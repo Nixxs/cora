@@ -1,6 +1,7 @@
 import pyaudio
 import pyttsx3
 import speech_recognition as sr
+import time
 
 salliVoiceIndex = 1
 
@@ -30,7 +31,23 @@ def takeCommand():
     return query.lower()
 
 def main():
-    said = takeCommand()
-    speak(f"I heard you say, {said}")
+    talking = True
+    while talking:
+        responded = False
+        userSaid = takeCommand()
+        if "hello" in userSaid:
+            speak("hello")
+            responded = True
+        if "how are you" in userSaid:
+            speak("doing fine, thanks")
+            responded = True
+        if "bye" in userSaid:
+            talking = False
+            speak("okay, see you next time")
+            responded = True
+        
+        if not(responded):
+            speak(f"I heard you say '{userSaid}' but I'm not sure how to respond to that.")
 
+        time.sleep(2)
 main()
