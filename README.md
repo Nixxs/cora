@@ -1,5 +1,6 @@
 # cora
-python project for development of my personal AI voice assistant. 
+python project for development of a Conversation
+Optimized Robot Assistant.
 
 Project Dependancies:
 - Python 3.11.6
