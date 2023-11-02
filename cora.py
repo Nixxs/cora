@@ -15,7 +15,7 @@ def speak(text):
     engine.say(text)
     engine.runAndWait()
 
-def takeCommand():
+def listen():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening..", end="")
@@ -34,7 +34,7 @@ def main():
     talking = True
     while talking:
         responded = False
-        userSaid = takeCommand()
+        userSaid = listen()
         if "hello" in userSaid:
             speak("hello")
             responded = True
