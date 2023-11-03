@@ -33,6 +33,7 @@ def speak(text):
         sample_rate=audio_segment.frame_rate
     )
 
+    print(f"CORA: {text}")
     # Wait for playback to finish before exiting
     play_obj.wait_done()
 
@@ -40,6 +41,7 @@ def listen():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening..", end="")
+        recognizer.adjust_for_ambient_noise(source)
         audio = recognizer.listen(source)
         query = ""
 
