@@ -20,7 +20,7 @@ def main():
         if not(responded):
             speak(f"I heard you say '{userSaid}' but I'm not sure how to respond to that.")
 
-        time.sleep(2)
+        time.sleep(1)
 
 if __name__ == "__main__":
     main()
