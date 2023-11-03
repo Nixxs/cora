@@ -4,6 +4,8 @@ python project for development of a Conversation Optimized Robot Assistant.
 
 ###Project Dependancies:###
 - Python 3.11.6
+- OpenAI API Key
+- AWS Polly Key
 - pyaudio
 - pyttsx3
 - SpeechRecognition
@@ -18,9 +20,14 @@ python project for development of a Conversation Optimized Robot Assistant.
 ###Road Map:###
 - ~~Initial text and speech recognition~~
 - ~~Synthesize voice from AWS Polly~~
-- Integration with openai chatgpt
+- ~~Integration with openai chatgpt~~
 - Activation on wake-up words
 - Simple speech visualiser using pygame
+- Store message history
+    - remember only the last few hours worth of messages
+- Support for local LLM via Langchain
+    - https://github.com/ravsau/langchain-notes/tree/main/local-llama-langchain
+- 
 
 ###Getting Started###
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
@@ -54,11 +61,12 @@ git clone https://github.com/Nixxs/cora.git
 
 cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too.
 
-Generate these, then create your own env.py file in the project root directory with 2 variables in it containing your key:
+Generate these, then create your own .env file in the project root directory with 2 variables in it containing your key:
 ```
 AWS_ACCESS_KEY = "[YOUR OWN AWS ACCESS KEY]"
 AWS_SECRET_KEY = "[THE CORRESPONDING SECRET KEY]"
 AWS_REGION = "[AWS REGION YOU WANT TO USE]"
+OPENAI_KEY = "[OPENAI API KEY]"
 ```
 
 5. Run cora.py:
