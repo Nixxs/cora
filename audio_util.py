@@ -33,6 +33,7 @@ def speak(text):
         sample_rate=audio_segment.frame_rate
     )
 
+    print(f"CORA: {text}")
     # Wait for playback to finish before exiting
     play_obj.wait_done()
 

@@ -1,5 +1,8 @@
 import time
 from audio_util import speak, listen
+from openai_services import get_chatgpt_response
+
+testing = True
 
 def main():
     talking = True
@@ -17,8 +20,10 @@ def main():
             speak("okay, see you next time")
             responded = True
         
+        # if pre-defined actions have not been set for input then make request to chatgpt
         if not(responded):
-            speak(f"I heard you say '{userSaid}' but I'm not sure how to respond to that.")
+            chatgpt_response = get_chatgpt_response(userSaid)
+            speak(chatgpt_response)
 
         time.sleep(1)
 
