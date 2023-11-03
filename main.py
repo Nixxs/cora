@@ -11,14 +11,14 @@ def main():
         userSaid = listen()
 
         if "hello" in userSaid:
-            speak("hello")
+            speak("hello! How can I help you today?")
             responded = True
         if "how are you" in userSaid:
             speak("doing fine, thanks")
             responded = True
         if "bye" in userSaid:
             talking = False
-            speak("okay, see you next time")
+            speak("okay, see you next time.")
             responded = True
         
         # if pre-defined actions have not been set for input then make request to chatgpt
