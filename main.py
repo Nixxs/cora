@@ -2,8 +2,6 @@ import time
 from audio_util import speak, listen
 from openai_services import get_chatgpt_response
 
-testing = True
-
 def main():
     talking = True
     while talking:
