@@ -9,6 +9,7 @@ def main():
     while talking:
         responded = False
         userSaid = listen()
+
         if "hello" in userSaid:
             speak("hello")
             responded = True
@@ -22,8 +23,9 @@ def main():
         
         # if pre-defined actions have not been set for input then make request to chatgpt
         if not(responded):
-            chatgpt_response = get_chatgpt_response(userSaid)
-            speak(chatgpt_response)
+            if not(userSaid == ""):
+                chatgpt_response = get_chatgpt_response(userSaid)
+                speak(chatgpt_response)
 
         time.sleep(1)
 
