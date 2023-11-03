@@ -1,22 +1,12 @@
-import pyaudio
-import pyttsx3
-import speech_recognition as sr
-import time
-import env
-import boto3
 import simpleaudio as sa
 from pydub import AudioSegment
 from io import BytesIO
-
-# Initialize a session using Amazon Polly
-polly_client = boto3.client(
-    'polly',
-    aws_access_key_id=env.AWS_ACCESS_KEY,
-    aws_secret_access_key=env.AWS_SECRET_KEY,
-    region_name=env.AWS_REGION
-)
+import speech_recognition as sr
+from aws_services import get_polly_client
 
 def speak(text):
+    polly_client = get_polly_client()
+
     response = polly_client.synthesize_speech(
         Engine='neural',
         VoiceId='Ruth',
@@ -60,25 +50,3 @@ def listen():
         except Exception as e:
             print(f"Exception: {str(e)}")
     return query.lower()
-
-def main():
-    talking = True
-    while talking:
-        responded = False
-        userSaid = listen()
-        if "hello" in userSaid:
-            speak("hello")
-            responded = True
-        if "how are you" in userSaid:
-            speak("doing fine, thanks")
-            responded = True
-        if "bye" in userSaid:
-            talking = False
-            speak("okay, see you next time")
-            responded = True
-        
-        if not(responded):
-            speak(f"I heard you say '{userSaid}' but I'm not sure how to respond to that.")
-
-        time.sleep(2)
-main()

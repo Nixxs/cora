@@ -7,7 +7,10 @@ python project for development of a Conversation Optimized Robot Assistant.
 - pyaudio
 - pyttsx3
 - SpeechRecognition
-- 
+- simpleaudio
+- pydub
+- boto3
+- python-dotenv
 
 ###Additional Voices:###
 - https://harposoftware.com/en/english-usa/129-salli-american-english-voice.html
@@ -31,6 +34,7 @@ pip3 install SpeechRecognition
 pip3 install boto3 
 pip3 install pydub 
 pip3 install simpleaudio
+pip3 intall python-dotenv
 ```
 OPTIONAL: 
 pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all. 
