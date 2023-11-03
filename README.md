@@ -16,6 +16,7 @@ python project for development of a Conversation Optimized Robot Assistant.
 - ~~Initial text and speech recognition~~
 - ~~Synthesize voice from AWS Polly~~
 - Integration with openai chatgpt
+- Activation on wake-up words
 - Simple speech visualiser using pygame
 
 ###Getting Started###
