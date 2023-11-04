@@ -1,13 +1,13 @@
 # cora
 ###Description:###
-python project for development of a Conversation Optimized Robot Assistant.
+Python project for development of a Conversation Optimized Robot Assistant (CORA). CORA is a voice assistant that is powered by openai's chatgpt for both user intent detection as well as general LLM responses. 
+
+This project is also using amazon AWS's Polly service for voice synthesis and the speechrecognition library utilising google's text to speech for user speech recognition. We are also using pydub and simpleaudio to play the audio coming back from Amazon AWS Polly service without having to write any audio files on the disk. 
 
 ###Project Dependancies:###
 - Python 3.11.6
 - OpenAI API Key
 - AWS Polly Key
-- pyaudio
-- pyttsx3
 - SpeechRecognition
 - simpleaudio
 - pydub
@@ -35,8 +35,6 @@ python project for development of a Conversation Optimized Robot Assistant.
 
 2. Install dependancies via pip commands:
 ```
-pip3 install pyadio
-pip3 install pyttsx3
 pip3 install SpeechRecognition
 pip3 install boto3 
 pip3 install pydub 
