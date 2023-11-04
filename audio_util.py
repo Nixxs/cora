@@ -50,5 +50,6 @@ def listen():
             query = recognizer.recognize_google(audio, language="en-AU")
             print(f"User said: {query}")
         except Exception as e:
-            print(f"Exception: {str(e)}")
+            print(f"Sound detected but speech not recognized: {str(e)}")
+ 
     return query.lower()
