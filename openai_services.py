@@ -1,5 +1,6 @@
 import openai
 import config
+import cora_skills
 
 openai.api_key = config.OPENAI_KEY
 chatGPTModel = "gpt-3.5-turbo-0613"
@@ -30,8 +31,18 @@ def get_chatgpt_response(prompt):
     response = openai.ChatCompletion.create(
         model=chatGPTModel,
         temperature=0,
-        messages=conversation_history
+        messages=conversation_history,
+        functions=cora_skills.gpt_functions,
+        function_call="auto"
     )
+    response_message = response["choices"][0]["message"]
     # append the response from chatgpt to the message history
-    conversation_history.append(response["choices"][0]["message"])
-    return response["choices"][0]["message"]["content"]
+    conversation_history.append(response_message)
+    print(response_message)
+
+    if response_message.get("function_call"):
+        # detected that a function should be called
+        print("handle function call")
+    else:
+        # no function to be called just respond like normal
+        return response_message["content"]
