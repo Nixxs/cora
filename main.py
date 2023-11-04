@@ -15,6 +15,7 @@ def main():
             talking = False
             speak("okay, see you next time.")
         else:
+            # don't make any calls to chatgpt if a falst postiive is given
             if not(userSaid == ""):
                 chatgpt_response = get_chatgpt_response(userSaid)
                 speak(chatgpt_response)

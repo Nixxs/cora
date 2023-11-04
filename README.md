@@ -21,14 +21,13 @@ python project for development of a Conversation Optimized Robot Assistant.
 - ~~Initial text and speech recognition~~
 - ~~Synthesize voice from AWS Polly~~
 - ~~Integration with openai chatgpt~~
-- Upgrade the openai ai service to use function calling
+- ~~Upgrade the openai ai service to use function calling~~
 - Activation on wake-up words
 - Simple speech visualiser using pygame
 - Store message history
     - remember only the last few hours worth of messages
 - Support for local LLM via Langchain
     - https://github.com/ravsau/langchain-notes/tree/main/local-llama-langchain
-- 
 
 ###Getting Started###
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
