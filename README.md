@@ -23,6 +23,7 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - ~~Upgrade the openai ai service to use function calling~~
 - Activation on wake-up words
 - Simple speech visualiser using pygame
+- Make unit test script
 - Store message history
     - remember only the last few hours worth of messages
 - Support for local LLM via Langchain
