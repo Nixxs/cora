@@ -8,13 +8,13 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - Python 3.11.6
 - OpenAI API Key
 - AWS Polly Key
+- Microsoft Visual C++ 14.0 or greater
 - SpeechRecognition
 - simpleaudio
 - pydub
 - boto3
 - python-dotenv
-
-
+- openai
 
 ### Road Map:
 - ~~Initial text and speech recognition~~
@@ -38,7 +38,8 @@ pip3 install SpeechRecognition
 pip3 install boto3 
 pip3 install pydub 
 pip3 install simpleaudio
-pip3 intall python-dotenv
+pip3 intsall python-dotenv
+pip3 install openai
 ```
 OPTIONAL: 
 pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all. 
