@@ -2,11 +2,12 @@ import openai
 import config
 import json
 import cora_skills
+from utilities import log_message
 
 openai.api_key = config.OPENAI_KEY
 chatGPTModel = "gpt-3.5-turbo-0613"
 
-preprompt = "you are helping my personal voice assistant produce funny and sometimes sarcastic but concise responses to my voice prompts."
+preprompt = "you are helping my personal voice assistant produce playful, funny and sometimes sarcastic responses to my voice prompts."
 conversation_history = []
 
 def get_current_models():
@@ -29,12 +30,15 @@ def get_chatgpt_response(prompt):
         conversation_history.append(
             {"role": "user","content": prompt}
         )
+    
+    print(log_message("SYSTEM", f"getting response from {chatGPTModel}"))
     response = openai.ChatCompletion.create(
         model=chatGPTModel,
         temperature=0,
         messages=conversation_history,
         functions=cora_skills.gpt_functions,
-        function_call="auto"
+        function_call="auto",
+        timeout=30
     )
     response_message = response["choices"][0]["message"]
     # append the response from chatgpt to the message history

@@ -38,17 +38,19 @@ def speak(text):
     # Wait for playback to finish before exiting
     play_obj.wait_done()
 
-def listen():
+def listen(sleeping):
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
-        print("Listening..", end="")
+        if not(sleeping):
+            print("Listening..", end="")
         audio = recognizer.listen(source)
         query = ""
 
         try:
-            print("Recognizing..", end="")
+            if not(sleeping):
+                print("Recognizing..")
             query = recognizer.recognize_google(audio, language="en-AU")
-            print(log_message("SYSTEM", f"User said: {query}"))
+            print(log_message("USER", query))
         except Exception as e:
             print(log_message("SYSTEM", "Sound detected but speech not recognized."))
  
