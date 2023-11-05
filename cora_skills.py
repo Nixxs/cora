@@ -12,6 +12,7 @@
 # if your function doesn't provide anything relevant or useful to chatgpt it will just default to giving the user it's own response.
 
 import json
+from utilities import log_message
 
 gpt_functions = [
     {
@@ -67,11 +68,13 @@ def call_skill_function(function_name, function_params):
     """
     match function_name:
         case "get_current_weather":
-            print("weather function detected from user intent")
+            print(log_message("SYSTEM", "weather function detected from user intent."))
             location_param = function_params["location"]
             return get_current_weather(location_param)
         case "turn_on_light":
-            print("turn on light detected from user intent")
+            print(log_message("SYSTEM", "turn on light detected from user intent"))
             return turn_on_light()
         case _:
+            print(log_message("SYSTEM", "Error: unmatched function name."))
             return "Error: unmatched function name."
+            

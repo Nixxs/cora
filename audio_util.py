@@ -3,6 +3,7 @@ from pydub import AudioSegment
 from io import BytesIO
 import speech_recognition as sr
 from aws_services import get_polly_client
+from utilities import log_message
 
 def speak(text):
     polly_client = get_polly_client()
@@ -33,7 +34,7 @@ def speak(text):
         sample_rate=audio_segment.frame_rate
     )
 
-    print(f"CORA: {text}")
+    print(log_message("CORA", f"{text}"))
     # Wait for playback to finish before exiting
     play_obj.wait_done()
 
@@ -41,15 +42,14 @@ def listen():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening..", end="")
-        recognizer.energy_threshold = 3
         audio = recognizer.listen(source)
         query = ""
 
         try:
             print("Recognizing..", end="")
             query = recognizer.recognize_google(audio, language="en-AU")
-            print(f"User said: {query}")
+            print(log_message("SYSTEM", f"User said: {query}"))
         except Exception as e:
-            print(f"Sound detected but speech not recognized.")
+            print(log_message("SYSTEM", "Sound detected but speech not recognized."))
  
     return query.lower()

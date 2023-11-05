@@ -6,7 +6,7 @@ import cora_skills
 openai.api_key = config.OPENAI_KEY
 chatGPTModel = "gpt-3.5-turbo-0613"
 
-preprompt = "you are helping my personal voice assistant produce meaningful but concise responses to my voice prompts."
+preprompt = "you are helping my personal voice assistant produce funny and sometimes sarcastic but concise responses to my voice prompts."
 conversation_history = []
 
 def get_current_models():

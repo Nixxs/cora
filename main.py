@@ -1,24 +1,11 @@
 import time
 from audio_util import speak, listen
 from openai_services import get_chatgpt_response
+from utilities import user_said_shutdown, user_said_sleep, log_message
 
 cora_is_running = True
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
 user = "Nick"
-
-def user_said_shutdown(user_said):
-    user_said = user_said.lower()
-    if "shutdown" in user_said or "shut down" in user_said:
-        return True
-    else:
-        return False
-
-def user_said_sleep(user_said):
-    user_said = user_said.lower()
-    if "sleep" in user_said:
-        return True
-    else:
-        return False
 
 # the main conversation loop after wake-up word was detected
 def run_conversation(initial_query):
@@ -58,13 +45,14 @@ def run_conversation(initial_query):
 def voice():
     while cora_is_running:
         user_said = listen().lower()
-
         # look through the audio and if one of the wake-words have been detected start conversation
         for wake_word in wake_words:
             if wake_word in user_said:
-                print("wake word detected")
+                print(log_message("SYSTEM", f"wake-word detected: {wake_word}"))
                 run_conversation(user_said)
-    print("shutting down.")
+
+    # write shutdown code here
+    print(log_message("SYSTEM", "Shutting down."))
 
 def main():
     voice()
