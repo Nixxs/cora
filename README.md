@@ -14,20 +14,19 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - boto3
 - python-dotenv
 
-
-
 ### Road Map:
 - ~~Initial text and speech recognition~~
 - ~~Synthesize voice from AWS Polly~~
 - ~~Integration with openai chatgpt~~
 - ~~Upgrade the openai ai service to use function calling~~
-- Activation on wake-up words
+- Simple utility functions for logging to the screen
+- Simple activation on wake-up words
 - Simple speech visualiser using pygame
-- Make unit test script
-- Store message history
-    - remember only the last few hours worth of messages
-- Support for local LLM via Langchain
-    - https://github.com/ravsau/langchain-notes/tree/main/local-llama-langchain
+- Display utility function output in the visualiser
+- Make unit tests
+- Store message history between sessions
+- Build and implement ML model for wake-up word detection
+- Support for local LLM instead of chatgpt service
 
 ### Getting Started:
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
