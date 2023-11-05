@@ -9,7 +9,7 @@ def speak(text):
 
     response = polly_client.synthesize_speech(
         Engine='neural',
-        VoiceId='Ruth',
+        VoiceId='Olivia',
         OutputFormat='pcm',
         Text=text
     )
@@ -41,7 +41,7 @@ def listen():
     recognizer = sr.Recognizer()
     with sr.Microphone() as source:
         print("Listening..", end="")
-        recognizer.adjust_for_ambient_noise(source)
+        recognizer.energy_threshold = 3
         audio = recognizer.listen(source)
         query = ""
 
@@ -50,6 +50,6 @@ def listen():
             query = recognizer.recognize_google(audio, language="en-AU")
             print(f"User said: {query}")
         except Exception as e:
-            print(f"Sound detected but speech not recognized: {str(e)}")
+            print(f"Sound detected but speech not recognized.")
  
     return query.lower()
