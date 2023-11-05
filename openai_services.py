@@ -62,6 +62,7 @@ def get_chatgpt_response(prompt):
         )
 
         # now that we have the function result in the chat history send this to gpt again for final response to the user
+        print(log_message("SYSTEM", f"sending function response to {chatGPTModel} and getting response."))
         response = openai.ChatCompletion.create(
             model=chatGPTModel,
             messages=conversation_history

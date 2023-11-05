@@ -21,8 +21,8 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - ~~Synthesize voice from AWS Polly~~
 - ~~Integration with openai chatgpt~~
 - ~~Upgrade the openai ai service to use function calling~~
-- Simple utility functions for logging to the screen
-- Simple activation on wake-up words
+- ~~Simple utility functions for logging to the screen~~
+- ~~Simple activation on wake-up words~~
 - Simple speech visualiser using pygame
 - Display utility function output in the visualiser
 - Make unit tests
