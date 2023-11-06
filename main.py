@@ -1,3 +1,7 @@
 from cora import cora_engine
 
-print(cora_engine.start())
+def main():
+    print(cora_engine.start())
+
+if __name__ == "__main__":
+    main()

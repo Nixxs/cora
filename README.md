@@ -15,6 +15,7 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - boto3
 - python-dotenv
 - openai
+- pyaudio
 
 ### Road Map:
 - ~~Initial text and speech recognition~~
@@ -44,35 +45,27 @@ git clone https://github.com/Nixxs/cora.git
 ```
 
 3. Setup your local .env file in the project root:
-
 ```
 AWS_ACCESS_KEY = "[YOUR OWN AWS ACCESS KEY]"
 AWS_SECRET_KEY = "[THE CORRESPONDING SECRET KEY]"
 AWS_REGION = "[AWS REGION YOU WANT TO USE]"
 OPENAI_KEY = "[OPENAI API KEY]"
+CHATGPT_MODEL = "gpt-3.5-turbo-0613"
 ```
-cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too.
+cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too as well as your openai key and the chatgpt model you want to use, make sure the model supports function calling otherwise cora's skill functions won't work (at time of writing either gpt-3.5-turbo-0613 or gpt-4-0613). 
 
 4. Install dependancies using poetry is easiest:
 ```
 poetry install
 ```
-OPTIONAL: 
-pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all. 
+OPTIONAL: pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all.  This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
 
-This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
+You can download it from here to cover all bases, you will also need to add it to your PATH: 
+- https://github.com/BtbN/FFmpeg-Builds/releases
 
-You can download it from here to cover all bases: https://github.com/BtbN/FFmpeg-Builds/releases
-
-Then just add it to your PATH.
-
-5. Start a virtual environment using poetry
+5. Then just run the entry script using
 ```
-poetry shell
-```
-then just run the main.py file:
-```
-python main.py
+poetry run start
 ```
 
 ### Local Voices:
