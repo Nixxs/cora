@@ -1,7 +1,7 @@
 import time
-from audio_util import speak, listen
-from openai_services import get_chatgpt_response
-from utilities import user_said_shutdown, user_said_sleep, log_message
+from cora.audio_util import speak, listen
+from cora.openai_services import get_chatgpt_response, get_conversation_history
+from cora.utilities import user_said_shutdown, user_said_sleep, log_message
 
 cora_is_running = True
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
@@ -60,8 +60,13 @@ def voice():
 
     print(log_message("SYSTEM", "shutting down."))
 
-def main():
-    voice()
+# starts all the threads that run CORA. After threads have shutdown returns conversation history
+def start():
+    """
+    starts the threads that are required to run cora
 
-if __name__ == "__main__":
-    main()
+    Returns:
+        list: the conversation history of the completed session.
+    """
+    voice()
+    return get_conversation_history()
