@@ -65,8 +65,21 @@ You can download it from here to cover all bases, you will also need to add it t
 
 5. Then just run the entry script using
 ```
-poetry run start
+poetry run cora
 ```
+
+6. How to use CORA:
+- The wake word for cora is "cora" at start up cora won't do anything except listen for the wake word.
+- If the wake word is detected, cora will respond.
+    - you can say 'cora' and your query in a single sentance and cora will both wake up and respond.
+- after cora has awoken, you can continue your conversation until you specifically ask cora to either go to 'sleep' or or 'shut down'.
+    - in 'sleep' mode, cora will stop responding until you say the wake word
+    - if you asked cora to 'shut down' at any point, cora's loops will end gracefully and the program will exit
+
+## Additional Notes:
+- Conversations are logged in the cora/logs folder and organised by date
+- CORA relies on lots of external services like google text to speech, even when sleeping cora is sending microphone information to google to check if the wake-word was detected from the audio. At some stage we will have a local model to detect this instead but for now it's all going to google so be wary of that.
+- Take a look cora's skills in the cora_skills.py file, make your own skills that might be relevant to you. Skills are activated when ChatGPT thinks the user wants to use one of the skills and give's cora access to everything you'd want to do (you just have to write the skill).
 
 ### Local Voices:
 In an earlier version of the project we were using local voices, at some stage this might still be useful if we don't want to pay for AWS Polly anymore.
