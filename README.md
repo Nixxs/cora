@@ -24,11 +24,15 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - ~~Simple utility functions for logging to the screen~~
 - ~~Simple activation on wake-up words~~
 - Simple speech visualiser using pygame
-- Display utility function output in the visualiser
+- change visualisation depending on sleeping or not sleeping
+- Display logging output in the visualiser
+- Make it easier to setup the project from scratch (use poetry)
+- Report daily schedule skill function
+- Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
 - Store message history between sessions
 - Build and implement ML model for wake-up word detection
-- Support for local LLM instead of chatgpt service
+- Support for local LLM instead of using chatgpt service
 
 ### Getting Started:
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/

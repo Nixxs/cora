@@ -10,7 +10,7 @@ def speak(text):
 
     response = polly_client.synthesize_speech(
         Engine='neural',
-        VoiceId='Olivia',
+        VoiceId='Joanna',
         OutputFormat='pcm',
         Text=text
     )
