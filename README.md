@@ -26,7 +26,7 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - Simple speech visualiser using pygame
 - change visualisation depending on sleeping or not sleeping
 - Display logging output in the visualiser
-- Make it easier to setup the project from scratch (use poetry)
+- ~~Make it easier to setup the project from scratch (use poetry)~~
 - Report daily schedule skill function
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
@@ -38,42 +38,39 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
     - 3.11.6 is required at the moment because this is the latest version supported by pyaudio
 
-2. Install dependancies via pip commands:
-```
-pip3 install SpeechRecognition
-pip3 install boto3 
-pip3 install pydub 
-pip3 install simpleaudio
-pip3 intsall python-dotenv
-pip3 install openai
-```
-OPTIONAL: 
-pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all. 
-
-This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
-
-You can downad it from here to cover all bases: https://github.com/BtbN/FFmpeg-Builds/releases
-
-Then just add it to your PATH.
-
-3. Clone this repo:
+2. Clone this repo:
 ```
 git clone https://github.com/Nixxs/cora.git
 ```
 
-4. Setup your local env.py
+3. Setup your local .env file in the project root:
 
-cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too.
-
-Generate these, then create your own .env file in the project root directory with 2 variables in it containing your key:
 ```
 AWS_ACCESS_KEY = "[YOUR OWN AWS ACCESS KEY]"
 AWS_SECRET_KEY = "[THE CORRESPONDING SECRET KEY]"
 AWS_REGION = "[AWS REGION YOU WANT TO USE]"
 OPENAI_KEY = "[OPENAI API KEY]"
 ```
+cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too.
 
-5. Run main.py:
+4. Install dependancies using poetry is easiest:
+```
+poetry install
+```
+OPTIONAL: 
+pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all. 
+
+This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
+
+You can download it from here to cover all bases: https://github.com/BtbN/FFmpeg-Builds/releases
+
+Then just add it to your PATH.
+
+5. Start a virtual environment using poetry
+```
+poetry shell
+```
+then just run the main.py file:
 ```
 python main.py
 ```

@@ -1,0 +1,22 @@
+[tool.poetry]
+name = "cora"
+version = "0.1.0"
+description = "Python project for development of a Conversation Optimized Robot Assistant (CORA). CORA is a voice assistant that is powered by openai's chatgpt for both user intent detection as well as general LLM responses."
+authors = ["Nicholas Chai <nicholas.chai@outlook.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+speechrecognition = "^3.10.0"
+simpleaudio = "^1.0.4"
+pydub = "^0.25.1"
+boto3 = "^1.28.78"
+python-dotenv = "^1.0.0"
+openai = "^0.28.1"
+pyaudio = "^0.2.13"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
