@@ -12,7 +12,8 @@ def main():
         "OPENAI_KEY" : os.getenv('OPENAI_KEY'),
         "CHATGPT_MODEL" : os.getenv('CHATGPT_MODEL')
     }
-    print(cora.start(config))
+    conversation_history = cora.start(config)
+    print(conversation_history)
 
 if __name__ == "__main__":
     main()

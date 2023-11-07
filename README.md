@@ -6,6 +6,34 @@ Python project for development of a Conversation Optimized Robot Assistant (CORA
 
 This project is also using amazon AWS's Polly service for voice synthesis and the speechrecognition library utilising google's text to speech for user speech recognition. We are also using pydub and simpleaudio to play the audio coming back from Amazon AWS Polly service without having to write any audio files on the disk. 
 
+### Getting Started:
+1. Install the corava library from pip:
+```
+pip install corava
+```
+2. Get all your API keys and setup a .env or just feed them into config if you want. Here is an example using .env.
+```
+from corava import cora
+from dotenv import load_dotenv
+import os
+
+load_dotenv() # take environment variables from .env.
+
+def main():
+    config = {
+        "AWS_ACCESS_KEY" : os.getenv('AWS_ACCESS_KEY'),
+        "AWS_SECRET_KEY" : os.getenv('AWS_SECRET_KEY'),
+        "AWS_REGION" : os.getenv('AWS_REGION'),
+        "OPENAI_KEY" : os.getenv('OPENAI_KEY'),
+        "CHATGPT_MODEL" : os.getenv('CHATGPT_MODEL')
+    }
+    conversation_history = cora.start(config)
+    print(conversation_history)
+
+if __name__ == "__main__":
+    main()
+```
+
 ### Project Dependancies:
 - Python 3.11.6
 - OpenAI API Key
@@ -30,9 +58,7 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - change visualisation depending on sleeping or not sleeping
 - Display logging output in the visualiser
 - ~~Make it easier to setup the project from scratch (use poetry)~~
-- setup the project so it can be used from pypi
-    - known issues:
-        - the .env values need to be handled in the main.py and then passed to cora_engine.start(). from there we need to pass them down to all the relevant functions that need them.
+- ~~setup the project so it can be used from pypi~~
 - Report daily schedule skill function
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
@@ -40,7 +66,7 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - Build and implement ML model for wake-up word detection
 - Support for local LLM instead of using chatgpt service
 
-### Getting Started:
+### Setting up your dev environment:
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
     - 3.11.6 is required at the moment because this is the latest version supported by pyaudio
 
@@ -73,7 +99,7 @@ You can download it from here to cover all bases, you will also need to add it t
 poetry run cora
 ```
 
-6. How to use CORA:
+### How to use CORA:
 - The wake word for cora is "cora" at start up cora won't do anything except listen for the wake word.
 - If the wake word is detected, cora will respond.
     - you can say 'cora' and your query in a single sentance and cora will both wake up and respond.
