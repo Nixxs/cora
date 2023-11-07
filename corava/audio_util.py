@@ -2,8 +2,8 @@ import simpleaudio as sa
 from pydub import AudioSegment
 from io import BytesIO
 import speech_recognition as sr
-from cora.aws_services import get_polly_client
-from cora.utilities import log_message
+from corava.aws_services import get_polly_client
+from corava.utilities import log_message
 
 def speak(text):
     polly_client = get_polly_client()

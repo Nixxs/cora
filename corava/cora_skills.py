@@ -12,7 +12,7 @@
 # if your function doesn't provide anything relevant or useful to chatgpt it will just default to giving the user it's own response.
 
 import json
-from cora.utilities import log_message
+from corava.utilities import log_message
 
 gpt_functions = [
     {

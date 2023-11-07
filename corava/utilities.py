@@ -24,8 +24,14 @@ def log_message(message_type, message):
     log_file_path = f"{logs_dir}\\{log_file_name}"
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_file = open(log_file_path,"a")
     log_string = f"{timestamp} [{message_type}]: {message}"
+
+    # create the logs dir if it doesn't already exist
+    if not os.path.exists(logs_dir):
+        os.makedirs(logs_dir)
+        print(f"{timestamp} [SYSTEM]: created logs directory: {logs_dir}")
+
+    log_file = open(log_file_path,"a")
     log_file.write(f"{log_string}\n")
     log_file.close()
 

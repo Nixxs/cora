@@ -1,4 +1,4 @@
-from cora import cora_engine
+from corava import cora_engine
 
 def main():
     print(cora_engine.start())

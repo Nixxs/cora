@@ -1,4 +1,6 @@
-# CORA
+# corava
+CORA Virtual Assistant
+
 ### Description:
 Python project for development of a Conversation Optimized Robot Assistant (CORA). CORA is a voice assistant that is powered by openai's chatgpt for both user intent detection as well as general LLM responses. 
 
@@ -28,6 +30,9 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 - change visualisation depending on sleeping or not sleeping
 - Display logging output in the visualiser
 - ~~Make it easier to setup the project from scratch (use poetry)~~
+- setup the project so it can be used from pypi
+    - known issues:
+        - the .env values need to be handled in the main.py and then passed to cora_engine.start(). from there we need to pass them down to all the relevant functions that need them.
 - Report daily schedule skill function
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests

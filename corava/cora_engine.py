@@ -1,7 +1,7 @@
 import time
-from cora.audio_util import speak, listen
-from cora.openai_services import get_chatgpt_response, get_conversation_history
-from cora.utilities import user_said_shutdown, user_said_sleep, log_message
+from corava.audio_util import speak, listen
+from corava.openai_services import get_chatgpt_response, get_conversation_history
+from corava.utilities import user_said_shutdown, user_said_sleep, log_message
 
 cora_is_running = True
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]

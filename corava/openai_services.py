@@ -1,10 +1,10 @@
 import openai
-import cora.config
+import corava.config
 import json
-import cora.cora_skills
-from cora.utilities import log_message
+import corava.cora_skills
+from corava.utilities import log_message
 
-openai.api_key = cora.config.OPENAI_KEY
+openai.api_key = corava.config.OPENAI_KEY
 
 preprompt = "you are helping my personal voice assistant produce playful, funny and sometimes sarcastic responses to my voice prompts."
 conversation_history = []
@@ -33,12 +33,12 @@ def get_chatgpt_response(prompt):
             {"role": "user","content": prompt}
         )
     
-    print(log_message("SYSTEM", f"getting response from {cora.config.CHATGPT_MODEL}"))
+    print(log_message("SYSTEM", f"getting response from {corava.config.CHATGPT_MODEL}"))
     response = openai.ChatCompletion.create(
-        model=cora.config.CHATGPT_MODEL,
+        model=corava.config.CHATGPT_MODEL,
         temperature=0,
         messages=conversation_history,
-        functions=cora.cora_skills.gpt_functions,
+        functions=corava.cora_skills.gpt_functions,
         function_call="auto",
         timeout=30
     )
@@ -52,7 +52,7 @@ def get_chatgpt_response(prompt):
         function_to_call = response_message["function_call"]
         function_name = function_to_call["name"]
         function_params = json.loads(function_to_call["arguments"])
-        function_response = cora.cora_skills.call_skill_function(function_name, function_params)
+        function_response = corava.cora_skills.call_skill_function(function_name, function_params)
         
         # add the function response to the chat history
         conversation_history.append(
@@ -64,9 +64,9 @@ def get_chatgpt_response(prompt):
         )
 
         # now that we have the function result in the chat history send this to gpt again for final response to the user
-        print(log_message("SYSTEM", f"sending function response to {cora.config.CHATGPT_MODEL} and getting response."))
+        print(log_message("SYSTEM", f"sending function response to {corava.config.CHATGPT_MODEL} and getting response."))
         response = openai.ChatCompletion.create(
-            model=cora.config.CHATGPT_MODEL,
+            model=corava.config.CHATGPT_MODEL,
             messages=conversation_history
         )
         response_to_user = response["choices"][0]["message"]
