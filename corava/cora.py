@@ -51,7 +51,7 @@ def voice(config):
         print(log_message("SYSTEM", "sleeping."))
 
         user_said = listen(sleeping).lower()
-        user_said = "hi cora, what is the weather like in perth today?"
+
         # look through the audio and if one of the wake-words have been detected start conversation
         for wake_word in wake_words:
             if wake_word in user_said:
