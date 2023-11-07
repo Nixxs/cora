@@ -1,7 +1,7 @@
-from corava import cora_engine
+from corava import cora
 
 def main():
-    print(cora_engine.start())
+    print(cora.start())
 
 if __name__ == "__main__":
     main()
