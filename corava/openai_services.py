@@ -1,13 +1,11 @@
 import openai
-import corava.config
 import json
 import corava.cora_skills
 from corava.utilities import log_message
 
-openai.api_key = corava.config.OPENAI_KEY
-
 preprompt = "you are helping my personal voice assistant produce playful, funny and sometimes sarcastic responses to my voice prompts."
 conversation_history = []
+openaid_api_key_is_set = False
 
 def get_current_models():
     response = openai.Model.list()
@@ -20,7 +18,13 @@ def get_current_models():
 def get_conversation_history():
     return conversation_history
 
-def get_chatgpt_response(prompt):
+def get_chatgpt_response(prompt, config):
+    # if the key hasn't been set yet then set it
+    global openaid_api_key_is_set
+    if not(openaid_api_key_is_set):
+        openai.api_key = config["OPENAI_KEY"]
+        openaid_api_key_is_set = True
+
     global conversation_history
     # if this is the first prompt then setup the conversation and intialise conversation_history
     if len(conversation_history) == 0:
@@ -33,9 +37,9 @@ def get_chatgpt_response(prompt):
             {"role": "user","content": prompt}
         )
     
-    print(log_message("SYSTEM", f"getting response from {corava.config.CHATGPT_MODEL}"))
+    print(log_message("SYSTEM", f"getting response from {config['CHATGPT_MODEL']}"))
     response = openai.ChatCompletion.create(
-        model=corava.config.CHATGPT_MODEL,
+        model=config["CHATGPT_MODEL"],
         temperature=0,
         messages=conversation_history,
         functions=corava.cora_skills.gpt_functions,
@@ -64,9 +68,9 @@ def get_chatgpt_response(prompt):
         )
 
         # now that we have the function result in the chat history send this to gpt again for final response to the user
-        print(log_message("SYSTEM", f"sending function response to {corava.config.CHATGPT_MODEL} and getting response."))
+        print(log_message("SYSTEM", f"sending function response to {config['CHATGPT_MODEL']} and getting response."))
         response = openai.ChatCompletion.create(
-            model=corava.config.CHATGPT_MODEL,
+            model=config["CHATGPT_MODEL"],
             messages=conversation_history
         )
         response_to_user = response["choices"][0]["message"]

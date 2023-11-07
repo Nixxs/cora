@@ -5,8 +5,8 @@ import speech_recognition as sr
 from corava.aws_services import get_polly_client
 from corava.utilities import log_message
 
-def speak(text):
-    polly_client = get_polly_client()
+def speak(text, config):
+    polly_client = get_polly_client(config)
 
     response = polly_client.synthesize_speech(
         Engine='neural',
