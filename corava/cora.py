@@ -2,10 +2,49 @@ import time
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response, get_conversation_history
 from corava.utilities import user_said_shutdown, user_said_sleep, log_message
+from corava.cora_visualiser import get_mic_input_level, draw_sine_wave
+from threading import Thread
+from queue import Queue
+import pygame
+import pyaudio
 
 cora_is_running = True
-wake_words = ["cora", "kora", "quora", "korra", "kooora"]
+voice_thread = None
+face_thread = None
+config = None
+
 sleeping = False
+wake_words = ["cora", "kora", "quora", "korra", "kooora"]
+
+red = (255,0,0)
+white = (255,255,255)
+visualisation_colour = white
+
+# pygame initialization
+screen_width = 500
+screen_height = 500
+pygame.init()
+pygame.display.set_caption("CORA")
+screen = pygame.display.set_mode(
+    (screen_width,screen_height)
+)
+clock = pygame.time.Clock()
+
+# audio initialization
+CHUNK = 1024
+FORMAT = pyaudio.paInt16
+CHANNELS = 1
+RATE = 44100
+
+p = pyaudio.PyAudio()
+stream = p.open(
+    format=FORMAT,
+    channels=CHANNELS,
+    rate=RATE,
+    input=True,
+    frames_per_buffer=CHUNK
+)
+
 
 # the main conversation loop after wake-up word was detected
 def run_conversation(initial_query, config):
@@ -44,9 +83,12 @@ def run_conversation(initial_query, config):
         # have a small pause between listening loops
         time.sleep(1)
 
-def voice(config):
+def voice():
+    global config
+    global sleeping 
+    global cora_is_running
+
     while cora_is_running:
-        global sleeping 
         sleeping = True
         print(log_message("SYSTEM", "sleeping."))
 
@@ -61,13 +103,36 @@ def voice(config):
 
     print(log_message("SYSTEM", "shutting down."))
 
+def face():
+    global cora_is_running
+    global visualisation_colour
+    amplitude = 100
+    while cora_is_running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                cora_is_running = False
+
+        adjusted_amplitude = get_mic_input_level(stream, CHUNK) / 20
+        amplitude = max(10, adjusted_amplitude)
+        draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
+        clock.tick(60)
+    pygame.quit()
+    
+
 # starts all the threads that run CORA. After threads have shutdown returns conversation history
-def start(config):
+def start(user_config):
     """
     starts the threads that are required to run cora
 
     Returns:
         list: the conversation history of the completed session.
     """
-    voice(config)
+    global config
+    config = user_config
+
+    voice_thread = Thread(target=voice)
+    voice_thread.start()
+
+    face()
+
     return get_conversation_history()
