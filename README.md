@@ -55,8 +55,8 @@ if __name__ == "__main__":
 - ~~Simple utility functions for logging to the screen~~
 - ~~Simple activation on wake-up words~~
 - update skills to support parrallel function calling
-- Simple speech visualiser using pygame
-- change visualisation depending on sleeping or not sleeping
+- ~~Simple speech visualiser using pygame~~
+- ~~change visualisation depending on sleeping or not sleeping~~
 - Display logging output in the visualiser
 - ~~Make it easier to setup the project from scratch (use poetry)~~
 - ~~setup the project so it can be used from pypi~~

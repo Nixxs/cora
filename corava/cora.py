@@ -2,9 +2,8 @@ import time
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response, get_conversation_history
 from corava.utilities import user_said_shutdown, user_said_sleep, log_message
-from corava.cora_visualiser import get_mic_input_level, draw_sine_wave
+from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
 from threading import Thread
-from queue import Queue
 import pygame
 import pyaudio
 
@@ -12,6 +11,7 @@ cora_is_running = True
 voice_thread = None
 face_thread = None
 config = None
+chatgpt_response = ""
 
 sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
@@ -20,6 +20,7 @@ red = (255,0,0)
 green = (0,255,0)
 blue = (0,0,255)
 white = (255,255,255)
+black = (0,0,0)
 visualisation_colour = white
 
 # pygame initialization
@@ -52,6 +53,7 @@ stream = p.open(
 def run_conversation(initial_query, config):
     global cora_is_running
     global visualisation_colour
+    global chatgpt_response
     initialized = False
     while True:
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
@@ -117,6 +119,7 @@ def face():
     global sleeping
     global cora_is_running
     global visualisation_colour
+    global chatgpt_response
     amplitude = 100
     while cora_is_running:
         for event in pygame.event.get():
@@ -129,7 +132,14 @@ def face():
             amplitude_modifier = 30
         adjusted_amplitude = get_mic_input_level(stream, CHUNK) / amplitude_modifier
         amplitude = max(10, adjusted_amplitude)
+
+        # draw everything
+        screen.fill((0,0,0))
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
+        draw_text_bottom_middle(screen, chatgpt_response, 20, white, black, screen_width)
+        pygame.display.flip()
+
+        # update clock
         clock.tick(60)
     pygame.quit()
     
