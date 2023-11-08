@@ -17,6 +17,8 @@ sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
 
 red = (255,0,0)
+green = (0,255,0)
+blue = (0,0,255)
 white = (255,255,255)
 visualisation_colour = white
 
@@ -49,24 +51,29 @@ stream = p.open(
 # the main conversation loop after wake-up word was detected
 def run_conversation(initial_query, config):
     global cora_is_running
+    global visualisation_colour
     initialized = False
     while True:
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
         if initialized:
+            visualisation_colour = blue
             user_query = listen(sleeping).lower()
 
             if user_said_sleep(user_query):
                 # break out of the the loop go back to voice loop
+                visualisation_colour = green
                 speak("okay, going to sleep.", config)    
                 break
             if user_said_shutdown(user_query):
                 # break out of the loop and let voice shutdown
+                visualisation_colour = green
                 speak("okay, see you later.", config)
                 cora_is_running = False
                 break
 
             if not(user_query == ""):
                 chatgpt_response = get_chatgpt_response(user_query, config)
+                visualisation_colour = green
                 speak(chatgpt_response, config)
         else:
             initialized = True
@@ -87,9 +94,11 @@ def voice():
     global config
     global sleeping 
     global cora_is_running
+    global visualisation_colour
 
     while cora_is_running:
         sleeping = True
+        visualisation_colour = white
         print(log_message("SYSTEM", "sleeping."))
 
         user_said = listen(sleeping).lower()
@@ -99,11 +108,13 @@ def voice():
             if wake_word in user_said:
                 print(log_message("SYSTEM", f"wake-word detected: {wake_word}"))
                 sleeping = False
+                visualisation_colour = green
                 run_conversation(user_said, config)
 
     print(log_message("SYSTEM", "shutting down."))
 
 def face():
+    global sleeping
     global cora_is_running
     global visualisation_colour
     amplitude = 100
@@ -112,7 +123,11 @@ def face():
             if event.type == pygame.QUIT:
                 cora_is_running = False
 
-        adjusted_amplitude = get_mic_input_level(stream, CHUNK) / 20
+        if sleeping:
+            amplitude_modifier = 100
+        else:
+            amplitude_modifier = 30
+        adjusted_amplitude = get_mic_input_level(stream, CHUNK) / amplitude_modifier
         amplitude = max(10, adjusted_amplitude)
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
         clock.tick(60)
