@@ -15,6 +15,7 @@ boto3 = "^1.28.78"
 python-dotenv = "^1.0.0"
 openai = "^0.28.1"
 pyaudio = "^0.2.13"
+pygame = "^2.5.2"
 
 
 [build-system]
