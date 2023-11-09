@@ -57,13 +57,13 @@ if __name__ == "__main__":
 - update skills to support parrallel function calling
 - ~~Simple speech visualiser using pygame~~
 - ~~change visualisation depending on sleeping or not sleeping~~
-- Display logging output in the visualiser
+- ~~Display logging output in the visualiser~~
 - ~~Make it easier to setup the project from scratch (use poetry)~~
 - ~~setup the project so it can be used from pypi~~
 - Report daily schedule skill function
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
-- Store message history between sessions
+- remember message history between sessions
 - Build and implement ML model for wake-up word detection
 - Support for local LLM instead of using chatgpt service
 

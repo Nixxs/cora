@@ -137,7 +137,7 @@ def face():
         amplitude = max(10, adjusted_amplitude)
 
         # draw everything
-        screen.fill((0,0,0))
+        screen.fill(colour("black"))
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
         draw_text_bottom_middle(screen, ui_text, 20, colour("black"), screen_width)
         pygame.display.flip()

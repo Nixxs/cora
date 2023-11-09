@@ -44,7 +44,7 @@ def remove_code(text):
 def colour(selected_colour):
     red = (255,0,0)
     green = (55,212,133)
-    blue = (66,118,237) 
+    blue = (66,118,237)
     orange = (217,143,59)
     white = (255,255,255)
     black = (0,0,0)
