@@ -1,7 +1,7 @@
 import time
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response, get_conversation_history
-from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code
+from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code, colour
 from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
 from threading import Thread
 import pygame
@@ -11,20 +11,13 @@ cora_is_running = True
 voice_thread = None
 face_thread = None
 config = None
-ui_text = {
-    "USER":"This is hte user query This is hte user queryThis is hte user queryThis is hte user query",
-    "CORA":"This is the cora's response to the user's query. This is the cora's response to the user's query. This is the cora's response to the user's query. This is the cora's response to the user's query. This is the cora's response to the user's query. "
-}
+ui_text = {"USER":"","CORA":""}
 
 sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
 
-red = (255,0,0)
-green = (0,255,0)
-blue = (0,0,255)
-white = (255,255,255)
-black = (0,0,0)
-visualisation_colour = white
+
+visualisation_colour = colour("white")
 
 # pygame initialization
 screen_width = 500
@@ -60,17 +53,17 @@ def run_conversation(initial_query, config):
     while True:
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
         if initialized:
-            visualisation_colour = blue
+            visualisation_colour = colour("blue")
             user_query = listen(sleeping).lower()
 
             if user_said_sleep(user_query):
                 # break out of the the loop go back to voice loop
-                visualisation_colour = green
+                visualisation_colour = colour("green")
                 speak("okay, going to sleep.", config)    
                 break
             if user_said_shutdown(user_query):
                 # break out of the loop and let voice shutdown
-                visualisation_colour = green
+                visualisation_colour = colour("green")
                 speak("okay, see you later.", config)
                 cora_is_running = False
                 break
@@ -81,7 +74,7 @@ def run_conversation(initial_query, config):
                     "USER":user_query,
                     "CORA":remove_code(chatgpt_response)
                 }
-                visualisation_colour = green
+                visualisation_colour = colour("green")
                 speak(chatgpt_response, config)
         else:
             initialized = True
@@ -110,7 +103,7 @@ def voice():
 
     while cora_is_running:
         sleeping = True
-        visualisation_colour = white
+        visualisation_colour = colour("white")
         print(log_message("SYSTEM", "sleeping."))
 
         user_said = listen(sleeping).lower()
@@ -120,7 +113,7 @@ def voice():
             if wake_word in user_said:
                 print(log_message("SYSTEM", f"wake-word detected: {wake_word}"))
                 sleeping = False
-                visualisation_colour = green
+                visualisation_colour = colour("green")
                 run_conversation(user_said, config)
 
     print(log_message("SYSTEM", "shutting down."))
@@ -146,7 +139,7 @@ def face():
         # draw everything
         screen.fill((0,0,0))
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
-        draw_text_bottom_middle(screen, ui_text, 20, black, screen_width)
+        draw_text_bottom_middle(screen, ui_text, 20, colour("black"), screen_width)
         pygame.display.flip()
 
         # update clock

@@ -40,3 +40,25 @@ def log_message(message_type, message):
 
 def remove_code(text):
     return re.sub('```.*?```', '', text, flags=re.DOTALL)
+
+def colour(selected_colour):
+    red = (255,0,0)
+    green = (55,212,133)
+    blue = (66,118,237) 
+    orange = (217,143,59)
+    white = (255,255,255)
+    black = (0,0,0)
+
+    match selected_colour:
+        case "red":
+            return red
+        case "green":
+            return green
+        case "blue":
+            return blue
+        case "white":
+            return white     
+        case "black":
+            return black
+        case "orange":
+            return orange

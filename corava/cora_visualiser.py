@@ -1,6 +1,7 @@
 import pygame
 import math
 import textwrap
+from corava.utilities import colour
 
 def get_mic_input_level(stream, CHUNK):
     data = stream.read(CHUNK)
@@ -68,9 +69,9 @@ def draw_text_bottom_middle(screen, text, font_size, background_color, screen_wi
     # Render each line into a surface
     for line in lines_to_render:
         if line["source"] == "USER":
-            text_color = (217, 143, 59) # orange
+            text_color = colour("orange")
         else:
-            text_color = (66, 118, 237) # blue
+            text_color = colour("blue")
 
         line_surface = font.render(line["text"], True, text_color, background_color)
         text_surfaces.append(line_surface)
