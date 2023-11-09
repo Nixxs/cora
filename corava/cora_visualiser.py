@@ -40,7 +40,7 @@ def draw_sine_wave(screen, amplitude, screen_width, screen_height, line_colour):
         4
     )
 
-def draw_text_bottom_middle(screen, text, font_size, background_color, screen_width, line_spacing=4):
+def draw_text_bottom_middle(screen, text, font_size, background_color, alpha, line_spacing=4):
     # Initialize a font
     font = pygame.font.SysFont(None, font_size)
     
@@ -61,7 +61,6 @@ def draw_text_bottom_middle(screen, text, font_size, background_color, screen_wi
             "text": line
         })
 
-
     # Initialize an empty list to hold rendered text surfaces
     text_surfaces = []
     total_height = 0  # To calculate the total height of the text block
@@ -74,6 +73,9 @@ def draw_text_bottom_middle(screen, text, font_size, background_color, screen_wi
             text_color = colour("blue")
 
         line_surface = font.render(line["text"], True, text_color, background_color)
+        line_surface = line_surface.convert_alpha()
+        line_surface.set_alpha(alpha)
+
         text_surfaces.append(line_surface)
         total_height += line_surface.get_height() + line_spacing
 

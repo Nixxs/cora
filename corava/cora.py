@@ -8,15 +8,13 @@ import pygame
 import pyaudio
 
 cora_is_running = True
-voice_thread = None
-face_thread = None
 config = None
-ui_text = {"USER":"","CORA":""}
-
 sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
 
-
+ui_text = {"USER":"asadfasdf","CORA":"asdfasdf"}
+ui_text_timer_max = 500
+ui_text_timer = ui_text_timer_max
 visualisation_colour = colour("white")
 
 # pygame initialization
@@ -49,6 +47,8 @@ def run_conversation(initial_query, config):
     global cora_is_running
     global visualisation_colour
     global ui_text
+    global ui_text_timer
+    global ui_text_timer_max
     initialized = False
     while True:
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
@@ -74,8 +74,10 @@ def run_conversation(initial_query, config):
                     "USER":user_query,
                     "CORA":remove_code(chatgpt_response)
                 }
+                ui_text_timer = ui_text_timer_max
                 visualisation_colour = colour("green")
                 speak(chatgpt_response, config)
+                
         else:
             initialized = True
 
@@ -90,8 +92,9 @@ def run_conversation(initial_query, config):
                 "USER":initial_query,
                 "CORA":remove_code(chatgpt_response)
             }
+            ui_text_timer = ui_text_timer_max
             speak(chatgpt_response, config)
-
+            
         # have a small pause between listening loops
         time.sleep(1)
 
@@ -123,8 +126,12 @@ def face():
     global cora_is_running
     global visualisation_colour
     global ui_text
+    global ui_text_timer
+    global ui_text_timer_max
     amplitude = 100
     while cora_is_running:
+        # drop the timer down each frame by 1
+        ui_text_timer -= 1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 cora_is_running = False
@@ -136,10 +143,16 @@ def face():
         adjusted_amplitude = get_mic_input_level(stream, CHUNK) * amplitude_modifier
         amplitude = max(10, adjusted_amplitude)
 
+        # set alpha to the remaining time on the timer this is how it fades
+        if ui_text_timer <= 255:
+            ui_text_alpha = ui_text_timer
+        else:
+            ui_text_alpha = 255
+
         # draw everything
         screen.fill(colour("black"))
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
-        draw_text_bottom_middle(screen, ui_text, 20, colour("black"), screen_width)
+        draw_text_bottom_middle(screen, ui_text, 20, colour("black"), ui_text_alpha)
         pygame.display.flip()
 
         # update clock
