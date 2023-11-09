@@ -12,7 +12,7 @@ config = None
 sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
 
-ui_text = {"USER":"asadfasdf","CORA":"asdfasdf"}
+ui_text = {"USER":"","CORA":""}
 ui_text_timer_max = 500
 ui_text_timer = ui_text_timer_max
 visualisation_colour = colour("white")

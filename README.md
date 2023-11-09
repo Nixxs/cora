@@ -47,7 +47,7 @@ if __name__ == "__main__":
 - openai
 - pyaudio
 
-### Road Map:
+### Road Map (Core):
 - ~~Initial text and speech recognition~~
 - ~~Synthesize voice from AWS Polly~~
 - ~~Integration with openai chatgpt~~
@@ -60,12 +60,19 @@ if __name__ == "__main__":
 - ~~Display logging output in the visualiser~~
 - ~~Make it easier to setup the project from scratch (use poetry)~~
 - ~~setup the project so it can be used from pypi~~
-- Report daily schedule skill function
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
 - remember message history between sessions
 - Build and implement ML model for wake-up word detection
 - Support for local LLM instead of using chatgpt service
+
+### Road Map (Active Skills):
+- Report daily outlook calendar schedule
+- Make the weather function call actuall work
+
+### Road Map (Monitoring Skills):
+- Monitor calendar and notify of next meeting
+- Monitor messages apps for new messages
 
 ### Setting up your dev environment:
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
