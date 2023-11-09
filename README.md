@@ -8,11 +8,11 @@ This project is also using amazon AWS's Polly service for voice synthesis and th
 
 ### Getting Started:
 1. Install the corava library from pip:
-```
+```bash
 pip install corava
 ```
 2. Get all your API keys and setup a .env or just feed them into config if you want. Here is an example using .env.
-```
+```python
 from corava import cora
 from dotenv import load_dotenv
 import os
@@ -60,6 +60,21 @@ if __name__ == "__main__":
 - ~~Display logging output in the visualiser~~
 - ~~Make it easier to setup the project from scratch (use poetry)~~
 - ~~setup the project so it can be used from pypi~~
+- when printing code to the console window use pygments to syntax highlight it
+    ```python
+    from pygments import highlight
+    from pygments.lexers import PythonLexer
+    from pygments.formatters import TerminalFormatter
+
+    # Sample Python code
+    code = '''print("Hello, world!")'''
+
+    # Highlight the Python code
+    highlighted_code = highlight(code, PythonLexer(), TerminalFormatter())
+
+    # Print the highlighted code to the console
+    print(highlighted_code)
+    ```
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
 - remember message history between sessions
@@ -79,12 +94,12 @@ if __name__ == "__main__":
     - 3.11.6 is required at the moment because this is the latest version supported by pyaudio
 
 2. Clone this repo:
-```
+```bash
 git clone https://github.com/Nixxs/cora.git
 ```
 
 3. Setup your local .env file in the project root:
-```
+```python
 AWS_ACCESS_KEY = "[YOUR OWN AWS ACCESS KEY]"
 AWS_SECRET_KEY = "[THE CORRESPONDING SECRET KEY]"
 AWS_REGION = "[AWS REGION YOU WANT TO USE]"
@@ -94,7 +109,7 @@ CHATGPT_MODEL = "gpt-3.5-turbo-0613"
 cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too as well as your openai key and the chatgpt model you want to use, make sure the model supports function calling otherwise cora's skill functions won't work (at time of writing either gpt-3.5-turbo-0613 or gpt-4-0613). 
 
 4. Install dependancies using poetry is easiest:
-```
+```bash
 poetry install
 ```
 OPTIONAL: pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all.  This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
@@ -103,7 +118,7 @@ You can download it from here to cover all bases, you will also need to add it t
 - https://github.com/BtbN/FFmpeg-Builds/releases
 
 5. Then just run the entry script using
-```
+```bash
 poetry run cora
 ```
 
