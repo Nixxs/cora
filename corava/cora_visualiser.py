@@ -39,23 +39,40 @@ def draw_sine_wave(screen, amplitude, screen_width, screen_height, line_colour):
         4
     )
 
-def draw_text_bottom_middle(screen, text, font_size, text_color, background_color, screen_width, line_spacing=4):
+def draw_text_bottom_middle(screen, text, font_size, background_color, screen_width, line_spacing=4):
     # Initialize a font
     font = pygame.font.SysFont(None, font_size)
-
-    # Width to wrap the text; adjust as necessary
-    wrap_width = screen_width - 20  # 20 pixels padding
     
+    lines_to_render = []
     # Split the text into a list of lines based on the screen width
-    lines = textwrap.wrap(text, width=70, replace_whitespace=False)
+    for line in textwrap.wrap(text["USER"], width=70, replace_whitespace=False):
+        lines_to_render.append({
+            "source" : "USER",
+            "text" : line
+        })
+    lines_to_render.append({
+        "source" : "CORA",
+        "text" : ""
+    })
+    for line in textwrap.wrap(text["CORA"], width=70, replace_whitespace=False):
+        lines_to_render.append({
+            "source": "CORA",
+            "text": line
+        })
+
 
     # Initialize an empty list to hold rendered text surfaces
     text_surfaces = []
     total_height = 0  # To calculate the total height of the text block
 
     # Render each line into a surface
-    for line in lines:
-        line_surface = font.render(line, True, text_color, background_color)
+    for line in lines_to_render:
+        if line["source"] == "USER":
+            text_color = (217, 143, 59) # orange
+        else:
+            text_color = (66, 118, 237) # blue
+
+        line_surface = font.render(line["text"], True, text_color, background_color)
         text_surfaces.append(line_surface)
         total_height += line_surface.get_height() + line_spacing
 

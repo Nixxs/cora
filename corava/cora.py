@@ -11,7 +11,10 @@ cora_is_running = True
 voice_thread = None
 face_thread = None
 config = None
-chatgpt_response = ""
+ui_text = {
+    "USER":"This is hte user query This is hte user queryThis is hte user queryThis is hte user query",
+    "CORA":"This is the cora's response to the user's query. This is the cora's response to the user's query. This is the cora's response to the user's query. This is the cora's response to the user's query. This is the cora's response to the user's query. "
+}
 
 sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora"]
@@ -48,12 +51,11 @@ stream = p.open(
     frames_per_buffer=CHUNK
 )
 
-
 # the main conversation loop after wake-up word was detected
 def run_conversation(initial_query, config):
     global cora_is_running
     global visualisation_colour
-    global chatgpt_response
+    global ui_text
     initialized = False
     while True:
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
@@ -75,6 +77,10 @@ def run_conversation(initial_query, config):
 
             if not(user_query == ""):
                 chatgpt_response = get_chatgpt_response(user_query, config)
+                ui_text = {
+                    "USER":user_query,
+                    "CORA":chatgpt_response
+                }
                 visualisation_colour = green
                 speak(chatgpt_response, config)
         else:
@@ -87,6 +93,10 @@ def run_conversation(initial_query, config):
                 break
         
             chatgpt_response = get_chatgpt_response(initial_query, config)
+            ui_text = {
+                "USER":initial_query,
+                "CORA":chatgpt_response
+            }
             speak(chatgpt_response, config)
 
         # have a small pause between listening loops
@@ -119,7 +129,7 @@ def face():
     global sleeping
     global cora_is_running
     global visualisation_colour
-    global chatgpt_response
+    global ui_text
     amplitude = 100
     while cora_is_running:
         for event in pygame.event.get():
@@ -136,7 +146,7 @@ def face():
         # draw everything
         screen.fill((0,0,0))
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
-        draw_text_bottom_middle(screen, chatgpt_response, 20, white, black, screen_width)
+        draw_text_bottom_middle(screen, ui_text, 20, black, screen_width)
         pygame.display.flip()
 
         # update clock
