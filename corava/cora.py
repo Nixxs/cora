@@ -127,10 +127,10 @@ def face():
                 cora_is_running = False
 
         if sleeping:
-            amplitude_modifier = 100
+            amplitude_modifier = 0.02
         else:
-            amplitude_modifier = 30
-        adjusted_amplitude = get_mic_input_level(stream, CHUNK) / amplitude_modifier
+            amplitude_modifier = 0.1
+        adjusted_amplitude = get_mic_input_level(stream, CHUNK) * amplitude_modifier
         amplitude = max(10, adjusted_amplitude)
 
         # draw everything

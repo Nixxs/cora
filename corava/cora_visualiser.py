@@ -47,7 +47,7 @@ def draw_text_bottom_middle(screen, text, font_size, text_color, background_colo
     wrap_width = screen_width - 20  # 20 pixels padding
     
     # Split the text into a list of lines based on the screen width
-    lines = textwrap.wrap(text, width=wrap_width, replace_whitespace=False)
+    lines = textwrap.wrap(text, width=70, replace_whitespace=False)
 
     # Initialize an empty list to hold rendered text surfaces
     text_surfaces = []
