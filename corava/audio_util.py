@@ -3,16 +3,16 @@ from pydub import AudioSegment
 from io import BytesIO
 import speech_recognition as sr
 from corava.aws_services import get_polly_client
-from corava.utilities import log_message
+from corava.utilities import log_message, remove_code
 
 def speak(text, config):
     polly_client = get_polly_client(config)
-
+    polly_text = remove_code(text)
     response = polly_client.synthesize_speech(
         Engine='neural',
         VoiceId='Joanna',
         OutputFormat='pcm',
-        Text=text
+        Text=polly_text
     )
 
     # Amazon Polly returns a stream for PCM format, which we can play directly

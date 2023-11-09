@@ -1,5 +1,6 @@
 from datetime import datetime
 import os
+import re
 
 def user_said_shutdown(user_said):
     """returns True or False depending on whether or not the user said told cora to shut down."""
@@ -36,3 +37,6 @@ def log_message(message_type, message):
     log_file.close()
 
     return log_string
+
+def remove_code(text):
+    return re.sub('```.*?```', '', text, flags=re.DOTALL)

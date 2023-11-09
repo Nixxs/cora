@@ -49,7 +49,6 @@ def get_chatgpt_response(prompt, config):
     response_message = response["choices"][0]["message"]
     # append the response from chatgpt to the message history
     conversation_history.append(response_message)
-    print(response_message)
 
     if response_message.get("function_call"):
         # detected that a function should be called so call the right function

@@ -1,7 +1,7 @@
 import time
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response, get_conversation_history
-from corava.utilities import user_said_shutdown, user_said_sleep, log_message
+from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code
 from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
 from threading import Thread
 import pygame
@@ -79,7 +79,7 @@ def run_conversation(initial_query, config):
                 chatgpt_response = get_chatgpt_response(user_query, config)
                 ui_text = {
                     "USER":user_query,
-                    "CORA":chatgpt_response
+                    "CORA":remove_code(chatgpt_response)
                 }
                 visualisation_colour = green
                 speak(chatgpt_response, config)
@@ -95,7 +95,7 @@ def run_conversation(initial_query, config):
             chatgpt_response = get_chatgpt_response(initial_query, config)
             ui_text = {
                 "USER":initial_query,
-                "CORA":chatgpt_response
+                "CORA":remove_code(chatgpt_response)
             }
             speak(chatgpt_response, config)
 
