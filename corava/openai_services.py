@@ -47,14 +47,7 @@ def get_chatgpt_response(prompt, config):
         timeout=30
     )
     response_message = response.choices[0].message
-
-    # append the response from chatgpt to the message history
-    history = {
-        "role":response_message.role,
-        "content":response_message.content,
-        "tool_calls":response_message.tool_calls
-    }
-    conversation_history.append(history)
+    conversation_history.append(response_message)
 
     if response_message.tool_calls:
         for tool_call in response_message.tool_calls:
@@ -78,12 +71,6 @@ def get_chatgpt_response(prompt, config):
             messages=conversation_history
         )
         response_to_user = response.choices[0].message
-
-        history = {
-            "role":response_to_user.role,
-            "content":response_to_user.content,
-            "tool_calls":response_message.tool_calls
-        }
         conversation_history.append(response_to_user)
 
         return response_to_user.content

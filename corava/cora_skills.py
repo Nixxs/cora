@@ -25,7 +25,7 @@ gpt_tools = [
                 "properties": {
                     "location": {
                         "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA",
+                        "description": "The city and state, example: Perth, Western Australia",
                     },
                     "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
                 },
@@ -37,10 +37,16 @@ gpt_tools = [
         "type": "function",
         "function": {
             "name": "turn_on_light",
-            "description": "Turns on a light in the office.",
+            "description": "controls a light in the office",
             "parameters": {
                 "type": "object",
-                "properties": {},
+                "properties": {
+                    "toggle":{
+                        "type": "string",
+                        "enum": ["on", "off"],
+                        "description": "toggle the light on or off"
+                    }
+                },
                 "required": [],
             }
         }
@@ -57,9 +63,13 @@ def get_current_weather(location, unit="celcius"):
     }
     return json.dumps(weather_info)
 
-def turn_on_light():
+def turn_on_light(toggle):
     # code for turning on the light goes here probably some microcontroller things here
-    return "light is now on"
+    match toggle:
+        case "on":
+            return "office light is on"
+        case "off":
+            return "office light is off"
 
 def call_skill_function(function_name, function_params):
     """
@@ -79,7 +89,8 @@ def call_skill_function(function_name, function_params):
             return get_current_weather(location_param)
         case "turn_on_light":
             log_message("SYSTEM", "turn on light detected from user intent")
-            return turn_on_light()
+            toggle_param = function_params["toggle"]
+            return turn_on_light(toggle_param)
         case _:
             log_message("SYSTEM", "Error: unmatched function name.")
             return "Error: unmatched function name."
