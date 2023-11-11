@@ -36,6 +36,8 @@ def log_message(message_type, message):
     log_file.write(f"{log_string}\n")
     log_file.close()
 
+    print(log_string)
+
     return log_string
 
 def remove_code(text):

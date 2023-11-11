@@ -34,7 +34,7 @@ def speak(text, config):
         sample_rate=audio_segment.frame_rate
     )
 
-    print(log_message("CORA", f"{text}"))
+    log_message("CORA", f"{text}")
     # Wait for playback to finish before exiting
     play_obj.wait_done()
 
@@ -50,8 +50,8 @@ def listen(sleeping):
             if not(sleeping):
                 print("Recognizing..")
             query = recognizer.recognize_google(audio, language="en-AU")
-            print(log_message("USER", query))
+            log_message("USER", query)
         except Exception as e:
-            print(log_message("SYSTEM", "Sound detected but speech not recognized."))
+            log_message("SYSTEM", "Sound detected but speech not recognized.")
  
     return query.lower()

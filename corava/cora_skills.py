@@ -74,13 +74,13 @@ def call_skill_function(function_name, function_params):
     """
     match function_name:
         case "get_current_weather":
-            print(log_message("SYSTEM", "weather function detected from user intent."))
+            log_message("SYSTEM", "weather function detected from user intent.")
             location_param = function_params["location"]
             return get_current_weather(location_param)
         case "turn_on_light":
-            print(log_message("SYSTEM", "turn on light detected from user intent"))
+            log_message("SYSTEM", "turn on light detected from user intent")
             return turn_on_light()
         case _:
-            print(log_message("SYSTEM", "Error: unmatched function name."))
+            log_message("SYSTEM", "Error: unmatched function name.")
             return "Error: unmatched function name."
             

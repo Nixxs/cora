@@ -37,7 +37,7 @@ def get_chatgpt_response(prompt, config):
             {"role": "user","content": prompt}
         )
     
-    print(log_message("SYSTEM", f"getting response from {config['CHATGPT_MODEL']}"))
+    log_message("SYSTEM", f"getting response from {config['CHATGPT_MODEL']}")
     response = openai.chat.completions.create(
         model=config["CHATGPT_MODEL"],
         temperature=0,
@@ -49,7 +49,12 @@ def get_chatgpt_response(prompt, config):
     response_message = response.choices[0].message
 
     # append the response from chatgpt to the message history
-    conversation_history.append(response_message)
+    history = {
+        "role":response_message.role,
+        "content":response_message.content,
+        "tool_calls":response_message.tool_calls
+    }
+    conversation_history.append(history)
 
     if response_message.tool_calls:
         # detected that a function should be called so call the right function
@@ -69,12 +74,18 @@ def get_chatgpt_response(prompt, config):
         )
 
         # now that we have the function result in the chat history send this to gpt again for final response to the user
-        print(log_message("SYSTEM", f"sending function response to {config['CHATGPT_MODEL']} and getting response."))
+        log_message("SYSTEM", f"sending function response to {config['CHATGPT_MODEL']} and getting response.")
         response = openai.chat.completions.create(
             model=config["CHATGPT_MODEL"],
             messages=conversation_history
         )
         response_to_user = response.choices[0].message
+
+        history = {
+            "role":response_to_user.role,
+            "content":response_to_user.content,
+            "tool_calls":response_to_user.tool_calls
+        }
         conversation_history.append(response_to_user)
 
         return response_to_user.content

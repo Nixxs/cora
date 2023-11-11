@@ -107,19 +107,19 @@ def voice():
     while cora_is_running:
         sleeping = True
         visualisation_colour = colour("white")
-        print(log_message("SYSTEM", "sleeping."))
+        log_message("SYSTEM", "sleeping.")
 
         user_said = listen(sleeping).lower()
 
         # look through the audio and if one of the wake-words have been detected start conversation
         for wake_word in wake_words:
             if wake_word in user_said:
-                print(log_message("SYSTEM", f"wake-word detected: {wake_word}"))
+                log_message("SYSTEM", f"wake-word detected: {wake_word}")
                 sleeping = False
                 visualisation_colour = colour("green")
                 run_conversation(user_said, config)
 
-    print(log_message("SYSTEM", "shutting down."))
+    log_message("SYSTEM", "shutting down.")
 
 def face():
     global sleeping
