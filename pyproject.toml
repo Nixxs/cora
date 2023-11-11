@@ -16,6 +16,7 @@ python-dotenv = "^1.0.0"
 openai = "^1.2.0"
 pyaudio = "^0.2.13"
 pygame = "^2.5.2"
+pygments = "^2.16.1"
 
 
 [build-system]
