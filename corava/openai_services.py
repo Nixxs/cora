@@ -57,21 +57,19 @@ def get_chatgpt_response(prompt, config):
     conversation_history.append(history)
 
     if response_message.tool_calls:
-        # detected that a function should be called so call the right function
-        function_to_call = response_message.tool_calls[0]
-        function_name = function_to_call.function.name
-        function_params = json.loads(function_to_call.function.arguments)
-        function_response = corava.cora_skills.call_skill_function(function_name, function_params)
-        tool_call_id = response_message.tool_calls[0].id
-        
-        # add the function response to the chat history
-        conversation_history.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": function_response
-            }
-        )
+        for tool_call in response_message.tool_calls:
+            function_name = tool_call.function.name
+            function_params = json.loads(tool_call.function.arguments)
+            function_response = corava.cora_skills.call_skill_function(function_name, function_params)
+            
+            # add the function response to the chat history
+            conversation_history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": function_response
+                }
+            )
 
         # now that we have the function result in the chat history send this to gpt again for final response to the user
         log_message("SYSTEM", f"sending function response to {config['CHATGPT_MODEL']} and getting response.")
@@ -84,7 +82,7 @@ def get_chatgpt_response(prompt, config):
         history = {
             "role":response_to_user.role,
             "content":response_to_user.content,
-            "tool_calls":response_to_user.tool_calls
+            "tool_calls":response_message.tool_calls
         }
         conversation_history.append(response_to_user)
 
