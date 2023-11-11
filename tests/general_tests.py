@@ -37,13 +37,12 @@ def gpt_display_code_test():
     response = get_chatgpt_response(prompt, config)
     log_message("FULL", response)
 
-    # code = re.findall(r"```(?:\w+)?(.*?)```", response, re.DOTALL)[0]
-    # log_message("CODE", code)
-
-    # language = re.findall(r"```(\w+)", response)[0]
-    # log_message("LANG", language)
-
-    # notCode = re.sub(r"```.*?```", '', response, flags=re.DOTALL)[0]
-    # log_message("NOCODE", notCode)
+def gpt_report_history_test():
+    prompt = "how many messages in your conversation history?"
+    response = get_chatgpt_response(prompt, config)
+    print(response)
 
 gpt_display_code_test()
+gpt_parallel_tool_call_test()
+gpt_response_test()
+gpt_report_history_test()

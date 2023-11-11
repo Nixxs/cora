@@ -176,4 +176,4 @@ def start(user_config):
 
     face()
 
-    return get_conversation_history()
+    return get_conversation_history().get()

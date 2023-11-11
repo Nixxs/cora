@@ -50,6 +50,18 @@ gpt_tools = [
                 "required": [],
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "report_conversation_history",
+            "description": "reports the current conversation information like max messages kept in history and the current number of messages in history",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            },
+            "required": []
+        }
     }
 ]
 
@@ -71,6 +83,17 @@ def turn_on_light(toggle):
         case "off":
             return "office light is off"
 
+def report_conversation_history():
+    from corava.openai_services import get_conversation_history
+    conversation_history = get_conversation_history()
+    message_count = len(conversation_history.get())
+    max_messages = conversation_history.max_history
+    conversation_info = {
+        "message_count":message_count,
+        "max_messages":max_messages
+    }
+    return json.dumps(conversation_info)
+
 def call_skill_function(function_name, function_params):
     """
     calls one of the defined skill functions.
@@ -91,7 +114,11 @@ def call_skill_function(function_name, function_params):
             log_message("SYSTEM", "turn on light detected from user intent")
             toggle_param = function_params["toggle"]
             return turn_on_light(toggle_param)
+        case "report_conversation_history":
+            log_message("SYSTEM", "report conversation history detected from user intent")
+            return report_conversation_history()
         case _:
             log_message("SYSTEM", "Error: unmatched function name.")
             return "Error: unmatched function name."
+        
             
