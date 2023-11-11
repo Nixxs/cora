@@ -32,7 +32,7 @@ def log_message(message_type, message):
         os.makedirs(logs_dir)
         print(f"{timestamp} [SYSTEM]: created logs directory: {logs_dir}")
 
-    log_file = open(log_file_path,"a")
+    log_file = open(log_file_path,"a", encoding="utf-8")
     log_file.write(f"{log_string}\n")
     log_file.close()
 

@@ -42,7 +42,7 @@ def draw_sine_wave(screen, amplitude, screen_width, screen_height, line_colour):
 
 def draw_text_bottom_middle(screen, text, font_size, background_color, alpha, line_spacing=4):
     # Initialize a font
-    font = pygame.font.SysFont(None, font_size)
+    font = pygame.font.SysFont("Segoe UI Emoji", font_size)
     
     lines_to_render = []
     # Split the text into a list of lines based on the screen width
@@ -72,7 +72,7 @@ def draw_text_bottom_middle(screen, text, font_size, background_color, alpha, li
         else:
             text_color = colour("blue")
 
-        line_surface = font.render(line["text"], True, text_color, background_color)
+        line_surface = font.render(line["text"].encode("utf-8"), True, text_color, background_color)
         line_surface = line_surface.convert_alpha()
         line_surface.set_alpha(alpha)
 

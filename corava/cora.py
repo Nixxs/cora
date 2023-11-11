@@ -152,7 +152,7 @@ def face():
         # draw everything
         screen.fill(colour("black"))
         draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
-        draw_text_bottom_middle(screen, ui_text, 20, colour("black"), ui_text_alpha)
+        draw_text_bottom_middle(screen, ui_text, 12, colour("black"), ui_text_alpha)
         pygame.display.flip()
 
         # update clock
