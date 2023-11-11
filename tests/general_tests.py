@@ -25,4 +25,9 @@ def gpt_tool_call_test():
     response = get_chatgpt_response(prompt, config)
     print(response)
 
-gpt_tool_call_test()
+def gpt_parallel_tool_call_test():
+    prompt = "check the weather in perth then turn on the light"
+    response = get_chatgpt_response(prompt, config)
+    print(response)
+
+gpt_parallel_tool_call_test()
