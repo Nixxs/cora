@@ -13,7 +13,7 @@ simpleaudio = "^1.0.4"
 pydub = "^0.25.1"
 boto3 = "^1.28.78"
 python-dotenv = "^1.0.0"
-openai = "^0.28.1"
+openai = "^1.2.0"
 pyaudio = "^0.2.13"
 pygame = "^2.5.2"
 

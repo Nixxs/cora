@@ -75,6 +75,9 @@ if __name__ == "__main__":
     # Print the highlighted code to the console
     print(highlighted_code)
     ```
+- manage the conversation history better to work more effciently with the token limit
+    - drop the oldest messages from the conversation history (these can be logged via the logger util later)
+    - consider keeping the most recent messages but summurizing the rest of the history to reduce as much as possible.
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - Make unit tests
 - remember message history between sessions
