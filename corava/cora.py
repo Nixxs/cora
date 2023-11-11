@@ -137,9 +137,9 @@ def face():
                 cora_is_running = False
 
         if sleeping:
-            amplitude_modifier = 0.02
+            amplitude_modifier = 0.1
         else:
-            amplitude_modifier = 0.06
+            amplitude_modifier = 0.4
         adjusted_amplitude = get_mic_input_level(stream, CHUNK) * amplitude_modifier
         amplitude = max(10, adjusted_amplitude)
 

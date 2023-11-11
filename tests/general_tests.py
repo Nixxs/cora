@@ -1,11 +1,13 @@
 import sys
 import os
+import re
 
 # Add the parent directory to sys.path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Now you can import your module
 from corava.openai_services import get_chatgpt_response
+from corava.utilities import log_message
 
 config = {
     "AWS_ACCESS_KEY" : os.getenv('AWS_ACCESS_KEY'),
@@ -30,4 +32,18 @@ def gpt_parallel_tool_call_test():
     response = get_chatgpt_response(prompt, config)
     print(response)
 
-gpt_parallel_tool_call_test()
+def gpt_display_code_test():
+    prompt = "write me a hello world in python"
+    response = get_chatgpt_response(prompt, config)
+    log_message("FULL", response)
+
+    # code = re.findall(r"```(?:\w+)?(.*?)```", response, re.DOTALL)[0]
+    # log_message("CODE", code)
+
+    # language = re.findall(r"```(\w+)", response)[0]
+    # log_message("LANG", language)
+
+    # notCode = re.sub(r"```.*?```", '', response, flags=re.DOTALL)[0]
+    # log_message("NOCODE", notCode)
+
+gpt_display_code_test()

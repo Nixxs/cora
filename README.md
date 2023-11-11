@@ -54,7 +54,7 @@ if __name__ == "__main__":
 - ~~Upgrade the openai ai service to use function calling~~
 - ~~Simple utility functions for logging to the screen~~
 - ~~Simple activation on wake-up words~~
-- ~~update skills to support parrallel function calling~~
+- ~~update skills to support parallel function calling~~
 - ~~Simple speech visualiser using pygame~~
 - ~~change visualisation depending on sleeping or not sleeping~~
 - ~~Display logging output in the visualiser~~
