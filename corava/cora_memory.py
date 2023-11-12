@@ -22,7 +22,7 @@ class Memory:
             recorded_history = ""
         
         user_defined_context = config.USER_DEFINED_CONTEXT
-        
+
         history_prompt = f"this is a summary of the last {self.recorded_memory_size} messages from the previous converstation with this user:\n\n{recorded_history}"
 
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -58,7 +58,6 @@ class Memory:
             messages=recent_history,
         )
         response_message = response.choices[0].message.content
-        print(response_message)
 
         with open(self.memory_file_path, 'w') as recent_memory_file:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
