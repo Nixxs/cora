@@ -60,9 +60,7 @@ if __name__ == "__main__":
 - ~~Display logging output in the visualiser~~
 - ~~Make it easier to setup the project from scratch (use poetry)~~
 - ~~setup the project so it can be used from pypi~~
-- manage the conversation history better to work more effciently with the token limit
-    - drop the oldest messages from the conversation history (these can be logged via the logger util later)
-    - consider keeping the most recent messages but summurizing the rest of the history to reduce as much as possible.
+- ~~manage the conversation history better to work more effciently with the token limit~~
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - remember message history between sessions
 - Build and implement ML model for wake-up word detection
@@ -70,11 +68,15 @@ if __name__ == "__main__":
 
 ### Road Map (Active Skills):
 - Report daily outlook calendar schedule
-- Make the weather function call actuall work
+- Make the weather function call actually work
+- Report latest most relevant news for a given location
+- Play youtube music (have a look at whats available in youtube apis)
+- Open youtube videos (have a look at whats available in youtube apis)
+- look up information using google maps (directions, distance to)
+- generate an image and open it (openai DALL-E image api)
 
 ### Road Map (Monitoring Skills):
 - Monitor calendar and notify of next meeting
-- Monitor messages apps for new messages
 
 ### Setting up your dev environment:
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/

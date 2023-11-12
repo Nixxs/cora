@@ -18,7 +18,7 @@ config = {
 }
 
 def gpt_response_test():
-    prompt = "tell me a joke"
+    prompt = "generate an image of pikachu as a cartographer"
     response = get_chatgpt_response(prompt, config)
     print(response)
 
@@ -42,7 +42,4 @@ def gpt_report_history_test():
     response = get_chatgpt_response(prompt, config)
     print(response)
 
-gpt_display_code_test()
-gpt_parallel_tool_call_test()
 gpt_response_test()
-gpt_report_history_test()
