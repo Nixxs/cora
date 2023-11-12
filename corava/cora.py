@@ -117,7 +117,7 @@ def voice():
                 log_message("SYSTEM", f"wake-word detected: {wake_word}")
                 sleeping = False
                 visualisation_colour = colour("green")
-                run_conversation(user_said)
+                run_conversation(user_said.replace(wake_word, "CORA"))
 
     # record recent memory of current conversation before shutdown
     memory.record_memory()

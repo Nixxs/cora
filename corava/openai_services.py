@@ -5,7 +5,7 @@ from corava.cora_config import config
 from corava.cora_memory import memory
 from corava.utilities import log_message
 
-openaid_api_key_is_set = False
+openai.api_key = config.OPENAI_KEY
 
 def get_current_models():
     response = openai.Model.list()
@@ -16,12 +16,7 @@ def get_current_models():
     return models
 
 def get_chatgpt_response(prompt):
-    global openaid_api_key_is_set
-
-    # if the key hasn't been set yet then set it
-    if not(openaid_api_key_is_set):
-        openai.api_key = config.OPENAI_KEY
-        openaid_api_key_is_set = True
+    openai.api_key = config.OPENAI_KEY
 
     memory.add_history(
         {"role": "user","content": prompt}
