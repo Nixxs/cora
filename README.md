@@ -34,6 +34,15 @@ if __name__ == "__main__":
     main()
 ```
 
+### How to use CORA:
+- The wake word for cora is "cora" at start up cora won't do anything except listen for the wake word.
+- If the wake word is detected, cora will respond.
+    - you can say 'cora' and your query in a single sentance and cora will both wake up and respond.
+- after cora has awoken, you can continue your conversation until you specifically ask cora to either go to 'sleep' or or 'shut down'.
+    - in 'sleep' mode, cora will stop responding until you say the wake word
+    - if you asked cora to 'shut down' at any point, cora's loops will end gracefully, your most recent messages will be summurised and saved locally and the program will exit
+- At the moment cora has not been setup with any real functions (this will come soon) however if you ask it for the weather or to turn on a light it will run some dummy functions. These will be updated or removed at as the project progresses.
+
 ### Project Dependancies:
 - Python 3.11.6
 - OpenAI API Key
@@ -46,6 +55,39 @@ if __name__ == "__main__":
 - python-dotenv
 - openai
 - pyaudio
+
+### Setting up your dev environment:
+1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
+    - 3.11.6 is required at the moment because this is the latest version supported by pyaudio
+
+2. Clone this repo:
+```bash
+git clone https://github.com/Nixxs/corava.git
+```
+
+3. Setup your local .env file in the project root:
+```python
+AWS_ACCESS_KEY = "[YOUR OWN AWS ACCESS KEY]"
+AWS_SECRET_KEY = "[THE CORRESPONDING SECRET KEY]"
+AWS_REGION = "[AWS REGION YOU WANT TO USE]"
+OPENAI_KEY = "[OPENAI API KEY]"
+CHATGPT_MODEL = "gpt-3.5-turbo-1106"
+```
+cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too as well as your openai key and the chatgpt model you want to use, make sure the model supports parallel function calling otherwise cora's skill functions might not work (at time of writing either gpt-3.5-turbo-1106 or gpt-4-1106-preview). 
+
+4. Install dependancies using poetry is easiest:
+```bash
+poetry install
+```
+OPTIONAL: pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all.  This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
+
+You can download it from here to cover all bases, you will also need to add it to your PATH: 
+- https://github.com/BtbN/FFmpeg-Builds/releases
+
+5. Then just run the entry script using
+```bash
+poetry run cora
+```
 
 ### Road Map (Core):
 - ~~Initial text and speech recognition~~
@@ -62,9 +104,10 @@ if __name__ == "__main__":
 - ~~setup the project so it can be used from pypi~~
 - ~~manage the conversation history better to work more effciently with the token limit~~
 - Allow cora to monitor things and report back/notify as events occur (third thread)
-- remember message history between sessions
+- ~~remember message history between sessions~~
 - Build and implement ML model for wake-up word detection
     - actually we can probably use this instead: https://github.com/mallorbc/whisper_mic
+- Improve memory to store things into a long-term memory file that will correct itself as CORA learns more about it's user
 - Support for local LLM instead of using chatgpt service
 
 ### Road Map (Active Skills):
@@ -79,49 +122,10 @@ if __name__ == "__main__":
 ### Road Map (Monitoring Skills):
 - Monitor calendar and notify of next meeting
 
-### Setting up your dev environment:
-1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
-    - 3.11.6 is required at the moment because this is the latest version supported by pyaudio
-
-2. Clone this repo:
-```bash
-git clone https://github.com/Nixxs/cora.git
-```
-
-3. Setup your local .env file in the project root:
-```python
-AWS_ACCESS_KEY = "[YOUR OWN AWS ACCESS KEY]"
-AWS_SECRET_KEY = "[THE CORRESPONDING SECRET KEY]"
-AWS_REGION = "[AWS REGION YOU WANT TO USE]"
-OPENAI_KEY = "[OPENAI API KEY]"
-CHATGPT_MODEL = "gpt-3.5-turbo-0613"
-```
-cora uses the amazon aws polly service for it's voice synthesis. To access this service, you will need to generate a key and secret on your amazon aws account that has access to the polly service. You'll also want to define your aws region here too as well as your openai key and the chatgpt model you want to use, make sure the model supports function calling otherwise cora's skill functions won't work (at time of writing either gpt-3.5-turbo-0613 or gpt-4-0613). 
-
-4. Install dependancies using poetry is easiest:
-```bash
-poetry install
-```
-OPTIONAL: pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all.  This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
-
-You can download it from here to cover all bases, you will also need to add it to your PATH: 
-- https://github.com/BtbN/FFmpeg-Builds/releases
-
-5. Then just run the entry script using
-```bash
-poetry run cora
-```
-
-### How to use CORA:
-- The wake word for cora is "cora" at start up cora won't do anything except listen for the wake word.
-- If the wake word is detected, cora will respond.
-    - you can say 'cora' and your query in a single sentance and cora will both wake up and respond.
-- after cora has awoken, you can continue your conversation until you specifically ask cora to either go to 'sleep' or or 'shut down'.
-    - in 'sleep' mode, cora will stop responding until you say the wake word
-    - if you asked cora to 'shut down' at any point, cora's loops will end gracefully and the program will exit
-
 ## Additional Notes:
-- Conversations are logged in the cora/logs folder and organised by date
+- Conversations are logged locally in the corava/logs folder and organised by date
+- Summurised recent memory is stored in corava/memory folder
+- CORA will remember the most recent thing you talked about from your previous conversation.
 - CORA relies on lots of external services like google text to speech, even when sleeping cora is sending microphone information to google to check if the wake-word was detected from the audio. At some stage we will have a local model to detect this instead but for now it's all going to google so be wary of that.
 - Take a look cora's skills in the cora_skills.py file, make your own skills that might be relevant to you. Skills are activated when ChatGPT thinks the user wants to use one of the skills and give's cora access to everything you'd want to do (you just have to write the skill).
 

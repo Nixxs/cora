@@ -12,7 +12,8 @@ class Memory:
         # create the memory_dir dir if it doesn't already exist
         if not os.path.exists(memory_dir):
             os.makedirs(memory_dir)
-            print(f"{timestamp} [SYSTEM]: created logs directory: {memory_dir}")
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"{timestamp} [SYSTEM]: created memory directory: {memory_dir}")
         self.memory_file_path = f"{memory_dir}\\recent.mem"
 
         if os.path.isfile(self.memory_file_path):
