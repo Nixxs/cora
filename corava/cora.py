@@ -4,12 +4,12 @@ from corava.openai_services import get_chatgpt_response
 from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code, colour
 from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
 from corava.cora_memory import memory
+from corava.cora_config import config
 from threading import Thread
 import pygame
 import pyaudio
 
 cora_is_running = True
-config = None
 sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora", "Kaikoura"]
 
@@ -44,7 +44,7 @@ stream = p.open(
 )
 
 # the main conversation loop after wake-up word was detected
-def run_conversation(initial_query, config):
+def run_conversation(initial_query):
     global cora_is_running
     global visualisation_colour
     global ui_text
@@ -60,24 +60,24 @@ def run_conversation(initial_query, config):
             if user_said_sleep(user_query):
                 # break out of the the loop go back to voice loop
                 visualisation_colour = colour("green")
-                speak("okay, going to sleep.", config)    
+                speak("okay, going to sleep.")    
                 break
             if user_said_shutdown(user_query):
                 # break out of the loop and let voice shutdown
                 visualisation_colour = colour("green")
-                speak("okay, see you later.", config)
+                speak("okay, see you later.")
                 cora_is_running = False
                 break
 
             if not(user_query == ""):
-                chatgpt_response = get_chatgpt_response(user_query, config)
+                chatgpt_response = get_chatgpt_response(user_query)
                 ui_text = {
                     "USER":user_query,
                     "CORA":remove_code(chatgpt_response)
                 }
                 ui_text_timer = ui_text_timer_max
                 visualisation_colour = colour("green")
-                speak(chatgpt_response, config)
+                speak(chatgpt_response)
                 
         else:
             initialized = True
@@ -88,19 +88,18 @@ def run_conversation(initial_query, config):
                 cora_is_running = False
                 break
         
-            chatgpt_response = get_chatgpt_response(initial_query, config)
+            chatgpt_response = get_chatgpt_response(initial_query)
             ui_text = {
                 "USER":initial_query,
                 "CORA":remove_code(chatgpt_response)
             }
             ui_text_timer = ui_text_timer_max
-            speak(chatgpt_response, config)
+            speak(chatgpt_response)
             
         # have a small pause between listening loops
         time.sleep(1)
 
 def voice():
-    global config
     global sleeping 
     global cora_is_running
     global visualisation_colour
@@ -118,7 +117,7 @@ def voice():
                 log_message("SYSTEM", f"wake-word detected: {wake_word}")
                 sleeping = False
                 visualisation_colour = colour("green")
-                run_conversation(user_said, config)
+                run_conversation(user_said)
 
     log_message("SYSTEM", "shutting down.")
 
@@ -168,8 +167,11 @@ def start(user_config):
     Returns:
         list: the conversation history of the completed session.
     """
-    global config
-    config = user_config
+    config.AWS_ACCESS_KEY = user_config["AWS_ACCESS_KEY"]
+    config.AWS_SECRET_KEY = user_config["AWS_SECRET_KEY"]
+    config.AWS_REGION = user_config["AWS_REGION"]
+    config.OPENAI_KEY = user_config["OPENAI_KEY"]
+    config.CHATGPT_MODEL = user_config["CHATGPT_MODEL"]
 
     voice_thread = Thread(target=voice)
     voice_thread.start()

@@ -1,6 +1,7 @@
 import openai
 import json
 import corava.cora_skills
+from corava.cora_config import config
 from corava.cora_memory import memory
 from corava.utilities import log_message
 
@@ -14,21 +15,21 @@ def get_current_models():
     
     return models
 
-def get_chatgpt_response(prompt, config):
+def get_chatgpt_response(prompt):
     global openaid_api_key_is_set
 
     # if the key hasn't been set yet then set it
     if not(openaid_api_key_is_set):
-        openai.api_key = config["OPENAI_KEY"]
+        openai.api_key = config.OPENAI_KEY
         openaid_api_key_is_set = True
 
     memory.add_history(
         {"role": "user","content": prompt}
     )
     
-    log_message("SYSTEM", f"getting response from {config['CHATGPT_MODEL']}")
+    log_message("SYSTEM", f"getting response from {config.CHATGPT_MODEL}")
     response = openai.chat.completions.create(
-        model=config["CHATGPT_MODEL"],
+        model=config.CHATGPT_MODEL,
         temperature=0,
         messages=memory.get_history(),
         tools=corava.cora_skills.gpt_tools,
@@ -54,9 +55,9 @@ def get_chatgpt_response(prompt, config):
             )
 
         # now that we have the function result in the chat history send this to gpt again for final response to the user
-        log_message("SYSTEM", f"sending function response to {config['CHATGPT_MODEL']} and getting response.")
+        log_message("SYSTEM", f"sending function response to {config.CHATGPT_MODEL} and getting response.")
         response = openai.chat.completions.create(
-            model=config["CHATGPT_MODEL"],
+            model=config.CHATGPT_MODEL,
             messages=memory.get_history()
         )
         response_to_user = response.choices[0].message
