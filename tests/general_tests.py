@@ -43,3 +43,5 @@ def gpt_report_history_test():
     print(response)
 
 gpt_response_test()
+gpt_tool_call_test()
+gpt_display_code_test()

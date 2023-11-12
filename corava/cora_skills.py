@@ -13,6 +13,7 @@
 
 import json
 from corava.utilities import log_message
+from corava.cora_memory import memory
 
 gpt_tools = [
     {
@@ -84,10 +85,8 @@ def turn_on_light(toggle):
             return "office light is off"
 
 def report_conversation_history():
-    from corava.openai_services import get_conversation_history
-    conversation_history = get_conversation_history()
-    message_count = len(conversation_history.get())
-    max_messages = conversation_history.max_history
+    message_count = len(memory.get_history())
+    max_messages = memory.max_history
     conversation_info = {
         "message_count":message_count,
         "max_messages":max_messages

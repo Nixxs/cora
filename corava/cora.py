@@ -1,8 +1,9 @@
 import time
 from corava.audio_util import speak, listen
-from corava.openai_services import get_chatgpt_response, get_conversation_history
+from corava.openai_services import get_chatgpt_response
 from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code, colour
 from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
+from corava.cora_memory import memory
 from threading import Thread
 import pygame
 import pyaudio
@@ -10,7 +11,7 @@ import pyaudio
 cora_is_running = True
 config = None
 sleeping = False
-wake_words = ["cora", "kora", "quora", "korra", "kooora"]
+wake_words = ["cora", "kora", "quora", "korra", "kooora", "Kaikoura"]
 
 ui_text = {"USER":"","CORA":""}
 ui_text_timer_max = 500
@@ -159,7 +160,6 @@ def face():
         clock.tick(60)
     pygame.quit()
     
-
 # starts all the threads that run CORA. After threads have shutdown returns conversation history
 def start(user_config):
     """
@@ -174,6 +174,7 @@ def start(user_config):
     voice_thread = Thread(target=voice)
     voice_thread.start()
 
+    # pygame is not threadsafe so we have to run it like this
     face()
 
-    return get_conversation_history().get()
+    return memory.get_history()
