@@ -40,17 +40,30 @@ def speak(text):
 
 def listen(sleeping):
     recognizer = sr.Recognizer()
+    ignore_phrases = ["", "you", "thankyou."]
+
     with sr.Microphone() as source:
-        if not(sleeping):
-            print("Listening..", end="")
-        audio = recognizer.listen(source)
+        recognizer.adjust_for_ambient_noise(source)
         query = ""
 
+        if not(sleeping):
+            print("Listening..", end="")
+            
         try:
+            audio = recognizer.listen(source, timeout=60, phrase_time_limit=15)
+            
             if not(sleeping):
                 print("Recognizing..")
-            query = recognizer.recognize_google(audio, language="en-AU")
-            log_message("USER", query)
+            query = recognizer.recognize_whisper(audio, model="base", language="english")
+
+            # if false postiive picked up by whisper log the message other wise skip it
+            if not(query.lower().replace(" ", "") in ignore_phrases):
+                log_message("USER", query)
+            else:
+                log_message("SYSTEM", f"Whisper detected false positive: {query}")
+                query = ""
+        except sr.WaitTimeoutError:
+            pass
         except Exception as e:
             log_message("SYSTEM", "Sound detected but speech not recognized.")
  
