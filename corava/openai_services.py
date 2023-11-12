@@ -31,7 +31,7 @@ def get_chatgpt_response(prompt):
     response = openai.chat.completions.create(
         model=config.CHATGPT_MODEL,
         temperature=0,
-        messages=memory.get_history(),
+        messages=memory.history,
         tools=corava.cora_skills.gpt_tools,
         tool_choice="auto",
         timeout=30
@@ -58,7 +58,7 @@ def get_chatgpt_response(prompt):
         log_message("SYSTEM", f"sending function response to {config.CHATGPT_MODEL} and getting response.")
         response = openai.chat.completions.create(
             model=config.CHATGPT_MODEL,
-            messages=memory.get_history()
+            messages=memory.history
         )
         response_to_user = response.choices[0].message
         memory.add_history(response_to_user)

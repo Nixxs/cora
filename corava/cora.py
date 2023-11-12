@@ -119,6 +119,8 @@ def voice():
                 visualisation_colour = colour("green")
                 run_conversation(user_said)
 
+    # record recent memory of current conversation before shutdown
+    memory.record_memory()
     log_message("SYSTEM", "shutting down.")
 
 def face():
@@ -179,4 +181,4 @@ def start(user_config):
     # pygame is not threadsafe so we have to run it like this
     face()
 
-    return memory.get_history()
+    return memory.history

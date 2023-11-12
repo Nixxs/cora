@@ -85,7 +85,7 @@ def turn_on_light(toggle):
             return "office light is off"
 
 def report_conversation_history():
-    message_count = len(memory.get_history())
+    message_count = len(memory.history)
     max_messages = memory.max_history
     conversation_info = {
         "message_count":message_count,

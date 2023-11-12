@@ -64,6 +64,7 @@ if __name__ == "__main__":
 - Allow cora to monitor things and report back/notify as events occur (third thread)
 - remember message history between sessions
 - Build and implement ML model for wake-up word detection
+    - actually we can probably use this instead: https://github.com/mallorbc/whisper_mic
 - Support for local LLM instead of using chatgpt service
 
 ### Road Map (Active Skills):
