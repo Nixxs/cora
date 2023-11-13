@@ -1,13 +1,13 @@
 [tool.poetry]
 name = "corava"
-version = "0.2.4"
+version = "0.2.5"
 description = "Python project for development of a Conversation Optimized Robot Assistant (CORA). CORA is a voice assistant that is powered by openai's chatgpt for both user intent detection as well as general LLM responses."
 authors = ["Nicholas Chai <nicholas.chai@outlook.com>"]
 license = "MIT"
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = ">=3.10,<3.12"
 speechrecognition = "^3.10.0"
 simpleaudio = "^1.0.4"
 pydub = "^0.25.1"

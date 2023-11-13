@@ -55,12 +55,12 @@ if __name__ == "__main__":
 - python-dotenv
 - openai
 - pyaudio
-- whisper-mic
+- openai-whisper (install it from the git if you are doing this manually refer to dev notes)
 - soundfile
 
 ### Setting up your dev environment:
-1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
-    - 3.11.6 is required at the moment because this is the latest version supported by pyaudio
+1. Install Python 3.10 to 3.11.6 from: https://www.python.org/downloads/release/python-3116/
+    - 3.11.6 is required at the moment because this is the latest version supported by pyaudio and other dependancies
 
 2. Clone this repo:
 ```bash
@@ -81,10 +81,7 @@ cora uses the amazon aws polly service for it's voice synthesis. To access this 
 ```bash
 poetry install
 ```
-OPTIONAL: pydub generally also needs ffmpeg installed as well if you want to do anything with audio file formats or editing the audio at all.  This project doesn't require any of that (at least not yet) as we just use simpleaudio to play the stream. However, you will get a warning from pydub on import if you don't have ffmpeg installed.
-
-You can download it from here to cover all bases, you will also need to add it to your PATH: 
-- https://github.com/BtbN/FFmpeg-Builds/releases
+NOTE: There is currently an issue with when installing the openai-whisper library due to a dependancy that isn't retrievable on pypi. This library (triton) isn't required so it has been removed from the poetry.lock file already. Refer to dev notes at the bottom if you need to remove it yourself.
 
 5. Then just run the entry script using
 ```bash
