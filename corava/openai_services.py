@@ -5,8 +5,6 @@ from corava.cora_config import config
 from corava.cora_memory import memory
 from corava.utilities import log_message
 
-openai.api_key = config.OPENAI_KEY
-
 def get_current_models():
     response = openai.Model.list()
     models = []
@@ -16,8 +14,6 @@ def get_current_models():
     return models
 
 def get_chatgpt_response(prompt):
-    openai.api_key = config.OPENAI_KEY
-
     memory.add_history(
         {"role": "user","content": prompt}
     )

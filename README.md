@@ -55,6 +55,8 @@ if __name__ == "__main__":
 - python-dotenv
 - openai
 - pyaudio
+- whisper-mic
+- soundfile
 
 ### Setting up your dev environment:
 1. Install Python 3.11.6 from: https://www.python.org/downloads/release/python-3116/
@@ -103,12 +105,14 @@ poetry run cora
 - ~~Make it easier to setup the project from scratch (use poetry)~~
 - ~~setup the project so it can be used from pypi~~
 - ~~manage the conversation history better to work more effciently with the token limit~~
-- Allow cora to monitor things and report back/notify as events occur (third thread)
+- Allow CORA to monitor things and report back/notify as events occur (third thread)
+- Refactor cora to better manage state, have cora decide if the user wants her to shutdown or go into sleep mode rather than just looking for words in speech recognition
 - ~~remember message history between sessions~~
 - Build and implement ML model for wake-up word detection
-    - actually we can probably use this instead: https://github.com/mallorbc/whisper_mic
+- ~~use a local model for speech recognition instead of sending it to google~~
 - Improve memory to store things into a long-term memory file that will correct itself as CORA learns more about it's user
-- Support for local LLM instead of using chatgpt service
+- Support for local LLM instead of using sending everything to OpenAI
+    - need an open source model that will support function calling well
 
 ### Road Map (Active Skills):
 - Report daily outlook calendar schedule
@@ -126,7 +130,8 @@ poetry run cora
 - Conversations are logged locally in the corava/logs folder and organised by date
 - Summurised recent memory is stored in corava/memory folder
 - CORA will remember the most recent thing you talked about from your previous conversation.
-- CORA relies on lots of external services like google text to speech, even when sleeping cora is sending microphone information to google to check if the wake-word was detected from the audio. At some stage we will have a local model to detect this instead but for now it's all going to google so be wary of that.
+- CORA uses a local model for text to speech, when you send speech to CORA for the first time the Whisper base model will be downloaded to your local computer and will be used from there.
+- When you are in a conversation with CORA, all your querys are being sent to the OpenAI ChatGPT model that you set so be aware of that. 
 - Take a look cora's skills in the cora_skills.py file, make your own skills that might be relevant to you. Skills are activated when ChatGPT thinks the user wants to use one of the skills and give's cora access to everything you'd want to do (you just have to write the skill).
 
 ### Local Voices:

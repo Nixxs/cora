@@ -60,11 +60,11 @@ def listen(sleeping):
             if not(query.lower().replace(" ", "") in ignore_phrases):
                 log_message("USER", query)
             else:
-                log_message("SYSTEM", f"Whisper detected false positive: {query}")
+                log_message("SYSTEM", f"Whisper detected false positive: '{query}'", False)
                 query = ""
         except sr.WaitTimeoutError:
             pass
         except Exception as e:
-            log_message("SYSTEM", "Sound detected but speech not recognized.")
+            log_message("SYSTEM", f"Exception occurred while listening: {e}")
  
     return query.lower()

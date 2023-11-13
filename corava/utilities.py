@@ -18,7 +18,7 @@ def user_said_sleep(user_said):
     else:
         return False
 
-def log_message(message_type, message):
+def log_message(message_type, message, write_to_file=True):
     """prints to screen and logs a log message into the log file"""
     logs_dir = f"{os.path.dirname(os.path.abspath(__file__))}\\logs"
     log_file_name = datetime.now().strftime("%Y-%m-%d.log")
@@ -32,9 +32,10 @@ def log_message(message_type, message):
         os.makedirs(logs_dir)
         print(f"{timestamp} [SYSTEM]: created logs directory: {logs_dir}")
 
-    log_file = open(log_file_path,"a", encoding="utf-8")
-    log_file.write(f"{log_string}\n")
-    log_file.close()
+    if write_to_file:
+        log_file = open(log_file_path,"a", encoding="utf-8")
+        log_file.write(f"{log_string}\n")
+        log_file.close()
 
     print(log_string)
 

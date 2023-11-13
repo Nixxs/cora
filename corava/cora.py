@@ -1,4 +1,5 @@
 import time
+import openai
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response
 from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code, colour
@@ -11,7 +12,7 @@ import pyaudio
 
 cora_is_running = True
 sleeping = False
-wake_words = ["cora", "kora", "quora", "korra", "kooora", "Kaikoura"]
+wake_words = ["cora", "kora", "quora", "korra", "kooora", "Kaikoura", "Laura"]
 
 ui_text = {"USER":"","CORA":""}
 ui_text_timer_max = 500
@@ -107,7 +108,7 @@ def voice():
     while cora_is_running:
         sleeping = True
         visualisation_colour = colour("white")
-        log_message("SYSTEM", "sleeping.")
+        log_message("SYSTEM", "sleeping.", False)
 
         user_said = listen(sleeping).lower()
 
@@ -174,7 +175,9 @@ def start(user_config):
     config.AWS_REGION = user_config["AWS_REGION"]
     config.OPENAI_KEY = user_config["OPENAI_KEY"]
     config.CHATGPT_MODEL = user_config["CHATGPT_MODEL"]
-
+    
+    # apply the openai key as soon as we can as it's used in a few places
+    openai.api_key = config.OPENAI_KEY
     voice_thread = Thread(target=voice)
     voice_thread.start()
 

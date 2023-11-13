@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "corava"
-version = "0.2.1"
+version = "0.2.2"
 description = "Python project for development of a Conversation Optimized Robot Assistant (CORA). CORA is a voice assistant that is powered by openai's chatgpt for both user intent detection as well as general LLM responses."
 authors = ["Nicholas Chai <nicholas.chai@outlook.com>"]
 license = "MIT"
@@ -16,7 +16,8 @@ python-dotenv = "^1.0.0"
 openai = "^1.2.0"
 pyaudio = "^0.2.13"
 pygame = "^2.5.2"
-
+openai-whisper = {git = "https://github.com/openai/whisper.git"}
+soundfile = "^0.12.1"
 
 [build-system]
 requires = ["poetry-core"]
