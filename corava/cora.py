@@ -12,7 +12,7 @@ import pyaudio
 
 cora_is_running = True
 sleeping = False
-wake_words = ["cora", "kora", "quora", "korra", "kooora", "Kaikoura", "Laura"]
+wake_words = ["cora", "kora", "quora", "korra", "kooora", "kaikoura", "laura", "chora"]
 
 ui_text = {"USER":"","CORA":""}
 ui_text_timer_max = 500

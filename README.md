@@ -137,3 +137,17 @@ poetry run cora
 ### Local Voices:
 In an earlier version of the project we were using local voices, at some stage this might still be useful if we don't want to pay for AWS Polly anymore.
 - https://harposoftware.com/en/english-usa/129-salli-american-english-voice.html
+
+### Developer Notes:
+- When preparing the package for pypi, openai-whisper has a dependancy call "triton" which doesn't exist on pypi for windows users. So it doesn't work, its okay though because it's not actually required for anything. Get around this issue by:
+    - update the lock file using using the .toml file with:
+    ```bash
+    poetry lock
+    ```
+    - next go into the .lock file and delete the "triton" package from it
+    - now run:
+    ```bash
+    poetry install
+    poetry build
+    poetry publish
+    ```
