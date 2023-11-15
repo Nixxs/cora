@@ -7,17 +7,11 @@ from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_tex
 from corava.cora_memory import memory
 from corava.cora_config import config
 from threading import Thread
+from corava.cora_state import state
 import pygame
 import pyaudio
 
-cora_is_running = True
-sleeping = False
 wake_words = ["cora", "kora", "quora", "korra", "kooora", "kaikoura", "laura", "chora"]
-
-ui_text = {"USER":"","CORA":""}
-ui_text_timer_max = 500
-ui_text_timer = ui_text_timer_max
-visualisation_colour = colour("white")
 
 # pygame initialization
 screen_width = 500
@@ -46,38 +40,33 @@ stream = p.open(
 
 # the main conversation loop after wake-up word was detected
 def run_conversation(initial_query):
-    global cora_is_running
-    global visualisation_colour
-    global ui_text
-    global ui_text_timer
-    global ui_text_timer_max
     initialized = False
     while True:
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
         if initialized:
-            visualisation_colour = colour("blue")
-            user_query = listen(sleeping).lower()
+            state.visualisation_colour = colour("blue")
+            user_query = listen().lower()
 
             if user_said_sleep(user_query):
                 # break out of the the loop go back to voice loop
-                visualisation_colour = colour("green")
+                state.visualisation_colour = colour("green")
                 speak("okay, going to sleep.")    
                 break
             if user_said_shutdown(user_query):
                 # break out of the loop and let voice shutdown
-                visualisation_colour = colour("green")
+                state.visualisation_colour = colour("green")
                 speak("okay, see you later.")
-                cora_is_running = False
+                state.running = False
                 break
 
             if not(user_query == ""):
                 chatgpt_response = get_chatgpt_response(user_query)
-                ui_text = {
+                state.ui_text = {
                     "USER":user_query,
                     "CORA":remove_code(chatgpt_response)
                 }
-                ui_text_timer = ui_text_timer_max
-                visualisation_colour = colour("green")
+                state.ui_text_timer = state.ui_text_timer_max
+                state.visualisation_colour = colour("green")
                 speak(chatgpt_response)
                 
         else:
@@ -86,38 +75,34 @@ def run_conversation(initial_query):
             # if the user has woken up cora and asked to shutdown in the same sentance
             if user_said_shutdown(initial_query):
                 # break out of the loop and let voice shutdown
-                cora_is_running = False
+                state.running = False
                 break
         
             chatgpt_response = get_chatgpt_response(initial_query)
-            ui_text = {
+            state.ui_text = {
                 "USER":initial_query,
                 "CORA":remove_code(chatgpt_response)
             }
-            ui_text_timer = ui_text_timer_max
+            state.ui_text_timer = state.ui_text_timer_max
             speak(chatgpt_response)
             
         # have a small pause between listening loops
         time.sleep(1)
 
 def voice():
-    global sleeping 
-    global cora_is_running
-    global visualisation_colour
-
-    while cora_is_running:
-        sleeping = True
-        visualisation_colour = colour("white")
+    while state.running:
+        state.sleeping = True
+        state.visualisation_colour = colour("white")
         log_message("SYSTEM", "sleeping.", False)
 
-        user_said = listen(sleeping).lower()
+        user_said = listen().lower()
 
         # look through the audio and if one of the wake-words have been detected start conversation
         for wake_word in wake_words:
             if wake_word in user_said:
                 log_message("SYSTEM", f"wake-word detected: {wake_word}")
-                sleeping = False
-                visualisation_colour = colour("green")
+                state.sleeping = False
+                state.visualisation_colour = colour("green")
                 run_conversation(user_said.replace(wake_word, "CORA"))
 
     # record recent memory of current conversation before shutdown
@@ -125,21 +110,15 @@ def voice():
     log_message("SYSTEM", "shutting down.")
 
 def face():
-    global sleeping
-    global cora_is_running
-    global visualisation_colour
-    global ui_text
-    global ui_text_timer
-    global ui_text_timer_max
     amplitude = 100
-    while cora_is_running:
+    while state.running:
         # drop the timer down each frame by 1
-        ui_text_timer -= 1
+        state.ui_text_timer -= 1
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
-                cora_is_running = False
+                state.running = False
 
-        if sleeping:
+        if state.sleeping:
             amplitude_modifier = 0.1
         else:
             amplitude_modifier = 0.4
@@ -147,15 +126,15 @@ def face():
         amplitude = max(10, adjusted_amplitude)
 
         # set alpha to the remaining time on the timer this is how it fades
-        if ui_text_timer <= 255:
-            ui_text_alpha = ui_text_timer
+        if state.ui_text_timer <= 255:
+            ui_text_alpha = state.ui_text_timer
         else:
             ui_text_alpha = 255
 
         # draw everything
         screen.fill(colour("black"))
-        draw_sine_wave(screen, amplitude, screen_width, screen_height, visualisation_colour)
-        draw_text_bottom_middle(screen, ui_text, 12, colour("black"), ui_text_alpha)
+        draw_sine_wave(screen, amplitude, screen_width, screen_height, state.visualisation_colour)
+        draw_text_bottom_middle(screen, state.ui_text, 12, colour("black"), ui_text_alpha)
         pygame.display.flip()
 
         # update clock

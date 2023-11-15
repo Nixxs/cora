@@ -81,7 +81,7 @@ cora uses the amazon aws polly service for it's voice synthesis. To access this 
 ```bash
 poetry install
 ```
-NOTE: There is currently an issue with when installing the openai-whisper library due to a dependancy that isn't retrievable on pypi. This library (triton) isn't required so it has been removed from the poetry.lock file already. Refer to dev notes at the bottom if you need to remove it yourself.
+NOTE: There is currently an issue when installing the openai-whisper library due to a dependancy that isn't retrievable on pypi. This library (triton) isn't required so it has been removed from the poetry.lock file already. Refer to dev notes at the bottom if you need to remove it yourself.
 
 5. Then just run the entry script using
 ```bash
@@ -112,6 +112,8 @@ poetry run cora
     - need an open source model that will support function calling well
 
 ### Road Map (Active Skills):
+- connect cora to bard/bing so that calls to the internet can be made when cora can't answer. 
+    - Currently these both don't have an offical api.
 - Report daily outlook calendar schedule
 - Make the weather function call actually work
 - Report latest most relevant news for a given location

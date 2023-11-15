@@ -2,6 +2,7 @@ import simpleaudio as sa
 from pydub import AudioSegment
 from io import BytesIO
 import speech_recognition as sr
+from corava.cora_state import state
 from corava.aws_services import get_polly_client
 from corava.utilities import log_message, remove_code
 
@@ -38,7 +39,7 @@ def speak(text):
     # Wait for playback to finish before exiting
     play_obj.wait_done()
 
-def listen(sleeping):
+def listen():
     recognizer = sr.Recognizer()
     ignore_phrases = ["", "you", "thankyou."]
 
@@ -46,13 +47,13 @@ def listen(sleeping):
         recognizer.adjust_for_ambient_noise(source)
         query = ""
 
-        if not(sleeping):
+        if not(state.sleeping):
             print("Listening..", end="")
             
         try:
             audio = recognizer.listen(source, timeout=60, phrase_time_limit=15)
             
-            if not(sleeping):
+            if not(state.sleeping):
                 print("Recognizing..")
             query = recognizer.recognize_whisper(audio, model="base", language="english")
 
