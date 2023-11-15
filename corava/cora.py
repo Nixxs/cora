@@ -1,8 +1,9 @@
 import time
 import openai
+from datetime import datetime
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response
-from corava.utilities import user_said_shutdown, user_said_sleep, log_message, remove_code, colour
+from corava.utilities import user_said_shutdown, log_message, remove_code, colour
 from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
 from corava.cora_memory import memory
 from corava.cora_config import config
@@ -45,20 +46,21 @@ def run_conversation(initial_query):
         # if we've already handled the initial query then continue the conversation and listen for the next prompt otherwise handle the initial query
         if initialized:
             state.visualisation_colour = colour("blue")
-            user_query = listen().lower()
 
-            if user_said_sleep(user_query):
+            if state.sleeping:
                 # break out of the the loop go back to voice loop
                 state.visualisation_colour = colour("green")
-                speak("okay, going to sleep.")    
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                memory.add_history(
+                    {"role": "system","content": f"CORA went into sleep mode at: {timestamp}"}
+                )
                 break
-            if user_said_shutdown(user_query):
+            if not(state.running):
                 # break out of the loop and let voice shutdown
                 state.visualisation_colour = colour("green")
-                speak("okay, see you later.")
-                state.running = False
                 break
 
+            user_query = listen().lower()
             if not(user_query == ""):
                 chatgpt_response = get_chatgpt_response(user_query)
                 state.ui_text = {
@@ -71,13 +73,6 @@ def run_conversation(initial_query):
                 
         else:
             initialized = True
-
-            # if the user has woken up cora and asked to shutdown in the same sentance
-            if user_said_shutdown(initial_query):
-                # break out of the loop and let voice shutdown
-                state.running = False
-                break
-        
             chatgpt_response = get_chatgpt_response(initial_query)
             state.ui_text = {
                 "USER":initial_query,
@@ -91,19 +86,25 @@ def run_conversation(initial_query):
 
 def voice():
     while state.running:
-        state.sleeping = True
-        state.visualisation_colour = colour("white")
-        log_message("SYSTEM", "sleeping.", False)
+        # the sleep loop
+        if state.sleeping:
+            state.visualisation_colour = colour("white")
+            log_message("SYSTEM", "sleeping.", False)
 
-        user_said = listen().lower()
-
-        # look through the audio and if one of the wake-words have been detected start conversation
-        for wake_word in wake_words:
-            if wake_word in user_said:
-                log_message("SYSTEM", f"wake-word detected: {wake_word}")
-                state.sleeping = False
-                state.visualisation_colour = colour("green")
-                run_conversation(user_said.replace(wake_word, "CORA"))
+            user_said = listen().lower()
+            # look through the audio and if one of the wake-words have been detected start conversation
+            for wake_word in wake_words:
+                if wake_word in user_said:
+                    log_message("SYSTEM", f"wake-word detected: {wake_word}")
+                    state.sleeping = False
+        # the wake up
+        else:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            memory.add_history(
+                {"role": "system","content": f"CORA exited sleep mode at: {timestamp}"}
+            )
+            state.visualisation_colour = colour("green")
+            run_conversation(user_said.replace(wake_word, "CORA"))
 
     # record recent memory of current conversation before shutdown
     memory.record_memory()

@@ -103,12 +103,12 @@ poetry run cora
 - ~~setup the project so it can be used from pypi~~
 - ~~manage the conversation history better to work more effciently with the token limit~~
 - Allow CORA to monitor things and report back/notify as events occur (third thread)
-- Refactor cora to better manage state, have cora decide if the user wants her to shutdown or go into sleep mode rather than just looking for words in speech recognition
+- ~~Refactor cora to better manage state, have cora decide if the user wants her to shutdown or go into sleep mode rather than just looking for words in speech recognition~~
 - ~~remember message history between sessions~~
 - Build and implement ML model for wake-up word detection
 - ~~use a local model for speech recognition instead of sending it to google~~
 - Improve memory to store things into a long-term memory file that will correct itself as CORA learns more about it's user
-- Support for local LLM instead of using sending everything to OpenAI
+- Support for local LLM instead of sending everything to OpenAI
     - need an open source model that will support function calling well
 
 ### Road Map (Active Skills):

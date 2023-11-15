@@ -14,6 +14,7 @@
 import json
 from corava.utilities import log_message
 from corava.cora_memory import memory
+from corava.cora_state import state
 
 gpt_tools = [
     {
@@ -63,6 +64,30 @@ gpt_tools = [
             },
             "required": []
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cora_sleep",
+            "description": "puts CORA into sleep mode, should be triggered when user asks CORA to sleep.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            },
+            "required": []
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "cora_shutdown",
+            "description": "record CORA's memory and shut down, should be triggered when the user asks CORA to shut down.",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            },
+            "required": []
+        }
     }
 ]
 
@@ -93,6 +118,14 @@ def report_conversation_history():
     }
     return json.dumps(conversation_info)
 
+def cora_sleep():
+    state.sleeping = True
+    return "CORA is now in sleep mode"
+
+def cora_shutdown():
+    state.running = False
+    return "CORA is shutting down"
+
 def call_skill_function(function_name, function_params):
     """
     calls one of the defined skill functions.
@@ -116,6 +149,12 @@ def call_skill_function(function_name, function_params):
         case "report_conversation_history":
             log_message("SYSTEM", "report conversation history detected from user intent")
             return report_conversation_history()
+        case "cora_sleep":
+            log_message("SYSTEM", "enter sleep mode detected from user intent")
+            return cora_sleep()
+        case "cora_shutdown":
+            log_message("SYSTEM", "shut down detected from user intent")
+            return cora_shutdown()
         case _:
             log_message("SYSTEM", "Error: unmatched function name.")
             return "Error: unmatched function name."
