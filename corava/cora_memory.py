@@ -53,11 +53,20 @@ class Memory:
              'content': prompt}
         )
 
-        response = openai.chat.completions.create(
-            model=config.CHATGPT_MODEL,
-            temperature=0,
-            messages=recent_history,
-        )
+        try:
+            response = openai.chat.completions.create(
+                model=config.CHATGPT_MODEL,
+                temperature=0,
+                messages=recent_history,
+            )
+        except openai.BadRequestError:
+            recent_history = self.history[-self.recorded_memory_size-1:]
+            response = openai.chat.completions.create(
+                model=config.CHATGPT_MODEL,
+                temperature=0,
+                messages=recent_history,
+            )
+
         response_message = response.choices[0].message.content
 
         with open(self.memory_file_path, 'w') as recent_memory_file:

@@ -3,7 +3,7 @@ import openai
 from datetime import datetime
 from corava.audio_util import speak, listen
 from corava.openai_services import get_chatgpt_response
-from corava.utilities import user_said_shutdown, log_message, remove_code, colour
+from corava.utilities import log_message, remove_code, colour
 from corava.cora_visualiser import get_mic_input_level, draw_sine_wave, draw_text_bottom_middle
 from corava.cora_memory import memory
 from corava.cora_config import config
@@ -12,7 +12,7 @@ from corava.cora_state import state
 import pygame
 import pyaudio
 
-wake_words = ["cora", "kora", "quora", "korra", "kooora", "kaikoura", "laura", "chora"]
+wake_words = ["cora", "kora", "quora", "korra", "kooora", "kaikoura", "laura", "chora", "coral"]
 
 # pygame initialization
 screen_width = 500
@@ -85,6 +85,7 @@ def run_conversation(initial_query):
         time.sleep(1)
 
 def voice():
+    user_said = ""
     while state.running:
         # the sleep loop
         if state.sleeping:
@@ -96,6 +97,7 @@ def voice():
             for wake_word in wake_words:
                 if wake_word in user_said:
                     log_message("SYSTEM", f"wake-word detected: {wake_word}")
+                    user_said = user_said.replace(wake_word, "CORA")
                     state.sleeping = False
         # the wake up
         else:
@@ -104,10 +106,11 @@ def voice():
                 {"role": "system","content": f"CORA exited sleep mode at: {timestamp}"}
             )
             state.visualisation_colour = colour("green")
-            run_conversation(user_said.replace(wake_word, "CORA"))
+            run_conversation(user_said)
 
     # record recent memory of current conversation before shutdown
     memory.record_memory()
+
     log_message("SYSTEM", "shutting down.")
 
 def face():
@@ -155,6 +158,9 @@ def start(user_config):
     config.AWS_REGION = user_config["AWS_REGION"]
     config.OPENAI_KEY = user_config["OPENAI_KEY"]
     config.CHATGPT_MODEL = user_config["CHATGPT_MODEL"]
+
+    # Optional configs
+    config.OPENWEATHERMAP_KEY = user_config["OPENWEATHERMAP_KEY"]
     
     # apply the openai key as soon as we can as it's used in a few places
     openai.api_key = config.OPENAI_KEY

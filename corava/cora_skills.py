@@ -12,9 +12,11 @@
 # if your function doesn't provide anything relevant or useful to chatgpt it will just default to giving the user it's own response.
 
 import json
+import requests
 from corava.utilities import log_message
 from corava.cora_memory import memory
 from corava.cora_state import state
+from corava.cora_config import config
 
 gpt_tools = [
     {
@@ -29,7 +31,6 @@ gpt_tools = [
                         "type": "string",
                         "description": "The city and state, example: Perth, Western Australia",
                     },
-                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
                 },
                 "required": ["location"],
             }
@@ -91,15 +92,30 @@ gpt_tools = [
     }
 ]
 
-def get_current_weather(location, unit="celcius"):
-    """Get the current weather in a given location"""
-    weather_info = {
-        "location": location,
-        "temperature": "32",
-        "unit": unit,
-        "forecast": ["sunny", "windy"],
-    }
-    return json.dumps(weather_info)
+def get_current_weather(location):
+    """Get the current weather in a given location but requires OpenWeatherMap key to be set in cora_config"""
+    if (config.OPENWEATHERMAP_KEY):
+        # Replace 'your_api_key' with your actual API key
+        api_key = config.OPENWEATHERMAP_KEY
+        url = f"http://api.openweathermap.org/data/2.5/weather?q={location}&appid={api_key}&units=metric"
+
+        response = requests.get(url)
+        data = response.json()
+        if response.status_code == 200:
+            # Extracting data
+            temperature = data['main']['temp']
+            weather_description = data['weather'][0]['description']
+            print(f"Weather in {location}: {weather_description}, Temperature: {temperature} °C")
+            weather_info = {
+                "location": location,
+                "temperature": f"{temperature} °C",
+                "description": weather_description,
+            }
+            return json.dumps(weather_info)
+        else:
+            return "ERROR: Unable to retrieve weather from OpenWeatherMaps"
+    else:
+        return "ERROR: Please provide an open weather map API key in config to get live weather."
 
 def turn_on_light(toggle):
     # code for turning on the light goes here probably some microcontroller things here

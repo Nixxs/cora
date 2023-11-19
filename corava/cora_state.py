@@ -9,9 +9,4 @@ class CoraState:
         self.ui_text_timer = self.ui_text_timer_max
         self.ui_text = {"USER":"","CORA":""}
 
-
-
-
-
-
 state = CoraState()
