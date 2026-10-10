@@ -3,3 +3,4 @@ textual-dev
 textual[syntax]
 dotenv
 openai[realtime]>=3.28.0
+sounddevice>=0.5.4

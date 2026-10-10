@@ -16,10 +16,22 @@ Screen {
     scrollbar-size: 0 0;
 }
 
-#chat-status {
+#status-bar {
     height: 1;
-    color: #a0aabb;
-    margin-top: 1;
+    margin: 0;
+    padding: 0 1;
+}
+
+#chat-status {
+    width: 1fr;
+    height: 1;
+    color: #8f98a8;
+}
+
+#mic-status {
+    width: auto;
+    height: 1;
+    color: #8f98a8;
 }
 
 #input-frame {

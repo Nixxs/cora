@@ -1,5 +1,5 @@
 from textual.app import App, ComposeResult
-from textual.containers import Vertical
+from textual.containers import Vertical, HorizontalGroup
 from textual.widgets import Input, RichLog, Static
 
 from dotenv import load_dotenv
@@ -20,7 +20,9 @@ class CoraApp(App):
     def compose(self) -> ComposeResult:
         with Vertical(id="chat-panel"):
             yield RichLog(id="chat-output", wrap=True)
-            yield Static("○ Not connected", id="chat-status")
+            with HorizontalGroup(id="status-bar"):
+                yield Static("○ Not connected", id="chat-status")
+                yield Static("🎙× Mic", id="mic-status")
             with Vertical(id="input-frame"):
                 yield Input(
                     placeholder="Type a message to Cora...",
@@ -54,7 +56,10 @@ class CoraApp(App):
         status.update("○ Connecting...")
 
         try:
-            await self.live.run(self.handle_live_event)
+            await self.live.run(
+                self.handle_live_event,
+                self.handle_mic_status,
+            )
         except Exception as error:
             status.update("○ Connection failed")
             output.write(f"Connection error: {error}")
@@ -74,6 +79,14 @@ class CoraApp(App):
 
         elif event.type == "session.closed":
             output.write(f"Session ended: {event.reason}")
+
+    def handle_mic_status(self, working: bool) -> None:
+        mic_status = self.query_one("#mic-status", Static)
+
+        if working:
+            mic_status.update("🎙 Mic")
+        else:
+            mic_status.update("🎙× Mic")
 
     async def action_disconnect_and_quit(self) -> None:
         self.query_one("#chat-status", Static).update("○ Disconnecting...")
