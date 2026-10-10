@@ -1,0 +1,46 @@
+Screen {
+    background: #141820;
+}
+
+#chat-panel {
+    height: 1fr;
+    background: #141820;
+    border: round #7799cc;
+    padding: 0 1;
+}
+
+#chat-output {
+    height: 1fr;
+    background: transparent;
+    background-tint: transparent;
+    scrollbar-size: 0 0;
+}
+
+#chat-status {
+    height: 1;
+    color: #a0aabb;
+    margin-top: 1;
+}
+
+#input-frame {
+    height: 3;
+    margin-top: 0;
+    padding: 0 1;
+    background: #141820;
+    border: round #7799cc;
+}
+
+#chat-input {
+    height: 1;
+    margin: 0;
+    padding: 0 1;
+    border: none;
+    background: #141820;
+    color: #e0e6ef;
+}
+
+#chat-input:focus {
+    border: none;
+    background: #141820;
+    background-tint: transparent;
+}
