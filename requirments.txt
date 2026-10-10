@@ -1,0 +1,5 @@
+textual
+textual-dev
+textual[syntax]
+dotenv
+openai

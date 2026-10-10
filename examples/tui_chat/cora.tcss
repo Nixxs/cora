@@ -1,0 +1,31 @@
+Chat {
+    height: 1fr;
+}
+
+#chat-input {
+    height: auto;
+}
+
+#chat-panel {
+    height: 1fr;
+    border: round $primary;
+    padding: 0 1;
+    background: $surface;
+}
+
+#chat-output {
+    height: 1fr;
+    border: none;
+    background: $surface;
+
+    scrollbar-background: $surface;
+    scrollbar-background-hover: $surface;
+    scrollbar-background-active: $surface;
+    scrollbar-corner-color: $surface;
+}
+
+#chat-status {
+    height: 1;
+    color: $text-muted;
+    background: $surface;
+}

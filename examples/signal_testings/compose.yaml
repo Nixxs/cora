@@ -1,0 +1,9 @@
+services:
+  signal-cli:
+    image: ghcr.io/asamk/signal-cli:0.14.8
+    volumes:
+      - signal-data:/var/lib/signal-cli
+    command: ["--version"]
+
+volumes:
+  signal-data:
