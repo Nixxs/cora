@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from microphone import microphone_chunks
 from openai import AsyncOpenAI
+from speaker import Speaker
 
 
 class CoraLive:
@@ -14,10 +15,12 @@ class CoraLive:
         self.closed = asyncio.Event()
         self.microphone_task = None
 
-    async def run(self, on_event, on_mic_status):
+    async def run(self, on_event, on_mic_status, on_audio_status=None):
         async with AsyncOpenAI() as client:
             async with client.live.connect() as connection:
                 self.connection = connection
+                speaker = Speaker()
+                playback_failed = False
 
                 try:
                     await connection.session.start(
@@ -68,6 +71,22 @@ class CoraLive:
                                 self.ready = True
                             elif event.type == "session.closed":
                                 self.ready = False
+                            elif event.type == "session.output_audio.delta" and not playback_failed:
+                                try:
+                                    started = speaker.play(event.delta)
+                                except Exception as error:
+                                    # Keep text/voice input usable if the output device fails.
+                                    playback_failed = True
+                                    try:
+                                        speaker.close()
+                                    except Exception as close_error:
+                                        if on_audio_status is not None:
+                                            on_audio_status(False, f"Speaker cleanup error: {close_error}")
+                                    if on_audio_status is not None:
+                                        on_audio_status(False, f"Audio playback error: {error}")
+                                else:
+                                    if started and on_audio_status is not None:
+                                        on_audio_status(True, "Speaker stream started")
                             on_event(event)
 
                             if event.type == "session.closed":
@@ -90,8 +109,11 @@ class CoraLive:
 
                 finally:
                     self.ready = False
-                    self.connection = None
-                    self.closed.set()
+                    try:
+                        speaker.close()
+                    finally:
+                        self.connection = None
+                        self.closed.set()
 
     async def send_text(self, message: str) -> None:
         connection = self.connection

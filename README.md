@@ -38,7 +38,8 @@ Make Cora comfortable to talk to and useful on screen.
 - [x] Unified voice/keyboard session with typed-context mirroring.
 - [ ] Continue testing mixed voice/text input, overlapping requests, and topic
 			changes; improve synchronization where needed.
-- [ ] Play Live's generated audio through the speakers.
+- [x] Basic buffered playback of Live's generated audio through the default output
+	device (mocked tests passed; audible playback still needs a headphone test).
 - [ ] Handle playback buffering, interruptions, shutdown, and microphone feedback.
 - [ ] Rich visual responses: Markdown, syntax-highlighted code, and tables.
 - [ ] Separate screen content from spoken delivery: Cora can say “I've put the

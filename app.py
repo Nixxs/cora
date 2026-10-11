@@ -80,6 +80,7 @@ class CoraApp(App):
             await self.live.run(
                 self.handle_live_event,
                 self.handle_mic_status,
+                self.handle_audio_status,
             )
         except Exception as error:
             status.update("○ Connection failed")
@@ -273,6 +274,12 @@ class CoraApp(App):
     def reset_mic_indicator(self) -> None:
         self.mic_idle_timer = None
         self.query_one("#mic-status", Static).update("🎙 Listening")
+
+    def handle_audio_status(self, working: bool, message: str) -> None:
+        self.write_debug(
+            message,
+            "Audio playback ready" if working else "Audio playback error",
+        )
 
     def handle_mic_status(self, working: bool, message: str = "") -> None:
         mic_status = self.query_one("#mic-status", Static)
