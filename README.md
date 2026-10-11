@@ -38,11 +38,16 @@ Make Cora comfortable to talk to and useful on screen.
 - [x] Unified voice/keyboard session with typed-context mirroring.
 - [ ] Continue testing mixed voice/text input, overlapping requests, and topic
 			changes; improve synchronization where needed.
-- [ ] Play Live's generated audio through the speakers.
+- [x] Basic buffered playback of Live's generated audio through the default output
+	device (mocked tests passed; audible playback still needs a headphone test).
 - [ ] Handle playback buffering, interruptions, shutdown, and microphone feedback.
-- [ ] Rich visual responses: Markdown, syntax-highlighted code, and tables.
-- [ ] Separate screen content from spoken delivery: Cora can say “I've put the
-			example on screen” rather than reading code syntax or table cells aloud.
+- [x] Completed backend answers displayed as Markdown with syntax-highlighted
+	code and tables, separately labelled “Cora · on screen”.
+- [x] Prompt-guided separation of written answers and spoken explanations.
+	Code requests are delegated for actual source code; Cora is instructed
+	not to read code or tables aloud. This is not a hard audio filter.
+- [ ] Verify screen/voice separation in live conversations and strengthen it
+	if Cora still reads code aloud.
 - [ ] Explore image presentation later.
 
 ### Phase 2 — Continuity

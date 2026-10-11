@@ -2,6 +2,11 @@ Screen {
     background: #141820;
 }
 
+Screen > .screen--selection {
+    color: #f3f6fb;
+    background: #31557a;
+}
+
 #chat-panel {
     height: 1fr;
     background: #141820;
@@ -74,7 +79,7 @@ Screen {
 }
 
 #input-frame {
-    height: 3;
+    height: auto;
     margin-top: 0;
     padding: 0 1;
     background: #141820;
@@ -88,6 +93,9 @@ Screen {
     border: none;
     background: #141820;
     color: #e0e6ef;
+    scrollbar-size: 1 0;
+    overflow-x: hidden;
+    overflow-y: auto;
 }
 
 #chat-input:focus {
