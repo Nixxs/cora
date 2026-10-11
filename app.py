@@ -7,12 +7,13 @@ from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
-from textual.widgets import Collapsible, Input, RichLog, Static
+from textual.widgets import Collapsible, RichLog, Static
 
 from dotenv import load_dotenv
 from textual import work
 
 from chat_widgets import ChatMarkdown, SelectableRichLog
+from composer import ChatComposer
 from live import CoraLive
 
 
@@ -35,14 +36,17 @@ class CoraApp(App):
                 yield Static("○ Not connected", id="chat-status")
                 yield Static("🎙× Mic", id="mic-status")
             with Vertical(id="input-frame"):
-                yield Input(
+                yield ChatComposer(
                     placeholder="Type a message to Cora...",
                     id="chat-input",
+                    soft_wrap=True,
+                    show_line_numbers=False,
+                    highlight_cursor_line=False,
                 )
 
     def on_mount(self) -> None:
         self.query_one("#chat-panel").border_title = "CORA"
-        self.query_one("#chat-input", Input).focus()
+        self.query_one("#chat-input", ChatComposer).focus()
         self.mic_idle_timer = None
         self.transcript_speaker = None
         self.transcript_text = ""
@@ -55,27 +59,28 @@ class CoraApp(App):
         self.live = CoraLive()
         self.connection_worker = self.connect_to_cora()
 
-    async def on_input_submitted(self, event: Input.Submitted) -> None:
-        message = event.value.strip()
+    async def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
+        message = event.text.strip()
+        composer = event.composer
 
-        if not message:
+        if not message or composer.disabled:
             return
 
-        event.input.disabled = True
+        composer.disabled = True
         try:
             await self.live.send_text(message)
         except Exception as error:
             self.write_debug(f"Text send error: {error}", "Text send error")
             return
         finally:
-            event.input.disabled = False
-            event.input.focus()
+            composer.disabled = False
+            composer.focus()
 
         self.flush_transcript()
         self.write_log(f"You: {message}")
         self.write_log("")
 
-        event.input.clear()
+        composer.clear()
 
     @work
     async def connect_to_cora(self) -> None:

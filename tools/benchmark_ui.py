@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from textual import events
-from textual.widgets import Input
+from textual.widgets import TextArea
 
 from app import CoraApp
 from chat_widgets import ChatMarkdown
@@ -88,7 +88,7 @@ async def measure(blocks, streaming, samples):
             for index in range(samples + 1):
                 app.set_focus(None)
                 await pilot.pause()
-                field = app.query_one("#chat-input", Input)
+                field = app.query_one("#chat-input", TextArea)
                 x, y = field.content_region.x + 1, field.content_region.y
                 app.focus_result = loop.create_future()
                 result = app.focus_result
