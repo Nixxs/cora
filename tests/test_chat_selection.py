@@ -26,7 +26,7 @@ class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):
                                for segment in log.lines[start_row]
                                if segment.style and segment.style.bgcolor
                                and not segment.style.meta.get("code_border")}
-                self.assertEqual(backgrounds, {"#202838"})
+                self.assertEqual(backgrounds, {"#10141b", "#202838"})
                 for row in (start_row - 1, start_row, end_row + 1):
                     borders = [segment for segment in log.render_line(row)
                                if segment.style and segment.style.meta.get("code_border")]
@@ -41,9 +41,30 @@ class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.mouse_up(log, offset=(2 + len('    print("hello")'), end_row))
                 await pilot.pause()
                 self.assertEqual(app.screen.get_selected_text(), code)
-                highlight = app.screen.get_component_rich_style("screen--selection").bgcolor
+                selection_style = app.screen.get_component_rich_style("screen--selection")
+                highlight = selection_style.bgcolor
+                self.assertEqual(selection_style.color.get_truecolor().hex, "#f3f6fb")
+                self.assertEqual(highlight.get_truecolor().hex, "#31557a")
+                self.assertNotEqual(selection_style.color, highlight)
                 self.assertTrue(any(segment.style and segment.style.bgcolor == highlight
                                     for segment in log.render_line(start_row)))
+                # Highlighting must change only styles, never the displayed text.
+                selected_strip = log.render_line(end_row)
+                selected_text = selected_strip.text
+                selected_segments = [segment for segment in selected_strip
+                                     if segment.style and segment.style.bgcolor == highlight]
+                self.assertTrue(selected_segments)
+                self.assertTrue(all(segment.style.color == selection_style.color
+                                    for segment in selected_segments))
+                self.assertIn('print("hello")', selected_text)
+                app.screen.selections = {}
+                self.assertEqual(log.render_line(end_row).text, selected_text)
+                self.assertFalse(any(segment.style and segment.style.bgcolor == highlight
+                                     for segment in log.render_line(end_row)))
+                # Restore the same selection to check copying remains unchanged.
+                app.screen.selections = {log: Selection(
+                    Offset(0, start_row), Offset(2 + len('    print("hello")'), end_row)
+                )}
                 await pilot.press("ctrl+c")
                 copy.assert_called_once_with(code)
                 self.assertEqual(log.get_selection(Selection(None, None))[0], code)

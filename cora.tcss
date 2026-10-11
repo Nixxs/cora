@@ -2,6 +2,11 @@ Screen {
     background: #141820;
 }
 
+Screen > .screen--selection {
+    color: #f3f6fb;
+    background: #31557a;
+}
+
 #chat-panel {
     height: 1fr;
     background: #141820;

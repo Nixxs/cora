@@ -226,13 +226,27 @@ class CoraApp(App):
             )
             return
 
+        # Plain conversational answers belong in Live's spoken transcript.
+        # Other written deliverables opt in with a leading backend marker.
+        screen_marker = "<!-- cora:screen -->"
+        screen_requested = text.lstrip().startswith(screen_marker)
+        if screen_requested:
+            text = text.lstrip()[len(screen_marker):].lstrip("\r\n")
+        written = ChatMarkdown(text, code_theme="monokai")
+        has_visual_content = any(
+            token.type in ("fence", "code_block", "table_open")
+            for token in written.parsed
+        )
+        if not text.strip() or not (screen_requested or has_visual_content):
+            return
+
         self.written_item_ids.add(item_id)
         # Keep renderables in history so transcript redraws preserve formatting.
         # Do not end an active spoken/user transcript when a result arrives.
         self.log_entries.extend([
             "",
             "Cora · on screen:",
-            ChatMarkdown(text, code_theme="monokai"),
+            written,
             "",
         ])
         self.redraw_log()

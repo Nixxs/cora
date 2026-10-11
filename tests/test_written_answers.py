@@ -91,10 +91,40 @@ class WrittenAnswerTests(unittest.IsolatedAsyncioTestCase):
                 app.handle_live_event(output_event("incomplete", "Partial code", status="incomplete"))
                 app.handle_live_event(output_event("empty", ""))
                 app.handle_live_event(output_event("typed", CODE, phase=None, delegation=None))
-                app.handle_live_event(output_event("voice", "Another answer", delegation="voice_2"))
+                app.handle_live_event(output_event("voice", "<!-- cora:screen -->\nAnother answer", delegation="voice_2"))
                 self.assertEqual(app.written_item_ids, {"typed", "voice"})
                 self.assertEqual(sum(isinstance(entry, Markdown) for entry in app.log_entries), 2)
                 self.assertTrue(any("no written text" in entry for entry in app.activity_entries))
+
+    async def test_clarifications_stay_spoken_and_written_content_opts_in(self):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+            app = CoraApp()
+            async with app.run_test(size=(100, 35)) as pilot:
+                await pilot.pause()
+                app.append_transcript("Cora", "What framework are you using?")
+                active_index = app.active_transcript_index
+                timer = app.transcript_idle_timer
+                before = list(app.log_entries)
+                app.handle_live_event(output_event("clarification", "What framework are you using?"))
+                app.handle_live_event(output_event("short_answer", "The answer is 42."))
+                app.handle_live_event(output_event("inline_code", "Use `print()` to show text."))
+                app.handle_live_event(output_event("empty_marker", "<!-- cora:screen -->\n"))
+                self.assertEqual(app.log_entries, before)
+                self.assertEqual(app.written_item_ids, set())
+                self.assertEqual(app.active_transcript_index, active_index)
+                self.assertIs(app.transcript_idle_timer, timer)
+
+                table = "| Name | Value |\n| --- | --- |\n| Count | 2 |"
+                guide = "# Written guide\n\nFirst step: open the application."
+                app.handle_live_event(output_event("table", table))
+                requested = output_event("guide", f"<!-- cora:screen -->\n{guide}", delegation=None)
+                app.handle_live_event(requested)
+                app.handle_live_event(requested)
+                app.handle_live_event(output_event("indented_code", "    print('hello')\n"))
+                answers = [entry.markup for entry in app.log_entries if isinstance(entry, Markdown)]
+                self.assertEqual(answers, [table, guide, "    print('hello')\n"])
+                self.assertEqual(app.written_item_ids, {"table", "guide", "indented_code"})
+                self.assertTrue(all("<!-- cora:screen -->" not in text for text in answers))
 
 
 if __name__ == "__main__":
