@@ -30,7 +30,17 @@ class CoraLive:
                                 "You are Cora, speaking with Nick. "
                                 "Be natural, conversational and concise. "
                                 "Delegate questions needing current information "
-                                "to your backend, which can search the web."
+                                "to your backend, which can search the web. "
+                                "Also delegate requests to write or show code, tables, "
+                                "or detailed written answers. The backend's final written "
+                                "answers are displayed automatically in the chat. "
+                                "Keep speech separate from screen content: briefly "
+                                "introduce or explain the result instead of repeating "
+                                "the full written answer. Never read code blocks, code "
+                                "syntax, Markdown markup, or table cells aloud. "
+                                "For code, explain what it does in natural language. "
+                                "Only say you have put an example on screen after "
+                                "the backend has returned the result."
                             ),
                             "delegation": {
                                 "type": "responses",
@@ -41,6 +51,13 @@ class CoraLive:
                                     "instructions": (
                                         "You support Cora in a conversation with Nick. "
                                         "Answer delegated requests clearly and concisely. "
+                                        "Your final answer is displayed directly in the "
+                                        "chat as Markdown; Cora handles spoken delivery "
+                                        "separately. When asked for code, provide actual "
+                                        "source code in fenced code blocks with a language "
+                                        "label, preserving indentation and line breaks. "
+                                        "Do not spell out syntax or newlines as speech. "
+                                        "Use Markdown tables when helpful. "
                                         "Use web search when current information is needed. "
                                         "Prefer official sources and include source URLs "
                                         "in your results. Distinguish verified information "
