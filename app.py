@@ -36,6 +36,7 @@ class CoraApp(App):
         self.transcript_speaker = None
         self.transcript_text = ""
         self.transcript_idle_timer = None
+        self.active_transcript_index = None
         self.log_entries = []
 
         self.live = CoraLive()
@@ -97,6 +98,44 @@ class CoraApp(App):
                 f"target={delegation.target}, id={delegation.id}"
             )
 
+        elif event.type == "response.event":
+            # Live wraps backend events in a dictionary, not an event object.
+            backend_event = event.event
+            event_type = backend_event.get("type")
+            if event_type in (
+                "response.created",
+                "response.completed",
+                "response.failed",
+                "response.incomplete",
+                "error",
+            ):
+                response = backend_event.get("response") or {}
+                self.write_log(
+                    f"[debug] Backend {event_type}: "
+                    f"delegation_id={event.delegation_id}, "
+                    f"response_id={response.get('id')}"
+                )
+                error = response.get("error") or backend_event.get("error")
+                if error:
+                    self.write_log(f"[debug] Backend error: {error}")
+                if event_type == "error" and not error:
+                    self.write_log(
+                        f"[debug] Backend error: {backend_event.get('message')}"
+                    )
+                details = response.get("incomplete_details")
+                if details:
+                    self.write_log(f"[debug] Backend incomplete: {details}")
+            elif event_type in (
+                "response.web_search_call.in_progress",
+                "response.web_search_call.searching",
+                "response.web_search_call.completed",
+            ):
+                self.write_log(
+                    f"[debug] Search {event_type}: "
+                    f"delegation_id={event.delegation_id}, "
+                    f"item_id={backend_event.get('item_id')}"
+                )
+
         elif event.type == "error":
             status.update("○ API error")
             self.write_log(f"API error: {event.error.message}")
@@ -115,33 +154,47 @@ class CoraApp(App):
             return
         if speaker != self.transcript_speaker:
             self.flush_transcript()
+
+        if self.active_transcript_index is None:
+            self.transcript_speaker = speaker
             self.log_entries.append("")
-        self.transcript_speaker = speaker
+            self.active_transcript_index = len(self.log_entries) - 1
+
         # Keep the spacing supplied by Live; fragments can split inside words.
         self.transcript_text += delta
-        self.log_entries[-1] = f"{speaker}: {self.transcript_text.strip()}"
-        # RichLog.write always adds lines, so redraw the entries to update
-        # the active message rather than adding another copy of it.
-        output = self.query_one("#chat-output", RichLog)
-        output.clear()
-        for entry in self.log_entries:
-            output.write(entry, scroll_end=False)
-        output.scroll_end(animate=False)
+        self.log_entries[self.active_transcript_index] = (
+            f"{speaker}: {self.transcript_text.strip()}"
+        )
+        self.redraw_log()
+
         if self.transcript_idle_timer is not None:
             self.transcript_idle_timer.stop()
         # A pause groups text for display; it is not an API turn boundary.
         self.transcript_idle_timer = self.set_timer(2.0, self.flush_transcript)
 
+    def redraw_log(self) -> None:
+        # RichLog.write adds lines, so redraw to update the active message.
+        output = self.query_one("#chat-output", RichLog)
+        output.clear()
+        for entry in self.log_entries:
+            output.write(entry, scroll_end=False)
+        output.scroll_end(animate=False)
+
     def flush_transcript(self) -> None:
         if self.transcript_idle_timer is not None:
             self.transcript_idle_timer.stop()
             self.transcript_idle_timer = None
-        text = self.transcript_text.strip()
-        if text:
+
+        had_active_transcript = self.active_transcript_index is not None
+        if had_active_transcript:
             self.log_entries.append("")
-            self.query_one("#chat-output", RichLog).write("")
+
         self.transcript_text = ""
         self.transcript_speaker = None
+        self.active_transcript_index = None
+
+        if had_active_transcript:
+            self.redraw_log()
 
     def reset_mic_indicator(self) -> None:
         self.mic_idle_timer = None

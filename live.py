@@ -22,8 +22,27 @@ class CoraLive:
                             "model": "gpt-live-1",
                             "instructions": (
                                 "You are Cora, speaking with Nick. "
-                                "Be natural, conversational and concise."
+                                "Be natural, conversational and concise. "
+                                "Delegate questions needing current information "
+                                "to your backend, which can search the web."
                             ),
+                            "delegation": {
+                                "type": "responses",
+                                "responses": {
+                                    "model": "gpt-6-luna",
+                                    "tools": [{"type": "web_search"}],
+                                    "tool_choice": "auto",
+                                    "instructions": (
+                                        "You support Cora in a conversation with Nick. "
+                                        "Answer delegated requests clearly and concisely. "
+                                        "Use web search when current information is needed. "
+                                        "Prefer official sources and include source URLs "
+                                        "in your results. Distinguish verified information "
+                                        "from assumptions; do not claim a search succeeded "
+                                        "unless it did."
+                                    ),
+                                },
+                            },
                             "audio": {
                                 "format": {
                                     "type": "audio/pcm",
