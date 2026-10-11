@@ -16,6 +16,45 @@ Screen {
     scrollbar-size: 0 0;
 }
 
+#activity-panel {
+    height: auto;
+    margin: 1 0 1 0;
+    padding: 0;
+    border: none;
+    background: transparent;
+}
+
+#activity-panel > CollapsibleTitle {
+    width: 1fr;
+    height: 1;
+    padding: 0 1;
+    color: #8f98a8;
+    text-style: none;
+}
+
+#activity-panel > CollapsibleTitle:hover,
+#activity-panel > CollapsibleTitle:focus {
+    background: #202838;
+    color: #e0e6ef;
+}
+
+#activity-panel.activity-error > CollapsibleTitle {
+    color: #f0a38a;
+}
+
+#activity-panel > Contents {
+    padding: 0;
+}
+
+#activity-output {
+    height: 6;
+    margin-top: 1;
+    padding: 0 1;
+    background: #10141b;
+    color: #8f98a8;
+    scrollbar-size: 1 1;
+}
+
 #status-bar {
     height: 1;
     margin: 0;
