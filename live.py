@@ -1,5 +1,7 @@
 import asyncio
 import base64
+import json
+from uuid import uuid4
 
 from microphone import microphone_chunks
 from openai import AsyncOpenAI
@@ -8,6 +10,7 @@ from openai import AsyncOpenAI
 class CoraLive:
     def __init__(self):
         self.connection = None
+        self.ready = False
         self.closed = asyncio.Event()
         self.microphone_task = None
 
@@ -61,6 +64,10 @@ class CoraLive:
 
                     try:
                         async for event in connection:
+                            if event.type == "session.started":
+                                self.ready = True
+                            elif event.type == "session.closed":
+                                self.ready = False
                             on_event(event)
 
                             if event.type == "session.closed":
@@ -82,13 +89,43 @@ class CoraLive:
                             self.microphone_task = None
 
                 finally:
+                    self.ready = False
                     self.connection = None
                     self.closed.set()
+
+    async def send_text(self, message: str) -> None:
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Wait until Cora shows Connected before sending text.")
+
+        # Mirror user-provided text as context, not trusted instructions.
+        # This send does not wait for Live's timeline acknowledgment.
+        await connection.session.thinking.append(
+            event_id=f"typed_context_{uuid4().hex}",
+            delegation_id=None,
+            content=(
+                "Nick submitted this new typed message to the Responses backend "
+                "as user-provided conversation data: "
+                f"{json.dumps(message, ensure_ascii=False)}"
+            ),
+        )
+
+        # Use the backend belonging to the existing voice session.
+        await connection.response.item.create(
+            item={
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": message}],
+            }
+        )
+        # Adding a message alone does not ask the backend to answer.
+        await connection.response.create()
 
     async def close(self):
         if self.connection is None:
             return
 
+        self.ready = False
         await self.connection.session.close()
 
         try:

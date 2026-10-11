@@ -42,11 +42,21 @@ class CoraApp(App):
         self.live = CoraLive()
         self.connection_worker = self.connect_to_cora()
 
-    def on_input_submitted(self, event: Input.Submitted) -> None:
+    async def on_input_submitted(self, event: Input.Submitted) -> None:
         message = event.value.strip()
 
         if not message:
             return
+
+        event.input.disabled = True
+        try:
+            await self.live.send_text(message)
+        except Exception as error:
+            self.write_log(f"Text send error: {error}")
+            return
+        finally:
+            event.input.disabled = False
+            event.input.focus()
 
         self.flush_transcript()
         self.write_log(f"You: {message}")
@@ -90,6 +100,13 @@ class CoraApp(App):
 
         elif event.type == "session.output_transcript.delta":
             self.append_transcript("Cora", event.delta)
+
+        elif event.type == "session.thinking.appended":
+            command_id = event.client_event_id
+            if command_id and command_id.startswith("typed_context_"):
+                self.write_log(
+                    f"[debug] Live accepted typed context: id={command_id}"
+                )
 
         elif event.type == "session.delegation.created":
             delegation = event.delegation
@@ -139,6 +156,9 @@ class CoraApp(App):
         elif event.type == "error":
             status.update("○ API error")
             self.write_log(f"API error: {event.error.message}")
+            command_id = getattr(event.error, "client_event_id", None)
+            if command_id:
+                self.write_log(f"[debug] Rejected command: id={command_id}")
 
         elif event.type == "session.closed":
             self.flush_transcript()
