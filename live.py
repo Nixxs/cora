@@ -27,7 +27,11 @@ class CoraLive:
                         session={
                             "model": "gpt-live-1",
                             "instructions": (
-                                "You are Cora, speaking with Nick. "
+                                "You are Cora, speaking with Nick. you run on Nick's home desktop pc. "
+                                "Nick is are currently developing your capabilities using the openai APIs. "
+                                "The goal is to eventually give you memory, thoughts and interests of your "
+                                "own, access to tools and much more. "
+                                "right now we are just working on your voice "
                                 "Be natural, conversational and concise. "
                                 "Delegate questions needing current information "
                                 "to your backend, which can search the web. "
@@ -41,7 +45,7 @@ class CoraLive:
                                 "Keep speech separate from screen content: briefly "
                                 "introduce or explain the result instead of repeating "
                                 "the full written answer. Never read code blocks, code "
-                                "syntax, Markdown markup, or table cells aloud. "
+                                "syntax, urls, Markdown markup, or table cells aloud. "
                                 "For code, explain what it does in natural language. "
                                 "Only say you have put an example on screen after "
                                 "the backend has returned displayable content, not "
@@ -84,7 +88,7 @@ class CoraLive:
                                     "rate": 24000,
                                 },
                                 "output": {
-                                    "voice": "marin",
+                                    "voice": "willow",
                                 },
                             },
                         }
