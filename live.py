@@ -80,9 +80,12 @@ class CoraLive:
 
     async def send_microphone(self, connection, on_mic_status):
         mic_working = False
+        chunk_count = 0
 
         try:
             async for chunk in microphone_chunks():
+                chunk_count += 1
+
                 audio = base64.b64encode(chunk).decode("ascii")
 
                 await connection.session.input_audio.append(
@@ -91,11 +94,20 @@ class CoraLive:
 
                 if not mic_working:
                     mic_working = True
-                    on_mic_status(True)
+                    on_mic_status(
+                        True,
+                        "first audio chunk sent"
+                    )
 
-        except Exception:
-            on_mic_status(False)
+        except Exception as error:
+            on_mic_status(
+                False,
+                f"ERROR: {error!r}"
+            )
             raise
 
         finally:
-            on_mic_status(False)
+            on_mic_status(
+                False,
+                "microphone task stopped"
+        )
