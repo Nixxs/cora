@@ -14,8 +14,9 @@ it, then build on the result.
 - [storage/](storage/): database engine, ORM models, conversation storage, and
 	keyboard persistence.
 - Root entrypoints: [app.py](app.py) runs Cora, [migrate.py](migrate.py) applies
-	migrations and defines `database_settings()`, and [summarize.py](summarize.py)
-	generates a summary for one selected conversation.
+	migrations and defines `database_settings()`, [summarize.py](summarize.py)
+	generates a summary for one selected conversation, and
+	[extract_memories.py](extract_memories.py) manually extracts its memories.
 - [tools/](tools/): custom tool registration and handlers.
 - [tests/](tests/): unit, headless UI, and opt-in database tests.
 - [examples/](examples/): standalone examples, kept in place with their own CSS
@@ -446,6 +447,40 @@ still duplicate model work, though storage prevents overwriting a saved summary.
 the pass with mocked model calls and disposable database records. For a manual
 check, close a chat normally, restart Cora, and watch Activity for its summary save;
 then refresh `conversation_summaries` in DBeaver. Normal chat should remain usable.
+
+## Manual memory extraction — memory step 12
+
+[extract_memories.py](extract_memories.py) extracts concise facts, preferences,
+decisions, and tasks from one `closed` or `interrupted` conversation's **raw
+original messages, not summaries**. The original 200-word summariser is unchanged.
+Use `python extract_memories.py UUID [--model MODEL]`, replacing UUID with the
+conversation ID; the optional model defaults to the existing `gpt-6-luna` backend.
+This makes a separate, billable request sending the raw saved-message transcript
+to OpenAI, with no tools, automatic API retry, or input truncation.
+
+`python migrate.py` applies the new
+[0004_create_memories.sql](migrations/0004_create_memories.sql) migration.
+The `memories` table has `id`, `source_message_id`, `kind`, `text`, `evidence`,
+and timezone-aware `created_at`; `kind` is `fact`, `preference`, `decision`, or
+`task`, and `text` is at most 500 characters. The source conversation is resolved
+through the source message: there is no duplicate conversation column.
+[storage/models.py](storage/models.py) maps it; [storage/memory_store.py](storage/memory_store.py)
+validates user-message sources and exact, verbatim evidence quotes.
+
+The extraction policy allows explicit personal facts such as “I live in Perth”,
+but skips temporary visits and never infers home/personal location from a weather
+question. Assistant assertions are not user facts; qualifiers and corrections
+must be preserved. Valid quotes and schema do **not** guarantee model semantic
+fact correctness. Mocked tests check plumbing only; manual quality review is required.
+
+Existing nonempty memories return from storage as a cache without another model
+request. Empty extraction returns no memories, but saves no processed marker:
+repeating it can request again. Saves are batch-atomic and never overwrite rows;
+exact retries deduplicate by source message, kind, and text. Cross-conversation
+semantic deduplication and updates are deferred.
+
+Extraction is **manual only**: no app worker or automatic extraction, context
+injection, search/retrieval, embeddings, or consolidation is implemented yet.
 
 ## Current progress
 

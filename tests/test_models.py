@@ -27,6 +27,7 @@ class ModelDefinitionTests(unittest.TestCase):
             self.assertEqual(summary.text, "A brief summary")
             self.assertEqual(set(Base.metadata.tables), {
                 "public.conversations", "public.messages", "public.conversation_summaries",
+                "public.memories",
             })
             connect.assert_not_called()
 
@@ -180,7 +181,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 3)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 4)
 
 
 if __name__ == "__main__":

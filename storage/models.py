@@ -1,4 +1,4 @@
-"""Conversation, message and summary mappings; SQL migrations create the tables."""
+"""Conversation and memory mappings; SQL migrations create the tables."""
 
 from __future__ import annotations
 
@@ -77,4 +77,24 @@ class ConversationSummaryRecord(Base):
         primary_key=True,
     )
     text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class MemoryRecord(Base):
+    __tablename__ = "memories"
+    __table_args__ = (
+        UniqueConstraint("source_message_id", "kind", "text", name="memories_source_kind_text_key"),
+        CheckConstraint("kind IN ('fact', 'preference', 'decision', 'task')", name="memories_kind_check"),
+        CheckConstraint("btrim(text) <> '' AND char_length(text) <= 500", name="memories_text_check"),
+        CheckConstraint("btrim(evidence) <> ''", name="memories_evidence_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    source_message_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.messages.id", name="memories_source_message_id_fkey", ondelete="RESTRICT")
+    )
+    kind: Mapped[str] = mapped_column(Text)
+    text: Mapped[str] = mapped_column(Text)
+    evidence: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

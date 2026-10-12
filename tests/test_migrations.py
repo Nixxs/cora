@@ -82,6 +82,7 @@ class MigrationDatabaseTests(unittest.TestCase):
         expected = [
             "0001_enable_vector.sql", "0002_create_conversations_and_messages.sql",
             "0003_create_conversation_summaries.sql",
+            "0004_create_memories.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])
