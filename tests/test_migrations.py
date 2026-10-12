@@ -79,13 +79,14 @@ class MigrationDatabaseTests(unittest.TestCase):
         (self.directory / name).write_text(script, encoding="utf-8")
 
     def test_vector_applies_once_and_history_has_timestamp(self):
-        self.assertEqual(apply_migrations(self.connection), ["0001_enable_vector.sql"])
+        expected = ["0001_enable_vector.sql", "0002_create_conversations_and_messages.sql"]
+        self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])
         version = self.connection.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'").fetchone()
         self.assertIsNotNone(version)
-        history = self.connection.execute("SELECT name, applied_at FROM public.schema_migrations").fetchall()
-        self.assertEqual(len(history), 1)
-        self.assertIsNotNone(history[0][1].tzinfo)
+        history = self.connection.execute("SELECT name, applied_at FROM public.schema_migrations ORDER BY name").fetchall()
+        self.assertEqual([row[0] for row in history], expected)
+        self.assertTrue(all(row[1].tzinfo is not None for row in history))
 
     def test_failed_batch_rolls_back_schema_and_history_then_can_retry(self):
         self.write_migration("0001_first.sql", "CREATE TABLE public.rollback_marker (id integer);")

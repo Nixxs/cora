@@ -12,8 +12,8 @@ it, then build on the result.
 
 [compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
 Only the database runs in Docker; Cora still runs directly on Windows. Cora does
-not connect to the database yet. Migrations now enable the `vector` extension;
-conversation/message tables and application persistence are separate next steps.
+not connect to the database yet. Migrations enable the `vector` extension and
+create conversation/message tables; application persistence is a later step.
 
 Prerequisite: Docker Desktop running with Linux containers and Docker Compose.
 Run the following commands from the repository root.
@@ -65,8 +65,8 @@ image-tag edit.
 
 [migrate.py](migrate.py) applies numbered SQL files in [migrations](migrations).
 The first, [0001_enable_vector.sql](migrations/0001_enable_vector.sql), enables
-pgvector. The only new table is `public.schema_migrations`, which records each
-applied filename, checksum, and timestamp. There are no conversation tables yet.
+pgvector. The runner's `public.schema_migrations` table records each applied
+filename, checksum, and timestamp. Later migrations add the application tables.
 
 With the existing Python virtual environment activated and the database running:
 
@@ -106,6 +106,61 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 
 Normal test discovery still runs file/configuration tests but skips the database
 tests unless explicitly enabled. No microphone or API connection is required.
+
+## SQLAlchemy connection — next small step
+
+[database.py](database.py) builds a SQLAlchemy engine using the existing Psycopg
+driver and the same database settings as the migration runner. Creating an engine
+does not connect; running the standalone check opens a connection and reports the
+database and user, then closes the connection and disposes the engine:
+
+```powershell
+python -m pip install -r requirements.txt
+python database.py
+```
+
+Expected default result: `SQLAlchemy connected: database=cora, user=cora`.
+The check only runs a `SELECT`: it does not create tables, change migration
+history, or save messages. SQLAlchemy models are defined separately below.
+Cora's startup, voice, keyboard, and shutdown code remain unchanged. This engine
+is synchronous and intended for this standalone check; responsive application
+integration is a separate step.
+
+[tests/test_database.py](tests/test_database.py) checks configuration, connection
+cleanup, and failures without a database. Its read-only live connection test is
+enabled by `CORA_RUN_DB_TESTS=1`, using the same opt-in as the migration tests.
+Keep using the existing SQL migrations; SQLAlchemy does not replace or run them.
+
+## Conversation and message schema — memory step 3
+
+[models.py](models.py) defines `ConversationRecord` and `MessageRecord` using
+SQLAlchemy. [0002_create_conversations_and_messages.sql](migrations/0002_create_conversations_and_messages.sql)
+creates the matching tables through the existing migration runner. Importing the
+models does not connect, run migrations, or call `create_all()`.
+
+- `conversations`: UUID, start/end timestamps, and status (`active`, `closed`,
+	`interrupted`). This is a logical discussion, not a model transport session.
+- `messages`: UUID, conversation ID, positive sequence number, role (`user` or
+	`assistant`), text, channel (`voice`, `keyboard`, `screen`), and timestamp.
+	Completion status is `incomplete`, `completed`, or `interrupted`; it defaults
+	to `incomplete`. Separate delivery status is `not_applicable`, `pending`,
+	`sent`, or `failed`, so submission failure need not erase the original text.
+
+Voice and keyboard share a conversation ID and one sequence. UUIDs and unique
+sequence positions prevent duplicate records; retries must reuse their message
+ID (the storage service will implement this later). Foreign keys reject orphan
+messages and prevent deleting a conversation while messages still reference it.
+Timestamps are timezone-aware; end times cannot precede start times.
+
+Run `python migrate.py`, then refresh DBeaver's table list. You should see
+`conversations`, `messages`, and `schema_migrations`. The new application tables
+are empty: Cora still does not save live messages. Processing checkpoints,
+summaries, extracted memories, and the storage service remain later steps.
+
+[tests/test_models.py](tests/test_models.py) tests ORM/database agreement,
+voice/keyboard ordering, defaults, constraints, and migration reruns. With
+`CORA_RUN_DB_TESTS=1`, writes happen only in a disposable test database that is
+removed afterwards; Cora's own tables are not used for test records.
 
 ## Current progress
 
