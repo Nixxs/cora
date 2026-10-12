@@ -9,6 +9,11 @@ from openai.types.live import ResponseEvent
 from openai.types.responses import ResponseOutputItemDoneEvent
 
 from app import CoraApp
+from session_config import build_session_config
+
+
+def example_schema(name):
+    return {"type": "function", "name": name, "parameters": {"type": "object"}}
 
 
 def tool_event(call_id="call_close", name="close_app", arguments="{}", status="completed"):
@@ -66,7 +71,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     app.handle_live_event(event)
                     await app.workers.wait_for_complete()
                     close.assert_not_called()
-                    self.assertFalse(app.close_tool_pending)
+                    self.assertFalse(app.tools.handled_call_ids)
 
     async def test_registry_dispatches_additional_tools_with_arguments(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None):
@@ -76,8 +81,8 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                 echo = AsyncMock()
                 validate_other = MagicMock()
                 other = AsyncMock()
-                app.tool_handlers["echo"] = (validate_echo, echo)
-                app.tool_handlers["other_tool"] = (validate_other, other)
+                app.tools.register(example_schema("echo"), validate_echo, echo)
+                app.tools.register(example_schema("other_tool"), validate_other, other)
                 with patch.object(app, "action_disconnect_and_quit", new_callable=AsyncMock) as close:
                     first = tool_event(call_id="echo_1", name="echo", arguments='{"text": "hello"}')
                     app.handle_live_event(first)
@@ -96,7 +101,11 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     other.assert_awaited_once_with("other_1", {"count": 3})
                     validate_other.assert_called_once_with({"count": 3})
                     close.assert_not_called()
-                    self.assertFalse(app.close_tool_pending)
+                    self.assertFalse(app.closing)
+                    self.assertEqual(
+                        [schema["name"] for schema in app.live.tool_schemas()],
+                        ["close_app", "echo", "other_tool"],
+                    )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None):
@@ -104,18 +113,18 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(90, 35)):
                 validate = MagicMock(side_effect=ValueError("Invalid value"))
                 handler = AsyncMock(side_effect=RuntimeError("Tool failed"))
-                app.tool_handlers["example"] = (validate, handler)
+                app.tools.register(example_schema("example"), validate, handler)
                 event = tool_event(call_id="example_1", name="example", arguments='{"value": 3}')
                 app.handle_live_event(event)
                 await app.workers.wait_for_complete()
                 handler.assert_not_called()
-                self.assertNotIn("example_1", app.handled_tool_call_ids)
+                self.assertNotIn("example_1", app.tools.handled_call_ids)
 
                 validate.side_effect = None
                 app.handle_live_event(event)
                 await asyncio.wait_for(app.workers.wait_for_complete(), 2)
                 handler.assert_awaited_once_with("example_1", {"value": 3})
-                self.assertTrue(any("example failed: Tool failed" in entry for entry in app.activity_entries))
+                self.assertTrue(any("example failed: Tool failed" in entry for entry in app.activity.entries))
                 self.assertFalse(app.closing)
 
     async def test_result_send_failure_still_closes(self):
@@ -129,7 +138,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     app.handle_live_event(tool_event())
                     await asyncio.wait_for(app.workers.wait_for_complete(), 2)
                     close.assert_awaited_once()
-                    self.assertTrue(any("Socket closed" in entry for entry in app.activity_entries))
+                    self.assertTrue(any("Socket closed" in entry for entry in app.activity.entries))
 
     async def test_shared_shutdown_is_idempotent_and_exits_on_cleanup_error(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None):
@@ -192,6 +201,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
             app = CoraApp()
             async with app.run_test(size=(90, 35)):
                 app.connection_worker = MagicMock()
+                app.tools.register(example_schema("example"), MagicMock(), AsyncMock())
                 with patch.object(app.live, "send_microphone", side_effect=microphone), \
                         patch.object(app, "exit") as exit_app:
                     await queue.put(SimpleNamespace(type="session.started"))
@@ -217,13 +227,20 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     exit_app.assert_called_once()
                     connection.response.create.assert_not_called()
                     config = connection.session.start.call_args.kwargs["session"]
+                    self.assertEqual(config, build_session_config(app.tools.schemas()))
                     backend = config["delegation"]["responses"]
                     self.assertFalse(backend["parallel_tool_calls"])
                     self.assertEqual(backend["tools"][0], {"type": "web_search"})
+                    self.assertEqual(backend["tools"][1:], app.tools.schemas())
+                    self.assertEqual(backend["tools"][2]["name"], "example")
                     tool = backend["tools"][1]
                     self.assertEqual(tool["name"], "close_app")
                     self.assertTrue(tool["strict"])
                     self.assertFalse(tool["parameters"]["additionalProperties"])
+                    self.assertEqual(backend["model"], "gpt-6-luna")
+                    self.assertEqual(config["model"], "gpt-live-1")
+                    self.assertEqual(config["audio"]["format"], {"type": "audio/pcm", "rate": 24000})
+                    self.assertEqual(config["audio"]["output"]["voice"], "marin")
                     self.assertIn("explicitly asks", config["instructions"])
 
 

@@ -65,6 +65,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 app.live.send_text.assert_awaited_once_with("hi\nx")
                 self.assertEqual(composer.text, "")
+                self.assertEqual(app.conversation.log_entries, ["You: hi\nx", ""])
                 await pilot.press("enter")
                 self.assertEqual(app.live.send_text.await_count, 1)
                 app.live.send_text = AsyncMock(side_effect=RuntimeError("Offline"))
@@ -74,6 +75,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(composer.text, "keep\nthis draft")
                 self.assertFalse(composer.disabled)
                 self.assertTrue(composer.has_focus)
+                self.assertEqual(app.conversation.log_entries, ["You: hi\nx", ""])
 
     async def test_native_and_windows_clipboard_paste_do_not_send(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
