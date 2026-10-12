@@ -38,7 +38,8 @@ def output_event(item_id, text, *, phase="final_answer", status="completed", del
 
 class WrittenAnswerTests(unittest.IsolatedAsyncioTestCase):
     async def test_code_arrives_in_item_not_completion_snapshot(self):
-        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "record_chat_message"):
             app = CoraApp()
             async with app.run_test(size=(100, 35)) as pilot:
                 await pilot.pause()
@@ -84,7 +85,8 @@ class WrittenAnswerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(log.lines[bottom + 1].text.strip(), "")
 
     async def test_typed_and_voice_items_are_independent(self):
-        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "record_chat_message"):
             app = CoraApp()
             async with app.run_test(size=(100, 35)):
                 app.handle_live_event(output_event("commentary", "Not final", phase="commentary"))
@@ -97,7 +99,8 @@ class WrittenAnswerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(any("no written text" in entry for entry in app.activity.entries))
 
     async def test_clarifications_stay_spoken_and_written_content_opts_in(self):
-        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "record_chat_message"):
             app = CoraApp()
             async with app.run_test(size=(100, 35)) as pilot:
                 await pilot.pause()

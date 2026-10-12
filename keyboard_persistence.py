@@ -1,4 +1,4 @@
-"""Lazy keyboard storage adapter; call its methods off the UI thread."""
+"""Lazy chat storage adapter; call its methods off the UI thread."""
 
 from uuid import UUID, uuid4
 
@@ -14,14 +14,24 @@ class KeyboardPersistence:
         self.store = store
         self.engine: Engine | None = None
 
-    def save_message(self, message_id: UUID, text: str) -> None:
+    def _get_store(self) -> ConversationStore:
         if self.store is None:
             self.engine = build_engine()
             self.store = ConversationStore(self.engine)
         self.store.create_conversation(self.conversation_id)
-        self.store.save_message(
+        return self.store
+
+    def save_message(self, message_id: UUID, text: str) -> None:
+        self._get_store().save_message(
             self.conversation_id, message_id=message_id, role="user", text=text,
             channel="keyboard", status="completed", delivery_status="pending",
+        )
+
+    def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
+        # Voice records are display chunks, not API-confirmed complete turns.
+        self._get_store().save_message(
+            self.conversation_id, message_id=message_id, role=role, text=text,
+            channel=channel, status="completed" if channel == "screen" else "incomplete",
         )
 
     def record_delivery(self, message_id: UUID, status: str) -> None:

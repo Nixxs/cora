@@ -59,10 +59,14 @@ class CoraApp(App):
             self.query_one("#activity-panel", Collapsible),
             self.query_one("#activity-output", RichLog),
         )
-        self.conversation = Conversation(
-            self.query_one("#chat-output", RichLog), self.set_timer, self.activity.write
-        )
         self.persistence = KeyboardPersistence()
+        self.database_lock = asyncio.Lock()
+        self.chat_workers = []
+        self.chat_recording_closed = False
+        self.conversation = Conversation(
+            self.query_one("#chat-output", RichLog), self.set_timer, self.activity.write,
+            record_message=self.record_chat_message,
+        )
         self.pending_keyboard_message = None
         self.keyboard_worker = None
         self.closing = False
@@ -84,6 +88,7 @@ class CoraApp(App):
             return
 
         composer.disabled = True
+        self.conversation.flush_transcript()
         if self.pending_keyboard_message is None or self.pending_keyboard_message[0] != message:
             self.pending_keyboard_message = (message, uuid4())
         message_id = self.pending_keyboard_message[1]
@@ -97,7 +102,7 @@ class CoraApp(App):
             if self.closing:
                 return
             try:
-                await asyncio.to_thread(self.persistence.save_message, message_id, message)
+                await self.call_database(self.persistence.save_message, message_id, message)
             except Exception as error:
                 # SQL errors may include query parameters: never log private text/credentials.
                 self.activity.write(
@@ -136,7 +141,7 @@ class CoraApp(App):
 
     async def record_keyboard_delivery(self, message_id: UUID, status: str) -> None:
         try:
-            await asyncio.to_thread(self.persistence.record_delivery, message_id, status)
+            await self.call_database(self.persistence.record_delivery, message_id, status)
         except Exception as error:
             self.activity.write(
                 f"Could not confirm database delivery status '{status}' for message_id={message_id} "
@@ -144,6 +149,30 @@ class CoraApp(App):
                 "Delivery status error",
             )
             self.notify("Text saved, but database delivery status could not be confirmed.", severity="warning")
+
+    async def call_database(self, operation, *args):
+        # Serialise off-thread calls, including lazy engine creation and shutdown.
+        async with self.database_lock:
+            return await asyncio.to_thread(operation, *args)
+
+    def record_chat_message(self, role: str, text: str, channel: str) -> None:
+        if self.chat_recording_closed:
+            return
+        self.chat_workers = [worker for worker in self.chat_workers if not worker.is_finished]
+        self.chat_workers.append(self.save_chat_message(uuid4(), role, text, channel))
+
+    @work(group="chat-save")
+    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
+        try:
+            await self.call_database(self.persistence.save_chat_message, message_id, role, text, channel)
+        except Exception as error:
+            self.activity.write(
+                f"Chat save failed ({type(error).__name__}); displayed text remains available.",
+                "Chat save failed",
+            )
+            self.notify("Conversation text could not be saved to the database.", severity="warning")
+        else:
+            self.activity.write(f"Chat text saved: role={role}, channel={channel}", "Chat text saved")
 
     @work
     async def connect_to_cora(self) -> None:
@@ -343,13 +372,22 @@ class CoraApp(App):
             await self.live.close()
         finally:
             try:
-                await asyncio.to_thread(self.persistence.close)
-            except Exception as error:
-                self.activity.write(f"Database cleanup failed ({type(error).__name__})", "Database cleanup failed")
-            finally:
                 if self.connection_worker is not None:
                     self.connection_worker.cancel()
-                self.exit()
+                self.conversation.flush_transcript()
+                self.chat_recording_closed = True
+                for worker in self.chat_workers:
+                    try:
+                        await worker.wait()
+                    except WorkerError:
+                        self.activity.write("Chat save worker stopped", "Chat save worker stopped")
+            finally:
+                try:
+                    await self.call_database(self.persistence.close)
+                except Exception as error:
+                    self.activity.write(f"Database cleanup failed ({type(error).__name__})", "Database cleanup failed")
+                finally:
+                    self.exit()
 
 if __name__ == "__main__":
     CoraApp().run()

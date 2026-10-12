@@ -56,7 +56,8 @@ class ActivityTests(unittest.TestCase):
 
 class ActivityPanelTests(unittest.IsolatedAsyncioTestCase):
     async def test_expansion_replays_history_without_duplicates_or_transcript_changes(self):
-        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "record_chat_message"):
             app = CoraApp()
             async with app.run_test(size=(90, 35)) as pilot:
                 await pilot.pause()

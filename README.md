@@ -12,8 +12,8 @@ it, then build on the result.
 
 [compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
 Only the database runs in Docker; Cora still runs directly on Windows. Cora now
-saves typed user messages to the database. Migrations enable the `vector`
-extension and create conversation/message tables; voice/reply saving is later.
+saves typed user messages and the displayed conversation to the database.
+Migrations enable the `vector` extension and create conversation/message tables.
 
 Prerequisite: Docker Desktop running with Linux containers and Docker Compose.
 Run the following commands from the repository root.
@@ -78,8 +78,8 @@ python migrate.py
 The runner reads the separate local database settings, not the API settings.
 Environment variables named `CORA_DB_*` override file values. The host defaults
 to `127.0.0.1`; `CORA_DB_HOST` can override it if needed. Migrations are explicit:
-starting Cora does **not** run them. Keyboard persistence connects lazily on the
-first typed submission.
+starting Cora does **not** run them. Persistence connects lazily on the first
+typed submission or saved chat chunk.
 
 Run the command again safely: already-applied files are checked and skipped.
 All pending migrations and their history commit in one transaction. If SQL fails,
@@ -154,8 +154,8 @@ Timestamps are timezone-aware; end times cannot precede start times.
 
 Run `python migrate.py`, then refresh DBeaver's table list. You should see
 `conversations`, `messages`, and `schema_migrations`. The new application tables
-start empty and now receive typed user messages. Processing checkpoints,
-summaries, extracted memories, voice/reply saving, and resumption remain later steps.
+start empty and now receive typed user messages and displayed conversation text.
+Processing checkpoints, summaries, extracted memories, and resumption remain later steps.
 
 [tests/test_models.py](tests/test_models.py) tests ORM/database agreement,
 voice/keyboard ordering, defaults, constraints, and migration reruns. With
@@ -207,15 +207,16 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 
 [keyboard_persistence.py](keyboard_persistence.py) gives each app run one logical
 conversation UUID, independent of its model connection. It opens the database
-lazily: no conversation row is created until the first typed message is saved.
+lazily: no conversation row is created until the first message is saved.
 [app.py](app.py) runs submissions in a managed Textual worker and uses
 `asyncio.to_thread()` for storage calls so database work does not block the UI.
 
 Start the database, apply migrations explicitly, then run Cora normally. Send a
 harmless test phrase and refresh DBeaver: `conversations` should contain the new
 discussion and `messages` its typed user text, `channel=keyboard`, `role=user`,
-and an increasing sequence number. No voice transcripts or assistant replies
-are persisted in this step. Nothing is injected into Cora's model context yet.
+and an increasing sequence number. Displayed voice transcripts and assistant
+replies are covered in step 6 below. No saved database history is injected into
+Cora's model context yet.
 
 Typed text is saved as `completed` (the submitted text is final) with delivery
 `pending` **before** the existing model send. If saving fails, the draft is kept
@@ -246,6 +247,42 @@ slow database save, and shutdown ordering. Its actual app-to-Postgres write test
 uses a disposable database with the OpenAI send mocked (`CORA_RUN_DB_TESTS=1`).
 Unit/headless tests stub persistence so ordinary test runs never write to Cora's
 real tables. A real voice/API smoke test remains a manual check.
+
+## Displayed conversation persistence — memory step 6
+
+For memory, Cora records the conversation visible in the chat, not a separate
+archive of Luna's internal events. [conversation.py](conversation.py) records
+grouped user and assistant voice text when the existing display grouping ends
+(speaker change, two-second pause, or shutdown). Displayed written answers are
+saved once, retaining their Markdown/code but removing the internal screen marker.
+Hidden backend answers, reasoning, tool calls, Activity entries, blank separators,
+and redraws do not create additional records. Typed messages keep their existing
+save-before-send path and are not saved again by the display callback.
+
+All text uses the same conversation UUID and existing `messages` table. Voice
+chunks have `channel=voice` and conservatively retain `status=incomplete`: the
+SDK provides no transcript-done event, and display grouping is approximate.
+They are still useful memory text, not confirmed complete speech turns. Screen
+answers have `channel=screen`, `status=completed`; both use delivery
+`not_applicable`. Sequence numbers follow save/flush order, not exact audio timing.
+No new schema, dependencies, backend archive, or turn-reconstruction system is added.
+
+Database calls remain off-thread and are serialised. Shutdown closes Live, flushes
+the last displayed transcript, waits for queued chat saves, then closes the engine.
+A failed voice/screen save warns without interrupting the conversation or hiding
+the text. There is no automatic retry; a crash can lose an unsaved display chunk.
+Conversation closing/resumption and memory retrieval are still separate later steps.
+
+Manual check: speak a harmless question, wait for the reply and display pause,
+then refresh `messages` in DBeaver. Look for `role=user/assistant`, `channel=voice`,
+and the same conversation ID as typed input. Ask for a short code example to check
+that its displayed answer also appears once with `channel=screen`. Quit while text
+is still active to check that the final chunk is saved.
+
+[tests/test_displayed_chat_persistence.py](tests/test_displayed_chat_persistence.py)
+checks display-only capture, duplicate redraw/flush protection, unchanged keyboard
+saving, failure warnings, shutdown draining, and mixed-channel readback after an
+engine reopen. Database writes use a disposable database, not personal chat data.
 
 ## Current progress
 

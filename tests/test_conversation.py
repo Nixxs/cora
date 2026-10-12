@@ -58,7 +58,8 @@ class ConversationTests(unittest.TestCase):
 
 class ConversationRoutingTests(unittest.IsolatedAsyncioTestCase):
     async def test_live_transcripts_route_to_conversation_without_activity_flushing_them(self):
-        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "record_chat_message"):
             app = CoraApp()
             async with app.run_test(size=(90, 35)):
                 app.handle_live_event(SimpleNamespace(type="session.input_transcript.delta", delta="Hello"))
