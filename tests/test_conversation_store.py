@@ -112,6 +112,63 @@ finally:
         )
         self.assertEqual(json.loads(result.stdout), expected)
 
+    def test_conversation_close_commits_and_retries_preserve_end_time_and_messages(self):
+        first = self.store.get_conversation(self.conversation_id)
+        message = self.save(channel="voice", status="incomplete")
+        closed = self.store.close_conversation(self.conversation_id)
+        self.assertEqual(closed.status, "closed")
+        self.assertEqual(closed.started_at, first.started_at)
+        self.assertIsNotNone(closed.ended_at.tzinfo)
+        self.assertGreaterEqual(closed.ended_at, message.created_at)
+        repeated = self.store.close_conversation(self.conversation_id)
+        self.assertEqual(repeated.ended_at, closed.ended_at)
+        self.assertEqual(self.store.create_conversation(self.conversation_id).status, "closed")
+        self.assertEqual(self.store.get_conversation(self.conversation_id).ended_at, closed.ended_at)
+        records = self.store.get_messages(self.conversation_id)
+        self.assertEqual([(record.id, record.text, record.status, record.created_at) for record in records],
+                         [(message.id, message.text, message.status, message.created_at)])
+
+    def test_close_missing_or_interrupted_conversation_does_not_create_or_overwrite(self):
+        unknown = uuid4()
+        self.assertIsNone(self.store.close_conversation(unknown))
+        self.assertIsNone(self.store.get_conversation(unknown))
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.conversations SET status = 'interrupted', ended_at = CURRENT_TIMESTAMP "
+                "WHERE id = :id"
+            ), {"id": self.conversation_id})
+        first = self.store.get_conversation(self.conversation_id)
+        result = self.store.close_conversation(self.conversation_id)
+        self.assertEqual((result.status, result.ended_at), (first.status, first.ended_at))
+
+    def test_startup_tags_only_other_active_conversations_and_preserves_saved_data(self):
+        saved = self.save(delivery_status="pending", channel="voice", status="incomplete")
+        previous = self.store.get_conversation(self.conversation_id)
+        current = uuid4()
+        self.store.create_conversation(current)
+        closed_id = uuid4()
+        self.store.create_conversation(closed_id)
+        closed = self.store.close_conversation(closed_id)
+        interrupted_id = uuid4()
+        self.store.create_conversation(interrupted_id)
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.conversations SET status = 'interrupted' WHERE id = :id"
+            ), {"id": interrupted_id})
+
+        self.assertEqual(self.store.interrupt_active_conversations(current), 1)
+        result = self.store.get_conversation(self.conversation_id)
+        self.assertEqual(result.status, "interrupted")
+        self.assertEqual((result.started_at, result.ended_at), (previous.started_at, previous.ended_at))
+        self.assertEqual(self.store.get_conversation(current).status, "active")
+        self.assertEqual(self.store.get_conversation(closed_id).ended_at, closed.ended_at)
+        self.assertEqual(self.store.get_conversation(closed_id).status, "closed")
+        self.assertEqual(self.store.get_conversation(interrupted_id).status, "interrupted")
+        message = self.store.get_messages(self.conversation_id)[0]
+        self.assertEqual((message.id, message.text, message.status, message.delivery_status, message.created_at),
+                         (saved.id, saved.text, saved.status, saved.delivery_status, saved.created_at))
+        self.assertEqual(self.store.interrupt_active_conversations(current), 0)
+
     def test_same_id_retry_preserves_one_message_and_next_ordering_position(self):
         message_id = uuid4()
         first = self.save(message_id=message_id)

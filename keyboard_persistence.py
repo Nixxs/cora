@@ -18,18 +18,25 @@ class KeyboardPersistence:
         if self.store is None:
             self.engine = build_engine()
             self.store = ConversationStore(self.engine)
-        self.store.create_conversation(self.conversation_id)
         return self.store
 
+    def mark_interrupted_conversations(self) -> int:
+        # Startup checks previous runs without creating a row for this run.
+        return self._get_store().interrupt_active_conversations(self.conversation_id)
+
     def save_message(self, message_id: UUID, text: str) -> None:
-        self._get_store().save_message(
+        store = self._get_store()
+        store.create_conversation(self.conversation_id)
+        store.save_message(
             self.conversation_id, message_id=message_id, role="user", text=text,
             channel="keyboard", status="completed", delivery_status="pending",
         )
 
     def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
         # Voice records are display chunks, not API-confirmed complete turns.
-        self._get_store().save_message(
+        store = self._get_store()
+        store.create_conversation(self.conversation_id)
+        store.save_message(
             self.conversation_id, message_id=message_id, role=role, text=text,
             channel=channel, status="completed" if channel == "screen" else "incomplete",
         )
@@ -38,6 +45,11 @@ class KeyboardPersistence:
         if self.store is None:
             raise RuntimeError("No keyboard message has been saved yet")
         self.store.set_delivery_status(self.conversation_id, message_id, status)
+
+    def finish_conversation(self) -> None:
+        # Do not create an empty conversation just to close it.
+        if self.store is not None:
+            self.store.close_conversation(self.conversation_id)
 
     def close(self) -> None:
         # Do not dispose an injected store's caller-owned engine.

@@ -32,6 +32,31 @@ class ConversationStore:
         with Session(self.engine) as session:
             return session.get(ConversationRecord, conversation_id)
 
+    def close_conversation(self, conversation_id: UUID) -> ConversationRecord | None:
+        """Close an active conversation once; preserve already-finished records."""
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            conversation = session.scalar(
+                update(ConversationRecord).where(
+                    ConversationRecord.id == conversation_id,
+                    ConversationRecord.status == "active",
+                ).values(status="closed", ended_at=func.current_timestamp()).returning(ConversationRecord)
+            )
+            if conversation is None:
+                conversation = session.get(ConversationRecord, conversation_id)
+        return conversation
+
+    def interrupt_active_conversations(self, current_conversation_id: UUID) -> int:
+        """Tag unfinished runs, excluding this run; leave messages and times alone."""
+        with Session(self.engine) as session, session.begin():
+            changed = session.scalars(
+                update(ConversationRecord).where(
+                    ConversationRecord.status == "active",
+                    ConversationRecord.id != current_conversation_id,
+                ).values(status="interrupted").returning(ConversationRecord.id)
+            )
+            count = len(changed.all())
+        return count
+
     def save_message(
         self,
         conversation_id: UUID,

@@ -128,6 +128,7 @@ class DisplayedChatAppTests(unittest.IsolatedAsyncioTestCase):
                 order.append(text)
 
             app.persistence.save_chat_message.side_effect = save
+            app.persistence.finish_conversation.side_effect = lambda: order.append("conversation closed")
             app.persistence.close.side_effect = lambda: order.append("engine closed")
             app.conversation.append_transcript("You", "Wait for the save.")
             app.conversation.flush_transcript()
@@ -143,10 +144,13 @@ class DisplayedChatAppTests(unittest.IsolatedAsyncioTestCase):
                 with patch.object(app, "exit") as exit_app:
                     close = asyncio.create_task(app.action_disconnect_and_quit())
                     await asyncio.sleep(0)
+                    app.persistence.finish_conversation.assert_not_called()
                     app.persistence.close.assert_not_called()
                     release.set()
                     await asyncio.wait_for(close, 3)
-                    self.assertEqual(order, ["Wait for the save.", "Last answer.", "engine closed"])
+                    self.assertEqual(order, [
+                        "Wait for the save.", "Last answer.", "conversation closed", "engine closed",
+                    ])
                     self.assertTrue(app.chat_recording_closed)
                     app.record_chat_message("assistant", "Too late", "voice")
                     self.assertEqual(app.persistence.save_chat_message.call_count, 2)
@@ -187,6 +191,9 @@ class DisplayedChatDatabaseTests(unittest.IsolatedAsyncioTestCase):
         with patch("database.database_settings", return_value=self.settings):
             reopened = build_engine()
         try:
+            conversation = ConversationStore(reopened).get_conversation(persistence.conversation_id)
+            self.assertEqual(conversation.status, "closed")
+            self.assertIsNotNone(conversation.ended_at.tzinfo)
             records = ConversationStore(reopened).get_messages(persistence.conversation_id)
             self.assertEqual([(record.role, record.text, record.channel, record.status) for record in records], [
                 ("user", "Typed input", "keyboard", "completed"),
@@ -197,6 +204,7 @@ class DisplayedChatDatabaseTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([record.sequence_number for record in records], [1, 2, 3, 4])
             self.assertEqual(records[0].delivery_status, "sent")
             self.assertTrue(all(record.delivery_status == "not_applicable" for record in records[1:]))
+            self.assertGreaterEqual(conversation.ended_at, max(record.created_at for record in records))
         finally:
             reopened.dispose()
 

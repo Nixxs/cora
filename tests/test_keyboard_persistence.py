@@ -49,6 +49,35 @@ class KeyboardPersistenceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             KeyboardPersistence().record_delivery(uuid4(), "sent")
 
+    def test_finish_closes_existing_conversation_without_initialising_unused_storage(self):
+        with patch("keyboard_persistence.build_engine") as build:
+            unused = KeyboardPersistence()
+            unused.finish_conversation()
+            unused.close()
+            build.assert_not_called()
+        store = MagicMock()
+        persistence = KeyboardPersistence(store)
+        persistence.finish_conversation()
+        store.close_conversation.assert_called_once_with(persistence.conversation_id)
+        store.create_conversation.assert_not_called()
+        store.engine.dispose.assert_not_called()
+
+    def test_startup_check_opens_storage_without_creating_current_conversation(self):
+        engine = MagicMock()
+        store = MagicMock()
+        store.interrupt_active_conversations.return_value = 2
+        with patch("keyboard_persistence.build_engine", return_value=engine) as build, \
+                patch("keyboard_persistence.ConversationStore", return_value=store):
+            persistence = KeyboardPersistence()
+            self.assertEqual(persistence.mark_interrupted_conversations(), 2)
+            store.interrupt_active_conversations.assert_called_once_with(persistence.conversation_id)
+            store.create_conversation.assert_not_called()
+            persistence.save_message(uuid4(), "First message after startup")
+            build.assert_called_once()
+            store.create_conversation.assert_called_once_with(persistence.conversation_id)
+            persistence.close()
+            engine.dispose.assert_called_once()
+
 
 @asynccontextmanager
 async def running_app(persistence=None):
@@ -153,6 +182,29 @@ class KeyboardSubmissionTests(unittest.IsolatedAsyncioTestCase):
                     exit_app.assert_called_once()
             finally:
                 release.set()
+
+    async def test_shutdown_closes_conversation_once_before_disposal(self):
+        async with running_app() as (app, pilot):
+            order = MagicMock()
+            order.attach_mock(app.live.close, "live_close")
+            order.attach_mock(app.persistence.finish_conversation, "finish")
+            order.attach_mock(app.persistence.close, "dispose")
+            with patch.object(app, "exit") as exit_app:
+                await app.action_disconnect_and_quit()
+                await app.action_disconnect_and_quit()
+                self.assertEqual([entry[0] for entry in order.mock_calls], ["live_close", "finish", "dispose"])
+                exit_app.assert_called_once()
+
+    async def test_failed_conversation_close_still_disposes_and_exits_without_leaking_error(self):
+        async with running_app() as (app, pilot):
+            app.persistence.finish_conversation.side_effect = RuntimeError("private credentials and SQL")
+            with patch.object(app, "exit") as exit_app:
+                await app.action_disconnect_and_quit()
+                app.persistence.close.assert_called_once()
+                exit_app.assert_called_once()
+            entries = "\n".join(app.activity.entries)
+            self.assertIn("Conversation close failed (RuntimeError)", entries)
+            self.assertNotIn("private credentials and SQL", entries)
 
 
 @unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")

@@ -69,6 +69,7 @@ class CoraApp(App):
         )
         self.pending_keyboard_message = None
         self.keyboard_worker = None
+        self.startup_worker = None
         self.closing = False
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
@@ -181,6 +182,10 @@ class CoraApp(App):
         status.update("○ Connecting...")
 
         try:
+            self.startup_worker = self.check_interrupted_conversations()
+            await self.startup_worker.wait()
+            if self.closing:
+                return
             await self.live.run(
                 self.handle_live_event,
                 self.handle_mic_status,
@@ -194,6 +199,23 @@ class CoraApp(App):
             self.activity.write("Connection closed", "Disconnected")
         finally:
             self.conversation.flush_transcript()
+
+    @work(group="database-startup")
+    async def check_interrupted_conversations(self) -> None:
+        try:
+            count = await self.call_database(self.persistence.mark_interrupted_conversations)
+        except Exception as error:
+            self.activity.write(
+                f"Interrupted conversation check failed ({type(error).__name__})",
+                "Database startup check failed",
+            )
+            self.notify("Could not tag unfinished conversations in the database.", severity="warning")
+        else:
+            if count:
+                self.activity.write(
+                    f"Tagged {count} unfinished conversation(s) as interrupted.",
+                    "Unfinished conversations tagged",
+                )
 
     def handle_live_event(self, event) -> None:
         status = self.query_one("#chat-status", Static)
@@ -364,6 +386,11 @@ class CoraApp(App):
         self.query_one("#chat-status", Static).update("○ Disconnecting...")
 
         try:
+            if self.startup_worker is not None:
+                try:
+                    await self.startup_worker.wait()
+                except WorkerError:
+                    self.activity.write("Database startup worker stopped", "Database startup worker stopped")
             if self.keyboard_worker is not None:
                 try:
                     await self.keyboard_worker.wait()
@@ -381,6 +408,14 @@ class CoraApp(App):
                         await worker.wait()
                     except WorkerError:
                         self.activity.write("Chat save worker stopped", "Chat save worker stopped")
+                try:
+                    await self.call_database(self.persistence.finish_conversation)
+                except Exception as error:
+                    self.activity.write(
+                        f"Conversation close failed ({type(error).__name__})",
+                        "Conversation close failed",
+                    )
+                    self.notify("Conversation end could not be saved to the database.", severity="warning")
             finally:
                 try:
                     await self.call_database(self.persistence.close)
