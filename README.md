@@ -148,19 +148,60 @@ models does not connect, run migrations, or call `create_all()`.
 
 Voice and keyboard share a conversation ID and one sequence. UUIDs and unique
 sequence positions prevent duplicate records; retries must reuse their message
-ID (the storage service will implement this later). Foreign keys reject orphan
+ID (the storage service below handles same-ID retries). Foreign keys reject orphan
 messages and prevent deleting a conversation while messages still reference it.
 Timestamps are timezone-aware; end times cannot precede start times.
 
 Run `python migrate.py`, then refresh DBeaver's table list. You should see
 `conversations`, `messages`, and `schema_migrations`. The new application tables
 are empty: Cora still does not save live messages. Processing checkpoints,
-summaries, extracted memories, and the storage service remain later steps.
+summaries, extracted memories, and application integration remain later steps.
 
 [tests/test_models.py](tests/test_models.py) tests ORM/database agreement,
 voice/keyboard ordering, defaults, constraints, and migration reruns. With
 `CORA_RUN_DB_TESTS=1`, writes happen only in a disposable test database that is
 removed afterwards; Cora's own tables are not used for test records.
+
+## Conversation storage service — memory step 4
+
+[conversation_store.py](conversation_store.py) provides `ConversationStore`:
+
+- `create_conversation(conversation_id)` creates and commits a conversation;
+	retrying its UUID returns the existing record without resetting its metadata.
+- `get_conversation(conversation_id)` returns its saved scalar fields or `None`.
+- `save_message(conversation_id, message_id=..., role=..., text=..., channel=...)`
+	commits one message and assigns the next sequence number in that conversation.
+	Supply `status="completed"` only when completion is confirmed; the default is
+	`incomplete`. Delivery status defaults to `not_applicable`.
+- `get_messages(conversation_id)` returns saved messages in sequence order.
+
+The caller generates conversation/message UUIDs **before** calling the service
+and reuses them when retrying an uncertain save. An identical message-ID retry
+returns the existing row, preserving its sequence and timestamp. Different text
+or metadata under that ID is rejected, not silently overwritten. Status updates
+are not implemented yet and must not be disguised as save retries.
+
+Each write commits before returning; failures roll back. A conversation row lock
+serialises saves for that discussion, protecting ordering and duplicate retries.
+The service creates a fresh SQLAlchemy session per operation and returns detached
+records with loaded scalar fields; use `get_messages()` rather than lazy-loading
+the conversation's relationship. The caller owns/disposes the engine.
+
+No new dependencies, migrations, automatic retries, or Cora startup changes are
+needed. This service is synchronous and independently testable; responsive app
+integration and failure/delivery handling are separate next steps.
+
+[tests/test_conversation_store.py](tests/test_conversation_store.py) verifies
+committed persistence through an engine reopen and a fresh Python process,
+mixed-channel history, rollback, ID conflicts and concurrent saves/retries. Its
+write tests use a uniquely named disposable database under `CORA_RUN_DB_TESTS=1`,
+not Cora's real tables. Run with the existing virtual environment activated:
+
+```powershell
+$env:CORA_RUN_DB_TESTS = "1"
+try { python -m unittest discover -s tests -p test_conversation_store.py -v }
+finally { Remove-Item Env:CORA_RUN_DB_TESTS }
+```
 
 ## Current progress
 
