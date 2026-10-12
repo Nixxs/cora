@@ -12,8 +12,8 @@ it, then build on the result.
 
 [compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
 Only the database runs in Docker; Cora still runs directly on Windows. Cora does
-not connect to the database yet. Message tables, migrations, and enabling the
-`vector` extension in the database are separate next steps.
+not connect to the database yet. Migrations now enable the `vector` extension;
+conversation/message tables and application persistence are separate next steps.
 
 Prerequisite: Docker Desktop running with Linux containers and Docker Compose.
 Run the following commands from the repository root.
@@ -60,6 +60,52 @@ database/user or change its password. Existing credentials must be changed with
 SQL; do not delete saved conversations to change configuration. Changing the
 Postgres major version also requires a planned database upgrade, not just an
 image-tag edit.
+
+## Database migrations — memory step 2
+
+[migrate.py](migrate.py) applies numbered SQL files in [migrations](migrations).
+The first, [0001_enable_vector.sql](migrations/0001_enable_vector.sql), enables
+pgvector. The only new table is `public.schema_migrations`, which records each
+applied filename, checksum, and timestamp. There are no conversation tables yet.
+
+With the existing Python virtual environment activated and the database running:
+
+```powershell
+python -m pip install -r requirements.txt
+python migrate.py
+```
+
+The runner reads the separate local database settings, not the API settings.
+Environment variables named `CORA_DB_*` override file values. The host defaults
+to `127.0.0.1`; `CORA_DB_HOST` can override it if needed. Migrations are explicit:
+starting Cora does **not** run them or connect to the database.
+
+Run the command again safely: already-applied files are checked and skipped.
+All pending migrations and their history commit in one transaction. If SQL fails,
+the whole run rolls back; correct the **unapplied** migration and retry. A database
+lock prevents two runners applying the same batch concurrently. Migration SQL
+must be transactional and must not contain its own `BEGIN`/`COMMIT`/`ROLLBACK`.
+
+Never edit, remove, or rename an applied migration: checksums/history are checked
+before pending SQL runs. Add a higher-numbered file for the next change instead
+(for example, `0002_...sql`). This runner is forward-only; it does not implement
+automatic downgrade scripts. Back up real data before future schema changes.
+
+In DBeaver, refresh `cora → Schemas → public → Tables` to see `schema_migrations`.
+The `vector` extension is also now enabled in `cora`.
+
+Migration tests include an opt-in database check. It creates and drops its own
+temporary database, never resets Cora's database, and needs permission to create
+databases (the current local development user has it):
+
+```powershell
+$env:CORA_RUN_DB_TESTS = "1"
+try { python -m unittest discover -s tests -p test_migrations.py -v }
+finally { Remove-Item Env:CORA_RUN_DB_TESTS }
+```
+
+Normal test discovery still runs file/configuration tests but skips the database
+tests unless explicitly enabled. No microphone or API connection is required.
 
 ## Current progress
 
