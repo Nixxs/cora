@@ -103,3 +103,28 @@ Screen > .screen--selection {
     background: #141820;
     background-tint: transparent;
 }
+
+#window-controls {
+    height: 1;
+    align: right top;
+    padding: 0;
+}
+
+#close-button {
+    width: 3;
+    min-width: 3;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: #141820;
+    color: #8f98a8;
+    # offset: 1 0;
+}
+
+#close-button:hover,
+#close-button:focus {
+    background: #202838;
+    color: #f0a38a;
+}

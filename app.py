@@ -7,7 +7,7 @@ from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
-from textual.widgets import Collapsible, RichLog, Static
+from textual.widgets import Collapsible, RichLog, Static, Button
 
 from dotenv import load_dotenv
 from textual import work
@@ -29,6 +29,8 @@ class CoraApp(App):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="chat-panel"):
+            with HorizontalGroup(id="window-controls"):
+                yield Button("×", id="close-button")
             yield SelectableRichLog(id="chat-output", wrap=True, min_width=1)
             with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
                 yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
@@ -277,6 +279,11 @@ class CoraApp(App):
         if event.collapsible.id == "activity-panel":
             # Wait for layout to restore the hidden log's usable width.
             self.call_after_refresh(self.redraw_activity_log)
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "close-button":
+            event.button.disabled = True
+            await self.action_disconnect_and_quit()
 
     def redraw_activity_log(self) -> None:
         panel = self.query_one("#activity-panel", Collapsible)

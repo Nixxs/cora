@@ -88,7 +88,7 @@ class CoraLive:
                                     "rate": 24000,
                                 },
                                 "output": {
-                                    "voice": "willow",
+                                    "voice": "marin",
                                 },
                             },
                         }
