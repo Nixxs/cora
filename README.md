@@ -19,6 +19,10 @@ it, then build on the result.
 - [x] Typed input mirrored into Live's context to improve voice/text continuity.
 - [x] Collapsible Activity panel with timestamps, backend/search lifecycle events,
 			and error details, separate from the conversation.
+- [x] First custom backend function, `close_app`, using the same guarded shutdown
+	action as the close button and Ctrl+X. Mocked routing/audio-cleanup tests
+	passed; voice and typed tool selection still need a live test. Shutdown
+	is immediate and does not wait for a spoken goodbye.
 
 Voice, keyboard, delegation, and search have been exercised interactively. Typed
 context delivery is asynchronous; using one connection does not by itself

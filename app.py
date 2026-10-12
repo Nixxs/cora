@@ -1,5 +1,6 @@
 from collections import deque
 from datetime import datetime
+import json
 import sys
 
 import pyperclip
@@ -57,6 +58,13 @@ class CoraApp(App):
         self.log_entries = []
         self.written_item_ids = set()
         self.activity_entries = deque(maxlen=500)
+        self.closing = False
+        self.close_tool_pending = False
+        self.handled_tool_call_ids = set()
+        # Each tool has its own argument validator and async handler.
+        self.tool_handlers = {
+            "close_app": (self.validate_close_arguments, self.close_from_tool),
+        }
 
         self.live = CoraLive()
         self.connection_worker = self.connect_to_cora()
@@ -146,7 +154,11 @@ class CoraApp(App):
             event_type = backend_event.get("type")
             if event_type == "response.output_item.done":
                 # Live lifecycle snapshots omit output; completed items carry it.
-                self.display_written_item(backend_event.get("item") or {})
+                item = backend_event.get("item") or {}
+                if item.get("type") == "function_call":
+                    self.handle_function_call(item)
+                else:
+                    self.display_written_item(item)
             elif event_type in (
                 "response.created",
                 "response.completed",
@@ -392,13 +404,82 @@ class CoraApp(App):
                 "Microphone active" if working else "Microphone stopped",
             )
 
+    def handle_function_call(self, item: dict) -> None:
+        if self.closing:
+            return
+        name = item.get("name")
+        if not isinstance(name, str) or name not in self.tool_handlers:
+            self.write_debug(f"Unknown tool: {name}", "Tool error")
+            return
+        call_id = item.get("call_id")
+        if not isinstance(call_id, str) or not call_id.strip() or item.get("status") not in (None, "completed"):
+            self.write_debug(f"Incomplete {name} call rejected", "Tool error")
+            return
+        if call_id in self.handled_tool_call_ids:
+            return
+        validate, _ = self.tool_handlers[name]
+        try:
+            arguments = json.loads(item.get("arguments", ""))
+            if not isinstance(arguments, dict):
+                raise ValueError("arguments must be a JSON object")
+            validate(arguments)
+        except (TypeError, ValueError):
+            self.write_debug(f"Invalid arguments for {name}", "Tool error")
+            return
+
+        # Deduplicate all tools, not just close_app, before scheduling.
+        self.handled_tool_call_ids.add(call_id)
+        self.run_worker(self.run_tool(name, call_id, arguments), group="tool-actions")
+
+    async def run_tool(self, name: str, call_id: str, arguments: dict) -> None:
+        _, handler = self.tool_handlers[name]
+        try:
+            # Handlers send their own result/continuation; closing is terminal.
+            await handler(call_id, arguments)
+        except Exception as error:
+            self.write_debug(f"{name} failed: {error}", "Tool error")
+
+    @staticmethod
+    def validate_close_arguments(arguments: dict) -> None:
+        if arguments:
+            raise ValueError("close_app requires an empty argument object")
+
+    async def close_from_tool(self, call_id: str, arguments: dict) -> None:
+        # Only this tool reserves shutdown; other tools stay independent.
+        if self.closing or self.close_tool_pending:
+            return
+        self.close_tool_pending = True
+        self.write_debug(f"close_app requested: call_id={call_id}", "Closing Cora")
+        try:
+            connection = self.live.connection
+            if connection is not None and not self.closing:
+                await connection.response.item.create(
+                    item={
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": json.dumps({"status": "shutting_down"}),
+                    }
+                )
+            # No response.create: this terminal action ends the session rather
+            # than requesting another backend answer or a spoken goodbye.
+        except Exception as error:
+            self.write_debug(f"Close tool result error: {error}", "Tool error")
+        finally:
+            # Separate worker lets the Live reader process session.closed.
+            await self.action_disconnect_and_quit()
+
     async def action_disconnect_and_quit(self) -> None:
+        if self.closing:
+            return
+        self.closing = True
+        self.query_one("#close-button", Button).disabled = True
         self.query_one("#chat-status", Static).update("○ Disconnecting...")
 
         try:
             await self.live.close()
         finally:
-            self.connection_worker.cancel()
+            if self.connection_worker is not None:
+                self.connection_worker.cancel()
             self.exit()
 
 if __name__ == "__main__":
