@@ -16,8 +16,8 @@ class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(100, 35)) as pilot:
                 await pilot.pause()
                 code = 'def joke():\n    print("hello")'
-                app.log_entries = [ChatMarkdown(f"```python\n{code}\n```")]
-                app.redraw_log()
+                app.conversation.log_entries = [ChatMarkdown(f"```python\n{code}\n```")]
+                app.conversation.redraw_log()
                 await pilot.pause()
                 log = app.query_one("#chat-output", SelectableRichLog)
                 start_row = next(i for i, line in enumerate(log.lines) if "def joke" in line.text)
@@ -77,9 +77,9 @@ class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):
             app = CoraApp()
             async with app.run_test(size=(90, 25)) as pilot:
                 await pilot.pause()
-                app.log_entries = [f"Earlier message {i}" for i in range(40)]
-                app.log_entries.append(ChatMarkdown("```python\nprint('copied')\n```"))
-                app.redraw_log()
+                app.conversation.log_entries = [f"Earlier message {i}" for i in range(40)]
+                app.conversation.log_entries.append(ChatMarkdown("```python\nprint('copied')\n```"))
+                app.conversation.redraw_log()
                 await pilot.pause()
                 log = app.query_one("#chat-output", SelectableRichLog)
                 row = next(i for i, line in enumerate(log.lines) if "print('copied')" in line.text)

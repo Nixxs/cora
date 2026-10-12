@@ -19,10 +19,47 @@ it, then build on the result.
 - [x] Typed input mirrored into Live's context to improve voice/text continuity.
 - [x] Collapsible Activity panel with timestamps, backend/search lifecycle events,
 			and error details, separate from the conversation.
+- [x] First custom backend function, `close_app`, using the same guarded shutdown
+	action as the close button and Ctrl+X. Mocked routing/audio-cleanup tests
+	passed; voice and typed tool selection still need a live test. Shutdown
+	is immediate and does not wait for a spoken goodbye.
 
 Voice, keyboard, delegation, and search have been exercised interactively. Typed
 context delivery is asynchronous; using one connection does not by itself
 guarantee that both models have consumed the latest input at the same instant.
+
+## Conversation display
+
+[conversation.py](conversation.py) owns chat history, transcript grouping and idle
+timers, written-answer filtering, and redraws of the existing chat log.
+[app.py](app.py) creates the component and routes voice, typed input, and backend
+answers to it. The widget layout and selection/copy behavior remain in the UI.
+
+## Activity display
+
+[activity.py](activity.py) owns the latest 500 diagnostic entries, timestamps,
+panel summaries/error highlighting, and activity-log redraws. [app.py](app.py)
+routes diagnostics to it and schedules a redraw after the panel expands and
+layout is ready. Activity does not modify conversation history or transcripts.
+
+## Session configuration
+
+[session_config.py](session_config.py) contains the model names, voice, session
+audio format, and Live/backend instructions. Its `build_session_config()` function
+builds a fresh payload using the registered tool schemas. [live.py](live.py)
+handles the connection, audio streaming, and message transport separately.
+
+## Custom tools
+
+- [tools/registry.py](tools/registry.py) owns registration, argument validation,
+	duplicate-call tracking, and dispatch. It does not depend on Textual.
+- [tools/close_app.py](tools/close_app.py) keeps the close tool's API schema,
+	validator, and handler together. UI shutdown remains in [app.py](app.py).
+- [tools/__init__.py](tools/__init__.py) registers the tools and supplies their
+	callbacks. Add future tools here after defining them in their own modules.
+- [live.py](live.py) uses schemas exported by that same registry alongside
+	hosted web search. Handlers own their result messages and any continuation;
+	the close handler terminates the session instead of requesting another answer.
 
 ## Roadmap / todo
 
