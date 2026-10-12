@@ -157,3 +157,19 @@ class ConversationStore:
         """Return the saved summary, or None when there is none."""
         with Session(self.engine) as session:
             return session.get(ConversationSummaryRecord, conversation_id)
+
+    def get_unsummarized_conversation_ids(self, current_conversation_id: UUID) -> list[UUID]:
+        """List older finished, nonempty chats without summaries, oldest first."""
+        with Session(self.engine) as session:
+            return list(session.scalars(
+                select(ConversationRecord.id).where(
+                    ConversationRecord.id != current_conversation_id,
+                    ConversationRecord.status.in_(("closed", "interrupted")),
+                    select(MessageRecord.id).where(
+                        MessageRecord.conversation_id == ConversationRecord.id
+                    ).exists(),
+                    ~select(ConversationSummaryRecord.conversation_id).where(
+                        ConversationSummaryRecord.conversation_id == ConversationRecord.id
+                    ).exists(),
+                ).order_by(ConversationRecord.started_at, ConversationRecord.id)
+            ).all())

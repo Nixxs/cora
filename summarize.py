@@ -1,4 +1,4 @@
-"""Manually summarise one finished conversation; not part of Cora's startup."""
+"""Summarise one finished conversation, with a manual CLI."""
 
 import argparse
 import json

@@ -8,7 +8,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
 from textual.widgets import Collapsible, RichLog, Static, Button
-from textual.worker import WorkerError
+from textual.worker import WorkerError, get_current_worker
 
 from dotenv import load_dotenv
 from textual import work
@@ -17,8 +17,11 @@ from ui.activity import Activity
 from ui.chat_widgets import SelectableRichLog
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
+from storage.conversation_store import ConversationStore
+from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
 from live import CoraLive
+from summarize import summarize_conversation
 from tools import create_tool_registry
 
 
@@ -70,6 +73,7 @@ class CoraApp(App):
         self.pending_keyboard_message = None
         self.keyboard_worker = None
         self.startup_worker = None
+        self.summary_worker = None
         self.closing = False
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
@@ -186,6 +190,7 @@ class CoraApp(App):
             await self.startup_worker.wait()
             if self.closing:
                 return
+            self.summary_worker = self.summarize_previous_conversations()
             await self.live.run(
                 self.handle_live_event,
                 self.handle_mic_status,
@@ -216,6 +221,35 @@ class CoraApp(App):
                     f"Tagged {count} unfinished conversation(s) as interrupted.",
                     "Unfinished conversations tagged",
                 )
+
+    @work(thread=True, group="memory-summary", exit_on_error=False)
+    def summarize_previous_conversations(self) -> None:
+        # Own a separate engine so an in-flight summary can finish during shutdown.
+        engine = None
+        worker = get_current_worker()
+        try:
+            if self.closing or worker.is_cancelled:
+                return
+            engine = build_engine()
+            store = ConversationStore(engine)
+            for conversation_id in store.get_unsummarized_conversation_ids(self.persistence.conversation_id):
+                if self.closing or worker.is_cancelled:
+                    break
+                summarize_conversation(store, conversation_id)
+                if not self.closing and not worker.is_cancelled:
+                    self.call_from_thread(
+                        self.activity.write,
+                        f"Summary saved: conversation_id={conversation_id}", "Memory summary saved",
+                    )
+        except Exception as error:
+            if not self.closing and not worker.is_cancelled:
+                self.call_from_thread(
+                    self.activity.write,
+                    f"Background summaries stopped ({type(error).__name__}).", "Memory summary failed",
+                )
+        finally:
+            if engine is not None:
+                engine.dispose()
 
     def handle_live_event(self, event) -> None:
         status = self.query_one("#chat-status", Static)
@@ -391,6 +425,8 @@ class CoraApp(App):
                     await self.startup_worker.wait()
                 except WorkerError:
                     self.activity.write("Database startup worker stopped", "Database startup worker stopped")
+            if self.summary_worker is not None and not self.summary_worker.is_finished:
+                self.summary_worker.cancel()
             if self.keyboard_worker is not None:
                 try:
                     await self.keyboard_worker.wait()

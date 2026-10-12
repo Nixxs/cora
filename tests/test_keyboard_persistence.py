@@ -81,7 +81,9 @@ class KeyboardPersistenceTests(unittest.TestCase):
 
 @asynccontextmanager
 async def running_app(persistence=None):
-    with patch.object(CoraApp, "connect_to_cora", return_value=None):
+    # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
+    with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "summarize_previous_conversations", return_value=None):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:

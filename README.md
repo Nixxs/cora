@@ -383,8 +383,9 @@ and migration reruns. Tests write only to a disposable database, not saved chats
 ## Standalone summariser — memory step 10
 
 [summarize.py](summarize.py) manually generates a short summary for **one selected
-finished conversation**. It is not called by Cora and does not run on startup or
-shutdown. Choose a `closed` or `interrupted` conversation UUID from DBeaver, then
+finished conversation**. The CLI remains manual; the same summariser is also
+called by the background pass below. Choose a `closed` or
+`interrupted` conversation UUID from DBeaver, then
 run `python summarize.py YOUR_CONVERSATION_UUID` in the existing environment,
 replacing the placeholder with that UUID. The script uses the existing `.env`
 API settings and `.env.database` database settings. Migrations must already be applied.
@@ -415,6 +416,36 @@ migration, background processor, chat-context injection, or Cora UI change is ad
 against the installed SDK, mocks model calls, and checks saved readback in a
 disposable database. These tests do not send personal conversations to OpenAI;
 an actual summary-quality check requires the manually selected conversation.
+
+## Background summaries — memory step 11
+
+After the startup interruption check, Cora starts **one background pass** over
+older `closed`/`interrupted` conversations with saved messages and no summary,
+oldest first. The current conversation UUID, active chats, empty chats, and already
+summarised chats are excluded. The pass does not hold up the Live connection or
+wait until you finish the current chat. A conversation closed on this run is
+eligible on the **next startup**, not during shutdown.
+
+The worker simply calls the existing `summarize_conversation()` in a background
+thread, one conversation at a time. This enables automatic, separate billable
+`gpt-6-luna` requests and sends those saved transcripts to OpenAI. The existing
+instructions, validation, cache, and no-retry behavior remain unchanged. Progress
+appears in Activity. An error stops this pass with only its exception type logged;
+missing summaries can be attempted on a later startup.
+
+The worker owns a separate database engine, so it does not hold the app's database
+lock or use an engine disposed by chat shutdown. Closing stops it from starting
+another summary, but an already-running synchronous request can finish and save
+its result; final process exit may wait for that request. Its engine is disposed
+when the worker finishes. There is no polling loop, async summariser rewrite,
+shutdown summary, new dependency/schema, extraction, embedding, or chat-context
+injection. Run only one Cora instance; simultaneous manual/automatic requests can
+still duplicate model work, though storage prevents overwriting a saved summary.
+
+[tests/test_background_summaries.py](tests/test_background_summaries.py) exercises
+the pass with mocked model calls and disposable database records. For a manual
+check, close a chat normally, restart Cora, and watch Activity for its summary save;
+then refresh `conversation_summaries` in DBeaver. Normal chat should remain usable.
 
 ## Current progress
 
