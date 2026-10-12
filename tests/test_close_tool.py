@@ -31,6 +31,11 @@ def tool_event(call_id="call_close", name="close_app", arguments="{}", status="c
 
 
 class CloseToolTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        delay = patch("tools.close_app.sleep", new_callable=AsyncMock)
+        self.delay = delay.start()
+        self.addCleanup(delay.stop)
+
     async def test_valid_call_runs_once_and_returns_correct_result(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None):
             app = CoraApp()
@@ -38,6 +43,10 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                 create = AsyncMock()
                 app.live.connection = SimpleNamespace(response=SimpleNamespace(item=SimpleNamespace(create=create)))
                 with patch.object(app, "action_disconnect_and_quit", new_callable=AsyncMock) as close:
+                    order = MagicMock()
+                    order.attach_mock(create, "result")
+                    order.attach_mock(self.delay, "delay")
+                    order.attach_mock(close, "close")
                     event = tool_event()
                     app.handle_live_event(event)
                     app.handle_live_event(event)
@@ -45,6 +54,8 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(app.workers.wait_for_complete(), 2)
                     close.assert_awaited_once()
                     create.assert_awaited_once()
+                    self.delay.assert_awaited_once_with(3)
+                    self.assertEqual([entry[0] for entry in order.mock_calls], ["result", "delay", "close"])
                     result = create.call_args.kwargs["item"]
                     self.assertEqual(result["type"], "function_call_output")
                     self.assertEqual(result["call_id"], "call_close")
