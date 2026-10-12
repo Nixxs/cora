@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app import CoraApp
-from composer import ChatComposer
+from ui.composer import ChatComposer
 from live import CoraLive
 from session_config import build_session_config
 

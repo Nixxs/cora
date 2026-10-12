@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app import CoraApp
-from conversation import Conversation
+from ui.conversation import Conversation
 
 
 class ConversationTests(unittest.TestCase):

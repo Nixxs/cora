@@ -2,7 +2,7 @@
 
 from textual.widgets import RichLog
 
-from chat_widgets import ChatMarkdown
+from .chat_widgets import ChatMarkdown
 
 
 class Conversation:

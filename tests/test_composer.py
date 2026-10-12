@@ -5,7 +5,7 @@ from textual import events
 from textual.document._document import Selection
 
 from app import CoraApp
-from composer import ChatComposer
+from ui.composer import ChatComposer
 
 
 class ComposerTests(unittest.IsolatedAsyncioTestCase):
@@ -82,8 +82,8 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_native_and_windows_clipboard_paste_do_not_send(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
-                patch("composer.sys.platform", "win32"), \
-                patch("composer.pyperclip.paste", return_value="one\r\ntwo\rthree") as paste:
+                patch("ui.composer.sys.platform", "win32"), \
+                patch("ui.composer.pyperclip.paste", return_value="one\r\ntwo\rthree") as paste:
             app = CoraApp()
             async with app.run_test(size=(90, 35)) as pilot:
                 await pilot.pause()

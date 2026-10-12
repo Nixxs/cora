@@ -13,11 +13,11 @@ from textual.worker import WorkerError
 from dotenv import load_dotenv
 from textual import work
 
-from activity import Activity
-from chat_widgets import SelectableRichLog
-from composer import ChatComposer
-from conversation import Conversation
-from keyboard_persistence import KeyboardPersistence
+from ui.activity import Activity
+from ui.chat_widgets import SelectableRichLog
+from ui.composer import ChatComposer
+from ui.conversation import Conversation
+from storage.keyboard_persistence import KeyboardPersistence
 from live import CoraLive
 from tools import create_tool_registry
 

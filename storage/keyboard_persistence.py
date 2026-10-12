@@ -4,8 +4,8 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
 
-from conversation_store import ConversationStore
-from database import build_engine
+from .conversation_store import ConversationStore
+from .database import build_engine
 
 
 class KeyboardPersistence:

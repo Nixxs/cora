@@ -11,10 +11,10 @@ from psycopg import sql
 from textual.widgets import Collapsible
 
 from app import CoraApp
-from composer import ChatComposer
-from conversation_store import ConversationStore
-from database import build_engine
-from keyboard_persistence import KeyboardPersistence
+from ui.composer import ChatComposer
+from storage.conversation_store import ConversationStore
+from storage.database import build_engine
+from storage.keyboard_persistence import KeyboardPersistence
 from migrate import apply_migrations, database_settings
 
 
@@ -22,8 +22,8 @@ class KeyboardPersistenceTests(unittest.TestCase):
     def test_adapter_is_lazy_owns_its_engine_and_reuses_conversation_id(self):
         engine = MagicMock()
         store = MagicMock()
-        with patch("keyboard_persistence.build_engine", return_value=engine) as build, \
-                patch("keyboard_persistence.ConversationStore", return_value=store):
+        with patch("storage.keyboard_persistence.build_engine", return_value=engine) as build, \
+            patch("storage.keyboard_persistence.ConversationStore", return_value=store):
             persistence = KeyboardPersistence()
             build.assert_not_called()
             message_id = uuid4()
@@ -50,7 +50,7 @@ class KeyboardPersistenceTests(unittest.TestCase):
             KeyboardPersistence().record_delivery(uuid4(), "sent")
 
     def test_finish_closes_existing_conversation_without_initialising_unused_storage(self):
-        with patch("keyboard_persistence.build_engine") as build:
+        with patch("storage.keyboard_persistence.build_engine") as build:
             unused = KeyboardPersistence()
             unused.finish_conversation()
             unused.close()
@@ -66,8 +66,8 @@ class KeyboardPersistenceTests(unittest.TestCase):
         engine = MagicMock()
         store = MagicMock()
         store.interrupt_active_conversations.return_value = 2
-        with patch("keyboard_persistence.build_engine", return_value=engine) as build, \
-                patch("keyboard_persistence.ConversationStore", return_value=store):
+        with patch("storage.keyboard_persistence.build_engine", return_value=engine) as build, \
+            patch("storage.keyboard_persistence.ConversationStore", return_value=store):
             persistence = KeyboardPersistence()
             self.assertEqual(persistence.mark_interrupted_conversations(), 2)
             store.interrupt_active_conversations.assert_called_once_with(persistence.conversation_id)
@@ -220,7 +220,7 @@ class KeyboardDatabaseTests(unittest.IsolatedAsyncioTestCase):
         cls.settings = {**settings, "dbname": database}
         with psycopg.connect(**cls.settings, autocommit=True) as connection:
             apply_migrations(connection)
-        with patch("database.database_settings", return_value=cls.settings):
+        with patch("storage.database.database_settings", return_value=cls.settings):
             cls.engine = build_engine()
         cls.addClassCleanup(cls.engine.dispose)
 
@@ -260,7 +260,7 @@ class KeyboardDatabaseTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(app, "exit"):
                 await app.action_disconnect_and_quit()
         self.engine.dispose()
-        with patch("database.database_settings", return_value=self.settings):
+        with patch("storage.database.database_settings", return_value=self.settings):
             reopened = build_engine()
         try:
             records = ConversationStore(reopened).get_messages(persistence.conversation_id)

@@ -9,10 +9,10 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 
-from conversation import Conversation
-from conversation_store import ConversationStore
-from database import build_engine
-from keyboard_persistence import KeyboardPersistence
+from ui.conversation import Conversation
+from storage.conversation_store import ConversationStore
+from storage.database import build_engine
+from storage.keyboard_persistence import KeyboardPersistence
 from migrate import apply_migrations, database_settings
 from test_keyboard_persistence import running_app, submit
 from test_written_answers import CODE, output_event
@@ -172,7 +172,7 @@ class DisplayedChatDatabaseTests(unittest.IsolatedAsyncioTestCase):
         cls.settings = {**settings, "dbname": database}
         with psycopg.connect(**cls.settings, autocommit=True) as connection:
             apply_migrations(connection)
-        with patch("database.database_settings", return_value=cls.settings):
+        with patch("storage.database.database_settings", return_value=cls.settings):
             cls.engine = build_engine()
         cls.addClassCleanup(cls.engine.dispose)
 
@@ -188,7 +188,7 @@ class DisplayedChatDatabaseTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(app, "exit"):
                 await app.action_disconnect_and_quit()
         self.engine.dispose()
-        with patch("database.database_settings", return_value=self.settings):
+        with patch("storage.database.database_settings", return_value=self.settings):
             reopened = build_engine()
         try:
             conversation = ConversationStore(reopened).get_conversation(persistence.conversation_id)

@@ -1,4 +1,4 @@
-"""Conversation/message mappings; SQL migrations create the actual tables."""
+"""Conversation, message and summary mappings; SQL migrations create the tables."""
 
 from __future__ import annotations
 
@@ -62,3 +62,19 @@ class MessageRecord(Base):
     delivery_status: Mapped[str] = mapped_column(Text, server_default="not_applicable")
 
     conversation: Mapped[ConversationRecord] = relationship(back_populates="messages")
+
+
+class ConversationSummaryRecord(Base):
+    __tablename__ = "conversation_summaries"
+    __table_args__ = (
+        CheckConstraint("btrim(text) <> ''", name="conversation_summaries_text_check"),
+        {"schema": "public"},
+    )
+
+    # The conversation UUID is also the primary key: one summary per discussion.
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.conversations.id", name="conversation_summaries_conversation_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

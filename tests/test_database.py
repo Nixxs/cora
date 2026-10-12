@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 
-from database import build_engine, main
+from storage.database import build_engine, main
 
 
 class DatabaseEngineTests(unittest.TestCase):
@@ -14,7 +14,7 @@ class DatabaseEngineTests(unittest.TestCase):
             "host": "127.0.0.1", "port": "55432", "dbname": "example",
             "user": "test_user", "password": "test@:/#only", "connect_timeout": 5,
         }
-        with patch("database.database_settings", return_value=settings), \
+        with patch("storage.database.database_settings", return_value=settings), \
                 patch("psycopg.connect") as connect:
             engine = build_engine()
             try:
@@ -32,7 +32,7 @@ class DatabaseEngineTests(unittest.TestCase):
         engine = MagicMock()
         connection = engine.connect.return_value.__enter__.return_value
         connection.execute.return_value.one.return_value = ("example", "test_user")
-        with patch("database.build_engine", return_value=engine), patch("builtins.print") as output:
+        with patch("storage.database.build_engine", return_value=engine), patch("builtins.print") as output:
             main()
         self.assertEqual(str(connection.execute.call_args.args[0]), "SELECT current_database(), current_user")
         output.assert_called_once_with("SQLAlchemy connected: database=example, user=test_user")
@@ -42,14 +42,14 @@ class DatabaseEngineTests(unittest.TestCase):
     def test_connection_failure_exits_and_disposes_engine(self):
         engine = MagicMock()
         engine.connect.side_effect = SQLAlchemyError("Connection unavailable")
-        with patch("database.build_engine", return_value=engine):
+        with patch("storage.database.build_engine", return_value=engine):
             with self.assertRaisesRegex(SystemExit, "Database connection failed"):
                 main()
         engine.dispose.assert_called_once()
 
     def test_invalid_settings_exit_before_building_engine(self):
-        with patch("database.database_settings", side_effect=ValueError("Missing database settings")), \
-                patch("database.create_engine") as create:
+        with patch("storage.database.database_settings", side_effect=ValueError("Missing database settings")), \
+                patch("storage.database.create_engine") as create:
             with self.assertRaisesRegex(SystemExit, "Missing database settings"):
                 main()
         create.assert_not_called()

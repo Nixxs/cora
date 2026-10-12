@@ -6,7 +6,7 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from models import ConversationRecord, MessageRecord
+from .models import ConversationRecord, ConversationSummaryRecord, MessageRecord
 
 
 class ConversationStore:
@@ -128,3 +128,32 @@ class ConversationStore:
                     MessageRecord.conversation_id == conversation_id
                 ).order_by(MessageRecord.sequence_number)
             ).all())
+
+    def save_summary(self, conversation_id: UUID, text: str) -> ConversationSummaryRecord:
+        """Commit one finished-conversation summary; identical retries are safe."""
+        if not text.strip():
+            raise ValueError("Summary text must not be blank")
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            conversation = session.scalar(
+                select(ConversationRecord).where(
+                    ConversationRecord.id == conversation_id
+                ).with_for_update()
+            )
+            if conversation is None:
+                raise LookupError("Conversation does not exist")
+            if conversation.status not in ("closed", "interrupted"):
+                raise ValueError("Conversation must be closed or interrupted before saving a summary")
+            summary = session.get(ConversationSummaryRecord, conversation_id)
+            if summary is not None:
+                if summary.text != text:
+                    raise ValueError("Conversation already has a different summary")
+            else:
+                summary = ConversationSummaryRecord(conversation_id=conversation_id, text=text)
+                session.add(summary)
+                session.flush()
+        return summary
+
+    def get_summary(self, conversation_id: UUID) -> ConversationSummaryRecord | None:
+        """Return the saved summary, or None when there is none."""
+        with Session(self.engine) as session:
+            return session.get(ConversationSummaryRecord, conversation_id)

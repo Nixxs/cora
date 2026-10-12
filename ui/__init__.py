@@ -1,0 +1,1 @@
+"""Chat widgets, conversation display and activity logging."""

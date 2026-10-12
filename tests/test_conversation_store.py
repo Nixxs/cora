@@ -13,8 +13,8 @@ from psycopg import sql
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
-from conversation_store import ConversationStore
-from database import build_engine
+from storage.conversation_store import ConversationStore
+from storage.database import build_engine
 from migrate import apply_migrations, database_settings
 
 
@@ -44,12 +44,13 @@ class ConversationStoreDatabaseTests(unittest.TestCase):
         cls.settings = {**settings, "dbname": cls.database}
         with psycopg.connect(**cls.settings, autocommit=True) as connection:
             apply_migrations(connection)
-        with patch("database.database_settings", return_value=cls.settings):
+        with patch("storage.database.database_settings", return_value=cls.settings):
             cls.engine = build_engine()
         cls.addClassCleanup(cls.engine.dispose)
 
     def setUp(self):
         with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.conversation_summaries"))
             connection.execute(text("DELETE FROM public.messages"))
             connection.execute(text("DELETE FROM public.conversations"))
         self.store = ConversationStore(self.engine)
@@ -79,7 +80,7 @@ class ConversationStoreDatabaseTests(unittest.TestCase):
         self.save(role="assistant", text="  Answer\n    code  ", channel="screen", delivery_status="not_applicable")
         expected = ["Voice message", "Keyboard message", "  Answer\n    code  "]
         self.engine.dispose()
-        with patch("database.database_settings", return_value=self.settings):
+        with patch("storage.database.database_settings", return_value=self.settings):
             reopened = build_engine()
         try:
             records = ConversationStore(reopened).get_messages(self.conversation_id)
@@ -91,8 +92,8 @@ class ConversationStoreDatabaseTests(unittest.TestCase):
 import json
 import sys
 from uuid import UUID
-from database import build_engine
-from conversation_store import ConversationStore
+from storage.database import build_engine
+from storage.conversation_store import ConversationStore
 engine = build_engine()
 try:
     records = ConversationStore(engine).get_messages(UUID(sys.argv[1]))

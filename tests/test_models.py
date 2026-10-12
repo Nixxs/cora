@@ -9,13 +9,13 @@ from sqlalchemy import CheckConstraint, inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, configure_mappers
 
-from database import build_engine
+from storage.database import build_engine
 from migrate import apply_migrations, database_settings
-from models import Base, ConversationRecord, MessageRecord
+from storage.models import Base, ConversationRecord, ConversationSummaryRecord, MessageRecord
 
 
 class ModelDefinitionTests(unittest.TestCase):
-    def test_mappings_only_describe_the_two_tables(self):
+    def test_mappings_only_describe_the_tables_without_connecting(self):
         with patch("psycopg.connect") as connect:
             configure_mappers()
             conversation = ConversationRecord()
@@ -23,7 +23,11 @@ class ModelDefinitionTests(unittest.TestCase):
                 sequence_number=1, role="user", text="Hello", channel="keyboard"
             ))
             self.assertIs(conversation.messages[0].conversation, conversation)
-            self.assertEqual(set(Base.metadata.tables), {"public.conversations", "public.messages"})
+            summary = ConversationSummaryRecord(conversation_id=uuid4(), text="A brief summary")
+            self.assertEqual(summary.text, "A brief summary")
+            self.assertEqual(set(Base.metadata.tables), {
+                "public.conversations", "public.messages", "public.conversation_summaries",
+            })
             connect.assert_not_called()
 
 
@@ -42,13 +46,14 @@ class ModelDatabaseTests(unittest.TestCase):
         cls.settings = {**settings, "dbname": cls.database}
         with psycopg.connect(**cls.settings, autocommit=True) as connection:
             apply_migrations(connection)
-        with patch("database.database_settings", return_value=cls.settings):
+        with patch("storage.database.database_settings", return_value=cls.settings):
             cls.engine = build_engine()
         cls.addClassCleanup(cls.engine.dispose)
 
     def setUp(self):
         # Only this disposable test database is cleared, never Cora's database.
         with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.conversation_summaries"))
             connection.execute(text("DELETE FROM public.messages"))
             connection.execute(text("DELETE FROM public.conversations"))
         with Session(self.engine) as session, session.begin():
@@ -89,6 +94,11 @@ class ModelDatabaseTests(unittest.TestCase):
         foreign_key = inspector.get_foreign_keys("messages", schema="public")[0]
         self.assertEqual(foreign_key["referred_table"], "conversations")
         self.assertEqual(foreign_key["options"]["ondelete"], "RESTRICT")
+        self.assertEqual(inspector.get_pk_constraint("conversation_summaries", schema="public")["constrained_columns"],
+                 ["conversation_id"])
+        summary_key = inspector.get_foreign_keys("conversation_summaries", schema="public")[0]
+        self.assertEqual(summary_key["referred_table"], "conversations")
+        self.assertEqual(summary_key["options"]["ondelete"], "RESTRICT")
 
     def test_voice_keyboard_and_screen_share_ordered_history_after_commit(self):
         with Session(self.engine) as session, session.begin():
@@ -170,7 +180,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 2)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 3)
 
 
 if __name__ == "__main__":

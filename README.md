@@ -8,6 +8,20 @@ and carefully controlled initiative.
 Development proceeds in small, understandable steps: implement one change, test
 it, then build on the result.
 
+## Project layout
+
+- [ui/](ui/): conversation and activity display, chat widgets, and text composer.
+- [storage/](storage/): database engine, ORM models, conversation storage, and
+	keyboard persistence.
+- Root entrypoints: [app.py](app.py) runs Cora, [migrate.py](migrate.py) applies
+	migrations and defines `database_settings()`, and [summarize.py](summarize.py)
+	generates a summary for one selected conversation.
+- [tools/](tools/): custom tool registration and handlers.
+- [tests/](tests/): unit, headless UI, and opt-in database tests.
+- [examples/](examples/): standalone examples, kept in place with their own CSS
+	where applicable.
+- [migrations/](migrations/): numbered SQL schema migrations.
+
 ## Local database — memory step 1
 
 [compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
@@ -110,14 +124,14 @@ tests unless explicitly enabled. No microphone or API connection is required.
 
 ## SQLAlchemy connection — next small step
 
-[database.py](database.py) builds a SQLAlchemy engine using the existing Psycopg
+[storage/database.py](storage/database.py) builds a SQLAlchemy engine using the existing Psycopg
 driver and the same database settings as the migration runner. Creating an engine
 does not connect; running the standalone check opens a connection and reports the
 database and user, then closes the connection and disposes the engine:
 
 ```powershell
 python -m pip install -r requirements.txt
-python database.py
+python -m storage.database
 ```
 
 Expected default result: `SQLAlchemy connected: database=cora, user=cora`.
@@ -133,7 +147,7 @@ Keep using the existing SQL migrations; SQLAlchemy does not replace or run them.
 
 ## Conversation and message schema — memory step 3
 
-[models.py](models.py) defines `ConversationRecord` and `MessageRecord` using
+[storage/models.py](storage/models.py) defines `ConversationRecord` and `MessageRecord` using
 SQLAlchemy. [0002_create_conversations_and_messages.sql](migrations/0002_create_conversations_and_messages.sql)
 creates the matching tables through the existing migration runner. Importing the
 models does not connect, run migrations, or call `create_all()`.
@@ -153,9 +167,10 @@ messages and prevent deleting a conversation while messages still reference it.
 Timestamps are timezone-aware; end times cannot precede start times.
 
 Run `python migrate.py`, then refresh DBeaver's table list. You should see
-`conversations`, `messages`, and `schema_migrations`. The new application tables
+`conversations`, `messages`, `conversation_summaries`, and `schema_migrations`. The application tables
 start empty and now receive typed user messages and displayed conversation text.
-Processing checkpoints, summaries, extracted memories, and resumption remain later steps.
+Summary storage is described below; generating summaries, extracting memories,
+processing checkpoints, and resumption remain later steps.
 
 [tests/test_models.py](tests/test_models.py) tests ORM/database agreement,
 voice/keyboard ordering, defaults, constraints, and migration reruns. With
@@ -164,7 +179,7 @@ removed afterwards; Cora's own tables are not used for test records.
 
 ## Conversation storage service — memory step 4
 
-[conversation_store.py](conversation_store.py) provides `ConversationStore`:
+[storage/conversation_store.py](storage/conversation_store.py) provides `ConversationStore`:
 
 - `create_conversation(conversation_id)` creates and commits a conversation;
 	retrying its UUID returns the existing record without resetting its metadata.
@@ -211,7 +226,7 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 
 ## Live keyboard persistence — memory step 5
 
-[keyboard_persistence.py](keyboard_persistence.py) gives each app run one logical
+[storage/keyboard_persistence.py](storage/keyboard_persistence.py) gives each app run one logical
 conversation UUID, independent of its model connection. It opens the database
 for the startup check described in step 8; no conversation row is created until
 the first message is saved.
@@ -258,7 +273,7 @@ real tables. A real voice/API smoke test remains a manual check.
 ## Displayed conversation persistence — memory step 6
 
 For memory, Cora records the conversation visible in the chat, not a separate
-archive of Luna's internal events. [conversation.py](conversation.py) records
+archive of Luna's internal events. [ui/conversation.py](ui/conversation.py) records
 grouped user and assistant voice text when the existing display grouping ends
 (speaker change, two-second pause, or shutdown). Displayed written answers are
 saved once, retaining their Markdown/code but removing the internal screen marker.
@@ -335,6 +350,72 @@ simulated unclosed run in a disposable database. To check manually after an actu
 crash, restart Cora and refresh `conversations` in DBeaver: the previous active row
 should now show `interrupted`, with its saved messages still present.
 
+## Summary storage — memory step 9
+
+[0003_create_conversation_summaries.sql](migrations/0003_create_conversation_summaries.sql)
+adds `conversation_summaries`. It stores just the conversation UUID, summary text,
+and timezone-aware creation timestamp. The conversation UUID is its primary key,
+so there can be only one summary per conversation. A foreign key links it to the
+original conversation and prevents orphan summaries or deleting a linked source.
+Blank summary text is rejected. [storage/models.py](storage/models.py) maps this table with
+`ConversationSummaryRecord`; importing the model still does not create tables.
+
+[storage/conversation_store.py](storage/conversation_store.py) adds:
+
+- `save_summary(conversation_id, text)`: commits a summary for a `closed` or
+	`interrupted` conversation. Missing/active conversations are rejected by the
+	service. Identical retries return the existing summary and preserve its timestamp;
+	different text for the same conversation is rejected rather than overwritten.
+- `get_summary(conversation_id)`: returns its saved summary, or `None`.
+
+The same conversation-row lock used by message storage serialises summary saves.
+Existing conversations and messages are not changed. No summary model, model call,
+background processor, embedding, recall, or UI wiring is added in this step.
+The new table remains empty until a summary is explicitly saved; closing a chat
+does not generate one yet. No new Python dependencies are needed.
+
+Apply the new migration with the existing runner, then refresh DBeaver's tables.
+[tests/test_conversation_summaries.py](tests/test_conversation_summaries.py)
+checks finished-conversation eligibility, committed readback after engine reopen,
+same-text retries, conflicting saves, concurrent saves, database constraints,
+and migration reruns. Tests write only to a disposable database, not saved chats.
+
+## Standalone summariser — memory step 10
+
+[summarize.py](summarize.py) manually generates a short summary for **one selected
+finished conversation**. It is not called by Cora and does not run on startup or
+shutdown. Choose a `closed` or `interrupted` conversation UUID from DBeaver, then
+run `python summarize.py YOUR_CONVERSATION_UUID` in the existing environment,
+replacing the placeholder with that UUID. The script uses the existing `.env`
+API settings and `.env.database` database settings. Migrations must already be applied.
+
+The default is Cora's existing backend model, `gpt-6-luna`; `--model MODEL_NAME`
+overrides it for this run. This makes a separate, billable Responses API request
+and sends that conversation's saved text to OpenAI. No web search or application
+tools are supplied. The request asks for at most 200 words covering topics,
+user-stated preferences/facts, decisions, outcomes, and unresolved tasks. Recorded
+conversation text is explicitly untrusted data, not instructions for the summariser.
+Approximate/incomplete voice chunks are included, with completion and delivery
+metadata so uncertain exchanges are not presented as confirmed outcomes.
+
+An existing summary is returned without another model call. Missing, active, or
+empty conversations are rejected before contacting the model. Failed, incomplete,
+blank, or refusal responses are not saved. Input is not silently truncated; an
+oversized conversation may fail rather than generate a summary of a hidden subset.
+There is no automatic API retry, chunking pipeline, or summary replacement policy.
+The script prints the resulting summary and saves it through `save_summary()`;
+refresh `conversation_summaries` in DBeaver to inspect the row.
+
+Database/API clients are cleaned up, and errors do not print private transcript
+text or credentials. If saving fails after generation, a later run may need to
+generate again; check for an existing summary before retrying. No new dependency,
+migration, background processor, chat-context injection, or Cora UI change is added.
+
+[tests/test_summarize.py](tests/test_summarize.py) validates the response fixtures
+against the installed SDK, mocks model calls, and checks saved readback in a
+disposable database. These tests do not send personal conversations to OpenAI;
+an actual summary-quality check requires the manually selected conversation.
+
 ## Current progress
 
 - [x] Textual chat interface with streaming, grouped user and Cora transcripts.
@@ -357,14 +438,14 @@ guarantee that both models have consumed the latest input at the same instant.
 
 ## Conversation display
 
-[conversation.py](conversation.py) owns chat history, transcript grouping and idle
+[ui/conversation.py](ui/conversation.py) owns chat history, transcript grouping and idle
 timers, written-answer filtering, and redraws of the existing chat log.
 [app.py](app.py) creates the component and routes voice, typed input, and backend
 answers to it. The widget layout and selection/copy behavior remain in the UI.
 
 ## Activity display
 
-[activity.py](activity.py) owns the latest 500 diagnostic entries, timestamps,
+[ui/activity.py](ui/activity.py) owns the latest 500 diagnostic entries, timestamps,
 panel summaries/error highlighting, and activity-log redraws. [app.py](app.py)
 routes diagnostics to it and schedules a redraw after the panel expands and
 layout is ready. Activity does not modify conversation history or transcripts.

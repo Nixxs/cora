@@ -1,4 +1,4 @@
-"""Standalone SQLAlchemy connection check; not part of Cora's startup yet."""
+"""SQLAlchemy engine and connection check: python -m storage.database."""
 
 import sys
 

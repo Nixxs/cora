@@ -79,7 +79,10 @@ class MigrationDatabaseTests(unittest.TestCase):
         (self.directory / name).write_text(script, encoding="utf-8")
 
     def test_vector_applies_once_and_history_has_timestamp(self):
-        expected = ["0001_enable_vector.sql", "0002_create_conversations_and_messages.sql"]
+        expected = [
+            "0001_enable_vector.sql", "0002_create_conversations_and_messages.sql",
+            "0003_create_conversation_summaries.sql",
+        ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])
         version = self.connection.execute("SELECT extversion FROM pg_extension WHERE extname = 'vector'").fetchone()

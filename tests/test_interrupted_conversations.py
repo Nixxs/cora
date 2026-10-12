@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from app import CoraApp
-from conversation_store import ConversationStore
-from keyboard_persistence import KeyboardPersistence
+from storage.conversation_store import ConversationStore
+from storage.keyboard_persistence import KeyboardPersistence
 import test_keyboard_persistence as keyboard_tests
 from test_keyboard_persistence import running_app
 

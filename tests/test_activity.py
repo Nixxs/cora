@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from activity import Activity
+from ui.activity import Activity
 from app import CoraApp
 
 
@@ -13,7 +13,7 @@ class ActivityTests(unittest.TestCase):
         self.output = MagicMock()
         self.output.scrollable_content_region.width = 40
         self.activity = Activity(self.panel, self.output)
-        clock = patch("activity.datetime")
+        clock = patch("ui.activity.datetime")
         clock.start().now.return_value.strftime.return_value = "12:34:56"
         self.addCleanup(clock.stop)
 
