@@ -8,6 +8,59 @@ and carefully controlled initiative.
 Development proceeds in small, understandable steps: implement one change, test
 it, then build on the result.
 
+## Local database — memory step 1
+
+[compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
+Only the database runs in Docker; Cora still runs directly on Windows. Cora does
+not connect to the database yet. Message tables, migrations, and enabling the
+`vector` extension in the database are separate next steps.
+
+Prerequisite: Docker Desktop running with Linux containers and Docker Compose.
+Run the following commands from the repository root.
+
+Database settings live in the ignored `.env.database` file, separate from Cora's
+existing `.env` API settings. On a fresh checkout, copy
+[.env.database.example](.env.database.example) to `.env.database`. The supplied
+password is **local-development-only**, not a production credential. Choose a
+private password before storing personal conversations. Do not publish the port
+outside localhost or commit credentials.
+
+Start the database and wait for its health check:
+
+```powershell
+docker compose --env-file .env.database up -d --wait database
+docker compose --env-file .env.database ps
+```
+
+Default connection settings: host `127.0.0.1`, port `5432`, database `cora`, user
+`cora`; password comes from `.env.database`. If port 5432 is already in use,
+change `CORA_DB_PORT` in that file before starting the container.
+
+Open an SQL console (with the default database/user settings):
+
+```powershell
+docker compose --env-file .env.database exec database psql -U cora -d cora
+```
+
+Inspect startup logs or stop the database:
+
+```powershell
+docker compose --env-file .env.database logs --tail 50 database
+docker compose --env-file .env.database down
+```
+
+The named volume `cora_database-data` keeps data when the container is stopped,
+removed, or recreated. Start it again with the same `up` command. **Do not use
+`down --volumes` / `down -v`, delete the volume, or reset Docker Desktop's data:
+these can erase the database.** A persistent volume is not a backup.
+
+Postgres uses the database name, user, and password to initialise an **empty**
+volume. Changing the environment file afterwards does not rename the existing
+database/user or change its password. Existing credentials must be changed with
+SQL; do not delete saved conversations to change configuration. Changing the
+Postgres major version also requires a planned database upgrade, not just an
+image-tag edit.
+
 ## Current progress
 
 - [x] Textual chat interface with streaming, grouped user and Cora transcripts.
