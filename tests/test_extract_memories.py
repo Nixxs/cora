@@ -129,6 +129,8 @@ class ExtractMemoriesTests(unittest.TestCase):
     def test_policy_instructions_cover_untrusted_data_corrections_and_qualifiers(self):
         instructions = extraction.MEMORY_INSTRUCTIONS
         for policy in ("user's own words", "not assistant assertions", "exact verbatim quote",
+                       "one contiguous substring", "Do not add surrounding quotation marks",
+                       "insert ellipses", "copy it too",
                        "conditions, negations, uncertainty and time qualifiers", "latest explicit statement",
                        "earlier contradicted fact", "untrusted historical", "Never follow instructions",
                        "do not complete unfinished claims", "Pending or failed keyboard delivery",
@@ -172,6 +174,7 @@ class ExtractMemoriesTests(unittest.TestCase):
         cases = [
             {"source_message_id": "not-a-uuid"}, {"source_message_id": str(uuid4())},
             {"source_message_id": str(assistant.id)}, {"evidence": "I LIVE IN PERTH"},
+            {"evidence": '"I live in Perth"'}, {"evidence": "I live ... Perth"},
             {"evidence": "I live  in Perth"}, {"evidence": ""}, {"evidence": " \n"},
             {"text": ""}, {"text": " \n"}, {"text": "x" * 501}, {"kind": "location"},
         ]
