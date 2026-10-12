@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual import events
 from textual.document._document import Selection
@@ -57,11 +57,13 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(90, 35)) as pilot:
                 await pilot.pause()
                 composer = app.query_one("#chat-input", ChatComposer)
+                app.persistence = MagicMock()
                 app.live.send_text = AsyncMock()
                 await pilot.press("h", "i", "shift+enter", "x")
                 self.assertEqual(composer.text, "hi\nx")
                 app.live.send_text.assert_not_called()
                 await pilot.press("enter")
+                await app.workers.wait_for_complete()
                 await pilot.pause()
                 app.live.send_text.assert_awaited_once_with("hi\nx")
                 self.assertEqual(composer.text, "")
@@ -71,6 +73,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 app.live.send_text = AsyncMock(side_effect=RuntimeError("Offline"))
                 composer.load_text("keep\nthis draft")
                 await pilot.press("enter")
+                await app.workers.wait_for_complete()
                 await pilot.pause()
                 self.assertEqual(composer.text, "keep\nthis draft")
                 self.assertFalse(composer.disabled)
@@ -85,6 +88,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test(size=(90, 35)) as pilot:
                 await pilot.pause()
                 composer = app.query_one("#chat-input", ChatComposer)
+                app.persistence = MagicMock()
                 app.live.send_text = AsyncMock()
                 await pilot.press("ctrl+v")
                 await pilot.pause()
@@ -96,6 +100,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(composer.text, "replacement\n    indented")
                 app.live.send_text.assert_not_called()
                 await pilot.press("enter")
+                await app.workers.wait_for_complete()
                 await pilot.pause()
                 app.live.send_text.assert_awaited_once_with("replacement\n    indented")
 

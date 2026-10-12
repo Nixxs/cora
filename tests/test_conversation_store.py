@@ -167,6 +167,20 @@ finally:
         self.assertEqual(partial.delivery_status, "not_applicable")
         self.assertEqual(interrupted.status, "interrupted")
 
+    def test_delivery_update_preserves_payload_and_rejects_unknown_or_invalid_updates(self):
+        saved = self.save(delivery_status="pending")
+        updated = self.store.set_delivery_status(self.conversation_id, saved.id, "sent")
+        self.assertEqual(updated.delivery_status, "sent")
+        self.assertEqual((updated.text, updated.sequence_number, updated.created_at),
+                         (saved.text, saved.sequence_number, saved.created_at))
+        with self.assertRaises(LookupError):
+            self.store.set_delivery_status(uuid4(), saved.id, "failed")
+        with self.assertRaises(LookupError):
+            self.store.set_delivery_status(self.conversation_id, uuid4(), "failed")
+        with self.assertRaises(IntegrityError):
+            self.store.set_delivery_status(self.conversation_id, saved.id, "unknown")
+        self.assertEqual(self.store.get_messages(self.conversation_id)[0].delivery_status, "sent")
+
     def test_concurrent_distinct_saves_allocate_unique_sequence_numbers(self):
         with ThreadPoolExecutor(max_workers=4) as executor:
             results = list(executor.map(lambda number: self.save(text=f"Message {number}"), range(8)))

@@ -11,9 +11,9 @@ it, then build on the result.
 ## Local database — memory step 1
 
 [compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
-Only the database runs in Docker; Cora still runs directly on Windows. Cora does
-not connect to the database yet. Migrations enable the `vector` extension and
-create conversation/message tables; application persistence is a later step.
+Only the database runs in Docker; Cora still runs directly on Windows. Cora now
+saves typed user messages to the database. Migrations enable the `vector`
+extension and create conversation/message tables; voice/reply saving is later.
 
 Prerequisite: Docker Desktop running with Linux containers and Docker Compose.
 Run the following commands from the repository root.
@@ -78,7 +78,8 @@ python migrate.py
 The runner reads the separate local database settings, not the API settings.
 Environment variables named `CORA_DB_*` override file values. The host defaults
 to `127.0.0.1`; `CORA_DB_HOST` can override it if needed. Migrations are explicit:
-starting Cora does **not** run them or connect to the database.
+starting Cora does **not** run them. Keyboard persistence connects lazily on the
+first typed submission.
 
 Run the command again safely: already-applied files are checked and skipped.
 All pending migrations and their history commit in one transaction. If SQL fails,
@@ -122,9 +123,8 @@ python database.py
 Expected default result: `SQLAlchemy connected: database=cora, user=cora`.
 The check only runs a `SELECT`: it does not create tables, change migration
 history, or save messages. SQLAlchemy models are defined separately below.
-Cora's startup, voice, keyboard, and shutdown code remain unchanged. This engine
-is synchronous and intended for this standalone check; responsive application
-integration is a separate step.
+This engine is synchronous. The standalone check runs directly; Cora's keyboard
+adapter runs database operations on worker threads, not the UI event loop.
 
 [tests/test_database.py](tests/test_database.py) checks configuration, connection
 cleanup, and failures without a database. Its read-only live connection test is
@@ -154,8 +154,8 @@ Timestamps are timezone-aware; end times cannot precede start times.
 
 Run `python migrate.py`, then refresh DBeaver's table list. You should see
 `conversations`, `messages`, and `schema_migrations`. The new application tables
-are empty: Cora still does not save live messages. Processing checkpoints,
-summaries, extracted memories, and application integration remain later steps.
+start empty and now receive typed user messages. Processing checkpoints,
+summaries, extracted memories, voice/reply saving, and resumption remain later steps.
 
 [tests/test_models.py](tests/test_models.py) tests ORM/database agreement,
 voice/keyboard ordering, defaults, constraints, and migration reruns. With
@@ -178,8 +178,9 @@ removed afterwards; Cora's own tables are not used for test records.
 The caller generates conversation/message UUIDs **before** calling the service
 and reuses them when retrying an uncertain save. An identical message-ID retry
 returns the existing row, preserving its sequence and timestamp. Different text
-or metadata under that ID is rejected, not silently overwritten. Status updates
-are not implemented yet and must not be disguised as save retries.
+or metadata under that ID is rejected, not silently overwritten.
+`set_delivery_status(conversation_id, message_id, delivery_status)` updates only
+delivery metadata; updates must not be disguised as save retries.
 
 Each write commits before returning; failures roll back. A conversation row lock
 serialises saves for that discussion, protecting ordering and duplicate retries.
@@ -187,9 +188,8 @@ The service creates a fresh SQLAlchemy session per operation and returns detache
 records with loaded scalar fields; use `get_messages()` rather than lazy-loading
 the conversation's relationship. The caller owns/disposes the engine.
 
-No new dependencies, migrations, automatic retries, or Cora startup changes are
-needed. This service is synchronous and independently testable; responsive app
-integration and failure/delivery handling are separate next steps.
+The service remains synchronous and independently testable, with no automatic
+retries or schema changes. The keyboard integration below calls it off-thread.
 
 [tests/test_conversation_store.py](tests/test_conversation_store.py) verifies
 committed persistence through an engine reopen and a fresh Python process,
@@ -202,6 +202,50 @@ $env:CORA_RUN_DB_TESTS = "1"
 try { python -m unittest discover -s tests -p test_conversation_store.py -v }
 finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 ```
+
+## Live keyboard persistence — memory step 5
+
+[keyboard_persistence.py](keyboard_persistence.py) gives each app run one logical
+conversation UUID, independent of its model connection. It opens the database
+lazily: no conversation row is created until the first typed message is saved.
+[app.py](app.py) runs submissions in a managed Textual worker and uses
+`asyncio.to_thread()` for storage calls so database work does not block the UI.
+
+Start the database, apply migrations explicitly, then run Cora normally. Send a
+harmless test phrase and refresh DBeaver: `conversations` should contain the new
+discussion and `messages` its typed user text, `channel=keyboard`, `role=user`,
+and an increasing sequence number. No voice transcripts or assistant replies
+are persisted in this step. Nothing is injected into Cora's model context yet.
+
+Typed text is saved as `completed` (the submitted text is final) with delivery
+`pending` **before** the existing model send. If saving fails, the draft is kept
+and nothing is sent; Activity and a notification show the problem without SQL
+parameters or credentials. Retrying the unchanged draft after a database-save
+failure reuses its message UUID, protecting against an uncertain commit.
+
+Successful send calls update delivery to `sent`; failed calls update it to
+`failed` and keep the draft. `sent` means the send routine completed, not that a
+model response or timeline acknowledgement was received. A failed send can have
+partially reached the backend, so there is no automatic resend. Manually sending
+again after a send failure creates a new attempt with a new message UUID, while
+the old record remains available. If the delivery-status update cannot be
+confirmed, saved text remains available and the app warns; an already-sent draft
+is cleared to avoid encouraging accidental resends. A crash may leave `pending`
+delivery, which is an uncertain outcome, not a confirmed failure.
+
+Shutdown rejects new submissions, waits for active keyboard work, then closes
+the model transport and disposes the adapter's database engine. The existing
+close-tool delay and microphone/speaker cleanup remain unchanged. Conversation
+closing/resumption/recovery are not implemented yet; records remain `active`
+with no end timestamp in this first slice. Keep Docker running while typing;
+choose a private database password before entering personal conversation data.
+
+[tests/test_keyboard_persistence.py](tests/test_keyboard_persistence.py) tests
+save-before-send, draft retention, delivery errors, a responsive UI during a
+slow database save, and shutdown ordering. Its actual app-to-Postgres write test
+uses a disposable database with the OpenAI send mocked (`CORA_RUN_DB_TESTS=1`).
+Unit/headless tests stub persistence so ordinary test runs never write to Cora's
+real tables. A real voice/API smoke test remains a manual check.
 
 ## Current progress
 

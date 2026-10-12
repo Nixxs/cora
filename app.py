@@ -1,4 +1,6 @@
+import asyncio
 import sys
+from uuid import UUID, uuid4
 
 import pyperclip
 from textual.actions import SkipAction
@@ -6,6 +8,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
 from textual.widgets import Collapsible, RichLog, Static, Button
+from textual.worker import WorkerError
 
 from dotenv import load_dotenv
 from textual import work
@@ -14,6 +17,7 @@ from activity import Activity
 from chat_widgets import SelectableRichLog
 from composer import ChatComposer
 from conversation import Conversation
+from keyboard_persistence import KeyboardPersistence
 from live import CoraLive
 from tools import create_tool_registry
 
@@ -58,6 +62,9 @@ class CoraApp(App):
         self.conversation = Conversation(
             self.query_one("#chat-output", RichLog), self.set_timer, self.activity.write
         )
+        self.persistence = KeyboardPersistence()
+        self.pending_keyboard_message = None
+        self.keyboard_worker = None
         self.closing = False
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
@@ -69,28 +76,74 @@ class CoraApp(App):
         self.live = CoraLive(tool_schemas=self.tools.schemas)
         self.connection_worker = self.connect_to_cora()
 
-    async def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
+    def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
         message = event.text.strip()
         composer = event.composer
 
-        if not message or composer.disabled:
+        if not message or composer.disabled or self.closing:
             return
 
         composer.disabled = True
+        if self.pending_keyboard_message is None or self.pending_keyboard_message[0] != message:
+            self.pending_keyboard_message = (message, uuid4())
+        message_id = self.pending_keyboard_message[1]
+        self.keyboard_worker = self.submit_keyboard_message(message, message_id, composer)
+
+    @work(group="keyboard-submit")
+    async def submit_keyboard_message(
+        self, message: str, message_id: UUID, composer: ChatComposer
+    ) -> None:
         try:
-            await self.live.send_text(message)
-        except Exception as error:
-            self.activity.write(f"Text send error: {error}", "Text send error")
-            return
+            if self.closing:
+                return
+            try:
+                await asyncio.to_thread(self.persistence.save_message, message_id, message)
+            except Exception as error:
+                # SQL errors may include query parameters: never log private text/credentials.
+                self.activity.write(
+                    f"Database save failed ({type(error).__name__}). Draft kept; nothing sent.",
+                    "Database save failed",
+                )
+                self.notify("Message not sent: database save failed. Draft kept.", severity="error")
+                return
+            self.activity.write(
+                f"Keyboard message saved: conversation_id={self.persistence.conversation_id}, "
+                f"message_id={message_id}",
+                "Keyboard message saved",
+            )
+            if self.closing:
+                # Saved text remains pending; shutdown must not start a new send.
+                return
+            try:
+                await self.live.send_text(message)
+            except Exception as error:
+                # A failed send may have reached the backend partially; do not auto-retry it.
+                self.pending_keyboard_message = None
+                await self.record_keyboard_delivery(message_id, "failed")
+                self.activity.write(f"Text send error: {error}", "Text send error")
+                return
+
+            self.pending_keyboard_message = None
+            await self.record_keyboard_delivery(message_id, "sent")
+            self.conversation.flush_transcript()
+            self.conversation.write_log(f"You: {message}")
+            self.conversation.write_log("")
+            composer.clear()
         finally:
-            composer.disabled = False
-            composer.focus()
+            composer.disabled = self.closing
+            if not self.closing:
+                composer.focus()
 
-        self.conversation.flush_transcript()
-        self.conversation.write_log(f"You: {message}")
-        self.conversation.write_log("")
-
-        composer.clear()
+    async def record_keyboard_delivery(self, message_id: UUID, status: str) -> None:
+        try:
+            await asyncio.to_thread(self.persistence.record_delivery, message_id, status)
+        except Exception as error:
+            self.activity.write(
+                f"Could not confirm database delivery status '{status}' for message_id={message_id} "
+                f"({type(error).__name__}). Text was already saved.",
+                "Delivery status error",
+            )
+            self.notify("Text saved, but database delivery status could not be confirmed.", severity="warning")
 
     @work
     async def connect_to_cora(self) -> None:
@@ -278,14 +331,25 @@ class CoraApp(App):
             return
         self.closing = True
         self.query_one("#close-button", Button).disabled = True
+        self.query_one("#chat-input", ChatComposer).disabled = True
         self.query_one("#chat-status", Static).update("○ Disconnecting...")
 
         try:
+            if self.keyboard_worker is not None:
+                try:
+                    await self.keyboard_worker.wait()
+                except WorkerError:
+                    self.activity.write("Keyboard submission worker stopped", "Keyboard worker stopped")
             await self.live.close()
         finally:
-            if self.connection_worker is not None:
-                self.connection_worker.cancel()
-            self.exit()
+            try:
+                await asyncio.to_thread(self.persistence.close)
+            except Exception as error:
+                self.activity.write(f"Database cleanup failed ({type(error).__name__})", "Database cleanup failed")
+            finally:
+                if self.connection_worker is not None:
+                    self.connection_worker.cancel()
+                self.exit()
 
 if __name__ == "__main__":
     CoraApp().run()

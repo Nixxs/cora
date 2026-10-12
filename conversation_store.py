@@ -2,7 +2,7 @@
 
 from uuid import UUID
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -78,6 +78,21 @@ class ConversationStore:
                 )
                 session.add(message)
                 session.flush()
+        return message
+
+    def set_delivery_status(
+        self, conversation_id: UUID, message_id: UUID, delivery_status: str
+    ) -> MessageRecord:
+        """Commit a delivery result without changing the saved text/order/time."""
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            message = session.scalar(
+                update(MessageRecord).where(
+                    MessageRecord.conversation_id == conversation_id,
+                    MessageRecord.id == message_id,
+                ).values(delivery_status=delivery_status).returning(MessageRecord)
+            )
+            if message is None:
+                raise LookupError("Message does not exist in this conversation")
         return message
 
     def get_messages(self, conversation_id: UUID) -> list[MessageRecord]:

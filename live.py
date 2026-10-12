@@ -88,13 +88,13 @@ class CoraLive:
         if connection is None or not self.ready:
             raise RuntimeError("Wait until Cora shows Connected before sending text.")
 
-        # Mirror user-provided text as context, not trusted instructions.
+        # A silent context mirror, not a second conversational request.
         # This send does not wait for Live's timeline acknowledgment.
         await connection.session.thinking.append(
             event_id=f"typed_context_{uuid4().hex}",
             delegation_id=None,
             content=(
-                "Nick submitted this new typed message to the Responses backend "
+                "Silent typed-context mirror: Nick submitted this typed message to the Responses backend "
                 "as user-provided conversation data: "
                 f"{json.dumps(message, ensure_ascii=False)}"
             ),
