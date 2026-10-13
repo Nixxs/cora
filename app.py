@@ -1,4 +1,6 @@
 import asyncio
+from math import isfinite
+from os import getenv
 import sys
 from collections import deque
 from pathlib import Path
@@ -10,11 +12,11 @@ from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
-from textual.widgets import Collapsible, RichLog, Static, Button
+from textual.widgets import Collapsible, RichLog, Static, Button, TextArea
 from textual.worker import WorkerError, get_current_worker
 
 from dotenv import load_dotenv
-from textual import work
+from textual import events, work
 
 from ui.activity import Activity
 from ui.chat_widgets import SelectableRichLog
@@ -34,6 +36,15 @@ from tools import create_tool_registry
 
 
 load_dotenv()
+
+
+def read_idle_timeout() -> float:
+    """Seconds of inactivity before standby; zero disables the timer."""
+    value = float(getenv("CORA_IDLE_TIMEOUT_SECONDS", "300"))
+    if not isfinite(value) or value < 0:
+        raise ValueError("Idle timeout must be finite and nonnegative")
+    return value
+
 
 class CoraApp(App):
 
@@ -100,6 +111,17 @@ class CoraApp(App):
         self.tool_response_ids = set()
         self.backend_response_ids = {}
         self.last_live_activity = 0.0
+        self.last_idle_activity = monotonic()
+        self.idle_was_busy = False
+        self.idle_standby_timer = None
+        try:
+            self.idle_timeout_seconds = read_idle_timeout()
+        except ValueError:
+            self.idle_timeout_seconds = 0.0
+            self.activity.write(
+                "Invalid CORA_IDLE_TIMEOUT_SECONDS; automatic standby disabled. Use finite seconds >= 0.",
+                "Idle timeout configuration error",
+            )
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
             is_closing=lambda: self.closing or self.reconnecting,
@@ -119,6 +141,38 @@ class CoraApp(App):
                     "Diagnostic trace enabled",
                 )
         self.connection_worker = self.connect_to_cora()
+        if self.idle_timeout_seconds > 0:
+            self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
+
+    def record_idle_activity(self) -> None:
+        self.last_idle_activity = monotonic()
+
+    def on_key(self, event: events.Key) -> None:
+        self.record_idle_activity()
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if isinstance(event.text_area, ChatComposer):
+            self.record_idle_activity()
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        if isinstance(event.text_area, ChatComposer):
+            self.record_idle_activity()
+
+    def check_inactivity(self) -> None:
+        if self.idle_timeout_seconds <= 0 or self.closing or self.reconnecting or self.standby or not self.live.ready:
+            return
+        if self.live_transition_blockers():
+            # No time spent doing work or playing speech counts toward idleness.
+            self.record_idle_activity()
+            self.idle_was_busy = True
+            return
+        if self.idle_was_busy:
+            self.record_idle_activity()
+            self.idle_was_busy = False
+            return
+        if monotonic() - self.last_idle_activity >= self.idle_timeout_seconds:
+            self.activity.write("Idle timeout reached; entering standby.", "Automatic standby")
+            self.action_standby()
 
     def trace_live(self, stage: str, **metadata) -> None:
         trace = self.live_trace
@@ -133,8 +187,11 @@ class CoraApp(App):
 
     def on_unmount(self) -> None:
         self.speaker_level_timer.stop()
+        if self.idle_standby_timer is not None:
+            self.idle_standby_timer.stop()
 
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
+        self.record_idle_activity()
         message = event.text.strip()
         composer = event.composer
 
@@ -197,6 +254,7 @@ class CoraApp(App):
             self.conversation.write_log("")
             composer.clear()
         finally:
+            self.record_idle_activity()
             composer.disabled = self.closing or self.reconnecting
             if not composer.disabled:
                 composer.focus()
@@ -280,9 +338,8 @@ class CoraApp(App):
         if self.live.ready and not self.standby:
             self.request_live_transition(restart=False)
 
-    def request_live_transition(self, restart: bool) -> None:
-        if self.closing or self.reconnecting:
-            return
+    def live_transition_blockers(self) -> list[str]:
+        """Share exactly the same safety checks for manual and automatic standby."""
         connecting = (
             self.connection_worker is not None and not self.connection_worker.is_finished
             and not self.live.ready
@@ -293,7 +350,7 @@ class CoraApp(App):
         )
         speaker = self.live.speaker
         playback_busy = speaker is not None and speaker.is_playback_busy()
-        blockers = [name for name, busy in (
+        return [name for name, busy in (
             ("connection setup", connecting),
             ("typed submission", keyboard_busy),
             ("tool execution", tools_busy),
@@ -302,9 +359,14 @@ class CoraApp(App):
             ("audio playback", playback_busy),
             ("recent speech", self.live.ready and monotonic() - self.last_live_activity < 2.0),
         ) if busy]
+
+    def request_live_transition(self, restart: bool) -> None:
+        if self.closing or self.reconnecting:
+            return
+        blockers = self.live_transition_blockers()
         self.live.trace(
             "transition.request", restart=restart, blockers=blockers,
-            playback_busy=bool(playback_busy),
+            playback_busy="audio playback" in blockers,
         )
         if blockers:
             action = "reconnect" if restart else "enter standby"
@@ -467,14 +529,18 @@ class CoraApp(App):
             "session.input_transcript.delta", "session.output_transcript.delta",
         ):
             self.last_live_activity = monotonic()
+            self.record_idle_activity()
         elif (
             event.type == "session.output_audio.delta" and self.live.speaker is not None
             and not self.live.speaker_muted and self.live.speaker.is_playback_busy()
         ):
             # Output audio is a continuous stream: silent chunks are not speech.
             self.last_live_activity = monotonic()
+            self.record_idle_activity()
 
         if event.type == "session.started":
+            self.record_idle_activity()
+            self.idle_was_busy = False
             self.set_connection_state("active")
             self.activity.write("Live session started", "Connected")
 
@@ -532,6 +598,7 @@ class CoraApp(App):
                 self.pending_backend_work.add(event.delegation_id)
                 self.pending_backend_work.add(response_id or event.delegation_id)
             elif event_type in ("response.completed", "response.failed", "response.incomplete"):
+                self.record_idle_activity()
                 self.pending_backend_work.discard(response_id or event.delegation_id)
                 # A completed response with function calls still needs a tool continuation.
                 if event_type != "response.completed" or response_id not in self.tool_response_ids:
@@ -606,6 +673,7 @@ class CoraApp(App):
             if command_id:
                 if command_id.startswith("typed_response_") and not self.live.pending_text_requests:
                     self.pending_backend_work.discard("typed-request")
+                    self.record_idle_activity()
                 self.activity.write(f"Rejected command: id={command_id}", "API error")
 
         elif event.type == "session.closed":
@@ -639,6 +707,7 @@ class CoraApp(App):
         button.disabled = state not in ("active", "standby") or self.closing or self.reconnecting
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.record_idle_activity()
         if event.button.id == "close-button":
             event.button.disabled = True
             await self.action_disconnect_and_quit()
@@ -663,6 +732,7 @@ class CoraApp(App):
                 self.activity.write(f"Audio control failed ({type(error).__name__})", "Audio control error")
                 self.notify("Could not change audio playback or capture. Check Activity.", severity="error")
             finally:
+                self.record_idle_activity()
                 self.update_audio_controls()
                 button.disabled = self.closing
                 if not self.closing:
@@ -752,6 +822,8 @@ class CoraApp(App):
             return
         self.closing = True
         self.speaker_level_timer.stop()
+        if self.idle_standby_timer is not None:
+            self.idle_standby_timer.stop()
         self.update_speaking_animation()
         self.query_one("#close-button", Button).disabled = True
         self.query_one("#mic-status", Button).disabled = True

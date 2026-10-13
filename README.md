@@ -84,6 +84,12 @@ not change an existing database's password or user. Back up important data.
   draft and asks you to resume, rather than saving or sending a failed request.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
+- **Automatic standby:** after five minutes of inactivity by default, Cora uses
+  the same standby path. Editing, cursor movement, submission, speech, and audio
+  controls reset the clock. Setup, pending responses/tools/submissions, and audible
+  playback prevent sleep. Work finishing or Live resuming gives a fresh full idle
+  period, leaving time to read or think. An untouched draft does not prevent sleep;
+  it is preserved. Click Standby or press Ctrl+R to resume; there is no automatic wake.
 - **Mute audio:** click the microphone or speaker control on the bottom status row.
   Mic mute stops local recording; speaker mute stops playback and discards queued
   speech. Unmuting does not replay discarded audio. Typing stays available and
@@ -107,6 +113,20 @@ available and Cora warns you. A failed send may have partially reached the model
 so there is no automatic resend. If Live drops with unfinished work, Cora warns
 you; reconnect does not replay requests or tools. Check uncertain action outcomes
 before requesting them again.
+
+### Configure inactivity standby
+
+Set `CORA_IDLE_TIMEOUT_SECONDS` in your local `.env` or process environment before
+launching Cora. The default is `300` seconds (five minutes); `0` disables automatic
+standby without affecting manual standby. For a short manual check, use `60`, then
+restore your preferred reading/thinking allowance. Restart Cora to apply a change.
+
+Values must be finite, nonnegative seconds. Invalid values disable automatic
+standby and show a warning in Activity. The timer checks once per second and
+silently waits while Live is busy, including its existing recent-speech safety
+gap. Continuous silent audio does not reset the clock. Background memory work
+does not keep Live connected and can continue with its separate charges.
+There is no farewell speech or automatic resume in this increment.
 
 ## How Cora works
 
@@ -252,6 +272,7 @@ changes transactionally; it does not provide automatic downgrades.
 - A fixed-width speaking animation driven by output audio playback levels.
 - Manual Live reconnect with recent chat context, without closing the local app.
 - Click Active for standby; click Standby or press Ctrl+R to resume with context.
+- Configurable inactivity standby, with full idle grace after work and resume.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -306,9 +327,13 @@ at a time before moving on; standby must close Live, not merely mute audio.
   context, drafts, and mute settings intact. Connecting disables repeat clicks.
   Manual standby confirmed working; mocked click-to-wake tests pass, with a
   real-device wake check still needed.
-8. [ ] **Inactivity standby:** add a configurable idle timeout that considers typing,
+8. [x] **Inactivity standby:** add a configurable idle timeout that considers typing,
   speech, playback, and pending work. Allow reading/thinking pauses; microphone
   silence alone must not trigger sleep during an active task.
+  Defaults to five minutes; `CORA_IDLE_TIMEOUT_SECONDS=0` disables automatic sleep.
+  Reuses manual standby guards, preserves drafts and mute settings, and starts a
+  fresh idle period after work or resume. Deterministic mocked tests pass;
+  real-device inactivity behaviour still needs a manual check.
 9. [ ] **Optional farewell:** offer a brief “I'll leave you to it” before automatic
   standby. Finish playback before closing, respect speaker mute, and cancel sleep
   if the user resumes interacting.
@@ -341,7 +366,7 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Automatic standby, local wake sensors, Signal integration, camera
+Local wake sensors, Signal integration, camera
 support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.
