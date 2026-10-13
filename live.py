@@ -3,59 +3,32 @@ import base64
 import json
 from uuid import uuid4
 
-from microphone import microphone_chunks
 from openai import AsyncOpenAI
+
+from devices.microphone import microphone_chunks
+from devices.speaker import Speaker
+from session_config import build_session_config
 
 
 class CoraLive:
-    def __init__(self):
+    def __init__(self, tool_schemas=None):
+        self.tool_schemas = tool_schemas if tool_schemas is not None else lambda: []
         self.connection = None
         self.ready = False
         self.closed = asyncio.Event()
         self.microphone_task = None
+        self.memory_context = ""
 
-    async def run(self, on_event, on_mic_status):
+    async def run(self, on_event, on_mic_status, on_audio_status=None):
         async with AsyncOpenAI() as client:
             async with client.live.connect() as connection:
                 self.connection = connection
+                speaker = Speaker()
+                playback_failed = False
 
                 try:
                     await connection.session.start(
-                        session={
-                            "model": "gpt-live-1",
-                            "instructions": (
-                                "You are Cora, speaking with Nick. "
-                                "Be natural, conversational and concise. "
-                                "Delegate questions needing current information "
-                                "to your backend, which can search the web."
-                            ),
-                            "delegation": {
-                                "type": "responses",
-                                "responses": {
-                                    "model": "gpt-6-luna",
-                                    "tools": [{"type": "web_search"}],
-                                    "tool_choice": "auto",
-                                    "instructions": (
-                                        "You support Cora in a conversation with Nick. "
-                                        "Answer delegated requests clearly and concisely. "
-                                        "Use web search when current information is needed. "
-                                        "Prefer official sources and include source URLs "
-                                        "in your results. Distinguish verified information "
-                                        "from assumptions; do not claim a search succeeded "
-                                        "unless it did."
-                                    ),
-                                },
-                            },
-                            "audio": {
-                                "format": {
-                                    "type": "audio/pcm",
-                                    "rate": 24000,
-                                },
-                                "output": {
-                                    "voice": "marin",
-                                },
-                            },
-                        }
+                        session=build_session_config(self.tool_schemas(), self.memory_context)
                     )
 
                     self.microphone_task = asyncio.create_task(
@@ -68,6 +41,22 @@ class CoraLive:
                                 self.ready = True
                             elif event.type == "session.closed":
                                 self.ready = False
+                            elif event.type == "session.output_audio.delta" and not playback_failed:
+                                try:
+                                    started = speaker.play(event.delta)
+                                except Exception as error:
+                                    # Keep text/voice input usable if the output device fails.
+                                    playback_failed = True
+                                    try:
+                                        speaker.close()
+                                    except Exception as close_error:
+                                        if on_audio_status is not None:
+                                            on_audio_status(False, f"Speaker cleanup error: {close_error}")
+                                    if on_audio_status is not None:
+                                        on_audio_status(False, f"Audio playback error: {error}")
+                                else:
+                                    if started and on_audio_status is not None:
+                                        on_audio_status(True, "Speaker stream started")
                             on_event(event)
 
                             if event.type == "session.closed":
@@ -90,21 +79,24 @@ class CoraLive:
 
                 finally:
                     self.ready = False
-                    self.connection = None
-                    self.closed.set()
+                    try:
+                        speaker.close()
+                    finally:
+                        self.connection = None
+                        self.closed.set()
 
     async def send_text(self, message: str) -> None:
         connection = self.connection
         if connection is None or not self.ready:
             raise RuntimeError("Wait until Cora shows Connected before sending text.")
 
-        # Mirror user-provided text as context, not trusted instructions.
+        # A silent context mirror, not a second conversational request.
         # This send does not wait for Live's timeline acknowledgment.
         await connection.session.thinking.append(
             event_id=f"typed_context_{uuid4().hex}",
             delegation_id=None,
             content=(
-                "Nick submitted this new typed message to the Responses backend "
+                "Silent typed-context mirror: Nick submitted this typed message to the Responses backend "
                 "as user-provided conversation data: "
                 f"{json.dumps(message, ensure_ascii=False)}"
             ),

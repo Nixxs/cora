@@ -4,3 +4,7 @@ textual[syntax]
 dotenv
 openai[realtime]>=3.28.0
 sounddevice>=0.5.4
+pyperclip>=1.9
+psycopg[binary]>=3.2,<4
+SQLAlchemy>=2.0,<3
+pgvector>=0.5.1,<1
