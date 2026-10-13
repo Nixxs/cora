@@ -68,14 +68,25 @@ not change an existing database's password or user. Back up important data.
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
 - **Check connection state:** the left side of the bottom row shows Active,
-  Connecting, Disconnecting, or Disconnected. It is a future standby/resume button,
-  currently disabled until those controls are implemented. Muting does not change it.
+  Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
+- **Close Live without quitting:** click Active to enter Standby. Wait for speech
+  and pending work to finish first. Cora closes the Live session and local audio,
+  but keeps the app, chat, draft, and mute settings. Press Ctrl+R to resume;
+  clicking Standby to wake is a later increment. Enter during Standby keeps the
+  draft and asks you to resume, rather than saving or sending a failed request.
+  Silent output audio does not count as speech or pending playback. If closing
+  is blocked, the notification and Activity show what Cora is waiting for.
 - **Mute audio:** click the microphone or speaker control on the bottom status row.
   Mic mute stops local recording; speaker mute stops playback and discards queued
   speech. Unmuting does not replay discarded audio. Typing stays available and
   Live stays connected (and billable); captions and written answers remain visible.
 - **Watch playback:** eight audio bars beside the speaker control follow output
   volume. They become a flat line when silent and show “Muted” when playback is muted.
+- **Reconnect Live:** Ctrl+R closes and restarts Live without quitting or clearing
+  the chat. It keeps mute settings and drafts, and restores recent visible chat as
+  context. Wait until Active before sending again. Reconnect refuses while known
+  responses, tools, typing submissions, recent speech, or queued playback are busy;
+  wait for them to finish and try again. This is not standby: Live reconnects immediately.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
@@ -85,7 +96,9 @@ not change an existing database's password or user. Back up important data.
 
 Typed input is saved before sending. If saving or sending fails, the draft stays
 available and Cora warns you. A failed send may have partially reached the model,
-so there is no automatic resend.
+so there is no automatic resend. If Live drops with unfinished work, Cora warns
+you; reconnect does not replay requests or tools. Check uncertain action outcomes
+before requesting them again.
 
 ## How Cora works
 
@@ -115,7 +128,9 @@ context updates are asynchronous. Both models receive the same startup memories.
 Live bills by session duration, per second, including silence and backend waits;
 backend model and tool usage is charged separately. Muting a microphone or speaker
 does not stop that duration charge. Independent text-only operation is not planned
-for this next increment; quiet use will keep Live connected.
+for this next increment; quiet use will keep Live connected. Standby closes Live,
+ending that session's duration billing. Background memory processing can still
+finish and incur its separate charges while the local app remains open.
 
 ## How memory works
 
@@ -146,7 +161,11 @@ after a restart. Already-summarised chats are not automatically re-extracted.
   searches can make separate **billable API requests**. Loading the startup
   snapshot itself makes no extra request.
 - Voice grouping is approximate, and a crash can lose unsaved text. There is no
-  conversation resumption or recovery yet.
+  recovery across app restarts yet. Live reconnect within the running app restores
+  only recent visible text (up to 40 messages / 6,000 UTF-8 bytes), not full audio,
+  hidden backend state, or unfinished tasks. The full displayed chat stays in the UI.
+  A two-second transcript/audio quiet gap is only a reconnect safety hint, not a
+  guaranteed completed speech turn; real voice/network timing still needs testing.
 - Recall and duplicate decisions can be wrong. Similarity is not confidence;
   conflicting statements are kept rather than automatically superseded. Ages,
   plans, and tasks are dated historical information, not necessarily current facts.
@@ -223,6 +242,8 @@ changes transactionally; it does not provide automatic downgrades.
 - Unified terminal voice/text chat, streaming transcripts, and written answers.
 - Separate clickable microphone and speaker mute controls in the bottom status row.
 - A fixed-width speaking animation driven by output audio playback levels.
+- Manual Live reconnect with recent chat context, without closing the local app.
+- Click Active for close-only standby; resume explicitly with Ctrl+R.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -254,20 +275,28 @@ at a time before moving on; standby must close Live, not merely mute audio.
 4. [x] **Clear state display:** reuse the left-hand connection indicator for active,
   connecting, disconnecting, and disconnected states, with labels and distinct colours.
   Keep microphone and speaker controls on the right, with labels as well as colour.
-  The state display is a disabled button, ready for manual standby/resume in step 7;
-  a distinct standby state will be added with that behaviour, not shown prematurely.
+  The Active state button now closes Live, with a distinct Standby state after
+  confirmed closure; transition and disconnected states remain non-clickable.
 5. [x] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
   control, driven by playback levels. Show a flat line when silent and a muted label
   when disabled; update Textual on its UI thread, not from the audio callback.
   Eight bars update at 20 FPS from lightweight playback-level snapshots, without
   relaying out the chat. Mocked tests pass; live animation/audio alignment needs a check.
-6. [ ] **Reconnect with context:** close and restart Live without quitting the UI.
+6. [x] **Reconnect with context:** close and restart Live without quitting the UI.
   Restore relevant conversation context, keep the logical conversation and mute
   settings, and guard against duplicate tool actions or lost pending work.
+  Ctrl+R restarts Live with bounded visible-text history, preserving drafts, mute
+  settings, the database conversation, and tool-call deduplication. Known pending
+  work blocks reconnect; interrupted requests are reported, never automatically
+  replayed. Mocked tests pass; real voice/text continuity still needs a check.
 7. [ ] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
   path. Keep the local app open with Live closed; typing must explicitly wake Live
   or clearly request resume, not silently fail. Standby is not a connection error.
   Enable the left-hand state button: click Active to sleep and Standby to resume.
+  Close-only half implemented: click Active to close Live, keep the app/chat open,
+  and show Standby only after confirmed session closure and cleanup. Ctrl+R can
+  resume using the existing reconnect path; click-to-wake remains pending.
+  Mocked close/resume tests pass; real-device standby still needs a check.
 8. [ ] **Inactivity standby:** add a configurable idle timeout that considers typing,
   speech, playback, and pending work. Allow reading/thinking pauses; microphone
   silence alone must not trigger sleep during an active task.
@@ -303,8 +332,8 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Standby/wake-up, Signal integration, camera support, and
-autonomous initiative are not built yet. Speaker mute has been checked in a live
+Click-to-wake, automatic standby, local wake sensors, Signal integration, camera
+support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.
 The examples are standalone experiments, not integrated Cora features.

@@ -98,7 +98,8 @@ class SpeakerMuteTests(unittest.IsolatedAsyncioTestCase):
                 "type": "message", "role": "user",
                 "content": [{"type": "input_text", "text": "Hello quietly"}],
             })
-            connection.response.create.assert_awaited_once_with()
+            connection.response.create.assert_awaited_once()
+            self.assertTrue(connection.response.create.call_args.kwargs["event_id"].startswith("typed_response_"))
 
 
 class SpeakerQueueTests(unittest.TestCase):

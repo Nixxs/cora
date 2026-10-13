@@ -17,14 +17,20 @@ class CoraLive:
         self.connection = None
         self.ready = False
         self.closed = asyncio.Event()
+        self.session_close_confirmed = False
         self.microphone_task = None
         self.memory_context = ""
+        self.conversation_history = []
+        self.pending_text_requests = set()
         self.speaker = None
         self.speaker_muted = False
         self.microphone_muted = False
         self.on_mic_status = None
 
     async def run(self, on_event, on_mic_status, on_audio_status=None):
+        # Reuse the transport owner, but never reuse a previous run's close signal.
+        self.closed.clear()
+        self.session_close_confirmed = False
         async with AsyncOpenAI() as client:
             async with client.live.connect() as connection:
                 self.connection = connection
@@ -35,7 +41,9 @@ class CoraLive:
 
                 try:
                     await connection.session.start(
-                        session=build_session_config(self.tool_schemas(), self.memory_context)
+                        session=build_session_config(
+                            self.tool_schemas(), self.memory_context, self.conversation_history,
+                        )
                     )
 
                     self.microphone_task = asyncio.create_task(
@@ -48,6 +56,14 @@ class CoraLive:
                                 self.ready = True
                             elif event.type == "session.closed":
                                 self.ready = False
+                                self.session_close_confirmed = True
+                            elif event.type == "response.event":
+                                if event.event.get("type") in (
+                                    "response.created", "response.failed", "response.incomplete",
+                                ):
+                                    self.pending_text_requests.discard(getattr(event, "client_event_id", None))
+                            elif event.type == "error":
+                                self.pending_text_requests.discard(getattr(event.error, "client_event_id", None))
                             elif (
                                 event.type == "session.output_audio.delta"
                                 and not playback_failed and not self.speaker_muted
@@ -87,6 +103,7 @@ class CoraLive:
                         self.speaker = None
                         self.on_mic_status = None
                         self.connection = None
+                        self.pending_text_requests.clear()
                         self.closed.set()
 
     def set_speaker_muted(self, muted: bool) -> None:
@@ -142,20 +159,28 @@ class CoraLive:
             }
         )
         # Adding a message alone does not ask the backend to answer.
-        await connection.response.create()
+        request_id = f"typed_response_{uuid4().hex}"
+        self.pending_text_requests.add(request_id)
+        try:
+            await connection.response.create(event_id=request_id)
+        except Exception:
+            self.pending_text_requests.discard(request_id)
+            raise
 
     async def close(self):
-        if self.connection is None:
+        connection = self.connection
+        if connection is None:
             return
 
         self.ready = False
-        await self.connection.session.close()
-
         try:
+            await connection.session.close()
             await asyncio.wait_for(self.closed.wait(), timeout=5)
         except TimeoutError:
-            if self.connection is not None:
-                await self.connection.close()
+            await connection.close()
+        except Exception:
+            await connection.close()
+            raise
 
     async def send_microphone(self, connection, on_mic_status):
         mic_working = False

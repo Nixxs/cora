@@ -18,6 +18,34 @@ class Conversation:
         self.log_entries = []
         self.written_item_ids = set()
 
+    def get_reconnect_history(self) -> list[dict]:
+        """Bounded visible chat, not tool calls, internal reasoning, or unsent drafts."""
+        history = []
+        remaining = 6000
+        for entry in reversed(self.log_entries):
+            if isinstance(entry, ChatMarkdown):
+                role, text = "assistant", entry.markup
+            elif isinstance(entry, str) and entry.startswith("You: "):
+                role, text = "user", entry[5:]
+            elif isinstance(entry, str) and entry.startswith("Cora: "):
+                role, text = "assistant", entry[6:]
+            else:
+                continue
+            if not text.strip():
+                continue
+            # A UTF-8 byte cap is a conservative token budget, including non-ASCII text.
+            text = text.encode("utf-8")[-remaining:].decode("utf-8", errors="ignore")
+            if not text:
+                continue
+            history.append({
+                "type": "message", "role": role,
+                "content": [{"type": "input_text" if role == "user" else "output_text", "text": text}],
+            })
+            remaining -= len(text.encode("utf-8"))
+            if remaining == 0 or len(history) == 40:
+                break
+        return list(reversed(history))
+
     def write_log(self, message: str) -> None:
         self.flush_transcript()
         self.log_entries.append(message)

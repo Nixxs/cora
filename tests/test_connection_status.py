@@ -21,7 +21,8 @@ class ConnectionStatusTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(status.label), "● Active")
             self.assertTrue(status.has_class("state-active"))
             self.assertFalse(status.has_class("state-disconnected"))
-            self.assertIn("Standby controls are not available yet", status.tooltip)
+            self.assertIn("enter standby", status.tooltip)
+            self.assertFalse(status.disabled)
 
             app.handle_live_event(SimpleNamespace(
                 type="error", error=SimpleNamespace(message="Rejected command", client_event_id=None),

@@ -15,6 +15,8 @@ class Speaker:
         self.chunks = Queue(maxsize=250)
         self.pending = bytearray()
         self._playback_level = (0.0, 0.0)
+        self._audible_samples_queued = 0
+        self._audible_samples_played = 0
 
     def play(self, audio: str) -> bool:
         """Queue a base64 chunk; return True when playback first starts."""
@@ -23,9 +25,13 @@ class Speaker:
             return False
         if len(chunk) % 2:
             raise ValueError("Speaker received an incomplete PCM16 sample.")
+        audible_samples = sum(sample != 0 for (sample,) in iter_unpack("<h", chunk))
+        # Publish before the queue item so the audio callback cannot get ahead.
+        self._audible_samples_queued += audible_samples
         try:
             self.chunks.put_nowait(chunk)
         except Full as error:
+            self._audible_samples_queued -= audible_samples
             raise RuntimeError("Speaker audio is backing up.") from error
 
         if self.stream is not None:
@@ -56,6 +62,7 @@ class Speaker:
         audio = bytes(self.pending[:count]) + bytes(needed - count)
         outdata[:] = audio
         del self.pending[:count]
+        self._audible_samples_played += sum(sample != 0 for (sample,) in iter_unpack("<h", audio))
         # Publish one immutable snapshot; never call UI code on the audio thread.
         level = (
             sqrt(sum(sample * sample for (sample,) in iter_unpack("<h", audio)) / frames) / 32768
@@ -69,6 +76,13 @@ class Speaker:
         if self.stream is None or not self.stream.active or monotonic() - sampled_at > 0.15:
             return 0.0
         return level
+
+    def is_playback_busy(self) -> bool:
+        """Non-silent samples queued or playing; continuous zero PCM is idle."""
+        return (
+            self._audible_samples_queued > self._audible_samples_played
+            or self.get_playback_level() > 0
+        )
 
     def close(self) -> None:
         # Abort queued speech on shutdown rather than speaking after exit.
@@ -86,3 +100,6 @@ class Speaker:
                 self.chunks.get_nowait()
             except Empty:
                 break
+        # Reset only after abort/close has stopped the callback thread.
+        self._audible_samples_queued = 0
+        self._audible_samples_played = 0
