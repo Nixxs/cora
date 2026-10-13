@@ -235,7 +235,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(app.idle_standby_timer, "stop") as stop:
                 await app.action_disconnect_and_quit()
                 stop.assert_called_once()
-                app.on_unmount()
+                await app.on_unmount()
                 self.assertEqual(stop.call_count, 2)
 
     @patch("app.monotonic", return_value=1000)

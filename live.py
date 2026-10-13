@@ -18,6 +18,8 @@ class CoraLive:
         self.on_trace = on_trace
         self.connection = None
         self.ready = False
+        self.started = asyncio.Event()
+        self.opening_microphone = None
         self.closed = asyncio.Event()
         self.session_close_confirmed = False
         self.microphone_task = None
@@ -36,6 +38,7 @@ class CoraLive:
     async def run(self, on_event, on_mic_status, on_audio_status=None):
         # Reuse the transport owner, but never reuse a previous run's close signal.
         self.closed.clear()
+        self.started.clear()
         self.session_close_confirmed = False
         async with AsyncOpenAI() as client:
             async with client.live.connect() as connection:
@@ -61,6 +64,11 @@ class CoraLive:
                             self.trace_server_event("receive.before", event)
                             if event.type == "session.started":
                                 self.ready = True
+                                self.started.set()
+                                if self.microphone_task is None:
+                                    self.microphone_task = asyncio.create_task(
+                                        self.send_microphone(connection, on_mic_status)
+                                    )
                             elif event.type == "session.closed":
                                 self.ready = False
                                 self.session_close_confirmed = True
@@ -108,9 +116,13 @@ class CoraLive:
 
                     finally:
                         await self.stop_microphone()
+                        if self.opening_microphone is not None:
+                            await self.opening_microphone.stop()
+                            self.opening_microphone = None
 
                 finally:
                     self.ready = False
+                    self.started.clear()
                     try:
                         speaker.close()
                     finally:
@@ -236,6 +248,9 @@ class CoraLive:
         if self.microphone_muted == muted:
             return
         self.microphone_muted = muted
+        if muted and self.opening_microphone is not None:
+            await self.opening_microphone.stop()
+            self.opening_microphone = None
         connection = self.connection
         await self.stop_microphone()
         if connection is not None and self.connection is connection and self.ready:
@@ -323,6 +338,7 @@ class CoraLive:
     async def send_microphone(self, connection, on_mic_status):
         mic_working = False
         chunk_count = 0
+        opening = self.opening_microphone
 
         try:
             if self.microphone_muted:
@@ -333,7 +349,12 @@ class CoraLive:
                     await connection.session.input_audio.append(audio=silence)
                     await asyncio.sleep(0.02)
             else:
-                async with aclosing(microphone_chunks()) as chunks:
+                if opening is not None:
+                    # Continue the existing local capture; do not open a second
+                    # device or send buffered room audio before Live is ready.
+                    await self.started.wait()
+                source = opening.chunks() if opening is not None else microphone_chunks()
+                async with aclosing(source) as chunks:
                     async for chunk in chunks:
                         if self.microphone_muted:
                             break
@@ -352,6 +373,10 @@ class CoraLive:
             raise
 
         finally:
+            if opening is not None:
+                await opening.stop()
+                if self.opening_microphone is opening:
+                    self.opening_microphone = None
             on_mic_status(
                 False,
                 "microphone task stopped"

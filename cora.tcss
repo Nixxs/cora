@@ -98,7 +98,7 @@ Screen > .screen--selection {
     color: #e0c080;
 }
 
-#mic-status, #speaker-status {
+#mic-status, #speaker-status, #wake-status {
     width: auto;
     min-width: 0;
     height: 1;
@@ -112,13 +112,23 @@ Screen > .screen--selection {
 }
 
 #mic-status:hover, #mic-status:focus,
-#speaker-status:hover, #speaker-status:focus {
+#speaker-status:hover, #speaker-status:focus,
+#wake-status:hover, #wake-status:focus {
     background: #202838;
     color: #e0e6ef;
 }
 
 #mic-status.audio-muted, #speaker-status.audio-muted {
     color: #f0a38a;
+}
+
+#wake-status.wake-listening {
+    color: #8fcca6;
+}
+
+#speaker-status {
+    width: 12;
+    text-align: left;
 }
 
 #speaker-level {
