@@ -36,7 +36,8 @@ class KeyboardResponseTests(unittest.IsolatedAsyncioTestCase):
             "type": "message", "role": "user",
             "content": [{"type": "input_text", "text": message}],
         })
-        live.connection.response.create.assert_awaited_once_with()
+        live.connection.response.create.assert_awaited_once()
+        self.assertTrue(live.connection.response.create.call_args.kwargs["event_id"].startswith("typed_response_"))
 
     async def test_queued_duplicate_submission_while_busy_does_not_send_twice(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None):

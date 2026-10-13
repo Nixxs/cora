@@ -1,5 +1,11 @@
 import asyncio
+from math import isfinite
+from os import getenv
 import sys
+from collections import deque
+from dataclasses import dataclass
+from pathlib import Path
+from time import monotonic
 from uuid import UUID, uuid4
 
 import pyperclip
@@ -7,11 +13,11 @@ from textual.actions import SkipAction
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
-from textual.widgets import Collapsible, RichLog, Static, Button
+from textual.widgets import Collapsible, RichLog, Static, Button, TextArea
 from textual.worker import WorkerError, get_current_worker
 
 from dotenv import load_dotenv
-from textual import work
+from textual import events, work
 
 from ui.activity import Activity
 from ui.chat_widgets import SelectableRichLog
@@ -20,6 +26,7 @@ from ui.conversation import Conversation
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
+from storage.live_trace import LiveTrace
 from memory.store import MemoryStore
 from live import CoraLive
 from memory.extract_memories import extract_memories
@@ -27,15 +34,37 @@ from memory.embed_memory import embed_memory
 from memory.deduplicate_memory import deduplicate_memory
 from memory.summarize import summarize_conversation
 from tools import create_tool_registry
+from wake.listener import WakeListener
+from wake.detector import WAKE_NAMES
 
 
 load_dotenv()
 
+
+def read_idle_timeout() -> float:
+    """Seconds of inactivity before standby; zero disables the timer."""
+    value = float(getenv("CORA_IDLE_TIMEOUT_SECONDS", "300"))
+    if not isfinite(value) or value < 0:
+        raise ValueError("Idle timeout must be finite and nonnegative")
+    return value
+
+
+@dataclass
+class StandbyAlert:
+    event_id: str
+    started_at: float
+    accepted: bool = False
+    last_output_at: float | None = None
+    quiet_since: float | None = None
+
+
 class CoraApp(App):
 
+    live_trace = None
     CSS_PATH = "cora.tcss"
     BINDINGS = [
         ("ctrl+x", "disconnect_and_quit", "Quit"),
+        ("ctrl+r", "reconnect", "Reconnect"),
         Binding("ctrl+c", "copy_chat_selection", "Copy selected text", priority=True, show=False),
     ]
 
@@ -47,8 +76,15 @@ class CoraApp(App):
             with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
                 yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
             with HorizontalGroup(id="status-bar"):
-                yield Static("○ Not connected", id="chat-status")
-                yield Static("🎙× Mic", id="mic-status")
+                yield Button(
+                    "○ Disconnected", id="chat-status", disabled=True,
+                    classes="state-disconnected",
+                    tooltip="Live is disconnected. Ctrl+R to reconnect.",
+                )
+                yield Button("🎙× Mic", id="mic-status", tooltip="Mute microphone")
+                yield Button("🔊 Speaker", id="speaker-status", tooltip="Mute speaker")
+                yield Static("────────", id="speaker-level")
+                yield Button("Wake off", id="wake-status", tooltip="Enable local Hey Cora listening in standby")
             with Vertical(id="input-frame"):
                 yield ChatComposer(
                     placeholder="Type a message to Cora...",
@@ -62,6 +98,7 @@ class CoraApp(App):
         self.query_one("#chat-panel").border_title = "CORA"
         self.query_one("#chat-input", ChatComposer).focus()
         self.mic_idle_timer = None
+        self.mic_working = False
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
             self.query_one("#activity-output", RichLog),
@@ -79,21 +116,296 @@ class CoraApp(App):
         self.startup_worker = None
         self.summary_worker = None
         self.closing = False
+        self.reconnecting = False
+        self.standby = False
+        self.reconnect_worker = None
+        self.startup_complete = False
+        self.pending_backend_work = set()
+        self.tool_response_ids = set()
+        self.backend_response_ids = {}
+        self.last_live_activity = 0.0
+        self.last_idle_activity = monotonic()
+        self.idle_was_busy = False
+        self.idle_standby_timer = None
+        self.standby_farewell_enabled = getenv("CORA_STANDBY_FAREWELL", "0").strip() == "1"
+        self.standby_alert = None
+        self.standby_alert_worker = None
+        self.wake_enabled = getenv("CORA_WAKE_ENABLED", "0").strip() == "1"
+        self.wake_debug = getenv("CORA_WAKE_DEBUG", "1").strip() == "1"
+        self.wake_listener = None
+        self.wake_listening = False
+        self.wake_failed = False
+        self.wake_reconnecting = False
+        self.wake_retry_at = 0.0
+        self.wake_response_deadline = None
+        self.wake_transcript = ""
+        self.wake_connection_timer = None
+        self.wake_idle_timer = self.set_interval(1.0, self.check_wake_timeout)
+        try:
+            self.idle_timeout_seconds = read_idle_timeout()
+        except ValueError:
+            self.idle_timeout_seconds = 0.0
+            self.activity.write(
+                "Invalid CORA_IDLE_TIMEOUT_SECONDS; automatic standby disabled. Use finite seconds >= 0.",
+                "Idle timeout configuration error",
+            )
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
-            is_closing=lambda: self.closing,
+            is_closing=lambda: self.closing or self.reconnecting,
             shutdown=lambda: self.action_disconnect_and_quit(),
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
         )
-        self.live = CoraLive(tool_schemas=self.tools.schemas)
+        self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
+        self.wake_control = self.query_one("#wake-status", Button)
+        self.speaker_level_indicator = self.query_one("#speaker-level", Static)
+        self.speaker_levels = deque("────────", maxlen=8)
+        self.speaker_level_timer = self.set_interval(0.05, self.update_speaking_animation)
+        if self.live_trace is not None:
+            self.trace_live("app.started")
+            if not self.live_trace.failed:
+                self.activity.write(
+                    f"Diagnostic trace: {self.live_trace.path.name} (IDs/state only; no chat text or audio).",
+                    "Diagnostic trace enabled",
+                )
         self.connection_worker = self.connect_to_cora()
+        self.update_wake_control()
+        if self.idle_timeout_seconds > 0:
+            self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
+
+    def record_idle_activity(self, *, user_activity: bool = False) -> None:
+        self.last_idle_activity = monotonic()
+        if user_activity:
+            self.wake_response_deadline = None
+            self.cancel_standby_alert("User activity; staying active.")
+
+    def update_wake_control(self) -> None:
+        button = self.wake_control
+        if not button.is_mounted:
+            return
+        failed = self.wake_failed or (self.wake_listener is not None and self.wake_listener.error is not None)
+        button.label = "Wake error" if failed else "Wake on" if self.wake_enabled else "Wake off"
+        button.tooltip = (
+            "Wake listener unavailable. See Activity; toggle off/on to retry." if failed
+            else "Privacy muted: all microphone capture is off." if self.live.microphone_muted
+            else "Listening locally for Hey Cora; no audio sent to OpenAI." if self.wake_listening
+            else "Wake enabled; listens locally only in standby." if self.wake_enabled
+            else "Enable local Hey Cora listening in standby."
+        )
+        button.set_class(self.wake_listening, "wake-listening")
+        button.disabled = self.closing
+        button.refresh(layout=True)
+
+    def start_wake_listener(self) -> None:
+        if (not self.wake_enabled or self.wake_failed or not self.standby or self.closing or self.reconnecting
+                or self.live.microphone_muted or self.live.connection is not None
+                or self.wake_listener is not None):
+            self.update_wake_control()
+            return
+        self.wake_listener = WakeListener(
+            self.handle_wake, self.handle_wake_status,
+            cooldown=max(0.0, self.wake_retry_at - monotonic()),
+            on_debug=self.handle_wake_diagnostic if self.wake_debug else None,
+        )
+        self.wake_listener.start()
+        self.update_wake_control()
+
+    async def stop_wake_listener(self) -> None:
+        listener = self.wake_listener
+        self.wake_listener = None
+        self.wake_listening = False
+        if listener is not None:
+            await listener.stop()
+            if self.live.opening_microphone is listener:
+                self.live.opening_microphone = None
+        if self.is_mounted:
+            self.update_wake_control()
+
+    def handle_wake_status(self, working: bool, message: str) -> None:
+        if self.closing:
+            return
+        self.wake_listening = working
+        if not working:
+            self.wake_failed = True
+        self.activity.write(message, "Local wake ready" if working else "Local wake unavailable")
+        self.update_wake_control()
+        if not working and self.wake_reconnecting:
+            self.abort_wake_connection()
+
+    def handle_wake_diagnostic(self, message: str) -> None:
+        if not self.closing and not self.live.microphone_muted and self.wake_enabled:
+            # Temporary local-only diagnostics: not chat, database, or Live trace.
+            self.activity.write(f"[wake] {message}", "Local wake diagnostics")
+
+    def handle_wake(self, listener: WakeListener) -> bool:
+        if (listener is not self.wake_listener or not self.wake_enabled
+                or self.live.microphone_muted or not self.standby
+                or self.closing or self.reconnecting):
+            return False
+        self.wake_listening = False
+        self.wake_retry_at = monotonic() + 5
+        self.live.opening_microphone = listener
+        self.record_idle_activity()
+        self.request_live_transition(restart=True, from_wake=True)
+        if not self.reconnecting:
+            self.live.opening_microphone = None
+            return False
+        self.activity.write("Hey Cora detected locally; buffering opening speech.", "Local wake detected")
+        self.wake_connection_timer = self.set_timer(15.0, self.abort_wake_connection)
+        self.update_wake_control()
+        return True
+
+    @work(group="wake-abort")
+    async def abort_wake_connection(self) -> None:
+        if not self.wake_reconnecting or self.live.ready or self.closing:
+            return
+        self.wake_reconnecting = False
+        self.wake_failed = True
+        self.wake_response_deadline = None
+        if self.reconnect_worker is not None and not self.reconnect_worker.is_finished:
+            self.reconnect_worker.cancel()
+            try:
+                await self.reconnect_worker.wait()
+            except WorkerError:
+                pass
+        await self.stop_wake_listener()
+        if self.connection_worker is not None:
+            self.connection_worker.cancel()
+            try:
+                await self.connection_worker.wait()
+            except WorkerError:
+                pass
+        if self.live.connection is None:
+            self.standby = True
+            self.set_connection_state("standby")
+        self.activity.write("Wake connection failed/timed out; audio discarded. Resume manually or toggle Wake to retry.", "Wake cancelled")
+        # No automatic retries after a connection/capture failure.
+
+    def check_wake_timeout(self) -> None:
+        deadline = self.wake_response_deadline
+        if deadline is None or self.closing or self.reconnecting or not self.live.ready:
+            return
+        if monotonic() >= deadline and not self.live_transition_blockers():
+            self.wake_response_deadline = None
+            self.activity.write("No request after wake; returning to standby.", "Possible false wake")
+            self.action_standby()
+
+    def on_key(self, event: events.Key) -> None:
+        self.record_idle_activity(user_activity=True)
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if isinstance(event.text_area, ChatComposer):
+            self.record_idle_activity(user_activity=True)
+
+    def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
+        if isinstance(event.text_area, ChatComposer):
+            self.record_idle_activity(user_activity=True)
+
+    def check_inactivity(self) -> None:
+        if self.standby_alert is not None:
+            self.check_standby_alert()
+            return
+        if self.idle_timeout_seconds <= 0 or self.closing or self.reconnecting or self.standby or not self.live.ready:
+            return
+        if self.live_transition_blockers():
+            # No time spent doing work or playing speech counts toward idleness.
+            self.record_idle_activity()
+            self.idle_was_busy = True
+            return
+        if self.idle_was_busy:
+            self.record_idle_activity()
+            self.idle_was_busy = False
+            return
+        if monotonic() - self.last_idle_activity >= self.idle_timeout_seconds:
+            if self.standby_farewell_enabled and not self.live.speaker_muted:
+                alert = StandbyAlert(f"standby_alert_{uuid4().hex}", monotonic())
+                self.standby_alert = alert
+                self.activity.write("Standby heads-up; interact to stay active.", "Standby heads-up")
+                self.standby_alert_worker = self.send_standby_alert(alert)
+                return
+            self.activity.write("Idle timeout reached; entering standby.", "Automatic standby")
+            self.action_standby()
+
+    @work(group="standby-alert")
+    async def send_standby_alert(self, alert: StandbyAlert) -> None:
+        try:
+            await asyncio.wait_for(self.live.send_standby_alert(alert.event_id), timeout=5)
+        except Exception as error:
+            if self.standby_alert is alert:
+                self.cancel_standby_alert(
+                    f"Heads-up send failed ({type(error).__name__}); staying active.", cancel_send=False,
+                )
+
+    def cancel_standby_alert(self, reason: str = "", *, cancel_send: bool = True) -> None:
+        if self.standby_alert is None:
+            return
+        self.standby_alert = None
+        if cancel_send and self.standby_alert_worker is not None and not self.standby_alert_worker.is_finished:
+            self.standby_alert_worker.cancel()
+        self.record_idle_activity()
+        self.idle_was_busy = False
+        if reason:
+            self.activity.write(reason, "Standby cancelled")
+
+    def check_standby_alert(self) -> None:
+        alert = self.standby_alert
+        if alert is None:
+            return
+        if self.closing or self.reconnecting or self.standby or not self.live.ready or self.idle_timeout_seconds <= 0:
+            self.cancel_standby_alert()
+            return
+        blockers = self.live_transition_blockers()
+        if any(name not in ("standby heads-up", "audio playback", "recent speech") for name in blockers):
+            self.cancel_standby_alert("New work; staying active.")
+            return
+        now = monotonic()
+        if now - alert.started_at >= 30:
+            # No authoritative speech-done event exists. Never close on timeout.
+            self.cancel_standby_alert("Heads-up wait timed out; staying active.")
+            return
+        if not alert.accepted or alert.last_output_at is None:
+            return
+        if "audio playback" in blockers or now - alert.last_output_at < 2:
+            alert.quiet_since = None
+            return
+        if alert.quiet_since is None:
+            alert.quiet_since = now
+            return
+        if now - alert.quiet_since >= 3:
+            self.standby_alert = None
+            self.activity.write("Heads-up finished; entering standby.", "Automatic standby")
+            self.action_standby()
+
+    def trace_live(self, stage: str, **metadata) -> None:
+        trace = self.live_trace
+        if trace is None or trace.failed:
+            return
+        trace.write(
+            stage, pending_backend_work=sorted(self.pending_backend_work, key=str),
+            tool_response_ids=sorted(self.tool_response_ids, key=str), **metadata,
+        )
+        if trace.failed:
+            self.activity.write("Could not write diagnostic trace; Live continues unchanged.", "Diagnostic trace unavailable")
+
+    async def on_unmount(self) -> None:
+        self.cancel_standby_alert()
+        self.wake_idle_timer.stop()
+        if self.wake_connection_timer is not None:
+            self.wake_connection_timer.stop()
+        await self.stop_wake_listener()
+        self.speaker_level_timer.stop()
+        if self.idle_standby_timer is not None:
+            self.idle_standby_timer.stop()
 
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
+        self.record_idle_activity(user_activity=True)
         message = event.text.strip()
         composer = event.composer
 
-        if not message or composer.disabled or self.closing:
+        if not message or composer.disabled or self.closing or self.reconnecting:
+            return
+        if self.standby:
+            self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
             return
 
         composer.disabled = True
@@ -129,8 +441,13 @@ class CoraApp(App):
                 # Saved text remains pending; shutdown must not start a new send.
                 return
             try:
+                self.pending_backend_work.add("typed-request")
+                self.trace_live("typed.submit", message_id=str(message_id))
                 await self.live.send_text(message)
+                self.trace_live("typed.sent", message_id=str(message_id))
             except Exception as error:
+                self.pending_backend_work.discard("typed-request")
+                self.trace_live("typed.failed", message_id=str(message_id), error_type=type(error).__name__)
                 # A failed send may have reached the backend partially; do not auto-retry it.
                 self.pending_keyboard_message = None
                 await self.record_keyboard_delivery(message_id, "failed")
@@ -144,8 +461,9 @@ class CoraApp(App):
             self.conversation.write_log("")
             composer.clear()
         finally:
-            composer.disabled = self.closing
-            if not self.closing:
+            self.record_idle_activity()
+            composer.disabled = self.closing or self.reconnecting
+            if not composer.disabled:
                 composer.focus()
 
     async def record_keyboard_delivery(self, message_id: UUID, status: str) -> None:
@@ -185,29 +503,160 @@ class CoraApp(App):
 
     @work
     async def connect_to_cora(self) -> None:
-        status = self.query_one("#chat-status", Static)
-
-        status.update("○ Connecting...")
+        self.set_connection_state("connecting")
 
         try:
-            self.startup_worker = self.check_interrupted_conversations()
-            await self.startup_worker.wait()
+            if not self.startup_complete:
+                self.startup_worker = self.check_interrupted_conversations()
+                await self.startup_worker.wait()
+                self.startup_complete = True
+                self.summary_worker = self.summarize_previous_conversations()
             if self.closing:
                 return
-            self.summary_worker = self.summarize_previous_conversations()
             await self.live.run(
                 self.handle_live_event,
                 self.handle_mic_status,
                 self.handle_audio_status,
             )
         except Exception as error:
-            status.update("○ Connection failed")
+            self.set_connection_state("disconnected", "Connection failed. See Activity for details.")
             self.activity.write(f"Connection error: {error}", "Connection failed")
         else:
-            status.update("○ Disconnected")
+            self.set_connection_state("disconnected")
             self.activity.write("Connection closed", "Disconnected")
         finally:
+            self.report_interrupted_work()
             self.conversation.flush_transcript()
+            if self.wake_reconnecting:
+                self.wake_reconnecting = False
+                self.wake_failed = True
+                if self.wake_connection_timer is not None:
+                    self.wake_connection_timer.stop()
+                await self.stop_wake_listener()
+                self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
+
+    def report_interrupted_work(self) -> None:
+        self.cancel_standby_alert()
+        if self.pending_backend_work:
+            self.activity.write(
+                "Live ended with unfinished backend work; it will not be replayed.", "Work interrupted",
+            )
+            self.notify("Live ended with unfinished work. Reconnect will not retry it.", severity="warning")
+        self.pending_backend_work.clear()
+        self.tool_response_ids.clear()
+        self.backend_response_ids.clear()
+
+    def action_reconnect(self) -> None:
+        self.record_idle_activity(user_activity=True)
+        self.request_live_transition(restart=True)
+
+    def action_standby(self) -> None:
+        if self.live.ready and not self.standby:
+            self.request_live_transition(restart=False)
+
+    def live_transition_blockers(self) -> list[str]:
+        """Share exactly the same safety checks for manual and automatic standby."""
+        connecting = (
+            self.connection_worker is not None and not self.connection_worker.is_finished
+            and not self.live.ready
+        )
+        keyboard_busy = self.keyboard_worker is not None and not self.keyboard_worker.is_finished
+        tools_busy = any(
+            worker.group == "tool-actions" and not worker.is_finished for worker in self.workers
+        )
+        speaker = self.live.speaker
+        playback_busy = speaker is not None and speaker.is_playback_busy()
+        return [name for name, busy in (
+            ("connection setup", connecting),
+            ("typed submission", keyboard_busy),
+            ("tool execution", tools_busy),
+            ("backend response", bool(self.pending_backend_work)),
+            ("typed acknowledgement", bool(self.live.pending_text_requests)),
+            ("audio playback", playback_busy),
+            ("recent speech", self.live.ready and monotonic() - self.last_live_activity < 2.0),
+            ("standby heads-up", self.standby_alert is not None),
+        ) if busy]
+
+    def request_live_transition(self, restart: bool, *, from_wake: bool = False) -> None:
+        if self.closing or self.reconnecting:
+            return
+        blockers = self.live_transition_blockers()
+        self.live.trace(
+            "transition.request", restart=restart, blockers=blockers,
+            playback_busy="audio playback" in blockers,
+        )
+        if blockers:
+            action = "reconnect" if restart else "enter standby"
+            reason = ", ".join(blockers)
+            self.activity.write(f"Cannot {action}: {reason}.", "Live busy")
+            self.notify(
+                f"Wait for speech and pending work to finish, then {action}. Waiting for: {reason}.",
+                severity="warning",
+            )
+            return
+        self.reconnecting = True
+        self.wake_reconnecting = from_wake
+        if not from_wake:
+            self.wake_failed = False
+            self.wake_response_deadline = None
+        self.query_one("#chat-input", ChatComposer).disabled = True
+        # Privacy mute remains available while opening speech is being buffered.
+        self.query_one("#speaker-status", Button).disabled = True
+        self.set_connection_state("connecting" if restart and self.standby else "disconnecting")
+        self.reconnect_worker = self.reconnect_live(restart=restart)
+
+    @work(group="live-reconnect")
+    async def reconnect_live(self, restart: bool = True) -> None:
+        try:
+            if not self.wake_reconnecting:
+                await self.stop_wake_listener()
+            self.set_connection_state("connecting" if restart and self.standby else "disconnecting")
+            await self.live.stop_microphone()
+            # Closing/cleanup must finish before another reader can own the transport.
+            await self.live.close()
+            if self.connection_worker is not None:
+                await self.connection_worker.wait()
+            if self.closing:
+                return
+            self.conversation.flush_transcript()
+            for worker in self.chat_workers:
+                await worker.wait()
+            if self.closing:
+                return
+            self.live.conversation_history = self.conversation.get_reconnect_history()
+            self.last_live_activity = 0.0
+            if not restart:
+                if self.live.connection is not None or not self.live.session_close_confirmed:
+                    raise RuntimeError("Live close was not confirmed")
+                self.standby = True
+                self.handle_mic_status(False)
+                self.set_connection_state("standby")
+                self.activity.write("Live closed; local app and chat remain open", "Standby")
+                return
+            self.standby = False
+            self.activity.write("Restarting Live with recent chat context", "Reconnecting")
+            self.connection_worker = self.connect_to_cora()
+        except Exception as error:
+            if self.wake_reconnecting:
+                self.wake_reconnecting = False
+                self.wake_failed = True
+                await self.stop_wake_listener()
+            summary = "Reconnect failed" if restart else "Standby failed"
+            self.activity.write(f"{summary} ({type(error).__name__})", summary)
+            if self.live.connection is None:
+                self.standby = False
+                self.set_connection_state("disconnected", f"{summary}. See Activity for details.")
+            self.notify(f"{summary}. Check Activity; no requests were replayed.", severity="error")
+        finally:
+            self.reconnecting = False
+            if self.standby and not self.closing:
+                self.set_connection_state("standby")
+                self.start_wake_listener()
+            self.query_one("#chat-input", ChatComposer).disabled = self.closing
+            self.query_one("#mic-status", Button).disabled = self.closing
+            self.query_one("#speaker-status", Button).disabled = self.closing
+            if not self.closing:
+                self.query_one("#chat-input", ChatComposer).focus()
 
     @work(group="database-startup")
     async def check_interrupted_conversations(self) -> None:
@@ -303,19 +752,56 @@ class CoraApp(App):
                 engine.dispose()
 
     def handle_live_event(self, event) -> None:
-        status = self.query_one("#chat-status", Static)
-        mic_status = self.query_one("#mic-status", Static)
+        mic_status = self.query_one("#mic-status", Button)
+        if event.type in (
+            "session.input_transcript.delta", "session.output_transcript.delta",
+        ) and event.delta:
+            self.last_live_activity = monotonic()
+            user_activity = event.type == "session.input_transcript.delta"
+            if user_activity and self.wake_response_deadline is not None:
+                self.wake_transcript += event.delta
+                phrase = " ".join("".join(
+                    char for char in self.wake_transcript.casefold() if char.isalnum() or char.isspace()
+                ).split())
+                # A transcript of the wake phrase alone is not a request.
+                user_activity = bool(phrase) and not any(
+                    keyword.startswith(phrase) for name in WAKE_NAMES for keyword in (f"hey {name}", name)
+                )
+            self.record_idle_activity(user_activity=user_activity)
+            if self.standby_alert is not None and event.delta:
+                self.standby_alert.last_output_at = monotonic()
+                self.standby_alert.quiet_since = None
+        elif (
+            event.type == "session.output_audio.delta" and self.live.speaker is not None
+            and not self.live.speaker_muted and self.live.speaker.is_playback_busy()
+        ):
+            # Output audio is a continuous stream: silent chunks are not speech.
+            self.last_live_activity = monotonic()
+            self.record_idle_activity()
+            if self.standby_alert is not None:
+                self.standby_alert.last_output_at = monotonic()
+                self.standby_alert.quiet_since = None
 
         if event.type == "session.started":
-            status.update("● Connected")
+            if self.wake_reconnecting:
+                self.wake_reconnecting = False
+                self.wake_response_deadline = monotonic() + 10
+                self.wake_transcript = ""
+                if self.wake_connection_timer is not None:
+                    self.wake_connection_timer.stop()
+            self.record_idle_activity()
+            self.idle_was_busy = False
+            self.set_connection_state("active")
             self.activity.write("Live session started", "Connected")
 
         elif event.type == "session.input_transcript.delta":
-            mic_status.update("🎙 Speech received")
-            if self.mic_idle_timer is not None:
-                self.mic_idle_timer.stop()
-            # Transcript silence is a UI hint, not a confirmed end of speech.
-            self.mic_idle_timer = self.set_timer(1.5, self.reset_mic_indicator)
+            if not self.live.microphone_muted:
+                mic_status.label = "🎙 Speech received"
+                mic_status.refresh(layout=True)
+                if self.mic_idle_timer is not None:
+                    self.mic_idle_timer.stop()
+                # Transcript silence is a UI hint, not a confirmed end of speech.
+                self.mic_idle_timer = self.set_timer(1.5, self.reset_mic_indicator)
             self.conversation.append_transcript("You", event.delta)
 
         elif event.type == "session.output_transcript.delta":
@@ -329,8 +815,17 @@ class CoraApp(App):
                     "Typed context accepted",
                 )
 
+        elif event.type == "session.commentary.appended":
+            if self.standby_alert is not None and event.client_event_id == self.standby_alert.event_id:
+                self.standby_alert.accepted = True
+
         elif event.type == "session.delegation.created":
+            self.cancel_standby_alert("New backend work; staying active.")
             delegation = event.delegation
+            self.pending_backend_work.add(delegation.id)
+            response_id = getattr(delegation, "response_id", None)
+            if response_id:
+                self.backend_response_ids[delegation.id] = response_id
             self.activity.write(
                 f"Delegation requested: "
                 f"target={delegation.target}, id={delegation.id}",
@@ -341,10 +836,37 @@ class CoraApp(App):
             # Live wraps backend events in a dictionary, not an event object.
             backend_event = event.event
             event_type = backend_event.get("type")
+            response_id = (backend_event.get("response") or {}).get("id") or backend_event.get("response_id")
+            # Forwarded output items can omit response_id; their delegation
+            # identifies the response announced by metadata/lifecycle events.
+            if response_id and event.delegation_id is not None:
+                self.backend_response_ids[event.delegation_id] = response_id
+            elif not response_id:
+                response_id = self.backend_response_ids.get(event.delegation_id)
+            if event_type in (
+                "response.created", "response.in_progress", "response.output_item.done",
+                "response.completed", "response.failed", "response.incomplete",
+            ):
+                if not self.live.pending_text_requests:
+                    self.pending_backend_work.discard("typed-request")
+            if event_type in ("response.created", "response.in_progress", "response.output_item.done"):
+                self.cancel_standby_alert("New backend work; staying active.")
+                self.pending_backend_work.add(event.delegation_id)
+                self.pending_backend_work.add(response_id or event.delegation_id)
+            elif event_type in ("response.completed", "response.failed", "response.incomplete"):
+                self.record_idle_activity()
+                self.pending_backend_work.discard(response_id or event.delegation_id)
+                # A completed response with function calls still needs a tool continuation.
+                if event_type != "response.completed" or response_id not in self.tool_response_ids:
+                    self.pending_backend_work.discard(event.delegation_id)
+                    self.backend_response_ids.pop(event.delegation_id, None)
+                self.tool_response_ids.discard(response_id)
             if event_type == "response.output_item.done":
                 # Live lifecycle snapshots omit output; completed items carry it.
                 item = backend_event.get("item") or {}
                 if item.get("type") == "function_call":
+                    self.pending_backend_work.add(event.delegation_id)
+                    self.tool_response_ids.add(response_id)
                     self.tools.handle_function_call(item)
                 else:
                     self.conversation.display_written_item(item)
@@ -366,7 +888,10 @@ class CoraApp(App):
                 self.activity.write(
                     f"Backend {event_type}: "
                     f"delegation_id={event.delegation_id}, "
-                    f"response_id={response.get('id')}",
+                    f"response_id={response_id}, "
+                    f"client_event_id={getattr(event, 'client_event_id', None)}, "
+                    f"typed_pending={len(self.live.pending_text_requests)}, "
+                    f"backend_pending={len(self.pending_backend_work)}",
                     summary,
                 )
                 error = response.get("error") or backend_event.get("error")
@@ -398,13 +923,20 @@ class CoraApp(App):
                 )
 
         elif event.type == "error":
-            status.update("○ API error")
+            # A rejected command does not necessarily end the Live session.
             self.activity.write(f"API error: {event.error.message}", "API error")
             command_id = getattr(event.error, "client_event_id", None)
+            if self.standby_alert is not None and command_id == self.standby_alert.event_id:
+                self.cancel_standby_alert("Heads-up rejected; staying active.")
             if command_id:
+                if command_id.startswith("typed_response_") and not self.live.pending_text_requests:
+                    self.pending_backend_work.discard("typed-request")
+                    self.record_idle_activity()
                 self.activity.write(f"Rejected command: id={command_id}", "API error")
 
         elif event.type == "session.closed":
+            self.report_interrupted_work()
+            self.set_connection_state("disconnected")
             self.conversation.flush_transcript()
             self.activity.write(f"Session ended: {event.reason}", "Disconnected")
 
@@ -413,14 +945,122 @@ class CoraApp(App):
             # Wait for layout to restore the hidden log's usable width.
             self.call_after_refresh(self.activity.redraw)
 
+    def set_connection_state(self, state: str, detail: str = "") -> None:
+        labels = {
+            "disconnected": "○ Disconnected",
+            "standby": "○ Standby",
+            "connecting": "◌ Connecting…",
+            "active": "● Active",
+            "disconnecting": "◌ Disconnecting…",
+        }
+        button = self.query_one("#chat-status", Button)
+        button.label = labels[state]
+        for name in labels:
+            button.set_class(name == state, f"state-{name}")
+        button.tooltip = detail or {
+            "active": "Click to close Live and enter standby.",
+            "standby": "Live is closed. Click to resume, or press Ctrl+R.",
+            "disconnected": "Live is disconnected. Ctrl+R to reconnect.",
+        }.get(state, f"Live is {state}.")
+        button.disabled = state not in ("active", "standby") or self.closing or self.reconnecting
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.record_idle_activity(user_activity=True)
         if event.button.id == "close-button":
             event.button.disabled = True
             await self.action_disconnect_and_quit()
+        elif event.button.id == "chat-status":
+            if self.standby:
+                self.action_reconnect()
+            else:
+                self.action_standby()
+        elif event.button.id == "wake-status" and not self.closing:
+            self.wake_enabled = not self.wake_enabled
+            self.wake_failed = False
+            if not self.wake_enabled:
+                self.wake_reconnecting = False
+                using_wake = self.live.opening_microphone is not None
+                await self.stop_wake_listener()
+                if using_wake:
+                    await self.live.stop_microphone()
+                    if self.live.ready:
+                        self.live.microphone_task = asyncio.create_task(
+                            self.live.send_microphone(self.live.connection, self.handle_mic_status),
+                        )
+            else:
+                self.start_wake_listener()
+            self.update_wake_control()
+            self.query_one("#chat-input", ChatComposer).focus()
+        elif (event.button.id in ("mic-status", "speaker-status") and not self.closing
+              and (not self.reconnecting or event.button.id == "mic-status")):
+            button = event.button
+            button.disabled = True
+            try:
+                if button.id == "mic-status":
+                    await self.live.set_microphone_muted(not self.live.microphone_muted)
+                    if self.live.microphone_muted:
+                        self.wake_reconnecting = False
+                        await self.stop_wake_listener()
+                    else:
+                        self.start_wake_listener()
+                    self.handle_mic_status(False)
+                    summary = "Microphone muted" if self.live.microphone_muted else "Microphone unmuted"
+                else:
+                    self.live.set_speaker_muted(not self.live.speaker_muted)
+                    summary = "Speaker muted" if self.live.speaker_muted else "Speaker unmuted"
+                self.activity.write(summary, summary)
+            except Exception as error:
+                self.activity.write(f"Audio control failed ({type(error).__name__})", "Audio control error")
+                self.notify("Could not change audio playback or capture. Check Activity.", severity="error")
+            finally:
+                self.record_idle_activity()
+                self.update_audio_controls()
+                button.disabled = self.closing
+                if not self.closing:
+                    self.query_one("#chat-input", ChatComposer).focus()
+
+    def update_audio_controls(self) -> None:
+        mic = self.query_one("#mic-status", Button)
+        mic.label = (
+            "🎙 Muted" if self.live.microphone_muted
+            else "🎙 Listening" if self.mic_working else "🎙× Mic"
+        )
+        mic.tooltip = "Unmute microphone" if self.live.microphone_muted else "Mute microphone"
+        mic.set_class(self.live.microphone_muted, "audio-muted")
+        # Button.label repaints but does not invalidate its cached auto width.
+        mic.refresh(layout=True)
+        speaker = self.query_one("#speaker-status", Button)
+        speaker.label = "🔇 Muted" if self.live.speaker_muted else "🔊 Speaker"
+        speaker.tooltip = "Unmute speaker" if self.live.speaker_muted else "Mute speaker"
+        speaker.set_class(self.live.speaker_muted, "audio-muted")
+        speaker.refresh(layout=True)
+        self.update_wake_control()
+        self.update_speaking_animation()
+
+    def update_speaking_animation(self) -> None:
+        indicator = self.speaker_level_indicator
+        if not indicator.is_mounted:
+            return
+        muted = self.live.speaker_muted
+        level = (
+            self.live.speaker.get_playback_level()
+            if not self.closing and not muted and self.live.speaker is not None else 0.0
+        )
+        if level > 0:
+            # A gentle gain makes ordinary speech visible without changing playback.
+            self.speaker_levels.append("▁▂▃▄▅▆▇█"[min(7, int(level ** 0.5 * 8))])
+        else:
+            self.speaker_levels.clear()
+            self.speaker_levels.extend("────────")
+        text = "Muted" if muted else "".join(self.speaker_levels)
+        if indicator.content != text:
+            # This fixed-width display never needs to relayout the conversation.
+            indicator.update(text, layout=False)
+        indicator.set_class(muted, "audio-muted")
 
     def reset_mic_indicator(self) -> None:
         self.mic_idle_timer = None
-        self.query_one("#mic-status", Static).update("🎙 Listening")
+        self.update_audio_controls()
 
     def action_copy_chat_selection(self) -> None:
         text = self.screen.get_selected_text()
@@ -439,22 +1079,21 @@ class CoraApp(App):
             self.notify("Selected text copied", timeout=2)
 
     def handle_audio_status(self, working: bool, message: str) -> None:
+        if not working:
+            self.cancel_standby_alert("Audio unavailable; staying active.")
         self.activity.write(
             message,
             "Audio playback ready" if working else "Audio playback error",
         )
 
     def handle_mic_status(self, working: bool, message: str = "") -> None:
-        mic_status = self.query_one("#mic-status", Static)
+        self.mic_working = working
 
         if self.mic_idle_timer is not None:
             self.mic_idle_timer.stop()
             self.mic_idle_timer = None
 
-        if working:
-            mic_status.update("🎙 Listening")
-        else:
-            mic_status.update("🎙× Mic")
+        self.update_audio_controls()
 
         if message:
             self.activity.write(
@@ -466,9 +1105,22 @@ class CoraApp(App):
         if self.closing:
             return
         self.closing = True
+        self.cancel_standby_alert()
+        self.wake_response_deadline = None
+        self.wake_idle_timer.stop()
+        if self.wake_connection_timer is not None:
+            self.wake_connection_timer.stop()
+        await self.stop_wake_listener()
+        self.speaker_level_timer.stop()
+        if self.idle_standby_timer is not None:
+            self.idle_standby_timer.stop()
+        self.update_speaking_animation()
         self.query_one("#close-button", Button).disabled = True
+        self.query_one("#mic-status", Button).disabled = True
+        self.query_one("#speaker-status", Button).disabled = True
+        self.query_one("#wake-status", Button).disabled = True
         self.query_one("#chat-input", ChatComposer).disabled = True
-        self.query_one("#chat-status", Static).update("○ Disconnecting...")
+        self.set_connection_state("disconnecting")
 
         try:
             if self.startup_worker is not None:
@@ -483,6 +1135,11 @@ class CoraApp(App):
                     await self.keyboard_worker.wait()
                 except WorkerError:
                     self.activity.write("Keyboard submission worker stopped", "Keyboard worker stopped")
+            if self.reconnect_worker is not None and not self.reconnect_worker.is_finished:
+                try:
+                    await self.reconnect_worker.wait()
+                except WorkerError:
+                    self.activity.write("Reconnect worker stopped", "Reconnect worker stopped")
             await self.live.close()
         finally:
             try:
@@ -512,4 +1169,6 @@ class CoraApp(App):
                     self.exit()
 
 if __name__ == "__main__":
-    CoraApp().run()
+    app = CoraApp()
+    app.live_trace = LiveTrace(Path(__file__).with_name("live-trace.log"))
+    app.run()

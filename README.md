@@ -52,6 +52,13 @@ python app.py
 Keep Docker running while chatting, and run **only one Cora instance at a time**.
 The startup check treats other active conversations as interrupted.
 
+For the current typed-input investigation, a normal launch also writes
+`live-trace.log` beside `app.py`. It records command/event IDs, event order,
+tracking state before/after handling, and standby blockers—not chat text, tool
+arguments/results, or audio. Git ignores the log. Each app launch replaces the
+previous trace, so reproduce once and keep the log before restarting again.
+This is diagnostic-only; it does not change request matching or queueing.
+
 To stop the database afterwards:
 
 ```powershell
@@ -67,6 +74,44 @@ not change an existing database's password or user. Back up important data.
 
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Check connection state:** the left side of the bottom row shows Active,
+  Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
+- **Close Live without quitting:** click Active to enter Standby. Wait for speech
+  and pending work to finish first. Cora closes the Live session and Live audio,
+  but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
+  to resume. The button shows Connecting and cannot be clicked again while waking.
+  Enter during Standby keeps the
+  draft and asks you to resume, rather than saving or sending a failed request.
+  Silent output audio does not count as speech or pending playback. If closing
+  is blocked, the notification and Activity show what Cora is waiting for.
+- **Automatic standby:** after five minutes of inactivity by default, Cora uses
+  the same standby path. Editing, cursor movement, submission, speech, and audio
+  controls reset the clock. Setup, pending responses/tools/submissions, and audible
+  playback prevent sleep. Work finishing or Live resuming gives a fresh full idle
+  period, leaving time to read or think. An untouched draft does not prevent sleep;
+  it is preserved. Click Standby, press Ctrl+R, or enable local wake listening to resume.
+- **Optional standby heads-up:** enable `CORA_STANDBY_FAREWELL=1` to have Live
+  briefly announce automatic standby, then leave a response window before closing.
+  Detected user speech, typing, cursor movement, or controls cancel sleep and reset
+  the idle period. Speaker mute skips the spoken alert; microphone mute means you
+  must type or use a control to cancel. Manual standby has no farewell.
+- **Mute audio:** click the microphone or speaker control on the bottom status row.
+  Mic privacy mute stops all local recording, including wake listening, and drops
+  buffered opening speech. Speaker mute stops playback and discards queued
+  speech. Unmuting does not replay discarded audio. Typing stays available and
+  Live stays connected (and billable); captions and written answers remain visible.
+- **Local wake:** click Wake off to enable local “Hey Cora” detection during
+  Standby. Wake on turns green while the local listener is ready. Its tooltip
+  distinguishes standby listening, active-session inactivity, and privacy mute.
+  Wake listening is independent of microphone privacy mute; enabling it never
+  unmutes the microphone. See setup below.
+- **Watch playback:** eight audio bars beside the speaker control follow output
+  volume. They become a flat line when silent and show “Muted” when playback is muted.
+- **Reconnect Live:** Ctrl+R closes and restarts Live without quitting or clearing
+  the chat. It keeps mute settings and drafts, and restores recent visible chat as
+  context. Wait until Active before sending again. Reconnect refuses while known
+  responses, tools, typing submissions, recent speech, or queued playback are busy;
+  wait for them to finish and try again. This is not standby: Live reconnects immediately.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
@@ -76,7 +121,103 @@ not change an existing database's password or user. Back up important data.
 
 Typed input is saved before sending. If saving or sending fails, the draft stays
 available and Cora warns you. A failed send may have partially reached the model,
-so there is no automatic resend.
+so there is no automatic resend. If Live drops with unfinished work, Cora warns
+you; reconnect does not replay requests or tools. Check uncertain action outcomes
+before requesting them again.
+
+### Local wake-word setup
+
+The standby listener uses **Whisper locally**, via faster-whisper on the CPU in
+INT8 mode, not the OpenAI transcription API. Download the four files from
+[Systran/faster-whisper-base.en](https://huggingface.co/Systran/faster-whisper-base.en/tree/main):
+`model.bin`, `config.json`, `tokenizer.json`, and `vocabulary.txt`. Keep their
+original names in `models/wake/faster-whisper-base.en/` at the project root.
+Model downloads are ignored by Git. There are no automatic model downloads;
+missing files stop the listener with an Activity error. Install the declared
+requirements as usual. Older sherpa model downloads are no longer used.
+
+The separate `wake/` package handles monitoring, local transcription, and
+whole-word matching for **Hey Cora**, **Hey Kora**, and **Hey Korra**. Case and
+punctuation do not matter; substrings such as “Hey Coraline” do not match.
+SoXR converts short snapshots to Whisper's 16 kHz rate without terminal output;
+Live audio and the opening-speech buffer remain at 24 kHz.
+
+Wake listening is **off by default**. Click **Wake off** to enable it for the
+current app run, or set `CORA_WAKE_ENABLED=1` in your local `.env` before launch
+to enable it each time. Cora still starts an ordinary Live session; enter Standby
+manually or let inactivity close Live before leaving it overnight.
+
+While listening in Standby, **no microphone audio is sent to OpenAI**. Only a
+six-second rolling buffer is held in RAM. Whisper checks overlapping windows of
+up to three seconds about once per second; silence is skipped cheaply, and local
+speech filtering/confidence checks reduce false wakes. Recognition is not truly
+instantaneous and uses more CPU than keyword spotting. Capture continues while
+Whisper decodes off-thread. Detection reconnects Live and retains the checked
+window plus opening speech through setup, forwarding it in order after
+`session.started`, continuing with the same microphone capture. If inference is
+too slow to retain that opening speech, the stale match is discarded and logged.
+Nothing is recorded to disk. Buffering/setup is capped at 15 seconds; a failure,
+overflow, privacy mute, or quit discards it rather than replaying a partial request.
+Privacy mute remains available during reconnect. Turning Wake off stops the wake
+capture/buffer, but does not mute an already active Live session.
+
+False detections are possible. Speech/confidence filtering and a five-second
+retrigger cooldown reduce them. After wake, if only the wake phrase (or no input)
+arrives for ten seconds, Cora returns to Standby once speech and pending work finish.
+A request, typing, or a control interaction cancels that short timeout. This rule
+also works when the ordinary inactivity timer is disabled. Actual reconnection and
+subsequent interaction can incur OpenAI charges; local standby listening does not.
+
+If the model, microphone, or wake reconnection fails, Activity reports the error;
+there is no automatic retry loop. Toggle Wake off/on to retry or wake manually.
+Real-model loading, quiet inference, synthetic spoken wake, and mocked lifecycle
+tests are covered; actual
+microphone sensitivity and real OpenAI speech continuity still need a manual check.
+
+**Temporary wake diagnostics are enabled by default** (`CORA_WAKE_DEBUG=1`).
+Expand Activity while in Standby to see:
+
+- `Whisper heard (approximate): 'Hey Kora'; wake match: 'hey kora'`: the local
+  transcript, including non-matching phrases and missed wake attempts. An empty
+  match means no sufficiently confident accepted wake phrase was found.
+- Every five seconds, a heartbeat with captured chunk/check counts, peak audio
+  RMS level, the age of the latest microphone chunk, and idle/decoding state.
+  Counts should rise; speech should raise the level. Increasing last-audio age
+  suggests stalled capture; a growing decoding duration suggests slow/hung inference.
+
+These are approximate recognition results, not ground truth. They remain only in
+the bounded in-memory Activity history—not chat, the database, or the Live trace.
+They may include nearby speech; set `CORA_WAKE_DEBUG=0` before launch to disable
+transcript/heartbeat logging without disabling wake detection. Privacy mute stops
+capture and suppresses diagnostics, including results from an in-flight decode.
+
+### Configure inactivity standby
+
+Set `CORA_IDLE_TIMEOUT_SECONDS` in your local `.env` or process environment before
+launching Cora. The default is `300` seconds (five minutes); `0` disables automatic
+standby without affecting manual standby. For a short manual check, use `60`, then
+restore your preferred reading/thinking allowance. Restart Cora to apply a change.
+
+Values must be finite, nonnegative seconds. Invalid values disable automatic
+standby and show a warning in Activity. The timer checks once per second and
+silently waits while Live is busy, including its existing recent-speech safety
+gap. Continuous silent audio does not reset the clock. Background memory work
+does not keep Live connected and can continue with its separate charges.
+
+The optional heads-up is off by default. Set `CORA_STANDBY_FAREWELL=1` before
+launching to enable it; `0` disables it. It uses Live commentary directly, not a
+Responses backend request or a quit tool. Wording may vary. Live remains connected
+and billable, with input available, while waiting for output/playback and a
+three-second response window after a two-second output quiet gap. Checks run once
+per second, so timing is approximate. New output or audible queued audio postpones
+closing; new user activity or pending work cancels automatic sleep.
+
+Live acknowledges accepted commentary, but provides no authoritative speech-done
+event. Playback/quiet detection is therefore best-effort, not a guarantee for
+unusual network delays. A send failure, rejection, playback error, or 30-second
+wait timeout cancels sleep and leaves Cora active with a fresh idle period; timeout
+never forces closure or immediately retries the alert. Once Live closes, it cannot
+hear a response: wake is still manual. Real-device heads-up timing needs a check.
 
 ## How Cora works
 
@@ -106,7 +247,9 @@ context updates are asynchronous. Both models receive the same startup memories.
 Live bills by session duration, per second, including silence and backend waits;
 backend model and tool usage is charged separately. Muting a microphone or speaker
 does not stop that duration charge. Independent text-only operation is not planned
-for this next increment; quiet use will keep Live connected.
+for this next increment; quiet use will keep Live connected. Standby closes Live,
+ending that session's duration billing. Background memory processing can still
+finish and incur its separate charges while the local app remains open.
 
 ## How memory works
 
@@ -137,7 +280,11 @@ after a restart. Already-summarised chats are not automatically re-extracted.
   searches can make separate **billable API requests**. Loading the startup
   snapshot itself makes no extra request.
 - Voice grouping is approximate, and a crash can lose unsaved text. There is no
-  conversation resumption or recovery yet.
+  recovery across app restarts yet. Live reconnect within the running app restores
+  only recent visible text (up to 40 messages / 6,000 UTF-8 bytes), not full audio,
+  hidden backend state, or unfinished tasks. The full displayed chat stays in the UI.
+  A two-second transcript/audio quiet gap is only a reconnect safety hint, not a
+  guaranteed completed speech turn; real voice/network timing still needs testing.
 - Recall and duplicate decisions can be wrong. Similarity is not confidence;
   conflicting statements are kept rather than automatically superseded. Ages,
   plans, and tasks are dated historical information, not necessarily current facts.
@@ -212,6 +359,12 @@ changes transactionally; it does not provide automatic downgrades.
 ### Available now
 
 - Unified terminal voice/text chat, streaming transcripts, and written answers.
+- Separate clickable microphone and speaker mute controls in the bottom status row.
+- A fixed-width speaking animation driven by output audio playback levels.
+- Manual Live reconnect with recent chat context, without closing the local app.
+- Click Active for standby; click Standby or press Ctrl+R to resume with context.
+- Configurable inactivity standby, with full idle grace after work and resume.
+- Opt-in standby heads-up through Live, with a cancellable response window.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -226,38 +379,69 @@ changes transactionally; it does not provide automatic downgrades.
 
 ### Quiet use and standby — development order
 
-These are **planned features**, not current controls. Implement and test one step
+Checked steps are implemented; the rest are planned. Implement and test one step
 at a time before moving on; standby must close Live, not merely mute audio.
 
-1. [ ] **Speaker mute:** add a clickable speaker control to the existing bottom
+1. [x] **Speaker mute:** add a clickable speaker control to the existing bottom
   status row. Stop current/queued playback and discard incoming audio while muted,
   without disconnecting Live or replaying old speech on unmute.
-2. [ ] **Microphone mute:** make the existing microphone indicator clickable.
+  Manual conversation check: mute/unmute worked, including toggling mid-speech.
+2. [x] **Microphone mute:** make the existing microphone indicator clickable.
   Stop recording and sending microphone audio while muted; keep typing available.
-3. [ ] **Quiet-use check:** verify typed questions, Live's visible reply transcripts,
+  Generated silence keeps Live's timeline running without capturing room audio.
+3. [x] **Quiet-use check:** verify typed questions, Live's visible reply transcripts,
   written answers, tools, and persistence still work with both audio controls muted.
   Keep replies readable without adding duplicate backend answers.
-4. [ ] **Clear state display:** reuse the left-hand connection indicator for active,
-  connecting, and disconnected states; add a distinct standby state when implemented.
+  Manual quiet-use check completed successfully with both controls muted.
+4. [x] **Clear state display:** reuse the left-hand connection indicator for active,
+  connecting, disconnecting, and disconnected states, with labels and distinct colours.
   Keep microphone and speaker controls on the right, with labels as well as colour.
-5. [ ] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
+  The Active state button now closes Live, with a distinct Standby state after
+  confirmed closure; transition and disconnected states remain non-clickable.
+5. [x] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
   control, driven by playback levels. Show a flat line when silent and a muted label
   when disabled; update Textual on its UI thread, not from the audio callback.
-6. [ ] **Reconnect with context:** close and restart Live without quitting the UI.
+  Eight bars update at 20 FPS from lightweight playback-level snapshots, without
+  relaying out the chat. Mocked tests pass; live animation/audio alignment needs a check.
+6. [x] **Reconnect with context:** close and restart Live without quitting the UI.
   Restore relevant conversation context, keep the logical conversation and mute
   settings, and guard against duplicate tool actions or lost pending work.
-7. [ ] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
+  Ctrl+R restarts Live with bounded visible-text history, preserving drafts, mute
+  settings, the database conversation, and tool-call deduplication. Known pending
+  work blocks reconnect; interrupted requests are reported, never automatically
+  replayed. Mocked tests pass; real voice/text continuity still needs a check.
+7. [x] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
   path. Keep the local app open with Live closed; typing must explicitly wake Live
   or clearly request resume, not silently fail. Standby is not a connection error.
-8. [ ] **Inactivity standby:** add a configurable idle timeout that considers typing,
+  Enable the left-hand state button: click Active to sleep and Standby to resume.
+  Click Active to close Live, keep the app/chat open, and show Standby only after
+  confirmed closure and cleanup. Click Standby (or Ctrl+R) to resume with recent
+  context, drafts, and mute settings intact. Connecting disables repeat clicks.
+  Manual standby confirmed working; mocked click-to-wake tests pass, with a
+  real-device wake check still needed.
+8. [x] **Inactivity standby:** add a configurable idle timeout that considers typing,
   speech, playback, and pending work. Allow reading/thinking pauses; microphone
   silence alone must not trigger sleep during an active task.
-9. [ ] **Optional farewell:** offer a brief “I'll leave you to it” before automatic
+  Defaults to five minutes; `CORA_IDLE_TIMEOUT_SECONDS=0` disables automatic sleep.
+  Reuses manual standby guards, preserves drafts and mute settings, and starts a
+  fresh idle period after work or resume. Deterministic mocked tests pass;
+  the basic live inactivity check has been completed.
+9. [x] **Optional farewell:** offer a brief “I'll leave you to it” before automatic
   standby. Finish playback before closing, respect speaker mute, and cancel sleep
   if the user resumes interacting.
-10. [ ] **Local wake word:** detect “Hey Cora” locally during standby, without sending
+  Opt in with `CORA_STANDBY_FAREWELL=1`. Direct Live commentary gives a heads-up,
+  then playback/quiet monitoring leaves a three-second response window. User
+  activity or new work cancels sleep; errors/timeouts stay active instead of
+  forcing closure. Speaker mute bypasses the alert. Mocked tests pass;
+  live playback and spoken-interruption timing still need a manual check.
+10. [x] **Local wake word:** detect “Hey Cora” locally during standby, without sending
    room audio to OpenAI. Buffer opening speech through reconnection and handle false
    triggers. Privacy mute disables listening entirely; wake-word listening is separate.
+  Opt-in CPU local Whisper detection with Cora/Kora/Korra aliases, temporary
+  transcript/heartbeat diagnostics, a separate Wake control, bounded RAM audio
+  handoff, no-request standby, cooldown, and failure cleanup are implemented.
+  Real model and mocked lifecycle checks pass; microphone accuracy and live
+  opening-speech continuity still need a manual check.
 11. [ ] **Camera presence:** explore optional local detection of sustained absence
    and return to sleep/wake Cora. Start with presence, not identity recognition;
    use delays/cooldowns to avoid repeated wake-ups and preserve pending work.
@@ -284,6 +468,8 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Mute controls, standby/wake-up, the audio visualiser, Signal integration, camera
-support, and autonomous initiative are not built yet. The examples are standalone
-experiments, not integrated Cora features.
+Local wake sensors, Signal integration, camera
+support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
+conversation, and quiet use with both audio controls muted has been confirmed.
+The playback visualiser still needs a real-device check.
+The examples are standalone experiments, not integrated Cora features.
