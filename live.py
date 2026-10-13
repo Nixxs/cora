@@ -16,6 +16,7 @@ class CoraLive:
         self.ready = False
         self.closed = asyncio.Event()
         self.microphone_task = None
+        self.memory_context = ""
 
     async def run(self, on_event, on_mic_status, on_audio_status=None):
         async with AsyncOpenAI() as client:
@@ -26,7 +27,7 @@ class CoraLive:
 
                 try:
                     await connection.session.start(
-                        session=build_session_config(self.tool_schemas())
+                        session=build_session_config(self.tool_schemas(), self.memory_context)
                     )
 
                     self.microphone_task = asyncio.create_task(

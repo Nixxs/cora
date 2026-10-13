@@ -45,7 +45,9 @@ async def mocked_pass(app, ids, *, blocked=False):
     engine.dispose.side_effect = lambda: loop.call_soon_threadsafe(disposed.set)
     with patch("app.build_engine", return_value=engine) as build, \
             patch("app.ConversationStore", return_value=store) as construct, \
-            patch("app.summarize_conversation", side_effect=summarize) as summary:
+            patch("app.summarize_conversation", side_effect=summarize) as summary, \
+            patch("app.extract_memories", return_value=[]) as extraction:
+        summary.extraction = extraction
         try:
             yield engine, store, summary, started, disposed, threads, build, construct
         finally:
@@ -73,6 +75,7 @@ class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
                             app.persistence.conversation_id,
                         )
                         self.assertEqual(summary.call_args_list, [call(store, id_) for id_ in ids])
+                        self.assertEqual(summary.extraction.call_args_list, [call(store, id_) for id_ in ids])
                         self.assertEqual(len(threads), len(ids))
                         self.assertTrue(all(thread != main_thread for thread in threads))
                         engine.dispose.assert_called_once_with()
@@ -92,7 +95,7 @@ class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
                 summary.assert_called_once_with(store, first)
                 engine.dispose.assert_called_once_with()
                 entries = "\n".join(app.activity.entries)
-                self.assertIn("Background summaries stopped (RuntimeError).", entries)
+                self.assertIn("Background memory pass stopped (RuntimeError).", entries)
                 for secret in ("private transcript", "SQL parameters", "API credentials"):
                     self.assertNotIn(secret, entries)
 
@@ -159,7 +162,7 @@ class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
             summary.assert_called_once_with(store, first)
             entries = "\n".join(app.activity.entries)
             self.assertNotIn("Summary saved", entries)
-            self.assertNotIn("Memory summary failed", entries)
+            self.assertNotIn("Memory processing failed", entries)
 
 
 @unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")
@@ -230,7 +233,8 @@ class BackgroundSummaryDatabaseTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch("app.build_engine", return_value=background_engine) as build, \
                     patch.object(background_engine, "dispose", side_effect=dispose), \
-                    patch("summarize.OpenAI") as factory:
+                    patch("summarize.OpenAI") as factory, \
+                    patch("app.extract_memories", return_value=[]) as extraction:
                 client = MagicMock()
                 client.responses.create.side_effect = model_response
                 factory.return_value.__enter__.return_value = client
@@ -261,6 +265,7 @@ class BackgroundSummaryDatabaseTests(unittest.IsolatedAsyncioTestCase):
                         client.responses.create.assert_called_once()
                         factory.assert_called_once_with(max_retries=0)
                         factory.return_value.__exit__.assert_called_once_with(None, None, None)
+                        extraction.assert_called_once_with(unittest.mock.ANY, previous)
                         again = self.store.get_summary(previous)
                         self.assertEqual((again.text, again.created_at), (first.text, first.created_at))
                     finally:

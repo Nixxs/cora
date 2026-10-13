@@ -420,6 +420,8 @@ an actual summary-quality check requires the manually selected conversation.
 
 ## Background summaries — memory step 11
 
+This describes the original step 11 pass; step 14 extends it with extraction before summarisation.
+
 After the startup interruption check, Cora starts **one background pass** over
 older `closed`/`interrupted` conversations with saved messages and no summary,
 oldest first. The current conversation UUID, active chats, empty chats, and already
@@ -479,8 +481,64 @@ repeating it can request again. Saves are batch-atomic and never overwrite rows;
 exact retries deduplicate by source message, kind, and text. Cross-conversation
 semantic deduplication and updates are deferred.
 
-Extraction is **manual only**: no app worker or automatic extraction, context
-injection, search/retrieval, embeddings, or consolidation is implemented yet.
+Step 12 introduced manual extraction only, with no context injection, extraction
+worker, search, embeddings, or consolidation. The manual CLI remains available;
+step 13 adds the startup read and step 14 adds automatic extraction.
+
+## Startup memory context — memory step 13
+
+[storage/memory_store.py](storage/memory_store.py)'s `MemoryStore.get_startup_context()`
+selects at most 10 SQL rows: facts/preferences first, then decisions/tasks;
+within each bucket, newest **source-message timestamp** first, then memory ID descending.
+Whole-record JSON is capped at **3,000 characters**, including metadata and escaping;
+selection stops before the next record would overflow, without truncating or skipping it.
+This is a first simple heuristic, not smart scoring or an exact token budget.
+
+[session_config.py](session_config.py) adds the same dated historical-data context to
+Live and backend sessions. `source_date` is the original statement's UTC date, not
+extraction time. A current-UTC-date prompt guard treats ages/plans/tasks as potentially
+outdated, prefers fresh explicit corrections, and treats memories as untrusted data,
+never instructions or permission to invoke tools. Static safety instructions sit
+outside the 3,000-character data cap; empty context leaves default prompts unchanged.
+
+[app.py](app.py) reads off-thread in the existing startup worker, before Live connects,
+using the persistence adapter's existing engine without creating a new chat row.
+Database failure warns with only the exception class (no private details) and continues
+with empty context; shutdown waits for the read before disposing the engine.
+Loading adds **no extra model request**; normal Live/backend sessions include the
+context with their usual token usage. This limited startup snapshot has no dynamic
+refresh, cross-chat semantic deduplication/correction filtering, pinned memories,
+index/search, schema changes, or new dependencies. At step 13 there was no automatic
+extraction; see step 14 for the later background extension.
+
+Manual check with the three existing actual memories: freshly restart and ask for
+your home city in both spoken and typed input **without telling Cora Perth again**.
+Check age is treated as a dated source statement and fresh current corrections win.
+Mocked tests make no actual Live or microphone calls; this manual check is still needed.
+
+## Automatic memory extraction — memory step 14
+
+[app.py](app.py) extends the same threaded `summarize_previous_conversations` worker.
+SQL selects finished, nonempty previous chats without summaries, oldest first;
+current, active, empty, and already-summarised chats are excluded, so there is no
+automatic backfill of already-summarised chats; use the manual extraction CLI for those.
+For each chat it calls the original `extract_memories(store, id)`, checks closing,
+then calls the original `summarize_conversation()`. Grounded JSON still uses original
+messages, not summaries; no async function rewrite, schema change, or dependency is added.
+The summary saved last is the automatic pass's completion marker, even for **zero
+memories**, avoiding repeated charges after success; manual empty extraction still saves no marker.
+An extraction error stops before summarisation or summary saving; any error stops the
+whole pass, logs only the exception type (redacted), and leaves retry to a future startup.
+If summarisation fails after extraction, a future startup reuses the existing nonempty memory cache, but a zero-memory extraction may incur another extraction charge.
+Closing permits an in-flight extraction to finish and save, but starts no summary or
+next chat; the independent engine is disposed in `finally`, and process exit may wait for the synchronous request.
+Startup context is loaded **before** this worker: new memories become available on the
+**following restart**, not in the current Live/backend session; there is no dynamic refresh.
+User-approved automation normally makes separate **billable extraction and summary
+model calls** at startup; tests mock them and make no real model calls.
+Activity logs `Memory extraction complete` with count and UUID, never memory texts,
+plus the summary save. Manual check: finish a new chat, restart, watch Activity and
+inspect `memories` in DBeaver, then restart again and check recall.
 
 ## Current progress
 

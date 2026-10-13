@@ -21,6 +21,7 @@ from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
 from live import CoraLive
+from extract_memories import extract_memories
 from summarize import summarize_conversation
 from tools import create_tool_registry
 
@@ -222,9 +223,27 @@ class CoraApp(App):
                     "Unfinished conversations tagged",
                 )
 
+        if self.closing:
+            return
+        self.live.memory_context = ""
+        try:
+            context = await self.call_database(self.persistence.load_startup_memory_context)
+        except Exception as error:
+            self.activity.write(
+                f"Startup memory load failed ({type(error).__name__}); connecting without memories.",
+                "Memory context unavailable",
+            )
+            self.notify("Could not load saved memories; connecting without them.", severity="warning")
+        else:
+            if not self.closing:
+                self.live.memory_context = context
+                self.activity.write(
+                    f"Startup memory context loaded ({len(context)} characters).", "Memory context loaded",
+                )
+
     @work(thread=True, group="memory-summary", exit_on_error=False)
     def summarize_previous_conversations(self) -> None:
-        # Own a separate engine so an in-flight summary can finish during shutdown.
+        # Own a separate engine so an in-flight request can finish during shutdown.
         engine = None
         worker = get_current_worker()
         try:
@@ -235,6 +254,15 @@ class CoraApp(App):
             for conversation_id in store.get_unsummarized_conversation_ids(self.persistence.conversation_id):
                 if self.closing or worker.is_cancelled:
                     break
+                memories = extract_memories(store, conversation_id)
+                if self.closing or worker.is_cancelled:
+                    break
+                self.call_from_thread(
+                    self.activity.write,
+                    f"Memories extracted: conversation_id={conversation_id}, count={len(memories)}",
+                    "Memory extraction complete",
+                )
+                # Save the summary last: even zero-memory chats then leave this queue.
                 summarize_conversation(store, conversation_id)
                 if not self.closing and not worker.is_cancelled:
                     self.call_from_thread(
@@ -245,7 +273,7 @@ class CoraApp(App):
             if not self.closing and not worker.is_cancelled:
                 self.call_from_thread(
                     self.activity.write,
-                    f"Background summaries stopped ({type(error).__name__}).", "Memory summary failed",
+                    f"Background memory pass stopped ({type(error).__name__}).", "Memory processing failed",
                 )
         finally:
             if engine is not None:

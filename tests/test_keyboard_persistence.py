@@ -89,6 +89,7 @@ async def running_app(persistence=None):
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
+                persistence.load_startup_memory_context.return_value = ""
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

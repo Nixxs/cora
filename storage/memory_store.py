@@ -1,15 +1,19 @@
 """Save evidence-linked memories without changing conversations or summaries."""
 
 from dataclasses import dataclass
+from datetime import timezone
+import json
 from uuid import UUID
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, case, select
 from sqlalchemy.orm import Session
 
 from .models import ConversationRecord, MemoryRecord, MessageRecord
 
 
 MEMORY_KINDS = ("fact", "preference", "decision", "task")
+STARTUP_MEMORY_LIMIT = 10
+STARTUP_MEMORY_MAX_CHARS = 3000
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,29 @@ class MemoryCandidate:
 class MemoryStore:
     def __init__(self, engine: Engine):
         self.engine = engine
+
+    def get_startup_context(self) -> str:
+        """Read at most ten ranked memories; return bounded, whole JSON records."""
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(MemoryRecord.kind, MemoryRecord.text, MessageRecord.created_at).join(
+                    MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+                ).where(MessageRecord.role == "user").order_by(
+                    case((MemoryRecord.kind.in_(("fact", "preference")), 0), else_=1),
+                    MessageRecord.created_at.desc(), MemoryRecord.id.desc(),
+                ).limit(STARTUP_MEMORY_LIMIT)
+            ).all()
+        selected = []
+        context = ""
+        for kind, text, recorded_at in rows:
+            record = {"kind": kind, "text": text,
+                      "source_date": recorded_at.astimezone(timezone.utc).date().isoformat()}
+            candidate = json.dumps([*selected, record], ensure_ascii=False)
+            if len(candidate) > STARTUP_MEMORY_MAX_CHARS:
+                break
+            selected.append(record)
+            context = candidate
+        return context
 
     def get_memories(self, conversation_id: UUID) -> list[MemoryRecord]:
         """Return this conversation's memories; source messages identify the chat."""

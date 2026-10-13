@@ -6,6 +6,7 @@ from sqlalchemy import Engine
 
 from .conversation_store import ConversationStore
 from .database import build_engine
+from .memory_store import MemoryStore
 
 
 class KeyboardPersistence:
@@ -23,6 +24,10 @@ class KeyboardPersistence:
     def mark_interrupted_conversations(self) -> int:
         # Startup checks previous runs without creating a row for this run.
         return self._get_store().interrupt_active_conversations(self.conversation_id)
+
+    def load_startup_memory_context(self) -> str:
+        # Share the existing owned/injected engine; do not create a chat row.
+        return MemoryStore(self._get_store().engine).get_startup_context()
 
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()
