@@ -48,7 +48,8 @@ class CoraApp(App):
                 yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
             with HorizontalGroup(id="status-bar"):
                 yield Static("○ Not connected", id="chat-status")
-                yield Static("🎙× Mic", id="mic-status")
+                yield Button("🎙× Mic", id="mic-status", tooltip="Mute microphone")
+                yield Button("🔊 Speaker", id="speaker-status", tooltip="Mute speaker")
             with Vertical(id="input-frame"):
                 yield ChatComposer(
                     placeholder="Type a message to Cora...",
@@ -62,6 +63,7 @@ class CoraApp(App):
         self.query_one("#chat-panel").border_title = "CORA"
         self.query_one("#chat-input", ChatComposer).focus()
         self.mic_idle_timer = None
+        self.mic_working = False
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
             self.query_one("#activity-output", RichLog),
@@ -304,18 +306,19 @@ class CoraApp(App):
 
     def handle_live_event(self, event) -> None:
         status = self.query_one("#chat-status", Static)
-        mic_status = self.query_one("#mic-status", Static)
+        mic_status = self.query_one("#mic-status", Button)
 
         if event.type == "session.started":
             status.update("● Connected")
             self.activity.write("Live session started", "Connected")
 
         elif event.type == "session.input_transcript.delta":
-            mic_status.update("🎙 Speech received")
-            if self.mic_idle_timer is not None:
-                self.mic_idle_timer.stop()
-            # Transcript silence is a UI hint, not a confirmed end of speech.
-            self.mic_idle_timer = self.set_timer(1.5, self.reset_mic_indicator)
+            if not self.live.microphone_muted:
+                mic_status.label = "🎙 Speech received"
+                if self.mic_idle_timer is not None:
+                    self.mic_idle_timer.stop()
+                # Transcript silence is a UI hint, not a confirmed end of speech.
+                self.mic_idle_timer = self.set_timer(1.5, self.reset_mic_indicator)
             self.conversation.append_transcript("You", event.delta)
 
         elif event.type == "session.output_transcript.delta":
@@ -417,10 +420,43 @@ class CoraApp(App):
         if event.button.id == "close-button":
             event.button.disabled = True
             await self.action_disconnect_and_quit()
+        elif event.button.id in ("mic-status", "speaker-status") and not self.closing:
+            button = event.button
+            button.disabled = True
+            try:
+                if button.id == "mic-status":
+                    await self.live.set_microphone_muted(not self.live.microphone_muted)
+                    self.handle_mic_status(False)
+                    summary = "Microphone muted" if self.live.microphone_muted else "Microphone unmuted"
+                else:
+                    self.live.set_speaker_muted(not self.live.speaker_muted)
+                    summary = "Speaker muted" if self.live.speaker_muted else "Speaker unmuted"
+                self.activity.write(summary, summary)
+            except Exception as error:
+                self.activity.write(f"Audio control failed ({type(error).__name__})", "Audio control error")
+                self.notify("Could not change audio playback or capture. Check Activity.", severity="error")
+            finally:
+                self.update_audio_controls()
+                button.disabled = self.closing
+                if not self.closing:
+                    self.query_one("#chat-input", ChatComposer).focus()
+
+    def update_audio_controls(self) -> None:
+        mic = self.query_one("#mic-status", Button)
+        mic.label = (
+            "🎙 Muted" if self.live.microphone_muted
+            else "🎙 Listening" if self.mic_working else "🎙× Mic"
+        )
+        mic.tooltip = "Unmute microphone" if self.live.microphone_muted else "Mute microphone"
+        mic.set_class(self.live.microphone_muted, "audio-muted")
+        speaker = self.query_one("#speaker-status", Button)
+        speaker.label = "🔇 Muted" if self.live.speaker_muted else "🔊 Speaker"
+        speaker.tooltip = "Unmute speaker" if self.live.speaker_muted else "Mute speaker"
+        speaker.set_class(self.live.speaker_muted, "audio-muted")
 
     def reset_mic_indicator(self) -> None:
         self.mic_idle_timer = None
-        self.query_one("#mic-status", Static).update("🎙 Listening")
+        self.update_audio_controls()
 
     def action_copy_chat_selection(self) -> None:
         text = self.screen.get_selected_text()
@@ -445,16 +481,13 @@ class CoraApp(App):
         )
 
     def handle_mic_status(self, working: bool, message: str = "") -> None:
-        mic_status = self.query_one("#mic-status", Static)
+        self.mic_working = working
 
         if self.mic_idle_timer is not None:
             self.mic_idle_timer.stop()
             self.mic_idle_timer = None
 
-        if working:
-            mic_status.update("🎙 Listening")
-        else:
-            mic_status.update("🎙× Mic")
+        self.update_audio_controls()
 
         if message:
             self.activity.write(
@@ -467,6 +500,8 @@ class CoraApp(App):
             return
         self.closing = True
         self.query_one("#close-button", Button).disabled = True
+        self.query_one("#mic-status", Button).disabled = True
+        self.query_one("#speaker-status", Button).disabled = True
         self.query_one("#chat-input", ChatComposer).disabled = True
         self.query_one("#chat-status", Static).update("○ Disconnecting...")
 

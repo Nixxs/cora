@@ -67,6 +67,10 @@ not change an existing database's password or user. Back up important data.
 
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Mute audio:** click the microphone or speaker control on the bottom status row.
+  Mic mute stops local recording; speaker mute stops playback and discards queued
+  speech. Unmuting does not replay discarded audio. Typing stays available and
+  Live stays connected (and billable); captions and written answers remain visible.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
@@ -212,6 +216,7 @@ changes transactionally; it does not provide automatic downgrades.
 ### Available now
 
 - Unified terminal voice/text chat, streaming transcripts, and written answers.
+- Separate clickable microphone and speaker mute controls in the bottom status row.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -226,14 +231,15 @@ changes transactionally; it does not provide automatic downgrades.
 
 ### Quiet use and standby — development order
 
-These are **planned features**, not current controls. Implement and test one step
+Checked steps are implemented; the rest are planned. Implement and test one step
 at a time before moving on; standby must close Live, not merely mute audio.
 
-1. [ ] **Speaker mute:** add a clickable speaker control to the existing bottom
+1. [x] **Speaker mute:** add a clickable speaker control to the existing bottom
   status row. Stop current/queued playback and discard incoming audio while muted,
   without disconnecting Live or replaying old speech on unmute.
-2. [ ] **Microphone mute:** make the existing microphone indicator clickable.
+2. [x] **Microphone mute:** make the existing microphone indicator clickable.
   Stop recording and sending microphone audio while muted; keep typing available.
+  Generated silence keeps Live's timeline running without capturing room audio.
 3. [ ] **Quiet-use check:** verify typed questions, Live's visible reply transcripts,
   written answers, tools, and persistence still work with both audio controls muted.
   Keep replies readable without adding duplicate backend answers.
@@ -284,6 +290,6 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Mute controls, standby/wake-up, the audio visualiser, Signal integration, camera
-support, and autonomous initiative are not built yet. The examples are standalone
-experiments, not integrated Cora features.
+Standby/wake-up, the audio visualiser, Signal integration, camera support, and
+autonomous initiative are not built yet. Real-device mute/caption checks are still
+needed. The examples are standalone experiments, not integrated Cora features.

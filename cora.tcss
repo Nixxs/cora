@@ -72,10 +72,26 @@ Screen > .screen--selection {
     color: #8f98a8;
 }
 
-#mic-status {
+#mic-status, #speaker-status {
     width: auto;
+    min-width: 0;
     height: 1;
+    min-height: 1;
+    margin: 0 0 0 2;
+    padding: 0;
+    border: none;
+    background: transparent;
     color: #8f98a8;
+}
+
+#mic-status:hover, #mic-status:focus,
+#speaker-status:hover, #speaker-status:focus {
+    background: #202838;
+    color: #e0e6ef;
+}
+
+#mic-status.audio-muted, #speaker-status.audio-muted {
+    color: #f0a38a;
 }
 
 #input-frame {
