@@ -3,10 +3,11 @@ import base64
 import json
 from uuid import uuid4
 
-from microphone import microphone_chunks
 from openai import AsyncOpenAI
+
+from devices.microphone import microphone_chunks
+from devices.speaker import Speaker
 from session_config import build_session_config
-from speaker import Speaker
 
 
 class CoraLive:

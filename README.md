@@ -10,6 +10,9 @@ it, then build on the result.
 
 ## Project layout
 
+- [devices/](devices/): hardware input and output.
+	- [devices/microphone.py](devices/microphone.py): microphone audio capture.
+	- [devices/speaker.py](devices/speaker.py): speaker playback and cleanup.
 - [ui/](ui/): conversation and activity display, chat widgets, and text composer.
 - [storage/](storage/): database engine, ORM models, conversation storage, and
 	keyboard persistence.
