@@ -1,4 +1,6 @@
+import asyncio
 import sys
+from uuid import UUID, uuid4
 
 import pyperclip
 from textual.actions import SkipAction
@@ -6,15 +8,24 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, HorizontalGroup
 from textual.widgets import Collapsible, RichLog, Static, Button
+from textual.worker import WorkerError, get_current_worker
 
 from dotenv import load_dotenv
 from textual import work
 
-from activity import Activity
-from chat_widgets import SelectableRichLog
-from composer import ChatComposer
-from conversation import Conversation
+from ui.activity import Activity
+from ui.chat_widgets import SelectableRichLog
+from ui.composer import ChatComposer
+from ui.conversation import Conversation
+from storage.conversation_store import ConversationStore
+from storage.database import build_engine
+from storage.keyboard_persistence import KeyboardPersistence
+from memory.store import MemoryStore
 from live import CoraLive
+from memory.extract_memories import extract_memories
+from memory.embed_memory import embed_memory
+from memory.deduplicate_memory import deduplicate_memory
+from memory.summarize import summarize_conversation
 from tools import create_tool_registry
 
 
@@ -55,9 +66,18 @@ class CoraApp(App):
             self.query_one("#activity-panel", Collapsible),
             self.query_one("#activity-output", RichLog),
         )
+        self.persistence = KeyboardPersistence()
+        self.database_lock = asyncio.Lock()
+        self.chat_workers = []
+        self.chat_recording_closed = False
         self.conversation = Conversation(
-            self.query_one("#chat-output", RichLog), self.set_timer, self.activity.write
+            self.query_one("#chat-output", RichLog), self.set_timer, self.activity.write,
+            record_message=self.record_chat_message,
         )
+        self.pending_keyboard_message = None
+        self.keyboard_worker = None
+        self.startup_worker = None
+        self.summary_worker = None
         self.closing = False
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
@@ -69,28 +89,99 @@ class CoraApp(App):
         self.live = CoraLive(tool_schemas=self.tools.schemas)
         self.connection_worker = self.connect_to_cora()
 
-    async def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
+    def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
         message = event.text.strip()
         composer = event.composer
 
-        if not message or composer.disabled:
+        if not message or composer.disabled or self.closing:
             return
 
         composer.disabled = True
-        try:
-            await self.live.send_text(message)
-        except Exception as error:
-            self.activity.write(f"Text send error: {error}", "Text send error")
-            return
-        finally:
-            composer.disabled = False
-            composer.focus()
-
         self.conversation.flush_transcript()
-        self.conversation.write_log(f"You: {message}")
-        self.conversation.write_log("")
+        if self.pending_keyboard_message is None or self.pending_keyboard_message[0] != message:
+            self.pending_keyboard_message = (message, uuid4())
+        message_id = self.pending_keyboard_message[1]
+        self.keyboard_worker = self.submit_keyboard_message(message, message_id, composer)
 
-        composer.clear()
+    @work(group="keyboard-submit")
+    async def submit_keyboard_message(
+        self, message: str, message_id: UUID, composer: ChatComposer
+    ) -> None:
+        try:
+            if self.closing:
+                return
+            try:
+                await self.call_database(self.persistence.save_message, message_id, message)
+            except Exception as error:
+                # SQL errors may include query parameters: never log private text/credentials.
+                self.activity.write(
+                    f"Database save failed ({type(error).__name__}). Draft kept; nothing sent.",
+                    "Database save failed",
+                )
+                self.notify("Message not sent: database save failed. Draft kept.", severity="error")
+                return
+            self.activity.write(
+                f"Keyboard message saved: conversation_id={self.persistence.conversation_id}, "
+                f"message_id={message_id}",
+                "Keyboard message saved",
+            )
+            if self.closing:
+                # Saved text remains pending; shutdown must not start a new send.
+                return
+            try:
+                await self.live.send_text(message)
+            except Exception as error:
+                # A failed send may have reached the backend partially; do not auto-retry it.
+                self.pending_keyboard_message = None
+                await self.record_keyboard_delivery(message_id, "failed")
+                self.activity.write(f"Text send error: {error}", "Text send error")
+                return
+
+            self.pending_keyboard_message = None
+            await self.record_keyboard_delivery(message_id, "sent")
+            self.conversation.flush_transcript()
+            self.conversation.write_log(f"You: {message}")
+            self.conversation.write_log("")
+            composer.clear()
+        finally:
+            composer.disabled = self.closing
+            if not self.closing:
+                composer.focus()
+
+    async def record_keyboard_delivery(self, message_id: UUID, status: str) -> None:
+        try:
+            await self.call_database(self.persistence.record_delivery, message_id, status)
+        except Exception as error:
+            self.activity.write(
+                f"Could not confirm database delivery status '{status}' for message_id={message_id} "
+                f"({type(error).__name__}). Text was already saved.",
+                "Delivery status error",
+            )
+            self.notify("Text saved, but database delivery status could not be confirmed.", severity="warning")
+
+    async def call_database(self, operation, *args):
+        # Serialise off-thread calls, including lazy engine creation and shutdown.
+        async with self.database_lock:
+            return await asyncio.to_thread(operation, *args)
+
+    def record_chat_message(self, role: str, text: str, channel: str) -> None:
+        if self.chat_recording_closed:
+            return
+        self.chat_workers = [worker for worker in self.chat_workers if not worker.is_finished]
+        self.chat_workers.append(self.save_chat_message(uuid4(), role, text, channel))
+
+    @work(group="chat-save")
+    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
+        try:
+            await self.call_database(self.persistence.save_chat_message, message_id, role, text, channel)
+        except Exception as error:
+            self.activity.write(
+                f"Chat save failed ({type(error).__name__}); displayed text remains available.",
+                "Chat save failed",
+            )
+            self.notify("Conversation text could not be saved to the database.", severity="warning")
+        else:
+            self.activity.write(f"Chat text saved: role={role}, channel={channel}", "Chat text saved")
 
     @work
     async def connect_to_cora(self) -> None:
@@ -99,6 +190,11 @@ class CoraApp(App):
         status.update("○ Connecting...")
 
         try:
+            self.startup_worker = self.check_interrupted_conversations()
+            await self.startup_worker.wait()
+            if self.closing:
+                return
+            self.summary_worker = self.summarize_previous_conversations()
             await self.live.run(
                 self.handle_live_event,
                 self.handle_mic_status,
@@ -112,6 +208,99 @@ class CoraApp(App):
             self.activity.write("Connection closed", "Disconnected")
         finally:
             self.conversation.flush_transcript()
+
+    @work(group="database-startup")
+    async def check_interrupted_conversations(self) -> None:
+        try:
+            count = await self.call_database(self.persistence.mark_interrupted_conversations)
+        except Exception as error:
+            self.activity.write(
+                f"Interrupted conversation check failed ({type(error).__name__})",
+                "Database startup check failed",
+            )
+            self.notify("Could not tag unfinished conversations in the database.", severity="warning")
+        else:
+            if count:
+                self.activity.write(
+                    f"Tagged {count} unfinished conversation(s) as interrupted.",
+                    "Unfinished conversations tagged",
+                )
+
+        if self.closing:
+            return
+        self.live.memory_context = ""
+        try:
+            context = await self.call_database(self.persistence.load_startup_memory_context)
+        except Exception as error:
+            self.activity.write(
+                f"Startup memory load failed ({type(error).__name__}); connecting without memories.",
+                "Memory context unavailable",
+            )
+            self.notify("Could not load saved memories; connecting without them.", severity="warning")
+        else:
+            if not self.closing:
+                self.live.memory_context = context
+                self.activity.write(
+                    f"Startup memory context loaded ({len(context)} characters).", "Memory context loaded",
+                )
+
+    @work(thread=True, group="memory-summary", exit_on_error=False)
+    def summarize_previous_conversations(self) -> None:
+        # Own a separate engine so an in-flight request can finish during shutdown.
+        engine = None
+        worker = get_current_worker()
+        try:
+            if self.closing or worker.is_cancelled:
+                return
+            engine = build_engine()
+            store = ConversationStore(engine)
+            for conversation_id in store.get_unsummarized_conversation_ids(self.persistence.conversation_id):
+                if self.closing or worker.is_cancelled:
+                    break
+                memories = extract_memories(store, conversation_id)
+                if self.closing or worker.is_cancelled:
+                    break
+                self.call_from_thread(
+                    self.activity.write,
+                    f"Memories extracted: conversation_id={conversation_id}, count={len(memories)}",
+                    "Memory extraction complete",
+                )
+                # Save the summary last: even zero-memory chats then leave this queue.
+                summarize_conversation(store, conversation_id)
+                if not self.closing and not worker.is_cancelled:
+                    self.call_from_thread(
+                        self.activity.write,
+                        f"Summary saved: conversation_id={conversation_id}", "Memory summary saved",
+                    )
+            if self.closing or worker.is_cancelled:
+                return
+            memory_store = MemoryStore(engine)
+            for memory_id in memory_store.get_pending_embedding_ids():
+                if self.closing or worker.is_cancelled:
+                    return
+                embed_memory(memory_store, memory_id)
+                if not self.closing and not worker.is_cancelled:
+                    self.call_from_thread(
+                        self.activity.write, f"Memory embedded: memory_id={memory_id}", "Memory embedding saved",
+                    )
+            for memory_id in memory_store.get_pending_deduplication_ids():
+                if self.closing or worker.is_cancelled:
+                    return
+                duplicate = deduplicate_memory(memory_store, memory_id)
+                if not self.closing and not worker.is_cancelled:
+                    self.call_from_thread(
+                        self.activity.write,
+                        f"Memory checked: memory_id={memory_id}, duplicate={duplicate}", "Memory deduplication checked",
+                    )
+        except Exception as error:
+            if not self.closing and not worker.is_cancelled:
+                self.call_from_thread(
+                    self.activity.write,
+                    f"Background memory pass stopped ({type(error).__name__}).", "Memory processing failed",
+                )
+        finally:
+            if engine is not None:
+                engine.dispose()
 
     def handle_live_event(self, event) -> None:
         status = self.query_one("#chat-status", Static)
@@ -278,14 +467,49 @@ class CoraApp(App):
             return
         self.closing = True
         self.query_one("#close-button", Button).disabled = True
+        self.query_one("#chat-input", ChatComposer).disabled = True
         self.query_one("#chat-status", Static).update("○ Disconnecting...")
 
         try:
+            if self.startup_worker is not None:
+                try:
+                    await self.startup_worker.wait()
+                except WorkerError:
+                    self.activity.write("Database startup worker stopped", "Database startup worker stopped")
+            if self.summary_worker is not None and not self.summary_worker.is_finished:
+                self.summary_worker.cancel()
+            if self.keyboard_worker is not None:
+                try:
+                    await self.keyboard_worker.wait()
+                except WorkerError:
+                    self.activity.write("Keyboard submission worker stopped", "Keyboard worker stopped")
             await self.live.close()
         finally:
-            if self.connection_worker is not None:
-                self.connection_worker.cancel()
-            self.exit()
+            try:
+                if self.connection_worker is not None:
+                    self.connection_worker.cancel()
+                self.conversation.flush_transcript()
+                self.chat_recording_closed = True
+                for worker in self.chat_workers:
+                    try:
+                        await worker.wait()
+                    except WorkerError:
+                        self.activity.write("Chat save worker stopped", "Chat save worker stopped")
+                try:
+                    await self.call_database(self.persistence.finish_conversation)
+                except Exception as error:
+                    self.activity.write(
+                        f"Conversation close failed ({type(error).__name__})",
+                        "Conversation close failed",
+                    )
+                    self.notify("Conversation end could not be saved to the database.", severity="warning")
+            finally:
+                try:
+                    await self.call_database(self.persistence.close)
+                except Exception as error:
+                    self.activity.write(f"Database cleanup failed ({type(error).__name__})", "Database cleanup failed")
+                finally:
+                    self.exit()
 
 if __name__ == "__main__":
     CoraApp().run()

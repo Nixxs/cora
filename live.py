@@ -3,10 +3,11 @@ import base64
 import json
 from uuid import uuid4
 
-from microphone import microphone_chunks
 from openai import AsyncOpenAI
+
+from devices.microphone import microphone_chunks
+from devices.speaker import Speaker
 from session_config import build_session_config
-from speaker import Speaker
 
 
 class CoraLive:
@@ -16,6 +17,7 @@ class CoraLive:
         self.ready = False
         self.closed = asyncio.Event()
         self.microphone_task = None
+        self.memory_context = ""
 
     async def run(self, on_event, on_mic_status, on_audio_status=None):
         async with AsyncOpenAI() as client:
@@ -26,7 +28,7 @@ class CoraLive:
 
                 try:
                     await connection.session.start(
-                        session=build_session_config(self.tool_schemas())
+                        session=build_session_config(self.tool_schemas(), self.memory_context)
                     )
 
                     self.microphone_task = asyncio.create_task(
@@ -88,13 +90,13 @@ class CoraLive:
         if connection is None or not self.ready:
             raise RuntimeError("Wait until Cora shows Connected before sending text.")
 
-        # Mirror user-provided text as context, not trusted instructions.
+        # A silent context mirror, not a second conversational request.
         # This send does not wait for Live's timeline acknowledgment.
         await connection.session.thinking.append(
             event_id=f"typed_context_{uuid4().hex}",
             delegation_id=None,
             content=(
-                "Nick submitted this new typed message to the Responses backend "
+                "Silent typed-context mirror: Nick submitted this typed message to the Responses backend "
                 "as user-provided conversation data: "
                 f"{json.dumps(message, ensure_ascii=False)}"
             ),

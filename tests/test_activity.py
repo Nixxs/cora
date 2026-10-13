@@ -2,7 +2,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, call, patch
 
-from activity import Activity
+from ui.activity import Activity
 from app import CoraApp
 
 
@@ -13,7 +13,7 @@ class ActivityTests(unittest.TestCase):
         self.output = MagicMock()
         self.output.scrollable_content_region.width = 40
         self.activity = Activity(self.panel, self.output)
-        clock = patch("activity.datetime")
+        clock = patch("ui.activity.datetime")
         clock.start().now.return_value.strftime.return_value = "12:34:56"
         self.addCleanup(clock.stop)
 
@@ -56,7 +56,8 @@ class ActivityTests(unittest.TestCase):
 
 class ActivityPanelTests(unittest.IsolatedAsyncioTestCase):
     async def test_expansion_replays_history_without_duplicates_or_transcript_changes(self):
-        with patch.object(CoraApp, "connect_to_cora", return_value=None):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+            patch.object(CoraApp, "record_chat_message"):
             app = CoraApp()
             async with app.run_test(size=(90, 35)) as pilot:
                 await pilot.pause()

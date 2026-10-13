@@ -2,14 +2,15 @@
 
 from textual.widgets import RichLog
 
-from chat_widgets import ChatMarkdown
+from .chat_widgets import ChatMarkdown
 
 
 class Conversation:
-    def __init__(self, output: RichLog, set_timer, write_debug):
+    def __init__(self, output: RichLog, set_timer, write_debug, record_message=None):
         self.output = output
         self.set_timer = set_timer
         self.write_debug = write_debug
+        self.record_message = record_message
         self.transcript_speaker = None
         self.transcript_text = ""
         self.transcript_idle_timer = None
@@ -51,6 +52,8 @@ class Conversation:
             self.transcript_idle_timer = None
 
         had_active_transcript = self.active_transcript_index is not None
+        speaker = self.transcript_speaker
+        text = self.transcript_text.strip()
         if had_active_transcript and self.log_entries[-1] != "":
             self.log_entries.append("")
 
@@ -60,6 +63,8 @@ class Conversation:
 
         if had_active_transcript:
             self.redraw_log()
+            if text and self.record_message is not None:
+                self.record_message("user" if speaker == "You" else "assistant", text, "voice")
 
     def redraw_log(self) -> None:
         # RichLog.write adds lines, so redraw to update the active message.
@@ -122,3 +127,5 @@ class Conversation:
             f"Written answer displayed: item_id={item_id}, characters={len(text)}",
             "Written answer displayed",
         )
+        if self.record_message is not None:
+            self.record_message("assistant", text, "screen")

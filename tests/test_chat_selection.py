@@ -5,7 +5,7 @@ from textual.geometry import Offset
 from textual.selection import Selection
 
 from app import CoraApp
-from chat_widgets import ChatMarkdown, SelectableRichLog
+from ui.chat_widgets import ChatMarkdown, SelectableRichLog
 
 
 class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):

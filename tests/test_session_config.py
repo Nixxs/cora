@@ -1,10 +1,20 @@
 from copy import deepcopy
 import unittest
 
-from session_config import BACKEND_INSTRUCTIONS, LIVE_INSTRUCTIONS, build_session_config
+from session_config import BACKEND_INSTRUCTIONS, LIVE_INSTRUCTIONS, MEMORY_RECALL_STYLE, build_session_config
 
 
 class SessionConfigTests(unittest.TestCase):
+    def test_both_models_use_quiet_grounded_memory_recall(self):
+        config = build_session_config([])
+        for instructions in (config["instructions"], config["delegation"]["responses"]["instructions"]):
+            self.assertIn(MEMORY_RECALL_STYLE, instructions)
+            self.assertIn("Do not announce a lookup", instructions)
+            self.assertIn("Wait for the result", instructions)
+            self.assertIn("supported by the available context or returned memory", instructions)
+            self.assertIn("rather than inventing a memory", instructions)
+            self.assertIn("unless Nick asks how memory works", instructions)
+
     def test_default_settings_and_prompts(self):
         config = build_session_config([])
         self.assertEqual(config["model"], "gpt-live-1")
