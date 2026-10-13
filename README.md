@@ -74,6 +74,8 @@ not change an existing database's password or user. Back up important data.
   Mic mute stops local recording; speaker mute stops playback and discards queued
   speech. Unmuting does not replay discarded audio. Typing stays available and
   Live stays connected (and billable); captions and written answers remain visible.
+- **Watch playback:** eight audio bars beside the speaker control follow output
+  volume. They become a flat line when silent and show “Muted” when playback is muted.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
@@ -220,6 +222,7 @@ changes transactionally; it does not provide automatic downgrades.
 
 - Unified terminal voice/text chat, streaming transcripts, and written answers.
 - Separate clickable microphone and speaker mute controls in the bottom status row.
+- A fixed-width speaking animation driven by output audio playback levels.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -253,9 +256,11 @@ at a time before moving on; standby must close Live, not merely mute audio.
   Keep microphone and speaker controls on the right, with labels as well as colour.
   The state display is a disabled button, ready for manual standby/resume in step 7;
   a distinct standby state will be added with that behaviour, not shown prematurely.
-5. [ ] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
+5. [x] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
   control, driven by playback levels. Show a flat line when silent and a muted label
   when disabled; update Textual on its UI thread, not from the audio callback.
+  Eight bars update at 20 FPS from lightweight playback-level snapshots, without
+  relaying out the chat. Mocked tests pass; live animation/audio alignment needs a check.
 6. [ ] **Reconnect with context:** close and restart Live without quitting the UI.
   Restore relevant conversation context, keep the logical conversation and mute
   settings, and guard against duplicate tool actions or lost pending work.
@@ -298,7 +303,8 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Standby/wake-up, the audio visualiser, Signal integration, camera support, and
+Standby/wake-up, Signal integration, camera support, and
 autonomous initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
+The playback visualiser still needs a real-device check.
 The examples are standalone experiments, not integrated Cora features.

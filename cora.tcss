@@ -112,6 +112,18 @@ Screen > .screen--selection {
     color: #f0a38a;
 }
 
+#speaker-level {
+    width: 8;
+    height: 1;
+    margin-left: 1;
+    content-align: center middle;
+    color: #8fcca6;
+}
+
+#speaker-level.audio-muted {
+    color: #f0a38a;
+}
+
 #input-frame {
     height: auto;
     margin-top: 0;
