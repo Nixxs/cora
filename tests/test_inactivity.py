@@ -14,7 +14,7 @@ from ui.composer import ChatComposer
 
 @asynccontextmanager
 async def idle_app():
-    with patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": "300"}):
+    with patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": "300", "CORA_STANDBY_FAREWELL": "0"}):
         async with running_app() as (app, pilot):
             # Tests drive the monotonic clock/check explicitly, without real sleeps.
             app.idle_standby_timer.stop()

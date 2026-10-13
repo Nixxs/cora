@@ -90,6 +90,11 @@ not change an existing database's password or user. Back up important data.
   playback prevent sleep. Work finishing or Live resuming gives a fresh full idle
   period, leaving time to read or think. An untouched draft does not prevent sleep;
   it is preserved. Click Standby or press Ctrl+R to resume; there is no automatic wake.
+- **Optional standby heads-up:** enable `CORA_STANDBY_FAREWELL=1` to have Live
+  briefly announce automatic standby, then leave a response window before closing.
+  Detected user speech, typing, cursor movement, or controls cancel sleep and reset
+  the idle period. Speaker mute skips the spoken alert; microphone mute means you
+  must type or use a control to cancel. Manual standby has no farewell.
 - **Mute audio:** click the microphone or speaker control on the bottom status row.
   Mic mute stops local recording; speaker mute stops playback and discards queued
   speech. Unmuting does not replay discarded audio. Typing stays available and
@@ -126,7 +131,21 @@ standby and show a warning in Activity. The timer checks once per second and
 silently waits while Live is busy, including its existing recent-speech safety
 gap. Continuous silent audio does not reset the clock. Background memory work
 does not keep Live connected and can continue with its separate charges.
-There is no farewell speech or automatic resume in this increment.
+
+The optional heads-up is off by default. Set `CORA_STANDBY_FAREWELL=1` before
+launching to enable it; `0` disables it. It uses Live commentary directly, not a
+Responses backend request or a quit tool. Wording may vary. Live remains connected
+and billable, with input available, while waiting for output/playback and a
+three-second response window after a two-second output quiet gap. Checks run once
+per second, so timing is approximate. New output or audible queued audio postpones
+closing; new user activity or pending work cancels automatic sleep.
+
+Live acknowledges accepted commentary, but provides no authoritative speech-done
+event. Playback/quiet detection is therefore best-effort, not a guarantee for
+unusual network delays. A send failure, rejection, playback error, or 30-second
+wait timeout cancels sleep and leaves Cora active with a fresh idle period; timeout
+never forces closure or immediately retries the alert. Once Live closes, it cannot
+hear a response: wake is still manual. Real-device heads-up timing needs a check.
 
 ## How Cora works
 
@@ -273,6 +292,7 @@ changes transactionally; it does not provide automatic downgrades.
 - Manual Live reconnect with recent chat context, without closing the local app.
 - Click Active for standby; click Standby or press Ctrl+R to resume with context.
 - Configurable inactivity standby, with full idle grace after work and resume.
+- Opt-in standby heads-up through Live, with a cancellable response window.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -333,10 +353,15 @@ at a time before moving on; standby must close Live, not merely mute audio.
   Defaults to five minutes; `CORA_IDLE_TIMEOUT_SECONDS=0` disables automatic sleep.
   Reuses manual standby guards, preserves drafts and mute settings, and starts a
   fresh idle period after work or resume. Deterministic mocked tests pass;
-  real-device inactivity behaviour still needs a manual check.
-9. [ ] **Optional farewell:** offer a brief “I'll leave you to it” before automatic
+  the basic live inactivity check has been completed.
+9. [x] **Optional farewell:** offer a brief “I'll leave you to it” before automatic
   standby. Finish playback before closing, respect speaker mute, and cancel sleep
   if the user resumes interacting.
+  Opt in with `CORA_STANDBY_FAREWELL=1`. Direct Live commentary gives a heads-up,
+  then playback/quiet monitoring leaves a three-second response window. User
+  activity or new work cancels sleep; errors/timeouts stay active instead of
+  forcing closure. Speaker mute bypasses the alert. Mocked tests pass;
+  live playback and spoken-interruption timing still need a manual check.
 10. [ ] **Local wake word:** detect “Hey Cora” locally during standby, without sending
    room audio to OpenAI. Buffer opening speech through reconnection and handle false
    triggers. Privacy mute disables listening entirely; wake-word listening is separate.

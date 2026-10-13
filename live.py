@@ -137,6 +137,7 @@ class CoraLive:
         if self.on_trace is None or event.type not in (
             "session.started", "session.closed", "session.delegation.created",
             "session.thinking.appended", "session.input_transcript.delta",
+            "session.commentary.appended",
             "session.output_transcript.delta", "response.event", "error",
         ):
             return
@@ -167,7 +168,7 @@ class CoraLive:
             )
         elif event.type == "error":
             metadata["client_event_id"] = getattr(event.error, "client_event_id", None)
-        elif event.type.endswith(".delta") or event.type == "session.thinking.appended":
+        elif event.type.endswith(".delta") or event.type in ("session.thinking.appended", "session.commentary.appended"):
             # Timeline metadata only: never include transcript fragments or context.
             metadata.update(start_ms=getattr(event, "start_ms", None), end_ms=getattr(event, "end_ms", None))
         delegation_id = metadata["delegation_id"]
@@ -284,6 +285,25 @@ class CoraLive:
             self.pending_text_requests.discard(request_id)
             self.trace("send.failed", event_type="response.create", client_event_id=request_id, error_type=type(error).__name__)
             raise
+
+    async def send_standby_alert(self, event_id: str) -> None:
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Live is not ready for a standby heads-up")
+        if self.speaker_muted:
+            return
+        self.trace("send.before", event_type="session.commentary.append", client_event_id=event_id)
+        await connection.session.commentary.append(
+            event_id=event_id,
+            delegation_id=None,
+            content=(
+                "Automatic standby heads-up: Cora is about to enter standby due to inactivity. "
+                "Briefly let Nick know: I'll leave you to it—going into standby. "
+                "This is not a request to quit the application or use tools. "
+                "If Nick responds, continue the conversation; the app will cancel standby."
+            ),
+        )
+        self.trace("send.after", event_type="session.commentary.append", client_event_id=event_id)
 
     async def close(self):
         connection = self.connection
