@@ -47,7 +47,11 @@ class CoraApp(App):
             with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
                 yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
             with HorizontalGroup(id="status-bar"):
-                yield Static("○ Not connected", id="chat-status")
+                yield Button(
+                    "○ Disconnected", id="chat-status", disabled=True,
+                    classes="state-disconnected",
+                    tooltip="Live is disconnected. Standby controls are not available yet.",
+                )
                 yield Button("🎙× Mic", id="mic-status", tooltip="Mute microphone")
                 yield Button("🔊 Speaker", id="speaker-status", tooltip="Mute speaker")
             with Vertical(id="input-frame"):
@@ -187,9 +191,7 @@ class CoraApp(App):
 
     @work
     async def connect_to_cora(self) -> None:
-        status = self.query_one("#chat-status", Static)
-
-        status.update("○ Connecting...")
+        self.set_connection_state("connecting")
 
         try:
             self.startup_worker = self.check_interrupted_conversations()
@@ -203,10 +205,10 @@ class CoraApp(App):
                 self.handle_audio_status,
             )
         except Exception as error:
-            status.update("○ Connection failed")
+            self.set_connection_state("disconnected", "Connection failed. See Activity for details.")
             self.activity.write(f"Connection error: {error}", "Connection failed")
         else:
-            status.update("○ Disconnected")
+            self.set_connection_state("disconnected")
             self.activity.write("Connection closed", "Disconnected")
         finally:
             self.conversation.flush_transcript()
@@ -305,16 +307,16 @@ class CoraApp(App):
                 engine.dispose()
 
     def handle_live_event(self, event) -> None:
-        status = self.query_one("#chat-status", Static)
         mic_status = self.query_one("#mic-status", Button)
 
         if event.type == "session.started":
-            status.update("● Connected")
+            self.set_connection_state("active")
             self.activity.write("Live session started", "Connected")
 
         elif event.type == "session.input_transcript.delta":
             if not self.live.microphone_muted:
                 mic_status.label = "🎙 Speech received"
+                mic_status.refresh(layout=True)
                 if self.mic_idle_timer is not None:
                     self.mic_idle_timer.stop()
                 # Transcript silence is a UI hint, not a confirmed end of speech.
@@ -401,13 +403,14 @@ class CoraApp(App):
                 )
 
         elif event.type == "error":
-            status.update("○ API error")
+            # A rejected command does not necessarily end the Live session.
             self.activity.write(f"API error: {event.error.message}", "API error")
             command_id = getattr(event.error, "client_event_id", None)
             if command_id:
                 self.activity.write(f"Rejected command: id={command_id}", "API error")
 
         elif event.type == "session.closed":
+            self.set_connection_state("disconnected")
             self.conversation.flush_transcript()
             self.activity.write(f"Session ended: {event.reason}", "Disconnected")
 
@@ -415,6 +418,23 @@ class CoraApp(App):
         if event.collapsible.id == "activity-panel":
             # Wait for layout to restore the hidden log's usable width.
             self.call_after_refresh(self.activity.redraw)
+
+    def set_connection_state(self, state: str, detail: str = "") -> None:
+        labels = {
+            "disconnected": "○ Disconnected",
+            "connecting": "◌ Connecting…",
+            "active": "● Active",
+            "disconnecting": "◌ Disconnecting…",
+        }
+        button = self.query_one("#chat-status", Button)
+        button.label = labels[state]
+        for name in labels:
+            button.set_class(name == state, f"state-{name}")
+        button.tooltip = detail or (
+            f"Live is {state}. Standby controls are not available yet."
+        )
+        # The eventual standby/resume control needs safe session reconnection first.
+        button.disabled = True
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close-button":
@@ -449,10 +469,13 @@ class CoraApp(App):
         )
         mic.tooltip = "Unmute microphone" if self.live.microphone_muted else "Mute microphone"
         mic.set_class(self.live.microphone_muted, "audio-muted")
+        # Button.label repaints but does not invalidate its cached auto width.
+        mic.refresh(layout=True)
         speaker = self.query_one("#speaker-status", Button)
         speaker.label = "🔇 Muted" if self.live.speaker_muted else "🔊 Speaker"
         speaker.tooltip = "Unmute speaker" if self.live.speaker_muted else "Mute speaker"
         speaker.set_class(self.live.speaker_muted, "audio-muted")
+        speaker.refresh(layout=True)
 
     def reset_mic_indicator(self) -> None:
         self.mic_idle_timer = None
@@ -503,7 +526,7 @@ class CoraApp(App):
         self.query_one("#mic-status", Button).disabled = True
         self.query_one("#speaker-status", Button).disabled = True
         self.query_one("#chat-input", ChatComposer).disabled = True
-        self.query_one("#chat-status", Static).update("○ Disconnecting...")
+        self.set_connection_state("disconnecting")
 
         try:
             if self.startup_worker is not None:

@@ -68,8 +68,25 @@ Screen > .screen--selection {
 
 #chat-status {
     width: 1fr;
+    min-width: 0;
     height: 1;
+    min-height: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+    content-align: left middle;
+    text-align: left;
+    text-style: none;
+    text-opacity: 100%;
     color: #8f98a8;
+}
+
+#chat-status.state-active {
+    color: #8fcca6;
+}
+
+#chat-status.state-connecting, #chat-status.state-disconnecting {
+    color: #e0c080;
 }
 
 #mic-status, #speaker-status {
@@ -81,6 +98,7 @@ Screen > .screen--selection {
     padding: 0;
     border: none;
     background: transparent;
+    text-style: none;
     color: #8f98a8;
 }
 

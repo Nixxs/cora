@@ -67,6 +67,9 @@ not change an existing database's password or user. Back up important data.
 
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Check connection state:** the left side of the bottom row shows Active,
+  Connecting, Disconnecting, or Disconnected. It is a future standby/resume button,
+  currently disabled until those controls are implemented. Muting does not change it.
 - **Mute audio:** click the microphone or speaker control on the bottom status row.
   Mic mute stops local recording; speaker mute stops playback and discards queued
   speech. Unmuting does not replay discarded audio. Typing stays available and
@@ -237,15 +240,19 @@ at a time before moving on; standby must close Live, not merely mute audio.
 1. [x] **Speaker mute:** add a clickable speaker control to the existing bottom
   status row. Stop current/queued playback and discard incoming audio while muted,
   without disconnecting Live or replaying old speech on unmute.
+  Manual conversation check: mute/unmute worked, including toggling mid-speech.
 2. [x] **Microphone mute:** make the existing microphone indicator clickable.
   Stop recording and sending microphone audio while muted; keep typing available.
   Generated silence keeps Live's timeline running without capturing room audio.
-3. [ ] **Quiet-use check:** verify typed questions, Live's visible reply transcripts,
+3. [x] **Quiet-use check:** verify typed questions, Live's visible reply transcripts,
   written answers, tools, and persistence still work with both audio controls muted.
   Keep replies readable without adding duplicate backend answers.
-4. [ ] **Clear state display:** reuse the left-hand connection indicator for active,
-  connecting, and disconnected states; add a distinct standby state when implemented.
+  Manual quiet-use check completed successfully with both controls muted.
+4. [x] **Clear state display:** reuse the left-hand connection indicator for active,
+  connecting, disconnecting, and disconnected states, with labels and distinct colours.
   Keep microphone and speaker controls on the right, with labels as well as colour.
+  The state display is a disabled button, ready for manual standby/resume in step 7;
+  a distinct standby state will be added with that behaviour, not shown prematurely.
 5. [ ] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
   control, driven by playback levels. Show a flat line when silent and a muted label
   when disabled; update Textual on its UI thread, not from the audio callback.
@@ -255,6 +262,7 @@ at a time before moving on; standby must close Live, not merely mute audio.
 7. [ ] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
   path. Keep the local app open with Live closed; typing must explicitly wake Live
   or clearly request resume, not silently fail. Standby is not a connection error.
+  Enable the left-hand state button: click Active to sleep and Standby to resume.
 8. [ ] **Inactivity standby:** add a configurable idle timeout that considers typing,
   speech, playback, and pending work. Allow reading/thinking pauses; microphone
   silence alone must not trigger sleep during an active task.
@@ -291,5 +299,6 @@ Camera presence detection is separate from sending images to a model for vision.
   permissions, quiet hours, and an off switch.
 
 Standby/wake-up, the audio visualiser, Signal integration, camera support, and
-autonomous initiative are not built yet. Real-device mute/caption checks are still
-needed. The examples are standalone experiments, not integrated Cora features.
+autonomous initiative are not built yet. Speaker mute has been checked in a live
+conversation, and quiet use with both audio controls muted has been confirmed.
+The examples are standalone experiments, not integrated Cora features.
