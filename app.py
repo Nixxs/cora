@@ -1,6 +1,7 @@
 import asyncio
 import sys
 from collections import deque
+from pathlib import Path
 from time import monotonic
 from uuid import UUID, uuid4
 
@@ -22,6 +23,7 @@ from ui.conversation import Conversation
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
+from storage.live_trace import LiveTrace
 from memory.store import MemoryStore
 from live import CoraLive
 from memory.extract_memories import extract_memories
@@ -35,6 +37,7 @@ load_dotenv()
 
 class CoraApp(App):
 
+    live_trace = None
     CSS_PATH = "cora.tcss"
     BINDINGS = [
         ("ctrl+x", "disconnect_and_quit", "Quit"),
@@ -95,6 +98,7 @@ class CoraApp(App):
         self.startup_complete = False
         self.pending_backend_work = set()
         self.tool_response_ids = set()
+        self.backend_response_ids = {}
         self.last_live_activity = 0.0
         self.tools = create_tool_registry(
             get_connection=lambda: self.live.connection,
@@ -103,11 +107,29 @@ class CoraApp(App):
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
         )
-        self.live = CoraLive(tool_schemas=self.tools.schemas)
+        self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
         self.speaker_level_indicator = self.query_one("#speaker-level", Static)
         self.speaker_levels = deque("────────", maxlen=8)
         self.speaker_level_timer = self.set_interval(0.05, self.update_speaking_animation)
+        if self.live_trace is not None:
+            self.trace_live("app.started")
+            if not self.live_trace.failed:
+                self.activity.write(
+                    f"Diagnostic trace: {self.live_trace.path.name} (IDs/state only; no chat text or audio).",
+                    "Diagnostic trace enabled",
+                )
         self.connection_worker = self.connect_to_cora()
+
+    def trace_live(self, stage: str, **metadata) -> None:
+        trace = self.live_trace
+        if trace is None or trace.failed:
+            return
+        trace.write(
+            stage, pending_backend_work=sorted(self.pending_backend_work, key=str),
+            tool_response_ids=sorted(self.tool_response_ids, key=str), **metadata,
+        )
+        if trace.failed:
+            self.activity.write("Could not write diagnostic trace; Live continues unchanged.", "Diagnostic trace unavailable")
 
     def on_unmount(self) -> None:
         self.speaker_level_timer.stop()
@@ -119,7 +141,7 @@ class CoraApp(App):
         if not message or composer.disabled or self.closing or self.reconnecting:
             return
         if self.standby:
-            self.notify("Live is in standby. Press Ctrl+R to resume; your draft is kept.", severity="warning")
+            self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
             return
 
         composer.disabled = True
@@ -156,9 +178,12 @@ class CoraApp(App):
                 return
             try:
                 self.pending_backend_work.add("typed-request")
+                self.trace_live("typed.submit", message_id=str(message_id))
                 await self.live.send_text(message)
+                self.trace_live("typed.sent", message_id=str(message_id))
             except Exception as error:
                 self.pending_backend_work.discard("typed-request")
+                self.trace_live("typed.failed", message_id=str(message_id), error_type=type(error).__name__)
                 # A failed send may have reached the backend partially; do not auto-retry it.
                 self.pending_keyboard_message = None
                 await self.record_keyboard_delivery(message_id, "failed")
@@ -246,6 +271,7 @@ class CoraApp(App):
             self.notify("Live ended with unfinished work. Reconnect will not retry it.", severity="warning")
         self.pending_backend_work.clear()
         self.tool_response_ids.clear()
+        self.backend_response_ids.clear()
 
     def action_reconnect(self) -> None:
         self.request_live_transition(restart=True)
@@ -276,6 +302,10 @@ class CoraApp(App):
             ("audio playback", playback_busy),
             ("recent speech", self.live.ready and monotonic() - self.last_live_activity < 2.0),
         ) if busy]
+        self.live.trace(
+            "transition.request", restart=restart, blockers=blockers,
+            playback_busy=bool(playback_busy),
+        )
         if blockers:
             action = "reconnect" if restart else "enter standby"
             reason = ", ".join(blockers)
@@ -289,13 +319,13 @@ class CoraApp(App):
         self.query_one("#chat-input", ChatComposer).disabled = True
         self.query_one("#mic-status", Button).disabled = True
         self.query_one("#speaker-status", Button).disabled = True
-        self.set_connection_state("disconnecting")
+        self.set_connection_state("connecting" if restart and self.standby else "disconnecting")
         self.reconnect_worker = self.reconnect_live(restart=restart)
 
     @work(group="live-reconnect")
     async def reconnect_live(self, restart: bool = True) -> None:
         try:
-            self.set_connection_state("disconnecting")
+            self.set_connection_state("connecting" if restart and self.standby else "disconnecting")
             await self.live.stop_microphone()
             # Closing/cleanup must finish before another reader can own the transport.
             await self.live.close()
@@ -330,6 +360,8 @@ class CoraApp(App):
             self.notify(f"{summary}. Check Activity; no requests were replayed.", severity="error")
         finally:
             self.reconnecting = False
+            if self.standby and not self.closing:
+                self.set_connection_state("standby")
             self.query_one("#chat-input", ChatComposer).disabled = self.closing
             self.query_one("#mic-status", Button).disabled = self.closing
             self.query_one("#speaker-status", Button).disabled = self.closing
@@ -470,6 +502,9 @@ class CoraApp(App):
         elif event.type == "session.delegation.created":
             delegation = event.delegation
             self.pending_backend_work.add(delegation.id)
+            response_id = getattr(delegation, "response_id", None)
+            if response_id:
+                self.backend_response_ids[delegation.id] = response_id
             self.activity.write(
                 f"Delegation requested: "
                 f"target={delegation.target}, id={delegation.id}",
@@ -480,10 +515,20 @@ class CoraApp(App):
             # Live wraps backend events in a dictionary, not an event object.
             backend_event = event.event
             event_type = backend_event.get("type")
-            response_id = (backend_event.get("response") or {}).get("id")
-            if event_type == "response.created":
+            response_id = (backend_event.get("response") or {}).get("id") or backend_event.get("response_id")
+            # Forwarded output items can omit response_id; their delegation
+            # identifies the response announced by metadata/lifecycle events.
+            if response_id and event.delegation_id is not None:
+                self.backend_response_ids[event.delegation_id] = response_id
+            elif not response_id:
+                response_id = self.backend_response_ids.get(event.delegation_id)
+            if event_type in (
+                "response.created", "response.in_progress", "response.output_item.done",
+                "response.completed", "response.failed", "response.incomplete",
+            ):
                 if not self.live.pending_text_requests:
                     self.pending_backend_work.discard("typed-request")
+            if event_type in ("response.created", "response.in_progress", "response.output_item.done"):
                 self.pending_backend_work.add(event.delegation_id)
                 self.pending_backend_work.add(response_id or event.delegation_id)
             elif event_type in ("response.completed", "response.failed", "response.incomplete"):
@@ -491,13 +536,14 @@ class CoraApp(App):
                 # A completed response with function calls still needs a tool continuation.
                 if event_type != "response.completed" or response_id not in self.tool_response_ids:
                     self.pending_backend_work.discard(event.delegation_id)
+                    self.backend_response_ids.pop(event.delegation_id, None)
                 self.tool_response_ids.discard(response_id)
             if event_type == "response.output_item.done":
                 # Live lifecycle snapshots omit output; completed items carry it.
                 item = backend_event.get("item") or {}
                 if item.get("type") == "function_call":
                     self.pending_backend_work.add(event.delegation_id)
-                    self.tool_response_ids.add(backend_event.get("response_id"))
+                    self.tool_response_ids.add(response_id)
                     self.tools.handle_function_call(item)
                 else:
                     self.conversation.display_written_item(item)
@@ -519,7 +565,10 @@ class CoraApp(App):
                 self.activity.write(
                     f"Backend {event_type}: "
                     f"delegation_id={event.delegation_id}, "
-                    f"response_id={response.get('id')}",
+                    f"response_id={response_id}, "
+                    f"client_event_id={getattr(event, 'client_event_id', None)}, "
+                    f"typed_pending={len(self.live.pending_text_requests)}, "
+                    f"backend_pending={len(self.pending_backend_work)}",
                     summary,
                 )
                 error = response.get("error") or backend_event.get("error")
@@ -584,17 +633,20 @@ class CoraApp(App):
             button.set_class(name == state, f"state-{name}")
         button.tooltip = detail or {
             "active": "Click to close Live and enter standby.",
-            "standby": "Live is closed. Press Ctrl+R to resume.",
+            "standby": "Live is closed. Click to resume, or press Ctrl+R.",
             "disconnected": "Live is disconnected. Ctrl+R to reconnect.",
         }.get(state, f"Live is {state}.")
-        button.disabled = state != "active" or self.closing or self.reconnecting
+        button.disabled = state not in ("active", "standby") or self.closing or self.reconnecting
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "close-button":
             event.button.disabled = True
             await self.action_disconnect_and_quit()
         elif event.button.id == "chat-status":
-            self.action_standby()
+            if self.standby:
+                self.action_reconnect()
+            else:
+                self.action_standby()
         elif event.button.id in ("mic-status", "speaker-status") and not self.closing and not self.reconnecting:
             button = event.button
             button.disabled = True
@@ -754,4 +806,6 @@ class CoraApp(App):
                     self.exit()
 
 if __name__ == "__main__":
-    CoraApp().run()
+    app = CoraApp()
+    app.live_trace = LiveTrace(Path(__file__).with_name("live-trace.log"))
+    app.run()

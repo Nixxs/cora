@@ -137,6 +137,157 @@ class ReconnectHistoryTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ReconnectTests(unittest.IsolatedAsyncioTestCase):
+    async def test_typed_command_is_acknowledged_by_its_delegation_announcement(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            await live.send_text("First typed request")
+            await live.send_text("Second typed request")
+            first, second = [call.kwargs["event_id"] for call in connection.response.create.call_args_list]
+            await emit("session.delegation.created", client_event_id="unrelated-command", delegation=SimpleNamespace(
+                id="voice", target="responses", response_id="voice-response",
+            ))
+            self.assertEqual(live.pending_text_requests, {first, second})
+            await emit("session.delegation.created", client_event_id=first, delegation=SimpleNamespace(
+                id="typed-first", target="responses", response_id="first-response",
+            ))
+            self.assertEqual(live.pending_text_requests, {second})
+            for kind in ("response.created", "response.completed"):
+                await emit("response.event", client_event_id=None, delegation_id="typed-first", event={
+                    "type": kind, "response": {"id": "first-response"},
+                })
+            self.assertEqual(live.pending_text_requests, {second})
+            # A duplicate first acknowledgement cannot consume request two.
+            await emit("session.delegation.created", client_event_id=first, delegation=SimpleNamespace(
+                id="typed-first", target="responses", response_id="first-response",
+            ))
+            self.assertEqual(live.pending_text_requests, {second})
+            await emit("session.delegation.created", client_event_id=second, delegation=SimpleNamespace(
+                id="typed-second", target="responses", response_id="second-response",
+            ))
+            self.assertFalse(live.pending_text_requests)
+
+    async def test_typed_reply_can_first_arrive_as_progress_or_terminal_snapshot(self):
+        for first_kind in ("response.in_progress", "response.completed", "response.failed", "response.incomplete"):
+            with self.subTest(first_kind=first_kind):
+                live = CoraLive()
+                async with live_transport(live) as (connection, speaker, emit):
+                    await live.send_text("A typed question")
+                    await emit("response.event", client_event_id=None, delegation_id="typed", event={
+                        "type": first_kind, "response": {"id": "typed-response"},
+                    })
+                    self.assertFalse(live.pending_text_requests)
+
+    async def test_missing_creation_snapshot_still_excludes_voice_old_and_continuation_responses(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            await emit("response.event", delegation_id="old", event={
+                "type": "response.in_progress", "response": {"id": "old-response"},
+            })
+            await emit("session.delegation.created", delegation=SimpleNamespace(
+                id="voice", target="responses", response_id="voice-response",
+            ))
+            await live.send_text("First request")
+            await live.send_text("Second request")
+            first, second = [call.kwargs["event_id"] for call in connection.response.create.call_args_list]
+            await emit("response.event", delegation_id="old", event={
+                "type": "response.completed", "response": {"id": "old-response"},
+            })
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.completed", "response": {"id": "voice-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {first, second})
+            # A completed item can identify the typed response before any snapshot.
+            await emit("response.event", delegation_id="typed", event={
+                "type": "response.output_item.done", "response_id": "typed-response",
+                "item": {"type": "function_call"},
+            })
+            await emit("response.event", delegation_id="typed", event={
+                "type": "response.completed", "response": {"id": "typed-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {second})
+            # Even a continuation with no creation snapshot must not consume request two.
+            await emit("response.event", delegation_id="typed", event={
+                "type": "response.completed", "response": {"id": "continuation-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {second})
+            await emit("response.event", delegation_id="typed", event={
+                "type": "response.completed", "response": {"id": "second-response"},
+            })
+            self.assertFalse(live.pending_text_requests)
+            # Replaying that terminal event cannot acknowledge a third submission.
+            await live.send_text("Third request")
+            third = connection.response.create.call_args.kwargs["event_id"]
+            await emit("response.event", delegation_id="typed", event={
+                "type": "response.completed", "response": {"id": "second-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {third})
+
+    async def test_response_without_client_event_id_releases_typed_request(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            await live.send_text("A typed question")
+            self.assertTrue(live.pending_text_requests)
+            await emit("response.event", delegation_id="typed-delegation", event={
+                "type": "response.created", "response": {"id": "typed-response"},
+            })
+            await emit("response.event", delegation_id="typed-delegation", event={
+                "type": "response.completed", "response": {"id": "typed-response"},
+            })
+            self.assertEqual(live.pending_text_requests, set())
+
+    async def test_missing_echo_consumes_one_request_per_new_response_even_with_shared_delegation(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            await live.send_text("First request")
+            await live.send_text("Second request")
+            first, second = [call.kwargs["event_id"] for call in connection.response.create.call_args_list]
+            await emit("response.event", delegation_id="shared", event={
+                "type": "response.created", "response": {"id": "first-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {second})
+            # Replayed starts and terminal snapshots cannot acknowledge another request.
+            await emit("response.event", delegation_id="shared", event={
+                "type": "response.created", "response": {"id": "first-response"},
+            })
+            await emit("response.event", delegation_id="shared", event={
+                "type": "response.completed", "response": {"id": "first-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {second})
+            await emit("response.event", delegation_id="shared", event={
+                "type": "response.created", "response": {"id": "second-response"},
+            })
+            self.assertFalse(live.pending_text_requests)
+
+    async def test_voice_response_and_tool_continuation_do_not_acknowledge_queued_typed_request(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            await emit("session.delegation.created", delegation=SimpleNamespace(
+                id="voice", target="responses", response_id="voice-response",
+            ))
+            await live.send_text("Queued typed request")
+            request_id = connection.response.create.call_args.kwargs["event_id"]
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.created", "response": {"id": "voice-response"},
+            })
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.output_item.done", "item": {"type": "function_call"},
+            })
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.completed", "response": {"id": "voice-response"},
+            })
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.created", "response": {"id": "tool-continuation"},
+            })
+            self.assertEqual(live.pending_text_requests, {request_id})
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.completed", "response": {"id": "tool-continuation"},
+            })
+            self.assertEqual(live.pending_text_requests, {request_id})
+            await emit("response.event", delegation_id="typed", event={
+                "type": "response.created", "response": {"id": "typed-response"},
+            })
+            self.assertFalse(live.pending_text_requests)
+
     async def test_queued_typed_requests_are_tracked_until_their_own_acknowledgements(self):
         live = CoraLive()
         async with live_transport(live) as (connection, speaker, emit):
@@ -150,6 +301,27 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(live.pending_text_requests, {second})
             await emit("error", error=SimpleNamespace(client_event_id=second))
             self.assertEqual(live.pending_text_requests, set())
+
+    async def test_old_response_and_voice_delegation_without_response_id_do_not_consume_typed_request(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            await emit("response.event", delegation_id="old", event={
+                "type": "response.created", "response": {"id": "old-response"},
+            })
+            await live.send_text("New request")
+            request_id = connection.response.create.call_args.kwargs["event_id"]
+            await emit("response.event", delegation_id="old", event={
+                "type": "response.created", "response": {"id": "old-response"},
+            })
+            await emit("session.delegation.created", delegation=SimpleNamespace(id="voice"))
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.created", "response": {"id": "voice-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {request_id})
+            await emit("response.event", delegation_id="voice", event={
+                "type": "response.completed", "response": {"id": "voice-response"},
+            })
+            self.assertEqual(live.pending_text_requests, {request_id})
 
     async def test_failed_new_connection_leaves_chat_draft_and_controls_available(self):
         async with running_app() as (app, pilot):

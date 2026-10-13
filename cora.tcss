@@ -85,7 +85,8 @@ Screen > .screen--selection {
     color: #8fcca6;
 }
 
-#chat-status.state-active:hover, #chat-status.state-active:focus {
+#chat-status.state-active:hover, #chat-status.state-active:focus,
+#chat-status.state-standby:hover, #chat-status.state-standby:focus {
     background: #202838;
 }
 

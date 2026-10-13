@@ -52,6 +52,13 @@ python app.py
 Keep Docker running while chatting, and run **only one Cora instance at a time**.
 The startup check treats other active conversations as interrupted.
 
+For the current typed-input investigation, a normal launch also writes
+`live-trace.log` beside `app.py`. It records command/event IDs, event order,
+tracking state before/after handling, and standby blockers—not chat text, tool
+arguments/results, or audio. Git ignores the log. Each app launch replaces the
+previous trace, so reproduce once and keep the log before restarting again.
+This is diagnostic-only; it does not change request matching or queueing.
+
 To stop the database afterwards:
 
 ```powershell
@@ -71,8 +78,9 @@ not change an existing database's password or user. Back up important data.
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
 - **Close Live without quitting:** click Active to enter Standby. Wait for speech
   and pending work to finish first. Cora closes the Live session and local audio,
-  but keeps the app, chat, draft, and mute settings. Press Ctrl+R to resume;
-  clicking Standby to wake is a later increment. Enter during Standby keeps the
+  but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
+  to resume. The button shows Connecting and cannot be clicked again while waking.
+  Enter during Standby keeps the
   draft and asks you to resume, rather than saving or sending a failed request.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
@@ -243,7 +251,7 @@ changes transactionally; it does not provide automatic downgrades.
 - Separate clickable microphone and speaker mute controls in the bottom status row.
 - A fixed-width speaking animation driven by output audio playback levels.
 - Manual Live reconnect with recent chat context, without closing the local app.
-- Click Active for close-only standby; resume explicitly with Ctrl+R.
+- Click Active for standby; click Standby or press Ctrl+R to resume with context.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -289,14 +297,15 @@ at a time before moving on; standby must close Live, not merely mute audio.
   settings, the database conversation, and tool-call deduplication. Known pending
   work blocks reconnect; interrupted requests are reported, never automatically
   replayed. Mocked tests pass; real voice/text continuity still needs a check.
-7. [ ] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
+7. [x] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
   path. Keep the local app open with Live closed; typing must explicitly wake Live
   or clearly request resume, not silently fail. Standby is not a connection error.
   Enable the left-hand state button: click Active to sleep and Standby to resume.
-  Close-only half implemented: click Active to close Live, keep the app/chat open,
-  and show Standby only after confirmed session closure and cleanup. Ctrl+R can
-  resume using the existing reconnect path; click-to-wake remains pending.
-  Mocked close/resume tests pass; real-device standby still needs a check.
+  Click Active to close Live, keep the app/chat open, and show Standby only after
+  confirmed closure and cleanup. Click Standby (or Ctrl+R) to resume with recent
+  context, drafts, and mute settings intact. Connecting disables repeat clicks.
+  Manual standby confirmed working; mocked click-to-wake tests pass, with a
+  real-device wake check still needed.
 8. [ ] **Inactivity standby:** add a configurable idle timeout that considers typing,
   speech, playback, and pending work. Allow reading/thinking pauses; microphone
   silence alone must not trigger sleep during an active task.
@@ -332,7 +341,7 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Click-to-wake, automatic standby, local wake sensors, Signal integration, camera
+Automatic standby, local wake sensors, Signal integration, camera
 support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.

@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from collections import deque
 from contextlib import aclosing
 from uuid import uuid4
 
@@ -12,8 +13,9 @@ from session_config import build_session_config
 
 
 class CoraLive:
-    def __init__(self, tool_schemas=None):
+    def __init__(self, tool_schemas=None, on_trace=None):
         self.tool_schemas = tool_schemas if tool_schemas is not None else lambda: []
+        self.on_trace = on_trace
         self.connection = None
         self.ready = False
         self.closed = asyncio.Event()
@@ -22,6 +24,10 @@ class CoraLive:
         self.memory_context = ""
         self.conversation_history = []
         self.pending_text_requests = set()
+        self._text_request_order = deque()
+        self._seen_response_ids = set()
+        self._voice_delegation_ids = set()
+        self._tool_delegation_ids = set()
         self.speaker = None
         self.speaker_muted = False
         self.microphone_muted = False
@@ -52,16 +58,23 @@ class CoraLive:
 
                     try:
                         async for event in connection:
+                            self.trace_server_event("receive.before", event)
                             if event.type == "session.started":
                                 self.ready = True
                             elif event.type == "session.closed":
                                 self.ready = False
                                 self.session_close_confirmed = True
                             elif event.type == "response.event":
-                                if event.event.get("type") in (
-                                    "response.created", "response.failed", "response.incomplete",
-                                ):
-                                    self.pending_text_requests.discard(getattr(event, "client_event_id", None))
+                                self.track_text_response(event)
+                            elif event.type == "session.delegation.created":
+                                # Live acknowledges response.create here; nested backend
+                                # events need not repeat the command's client_event_id.
+                                self.pending_text_requests.discard(getattr(event, "client_event_id", None))
+                                response_id = getattr(event.delegation, "response_id", None)
+                                if response_id:
+                                    self._seen_response_ids.add(response_id)
+                                else:
+                                    self._voice_delegation_ids.add(event.delegation.id)
                             elif event.type == "error":
                                 self.pending_text_requests.discard(getattr(event.error, "client_event_id", None))
                             elif (
@@ -84,6 +97,7 @@ class CoraLive:
                                     if started and on_audio_status is not None:
                                         on_audio_status(True, "Speaker stream started")
                             on_event(event)
+                            self.trace_server_event("receive.after", event)
 
                             if event.type == "session.closed":
                                 break
@@ -104,7 +118,102 @@ class CoraLive:
                         self.on_mic_status = None
                         self.connection = None
                         self.pending_text_requests.clear()
+                        self._text_request_order.clear()
+                        self._seen_response_ids.clear()
+                        self._voice_delegation_ids.clear()
+                        self._tool_delegation_ids.clear()
                         self.closed.set()
+                        self.trace("transport.cleaned_up")
+
+    def trace(self, stage: str, **metadata) -> None:
+        if self.on_trace is not None:
+            self.on_trace(
+                stage, ready=self.ready,
+                pending_text_requests=sorted(self.pending_text_requests),
+                typed_request_order=list(self._text_request_order), **metadata,
+            )
+
+    def trace_server_event(self, stage: str, event) -> None:
+        if self.on_trace is None or event.type not in (
+            "session.started", "session.closed", "session.delegation.created",
+            "session.thinking.appended", "session.input_transcript.delta",
+            "session.output_transcript.delta", "response.event", "error",
+        ):
+            return
+        metadata = {
+            "event_type": event.type,
+            "event_id": getattr(event, "event_id", None),
+            "client_event_id": getattr(event, "client_event_id", None),
+            "delegation_id": getattr(event, "delegation_id", None),
+        }
+        response_id = None
+        if event.type == "response.event":
+            nested = event.event
+            kind = nested.get("type")
+            if not isinstance(kind, str) or kind.endswith(".delta"):
+                return
+            response_id = (nested.get("response") or {}).get("id") or nested.get("response_id")
+            item = nested.get("item") or {}
+            metadata.update(
+                backend_event_type=kind, sequence_number=nested.get("sequence_number"),
+                item_id=item.get("id") or nested.get("item_id"),
+                item_type=item.get("type"), call_id=item.get("call_id"),
+            )
+        elif event.type == "session.delegation.created":
+            response_id = getattr(event.delegation, "response_id", None)
+            metadata.update(
+                delegation_id=event.delegation.id,
+                delegation_target=getattr(event.delegation, "target", None),
+            )
+        elif event.type == "error":
+            metadata["client_event_id"] = getattr(event.error, "client_event_id", None)
+        elif event.type.endswith(".delta") or event.type == "session.thinking.appended":
+            # Timeline metadata only: never include transcript fragments or context.
+            metadata.update(start_ms=getattr(event, "start_ms", None), end_ms=getattr(event, "end_ms", None))
+        delegation_id = metadata["delegation_id"]
+        self.trace(
+            stage, response_id=response_id,
+            response_already_seen=response_id in self._seen_response_ids,
+            excluded_voice_delegation=delegation_id in self._voice_delegation_ids,
+            awaiting_tool_continuation=delegation_id in self._tool_delegation_ids,
+            **metadata,
+        )
+
+    def track_text_response(self, event) -> None:
+        """Match a typed command to the first identifiable snapshot of its response."""
+        kind = event.event.get("type")
+        delegation_id = getattr(event, "delegation_id", None)
+        if kind not in (
+            "response.created", "response.in_progress", "response.output_item.done",
+            "response.completed", "response.failed", "response.incomplete",
+        ):
+            return
+        command_id = getattr(event, "client_event_id", None)
+        response_id = (event.event.get("response") or {}).get("id") or event.event.get("response_id")
+        new_response = response_id and response_id not in self._seen_response_ids
+        tool_continuation = delegation_id in self._tool_delegation_ids
+        if command_id:
+            self.pending_text_requests.discard(command_id)
+        elif (
+            new_response and not tool_continuation
+            and delegation_id not in self._voice_delegation_ids
+        ):
+            # Do not require response.created or the optional echoed command ID.
+            # Consume once per response, never for old/voice work or a continuation.
+            while self._text_request_order and self._text_request_order[0] not in self.pending_text_requests:
+                self._text_request_order.popleft()
+            if self._text_request_order:
+                self.pending_text_requests.discard(self._text_request_order.popleft())
+        if response_id:
+            self._seen_response_ids.add(response_id)
+        if new_response:
+            self._tool_delegation_ids.discard(delegation_id)
+        elif kind in ("response.failed", "response.incomplete"):
+            self._tool_delegation_ids.discard(delegation_id)
+        if kind == "response.output_item.done" and (event.event.get("item") or {}).get("type") == "function_call":
+            self._tool_delegation_ids.add(delegation_id)
+        if kind in ("response.completed", "response.failed", "response.incomplete"):
+            self._voice_delegation_ids.discard(delegation_id)
 
     def set_speaker_muted(self, muted: bool) -> None:
         self.speaker_muted = muted
@@ -140,8 +249,10 @@ class CoraLive:
 
         # A silent context mirror, not a second conversational request.
         # This send does not wait for Live's timeline acknowledgment.
+        context_id = f"typed_context_{uuid4().hex}"
+        self.trace("send.before", event_type="session.thinking.append", client_event_id=context_id)
         await connection.session.thinking.append(
-            event_id=f"typed_context_{uuid4().hex}",
+            event_id=context_id,
             delegation_id=None,
             content=(
                 "Silent typed-context mirror: Nick submitted this typed message to the Responses backend "
@@ -149,8 +260,10 @@ class CoraLive:
                 f"{json.dumps(message, ensure_ascii=False)}"
             ),
         )
+        self.trace("send.after", event_type="session.thinking.append", client_event_id=context_id)
 
         # Use the backend belonging to the existing voice session.
+        self.trace("send.before", event_type="response.item.create", submission_id=context_id)
         await connection.response.item.create(
             item={
                 "type": "message",
@@ -158,13 +271,18 @@ class CoraLive:
                 "content": [{"type": "input_text", "text": message}],
             }
         )
+        self.trace("send.after", event_type="response.item.create", submission_id=context_id)
         # Adding a message alone does not ask the backend to answer.
         request_id = f"typed_response_{uuid4().hex}"
         self.pending_text_requests.add(request_id)
+        self._text_request_order.append(request_id)
         try:
+            self.trace("send.before", event_type="response.create", client_event_id=request_id, submission_id=context_id)
             await connection.response.create(event_id=request_id)
-        except Exception:
+            self.trace("send.after", event_type="response.create", client_event_id=request_id, submission_id=context_id)
+        except Exception as error:
             self.pending_text_requests.discard(request_id)
+            self.trace("send.failed", event_type="response.create", client_event_id=request_id, error_type=type(error).__name__)
             raise
 
     async def close(self):
