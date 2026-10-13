@@ -6,7 +6,7 @@ from sqlalchemy import Engine
 
 from .conversation_store import ConversationStore
 from .database import build_engine
-from .memory_store import MemoryStore
+from memory.store import MemoryStore
 
 
 class KeyboardPersistence:

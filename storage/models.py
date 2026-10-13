@@ -5,9 +5,13 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID, uuid4
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Text, UniqueConstraint, Uuid
 from sqlalchemy import text as sql_text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+MEMORY_EMBEDDING_MODEL = "text-embedding-3-small"
+MEMORY_EMBEDDING_DIMENSIONS = 1536
 
 
 class Base(DeclarativeBase):
@@ -87,6 +91,17 @@ class MemoryRecord(Base):
         CheckConstraint("kind IN ('fact', 'preference', 'decision', 'task')", name="memories_kind_check"),
         CheckConstraint("btrim(text) <> '' AND char_length(text) <= 500", name="memories_text_check"),
         CheckConstraint("btrim(evidence) <> ''", name="memories_evidence_check"),
+        CheckConstraint(
+            "(embedding IS NULL AND embedding_model IS NULL AND embedding_created_at IS NULL) "
+            "OR (embedding IS NOT NULL AND embedding_model IS NOT NULL "
+            "AND embedding_model = 'text-embedding-3-small' AND embedding_created_at IS NOT NULL)",
+            name="memories_embedding_metadata_check",
+        ),
+        CheckConstraint("embedding IS NULL OR vector_norm(embedding) > 0", name="memories_embedding_nonzero_check"),
+        CheckConstraint(
+            "duplicate_of IS NULL OR (duplicate_of <> id AND dedup_checked_at IS NOT NULL)",
+            name="memories_duplicate_check",
+        ),
         {"schema": "public"},
     )
 
@@ -98,3 +113,10 @@ class MemoryRecord(Base):
     text: Mapped[str] = mapped_column(Text)
     evidence: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(MEMORY_EMBEDDING_DIMENSIONS))
+    embedding_model: Mapped[str | None] = mapped_column(Text)
+    embedding_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    duplicate_of: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.memories.id", name="memories_duplicate_of_fkey", ondelete="RESTRICT"),
+    )
+    dedup_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -11,10 +11,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-import extract_memories as extraction
+import memory.extract_memories as extraction
 from session_config import BACKEND_MODEL
 from storage.conversation_store import ConversationStore
-from storage.memory_store import MEMORY_KINDS, MemoryCandidate
+from memory.store import MEMORY_KINDS, MemoryCandidate
 import test_summarize as summarize_tests
 
 
@@ -45,7 +45,7 @@ class ExtractMemoriesTests(unittest.TestCase):
         self.store.get_messages.return_value = [self.source]
         self.store.get_summary.side_effect = AssertionError("Original messages, not summaries")
         self.store.save_summary.side_effect = AssertionError("Do not change summaries")
-        factory = patch("extract_memories.MemoryStore")
+        factory = patch("memory.extract_memories.MemoryStore")
         self.memory_factory = factory.start()
         self.addCleanup(factory.stop)
         self.memories = self.memory_factory.return_value
@@ -198,7 +198,7 @@ class ExtractMemoriesTests(unittest.TestCase):
     def test_cached_memories_skip_messages_summary_and_client_creation(self):
         existing = [SimpleNamespace(text="Already saved")]
         self.memories.get_memories.return_value = existing
-        with patch("extract_memories.OpenAI") as factory:
+        with patch("memory.extract_memories.OpenAI") as factory:
             self.assertIs(extraction.extract_memories(self.store, self.conversation_id), existing)
             factory.assert_not_called()
         self.store.get_messages.assert_not_called()
@@ -217,7 +217,7 @@ class ExtractMemoriesTests(unittest.TestCase):
         self.client.responses.create.assert_not_called()
 
     def test_empty_and_assistant_only_chats_do_not_create_client_or_save(self):
-        with patch("extract_memories.OpenAI") as factory:
+        with patch("memory.extract_memories.OpenAI") as factory:
             self.store.get_messages.return_value = []
             with self.assertRaisesRegex(ValueError, "no saved messages"):
                 extraction.extract_memories(self.store, self.conversation_id)
@@ -228,7 +228,7 @@ class ExtractMemoriesTests(unittest.TestCase):
         self.store.get_summary.assert_not_called()
 
     def test_owned_client_uses_backend_default_zero_retries_and_closes(self):
-        with patch("extract_memories.OpenAI") as factory:
+        with patch("memory.extract_memories.OpenAI") as factory:
             factory.return_value.__enter__.return_value = self.client
             extraction.extract_memories(self.store, self.conversation_id)
             factory.assert_called_once_with(max_retries=0)
@@ -237,7 +237,7 @@ class ExtractMemoriesTests(unittest.TestCase):
 
     def test_injected_client_failure_is_not_retried_saved_or_closed(self):
         self.client.responses.create.side_effect = RuntimeError("API unavailable")
-        with patch("extract_memories.OpenAI") as factory:
+        with patch("memory.extract_memories.OpenAI") as factory:
             with self.assertRaises(RuntimeError):
                 self.extract()
             factory.assert_not_called()
@@ -248,7 +248,7 @@ class ExtractMemoriesTests(unittest.TestCase):
 
     def test_owned_client_also_closes_on_generation_failure(self):
         self.client.responses.create.side_effect = RuntimeError("API unavailable")
-        with patch("extract_memories.OpenAI") as factory:
+        with patch("memory.extract_memories.OpenAI") as factory:
             factory.return_value.__enter__.return_value = self.client
             with self.assertRaises(RuntimeError):
                 extraction.extract_memories(self.store, self.conversation_id)
@@ -261,10 +261,10 @@ class ExtractMemoriesTests(unittest.TestCase):
         engine = MagicMock()
         saved = SimpleNamespace(kind="fact", text="The user lives in Perth.")
         args = ["extract_memories.py", str(self.conversation_id), "--model", "chosen-model"]
-        with patch("extract_memories.load_dotenv"), \
-                patch("extract_memories.build_engine", return_value=engine), \
-                patch("extract_memories.ConversationStore", return_value=self.store), \
-                patch("extract_memories.extract_memories", return_value=[saved]) as generate, \
+        with patch("memory.extract_memories.load_dotenv"), \
+            patch("memory.extract_memories.build_engine", return_value=engine), \
+            patch("memory.extract_memories.ConversationStore", return_value=self.store), \
+            patch("memory.extract_memories.extract_memories", return_value=[saved]) as generate, \
                 patch("sys.argv", args), patch("builtins.print") as output:
             extraction.main()
             generate.assert_called_once_with(self.store, self.conversation_id, model="chosen-model")

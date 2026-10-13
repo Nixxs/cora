@@ -47,8 +47,8 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                     return [private] if conversation_id == oldest else []
 
                 summary.extraction.side_effect = extract
-                with patch("extract_memories.OpenAI") as extraction_api, \
-                        patch("summarize.OpenAI") as summary_api:
+                with patch("memory.extract_memories.OpenAI") as extraction_api, \
+                    patch("memory.summarize.OpenAI") as summary_api:
                     app.summary_worker = SUMMARY_WORKER(app)
                     await asyncio.wait_for(app.summary_worker.wait(), 5)
                     await asyncio.wait_for(disposed.wait(), 5)
@@ -226,8 +226,8 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch("app.build_engine", return_value=background_engine) as build, \
                     patch.object(background_engine, "dispose", side_effect=dispose) as disposal, \
-                    patch("extract_memories.OpenAI") as extraction_factory, \
-                    patch("summarize.OpenAI") as summary_factory:
+                    patch("memory.extract_memories.OpenAI") as extraction_factory, \
+                    patch("memory.summarize.OpenAI") as summary_factory:
                 extraction_client, summary_client = MagicMock(), MagicMock()
                 extraction_factory.return_value.__enter__.return_value = extraction_client
                 summary_factory.return_value.__enter__.return_value = summary_client

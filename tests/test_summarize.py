@@ -9,7 +9,7 @@ from openai.types.responses import Response
 
 from storage.conversation_store import ConversationStore
 import test_conversation_summaries as summary_tests
-from summarize import SUMMARY_INSTRUCTIONS, main, summarize_conversation
+from memory.summarize import SUMMARY_INSTRUCTIONS, main, summarize_conversation
 
 
 def response_fixture(text="Discussed memory storage; next task is summarisation.", *, status="completed", refusal=False):
@@ -73,7 +73,7 @@ class SummarizerTests(unittest.TestCase):
     def test_existing_summary_skips_message_read_and_client_creation(self):
         existing = SimpleNamespace(text="Previously saved")
         self.store.get_summary.return_value = existing
-        with patch("summarize.OpenAI") as client:
+        with patch("memory.summarize.OpenAI") as client:
             self.assertIs(summarize_conversation(self.store, self.conversation_id), existing)
             client.assert_not_called()
         self.store.get_messages.assert_not_called()
@@ -112,7 +112,7 @@ class SummarizerTests(unittest.TestCase):
         self.store.save_summary.assert_not_called()
 
     def test_owned_client_is_closed_and_uses_existing_backend_model(self):
-        with patch("summarize.OpenAI") as factory:
+        with patch("memory.summarize.OpenAI") as factory:
             factory.return_value.__enter__.return_value = self.client
             summarize_conversation(self.store, self.conversation_id)
             factory.assert_called_once_with(max_retries=0)
@@ -123,9 +123,9 @@ class SummarizerTests(unittest.TestCase):
         engine = MagicMock()
         summary = SimpleNamespace(conversation_id=self.conversation_id, text="Saved summary")
         args = ["summarize.py", str(self.conversation_id), "--model", "chosen-model"]
-        with patch("summarize.load_dotenv"), patch("summarize.build_engine", return_value=engine), \
-                patch("summarize.ConversationStore", return_value=self.store), \
-                patch("summarize.summarize_conversation", return_value=summary) as generate, \
+        with patch("memory.summarize.load_dotenv"), patch("memory.summarize.build_engine", return_value=engine), \
+            patch("memory.summarize.ConversationStore", return_value=self.store), \
+            patch("memory.summarize.summarize_conversation", return_value=summary) as generate, \
                 patch("sys.argv", args), patch("builtins.print") as output:
             main()
             generate.assert_called_once_with(self.store, self.conversation_id, model="chosen-model")

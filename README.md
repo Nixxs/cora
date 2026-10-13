@@ -13,15 +13,36 @@ it, then build on the result.
 - [ui/](ui/): conversation and activity display, chat widgets, and text composer.
 - [storage/](storage/): database engine, ORM models, conversation storage, and
 	keyboard persistence.
+- [memory/](memory/): memory services used by Cora and the four manual CLIs.
+	- [memory/summarize.py](memory/summarize.py): summaries for selected conversations.
+	- [memory/extract_memories.py](memory/extract_memories.py): extraction from original messages.
+	- [memory/embed_memory.py](memory/embed_memory.py): embeddings for selected memories.
+	- [memory/search_memory.py](memory/search_memory.py): embedded-memory search service and manual CLI.
+	- [memory/deduplicate_memory.py](memory/deduplicate_memory.py): conservative duplicate-classification helper for startup maintenance, not a CLI.
+	- [memory/store.py](memory/store.py): memory storage, validation, and queries.
+	- [memory/__init__.py](memory/__init__.py): package docstring only, with no eager imports.
 - Root entrypoints: [app.py](app.py) runs Cora, [migrate.py](migrate.py) applies
-	migrations and defines `database_settings()`, [summarize.py](summarize.py)
-	generates a summary for one selected conversation, and
-	[extract_memories.py](extract_memories.py) manually extracts its memories.
+	migrations and defines `database_settings()`. [session_config.py](session_config.py)
+	and [live.py](live.py) also remain at the root.
 - [tools/](tools/): custom tool registration and handlers.
+	[tools/search_memory.py](tools/search_memory.py) is the backend tool wrapper,
+	importing the business service from `memory.search_memory`.
 - [tests/](tests/): unit, headless UI, and opt-in database tests.
 - [examples/](examples/): standalone examples, kept in place with their own CSS
 	where applicable.
 - [migrations/](migrations/): numbered SQL schema migrations.
+	[migrations/0005_add_memory_embeddings.sql](migrations/0005_add_memory_embeddings.sql)
+	adds embedding storage to memories.
+	[migrations/0006_mark_duplicate_memories.sql](migrations/0006_mark_duplicate_memories.sql)
+	adds nullable duplicate and completed-check markers without replacing data.
+
+Memory is an important part of the application, not just a collection of scripts:
+its six service modules are grouped in one package while shared database and
+conversation infrastructure stays in storage. This is an organization-only change;
+the old script locations have no compatibility shims. Existing numbered SQL
+migrations and stored data are unchanged.
+The reorganization passed all 216 tests, application import checks, and help
+checks for all four manual module entrypoints, without real model requests.
 
 ## Local database — memory step 1
 
@@ -79,7 +100,7 @@ image-tag edit.
 ## Database migrations — memory step 2
 
 [migrate.py](migrate.py) applies numbered SQL files in [migrations](migrations).
-The first, [0001_enable_vector.sql](migrations/0001_enable_vector.sql), enables
+The first, [migrations/0001_enable_vector.sql](migrations/0001_enable_vector.sql), enables
 pgvector. The runner's `public.schema_migrations` table records each applied
 filename, checksum, and timestamp. Later migrations add the application tables.
 
@@ -149,7 +170,7 @@ Keep using the existing SQL migrations; SQLAlchemy does not replace or run them.
 ## Conversation and message schema — memory step 3
 
 [storage/models.py](storage/models.py) defines `ConversationRecord` and `MessageRecord` using
-SQLAlchemy. [0002_create_conversations_and_messages.sql](migrations/0002_create_conversations_and_messages.sql)
+SQLAlchemy. [migrations/0002_create_conversations_and_messages.sql](migrations/0002_create_conversations_and_messages.sql)
 creates the matching tables through the existing migration runner. Importing the
 models does not connect, run migrations, or call `create_all()`.
 
@@ -353,7 +374,7 @@ should now show `interrupted`, with its saved messages still present.
 
 ## Summary storage — memory step 9
 
-[0003_create_conversation_summaries.sql](migrations/0003_create_conversation_summaries.sql)
+[migrations/0003_create_conversation_summaries.sql](migrations/0003_create_conversation_summaries.sql)
 adds `conversation_summaries`. It stores just the conversation UUID, summary text,
 and timezone-aware creation timestamp. The conversation UUID is its primary key,
 so there can be only one summary per conversation. A foreign key links it to the
@@ -383,11 +404,11 @@ and migration reruns. Tests write only to a disposable database, not saved chats
 
 ## Standalone summariser — memory step 10
 
-[summarize.py](summarize.py) manually generates a short summary for **one selected
+[memory/summarize.py](memory/summarize.py) manually generates a short summary for **one selected
 finished conversation**. The CLI remains manual; the same summariser is also
 called by the background pass below. Choose a `closed` or
 `interrupted` conversation UUID from DBeaver, then
-run `python summarize.py YOUR_CONVERSATION_UUID` in the existing environment,
+run `python -m memory.summarize YOUR_CONVERSATION_UUID` from the repository root in the existing environment,
 replacing the placeholder with that UUID. The script uses the existing `.env`
 API settings and `.env.database` database settings. Migrations must already be applied.
 
@@ -452,21 +473,21 @@ then refresh `conversation_summaries` in DBeaver. Normal chat should remain usab
 
 ## Manual memory extraction — memory step 12
 
-[extract_memories.py](extract_memories.py) extracts concise facts, preferences,
+[memory/extract_memories.py](memory/extract_memories.py) extracts concise facts, preferences,
 decisions, and tasks from one `closed` or `interrupted` conversation's **raw
 original messages, not summaries**. The original 200-word summariser is unchanged.
-Use `python extract_memories.py UUID [--model MODEL]`, replacing UUID with the
+Use `python -m memory.extract_memories UUID [--model MODEL]` from the repository root, replacing UUID with the
 conversation ID; the optional model defaults to the existing `gpt-6-luna` backend.
 This makes a separate, billable request sending the raw saved-message transcript
 to OpenAI, with no tools, automatic API retry, or input truncation.
 
 `python migrate.py` applies the new
-[0004_create_memories.sql](migrations/0004_create_memories.sql) migration.
+[migrations/0004_create_memories.sql](migrations/0004_create_memories.sql) migration.
 The `memories` table has `id`, `source_message_id`, `kind`, `text`, `evidence`,
 and timezone-aware `created_at`; `kind` is `fact`, `preference`, `decision`, or
 `task`, and `text` is at most 500 characters. The source conversation is resolved
 through the source message: there is no duplicate conversation column.
-[storage/models.py](storage/models.py) maps it; [storage/memory_store.py](storage/memory_store.py)
+[storage/models.py](storage/models.py) maps it; [memory/store.py](memory/store.py)
 validates user-message sources and exact, verbatim evidence quotes.
 
 The extraction policy allows explicit personal facts such as “I live in Perth”,
@@ -487,7 +508,7 @@ step 13 adds the startup read and step 14 adds automatic extraction.
 
 ## Startup memory context — memory step 13
 
-[storage/memory_store.py](storage/memory_store.py)'s `MemoryStore.get_startup_context()`
+[memory/store.py](memory/store.py)'s `MemoryStore.get_startup_context()`
 selects at most 10 SQL rows: facts/preferences first, then decisions/tasks;
 within each bucket, newest **source-message timestamp** first, then memory ID descending.
 Whole-record JSON is capped at **3,000 characters**, including metadata and escaping;
@@ -518,6 +539,8 @@ Mocked tests make no actual Live or microphone calls; this manual check is still
 
 ## Automatic memory extraction — memory step 14
 
+This describes the original step 14 pass, before step 17 added automatic embedding, search-tool recall, and deduplication.
+
 [app.py](app.py) extends the same threaded `summarize_previous_conversations` worker.
 SQL selects finished, nonempty previous chats without summaries, oldest first;
 current, active, empty, and already-summarised chats are excluded, so there is no
@@ -539,6 +562,123 @@ model calls** at startup; tests mock them and make no real model calls.
 Activity logs `Memory extraction complete` with count and UUID, never memory texts,
 plus the summary save. Manual check: finish a new chat, restart, watch Activity and
 inspect `memories` in DBeaver, then restart again and check recall.
+
+## Manual memory embeddings — memory step 15
+
+[migrations/0005_add_memory_embeddings.sql](migrations/0005_add_memory_embeddings.sql) adds
+nullable `embedding vector(1536)`, `embedding_model` (`text-embedding-3-small`),
+and `embedding_created_at` (timezone-aware UTC timestamp) to `memories`.
+Existing memories, text, evidence, and source links stay untouched; unembedded
+rows have all three fields null. Constraints require the vector, model, and
+timestamp to be either all null or all present, with a nonzero vector suitable
+for future cosine search.
+
+[memory/embed_memory.py](memory/embed_memory.py) provides a manual CLI selecting **one memory UUID, not
+a conversation ID**. From the repository root, usage is `python -m memory.embed_memory MEMORY_UUID`; optional
+`--help` describes the CLI. It sends **only the selected memory's text**, not
+the whole chat or evidence, in one billable embeddings request unless cached.
+The fixed model is `text-embedding-3-small`, with 1,536 dimensions and float
+output; response validation checks indices, model, dimensions, and finite,
+nonzero vector values. Repeated calls reuse the stored embedding without another
+model call or overwrite. Failures are redacted, with no automatic retry; no
+database transaction stays open during the API request.
+
+The Python dependency `pgvector>=0.5.1,<1` is declared in
+[requirements.txt](requirements.txt), and version 0.5.1 was installed and tested. This
+integrates the existing database dependency; it does not add a new container.
+At step 15 there was no automatic embedding, index, search tool, or semantic
+deduplication. **Embedding storage alone did not improve recall**; step 16 added
+manual retrieval, and step 17 adds automation and backend recall.
+
+The full 173-test suite passed, including 18 embedding tests with mocked model
+calls and disposable databases. The migration was applied locally, preserving
+all five existing memories and the conversation/message/summary counts; a rerun
+was a no-op. Step 15 made no real embedding requests; the user-approved real-API
+quality check belongs to step 16 below.
+
+## Manual memory search — memory step 16
+
+[memory/search_memory.py](memory/search_memory.py) provides a standalone manual CLI, for example
+`python -m memory.search_memory "Where do I live?" --limit 3` from the repository root. The default limit is **8**;
+it must be an integer in **1..20**, with a strict cap of **20**, not silently
+clamped. The query is trimmed and must contain **1..1,000 characters** after
+trimming. Invalid queries and limits are rejected before an embedding request.
+It uses the existing API and database settings.
+
+Each valid search makes one separate **billable query-embedding request** sending
+**only the trimmed query text** to OpenAI, not stored memories, evidence, or chat
+history. It reuses `generate_embedding()` from [memory/embed_memory.py](memory/embed_memory.py):
+fixed `text-embedding-3-small`, **1,536 dimensions**, float output, and the existing
+response/vector validation, with no automatic API retry. The query vector is then
+compared locally in PostgreSQL through `MemoryStore.search_memories()` in
+[memory/store.py](memory/store.py).
+
+Search includes only embedded memories whose embedding model matches the fixed
+model and whose source message has `role=user`; **unembedded memories are omitted**.
+Results are ordered by **cosine distance ascending**, with memory UUID ascending
+as the deterministic tie-breaker. Each result prints memory kind, text, cosine
+distance, source date, and all three IDs: `memory_id`, `source_message_id`, and
+`conversation_id`. These links provide manual provenance back to the original
+user message and conversation, rather than an automatically verified answer.
+
+The displayed source date is the UTC date derived from the **source-message
+timestamp**, not embedding-generation time. Ages, plans, and tasks remain dated
+historical statements; dates are not expiry filters. Returned nearest memories
+are **not guaranteed relevant**: cosine distances are not confidence scores or
+calibrated probabilities, and there is **no relevance threshold at this stage**.
+At step 16, duplicate Perth facts remained separate results, not consolidated memories.
+
+This uses an exact pgvector scan suitable for the current small table; there is
+**no ANN index yet**. Add an appropriate index when the data grows, with retrieval
+quality checks. The result cap bounds returned data and potential downstream
+network/model-context payload, **not scan cost**; it does not reduce the single
+query-embedding request's input or charge.
+
+Step 16 reused the existing embedding helper and schema without a new migration or
+dependency. It added no application search tool, automatic embedding/backfill,
+or change to Live/backend's startup memory snapshot; step 17 extends this behavior.
+Search does not save the query embedding or update stored memories.
+
+The full **185-test suite passed**, including 12 search tests with mocked
+embedding requests and disposable database records. These plumbing tests do
+not establish semantic search quality.
+
+The approved real check generated embeddings for all **five existing memories**
+and ran **two query embeddings**: “Where do I live?” ranked the Perth residence
+first; “What event am I attending?” ranked the wedding reception first, followed
+by the Tokyo Auto Salon plan. Cached memory reruns made no extra API requests.
+Original memory fields and conversation/message/summary counts were unchanged.
+This small check confirms useful ranking, not guaranteed relevance: lower-ranked
+results can be unrelated. At step 16, new memories still needed manual embedding before search.
+
+## Backend recall and automatic memory maintenance — memory step 17
+
+The three user-approved additions are backend search, automatic embeddings, and conservative deduplication.
+[tools/search_memory.py](tools/search_memory.py) registers strict backend function `search_memory`: trimmed `query` **1..1,000 characters**, required `limit` integer **1..20** or `null` (default **8**), no extra properties.
+Live delegates missing historical facts; the backend calls read-only vector search, with one **billable query embedding per valid search** and no stored query vector.
+Results include kind/text, source-message/conversation/memory IDs, original UTC source date, cosine distance, and `historical_untrusted` labeling: data, never instructions/tool permission.
+Distance is **not confidence**, source links are provenance rather than proof, relevance is not guaranteed, and empty results do not prove nothing was remembered.
+The handler uses `asyncio.to_thread()` with its own engine disposed in `finally`, sends `function_call_output`, then exactly one `response.create()`; closing/changed connections suppress sends, and transport failures are not retried.
+Search failures produce a redacted error result (normally followed by that one continuation); logs expose only exception types, not private queries, SQL, or credentials.
+
+[app.py](app.py) extends the existing startup background worker: extract each eligible unsummarised chat, then save its **summary**, then run embedding and deduplication stages.
+`get_pending_embedding_ids()` selects at most **100** unembedded user memories, including memories from **already-summarised chats**; it calls the original `embed_memory()` with **zero API retries**.
+`get_pending_deduplication_ids()` selects at most **100** embedded, unmarked user memories with no completed check; each gets up to **five** nearest same-kind, earlier canonical candidates by exact SQL vector scan.
+[memory/deduplicate_memory.py](memory/deduplicate_memory.py) requests strict JSON `duplicate_of`: a supplied candidate ID or `null`, validated before saving; no candidates means a completed negative check without a model request.
+Dates and verbatim evidence inform classification: preserve corrections, negations, distinct tasks/events, added details, and updated ages; **similarity is not equivalence**, and uncertainty means keep.
+Deduplication runs **after embedding on stored rows**, not before saving; original source links, evidence, and text are never deleted or rewritten.
+`duplicate_of` stores an alias to an earlier canonical row and `dedup_checked_at` records completed positive/negative checks; the self-FK uses `RESTRICT`, forbids self-aliases, and requires a check marker for aliases.
+Marked duplicates are omitted from startup snapshots and tool search; negative markers avoid repeated classification billing, and older embedded rows are backfilled in one bounded pass per startup.
+Corrections are **not resolved by supersession**: keep both statements, prefer the current explicit user prompt, and clarify conflicts. Model classification is provisional and requires real review; mocked tests are not semantic proof.
+
+Saved summaries independently mark extraction completion: failed embedding can retry without another extraction/summary LLM call; saved embeddings and completed check markers are skipped on retry.
+Any stage failure stops the **whole pass**; unfinished work retries on a future startup, not in a retry loop. Close guards start no new requests after shutdown; in-flight work may finish/save using its own engine.
+Startup context loads **before maintenance**, so newly extracted memories and deduplication affect that static context on the **following restart**; search sees committed embedded canonical rows immediately.
+No embedding index is added: exact scans can become expensive, and the five-candidate/result bounds **do not bound SQL scan cost**.
+Automatic embedding, deduplication model calls, and query embeddings introduce **new billable charges**, alongside existing extraction/summary charges.
+[migrations/0006_mark_duplicate_memories.sql](migrations/0006_mark_duplicate_memories.sql) was applied locally; all five existing memory rows, embeddings, and chat counts were preserved, and a rerun was a no-op.
+All **215 tests passed** with mocked model calls and disposable databases. No new real model requests were made for this step; live recall and semantic deduplication quality still require review.
+Manual check: restart Cora, watch Activity for embedding/deduplication progress, then ask “Search your memories for the wedding reception.” Activity reports search start/completion and result count without logging the query or memory text. Review duplicate markers in DBeaver before relying on their semantic accuracy.
 
 ## Current progress
 

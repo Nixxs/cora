@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from migrate import apply_migrations
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
-from storage.memory_store import MEMORY_KINDS, MemoryCandidate, MemoryStore
+from memory.store import MEMORY_KINDS, MemoryCandidate, MemoryStore
 from storage.models import MemoryRecord
 import test_conversation_summaries as summary_tests
 
@@ -29,7 +29,7 @@ class MemoryStoreValidationTests(unittest.TestCase):
 
     def test_construction_and_empty_batch_do_not_open_a_session(self):
         engine = MagicMock()
-        with patch("storage.memory_store.Session") as session:
+        with patch("memory.store.Session") as session:
             store = MemoryStore(engine)
             self.assertIs(store.engine, engine)
             self.assertEqual(store.save_memories(uuid4(), []), [])
@@ -46,7 +46,7 @@ class MemoryStoreValidationTests(unittest.TestCase):
             ("fact", "x" * 501, "quote"),
             ("fact", "Valid text", ""), ("fact", "Valid text", " \n\t"),
         ]
-        with patch("storage.memory_store.Session") as session:
+        with patch("memory.store.Session") as session:
             for kind, content, evidence in cases:
                 with self.subTest(kind=kind, content=content, evidence=evidence):
                     invalid = MemoryCandidate(uuid4(), kind, content, evidence)

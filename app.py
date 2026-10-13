@@ -20,9 +20,12 @@ from ui.conversation import Conversation
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
+from memory.store import MemoryStore
 from live import CoraLive
-from extract_memories import extract_memories
-from summarize import summarize_conversation
+from memory.extract_memories import extract_memories
+from memory.embed_memory import embed_memory
+from memory.deduplicate_memory import deduplicate_memory
+from memory.summarize import summarize_conversation
 from tools import create_tool_registry
 
 
@@ -268,6 +271,26 @@ class CoraApp(App):
                     self.call_from_thread(
                         self.activity.write,
                         f"Summary saved: conversation_id={conversation_id}", "Memory summary saved",
+                    )
+            if self.closing or worker.is_cancelled:
+                return
+            memory_store = MemoryStore(engine)
+            for memory_id in memory_store.get_pending_embedding_ids():
+                if self.closing or worker.is_cancelled:
+                    return
+                embed_memory(memory_store, memory_id)
+                if not self.closing and not worker.is_cancelled:
+                    self.call_from_thread(
+                        self.activity.write, f"Memory embedded: memory_id={memory_id}", "Memory embedding saved",
+                    )
+            for memory_id in memory_store.get_pending_deduplication_ids():
+                if self.closing or worker.is_cancelled:
+                    return
+                duplicate = deduplicate_memory(memory_store, memory_id)
+                if not self.closing and not worker.is_cancelled:
+                    self.call_from_thread(
+                        self.activity.write,
+                        f"Memory checked: memory_id={memory_id}, duplicate={duplicate}", "Memory deduplication checked",
                     )
         except Exception as error:
             if not self.closing and not worker.is_cancelled:

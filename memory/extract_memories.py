@@ -11,7 +11,7 @@ from openai import OpenAI
 from session_config import BACKEND_MODEL
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
-from storage.memory_store import MEMORY_KINDS, MemoryCandidate, MemoryStore
+from .store import MEMORY_KINDS, MemoryCandidate, MemoryStore
 from storage.models import MemoryRecord, MessageRecord
 
 

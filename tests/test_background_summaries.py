@@ -233,7 +233,7 @@ class BackgroundSummaryDatabaseTests(unittest.IsolatedAsyncioTestCase):
         try:
             with patch("app.build_engine", return_value=background_engine) as build, \
                     patch.object(background_engine, "dispose", side_effect=dispose), \
-                    patch("summarize.OpenAI") as factory, \
+                    patch("memory.summarize.OpenAI") as factory, \
                     patch("app.extract_memories", return_value=[]) as extraction:
                 client = MagicMock()
                 client.responses.create.side_effect = model_response

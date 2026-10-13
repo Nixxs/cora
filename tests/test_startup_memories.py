@@ -21,7 +21,7 @@ from app import CoraApp
 from live import CoraLive
 from session_config import BACKEND_INSTRUCTIONS, LIVE_INSTRUCTIONS, build_session_config
 from storage.keyboard_persistence import KeyboardPersistence
-from storage.memory_store import MemoryCandidate, MemoryStore
+from memory.store import MemoryCandidate, MemoryStore
 from storage.models import ConversationRecord, MemoryRecord, MessageRecord
 from ui.composer import ChatComposer
 import test_keyboard_persistence as keyboard_tests
@@ -71,7 +71,7 @@ def fake_live_transport():
 class StartupMemoryUnitTests(unittest.TestCase):
     def test_query_projects_only_context_filters_users_and_limits_ranked_rows(self):
         engine = MagicMock()
-        with patch("storage.memory_store.Session") as session_type:
+        with patch("memory.store.Session") as session_type:
             session = session_type.return_value.__enter__.return_value
             session.execute.return_value.all.return_value = []
             self.assertEqual(MemoryStore(engine).get_startup_context(), "")
@@ -98,7 +98,7 @@ class StartupMemoryUnitTests(unittest.TestCase):
 
     def test_json_budget_counts_escaping_overhead_and_keeps_whole_prefix_at_boundary(self):
         def load(rows):
-            with patch("storage.memory_store.Session") as session_type:
+            with patch("memory.store.Session") as session_type:
                 session_type.return_value.__enter__.return_value.execute.return_value.all.return_value = rows
                 return MemoryStore(MagicMock()).get_startup_context()
 
