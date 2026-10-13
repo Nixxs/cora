@@ -334,9 +334,10 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
             yield SimpleNamespace(live=SimpleNamespace(connect=connect))
 
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
-                patch("live.AsyncOpenAI", client), patch("live.Speaker"), \
+                patch("live.AsyncOpenAI", client), patch("live.Speaker") as speaker, \
                 patch.object(CoraLive, "send_microphone", new_callable=AsyncMock), \
                 patch("live.microphone_chunks", side_effect=AssertionError("Hardware forbidden")):
+            speaker.return_value.get_playback_level.return_value = 0.0
             app = CoraApp()
             async with app.run_test(size=(90, 35)):
                 await asyncio.wait_for(app.live.run(

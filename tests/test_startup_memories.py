@@ -65,6 +65,7 @@ def fake_live_transport():
             patch("live.Speaker") as speaker, \
             patch.object(CoraLive, "send_microphone", new_callable=AsyncMock), \
             patch("live.microphone_chunks", side_effect=AssertionError("Hardware access")) as chunks:
+        speaker.return_value.get_playback_level.return_value = 0.0
         yield start, speaker, chunks
 
 

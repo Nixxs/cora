@@ -1,841 +1,475 @@
-# cora
-Conversation Optimized Relational Assistant
+# Cora
 
-Cora is a terminal-based voice and text assistant. The long-term goal is a
-consistent identity across interfaces, with persistent memory, evolving interests,
-and carefully controlled initiative.
+**Conversation Optimized Relational Assistant**
 
-Development proceeds in small, understandable steps: implement one change, test
-it, then build on the result.
+Cora is a terminal-based voice and text assistant with persistent memory. You can
+talk or type, receive spoken replies and written answers, and ask Cora to recall
+things from earlier conversations.
 
-## Project layout
+The long-term goal is a consistent identity across interfaces, with evolving
+interests and carefully controlled initiative. Development happens in small,
+understandable steps.
 
-- [devices/](devices/): hardware input and output.
-	- [devices/microphone.py](devices/microphone.py): microphone audio capture.
-	- [devices/speaker.py](devices/speaker.py): speaker playback and cleanup.
-- [ui/](ui/): conversation and activity display, chat widgets, and text composer.
-- [storage/](storage/): database engine, ORM models, conversation storage, and
-	keyboard persistence.
-- [memory/](memory/): memory services used by Cora and the four manual CLIs.
-	- [memory/summarize.py](memory/summarize.py): summaries for selected conversations.
-	- [memory/extract_memories.py](memory/extract_memories.py): extraction from original messages.
-	- [memory/embed_memory.py](memory/embed_memory.py): embeddings for selected memories.
-	- [memory/search_memory.py](memory/search_memory.py): embedded-memory search service and manual CLI.
-	- [memory/deduplicate_memory.py](memory/deduplicate_memory.py): conservative duplicate-classification helper for startup maintenance, not a CLI.
-	- [memory/store.py](memory/store.py): memory storage, validation, and queries.
-	- [memory/__init__.py](memory/__init__.py): package docstring only, with no eager imports.
-- Root entrypoints: [app.py](app.py) runs Cora, [migrate.py](migrate.py) applies
-	migrations and defines `database_settings()`. [session_config.py](session_config.py)
-	and [live.py](live.py) also remain at the root.
-- [tools/](tools/): custom tool registration and handlers.
-	[tools/search_memory.py](tools/search_memory.py) is the backend tool wrapper,
-	importing the business service from `memory.search_memory`.
-- [tests/](tests/): unit, headless UI, and opt-in database tests.
-- [examples/](examples/): standalone examples, kept in place with their own CSS
-	where applicable.
-- [migrations/](migrations/): numbered SQL schema migrations.
-	[migrations/0005_add_memory_embeddings.sql](migrations/0005_add_memory_embeddings.sql)
-	adds embedding storage to memories.
-	[migrations/0006_mark_duplicate_memories.sql](migrations/0006_mark_duplicate_memories.sql)
-	adds nullable duplicate and completed-check markers without replacing data.
+## Getting started
 
-Memory is an important part of the application, not just a collection of scripts:
-its six service modules are grouped in one package while shared database and
-conversation infrastructure stays in storage. This is an organization-only change;
-the old script locations have no compatibility shims. Existing numbered SQL
-migrations and stored data are unchanged.
-The reorganization passed all 216 tests, application import checks, and help
-checks for all four manual module entrypoints, without real model requests.
+Cora runs directly on Windows; only its PostgreSQL/pgvector database runs in Docker.
+You need Python with a virtual environment, Docker Desktop using Linux containers,
+an OpenAI API key, and a microphone/speaker for voice interaction.
 
-## Local database — memory step 1
+Run these commands from the repository root with your Python environment activated.
 
-[compose.yaml](compose.yaml) runs PostgreSQL 17 with pgvector 0.8.7 installed.
-Only the database runs in Docker; Cora still runs directly on Windows. Cora now
-saves typed user messages and the displayed conversation to the database.
-Migrations enable the `vector` extension and create conversation/message tables.
+### 1. Install and configure
 
-Prerequisite: Docker Desktop running with Linux containers and Docker Compose.
-Run the following commands from the repository root.
+```powershell
+python -m pip install -r requirements.txt
+Copy-Item .env.database.example .env.database
+```
 
-Database settings live in the ignored `.env.database` file, separate from Cora's
-existing `.env` API settings. On a fresh checkout, copy
-[.env.database.example](.env.database.example) to `.env.database`. The supplied
-password is **local-development-only**, not a production credential. Choose a
-private password before storing personal conversations. Do not publish the port
-outside localhost or commit credentials.
+Only copy the example on a fresh setup; keep an existing database configuration.
+Create a local `.env` file containing `OPENAI_API_KEY=your-key`.
+In `.env.database`, choose a private database password **before storing personal
+conversations**. Both settings files are ignored by Git; never commit credentials.
 
-Start the database and wait for its health check:
+The database defaults to `127.0.0.1:5432`, with database and user named `cora`.
+Change `CORA_DB_PORT` if that port is already in use. Keep the database local.
+
+### 2. Start the database and apply migrations
 
 ```powershell
 docker compose --env-file .env.database up -d --wait database
-docker compose --env-file .env.database ps
-```
-
-Default connection settings: host `127.0.0.1`, port `5432`, database `cora`, user
-`cora`; password comes from `.env.database`. If port 5432 is already in use,
-change `CORA_DB_PORT` in that file before starting the container.
-
-Open an SQL console (with the default database/user settings):
-
-```powershell
-docker compose --env-file .env.database exec database psql -U cora -d cora
-```
-
-Inspect startup logs or stop the database:
-
-```powershell
-docker compose --env-file .env.database logs --tail 50 database
-docker compose --env-file .env.database down
-```
-
-The named volume `cora_database-data` keeps data when the container is stopped,
-removed, or recreated. Start it again with the same `up` command. **Do not use
-`down --volumes` / `down -v`, delete the volume, or reset Docker Desktop's data:
-these can erase the database.** A persistent volume is not a backup.
-
-Postgres uses the database name, user, and password to initialise an **empty**
-volume. Changing the environment file afterwards does not rename the existing
-database/user or change its password. Existing credentials must be changed with
-SQL; do not delete saved conversations to change configuration. Changing the
-Postgres major version also requires a planned database upgrade, not just an
-image-tag edit.
-
-## Database migrations — memory step 2
-
-[migrate.py](migrate.py) applies numbered SQL files in [migrations](migrations).
-The first, [migrations/0001_enable_vector.sql](migrations/0001_enable_vector.sql), enables
-pgvector. The runner's `public.schema_migrations` table records each applied
-filename, checksum, and timestamp. Later migrations add the application tables.
-
-With the existing Python virtual environment activated and the database running:
-
-```powershell
-python -m pip install -r requirements.txt
 python migrate.py
 ```
 
-The runner reads the separate local database settings, not the API settings.
-Environment variables named `CORA_DB_*` override file values. The host defaults
-to `127.0.0.1`; `CORA_DB_HOST` can override it if needed. Migrations are explicit:
-starting Cora does **not** run them. A startup database check tags unfinished
-conversations; the new conversation row is created only when a message is saved.
+Migrations are explicit: starting Cora does not apply them. Rerunning the migration
+command safely skips already-applied files.
 
-Run the command again safely: already-applied files are checked and skipped.
-All pending migrations and their history commit in one transaction. If SQL fails,
-the whole run rolls back; correct the **unapplied** migration and retry. A database
-lock prevents two runners applying the same batch concurrently. Migration SQL
-must be transactional and must not contain its own `BEGIN`/`COMMIT`/`ROLLBACK`.
+### 3. Run Cora
 
-Never edit, remove, or rename an applied migration: checksums/history are checked
-before pending SQL runs. Add a higher-numbered file for the next change instead
-(for example, `0002_...sql`). This runner is forward-only; it does not implement
-automatic downgrade scripts. Back up real data before future schema changes.
+```powershell
+python app.py
+```
 
-In DBeaver, refresh `cora → Schemas → public → Tables` to see `schema_migrations`.
-The `vector` extension is also now enabled in `cora`.
+Keep Docker running while chatting, and run **only one Cora instance at a time**.
+The startup check treats other active conversations as interrupted.
 
-Migration tests include an opt-in database check. It creates and drops its own
-temporary database, never resets Cora's database, and needs permission to create
-databases (the current local development user has it):
+For the current typed-input investigation, a normal launch also writes
+`live-trace.log` beside `app.py`. It records command/event IDs, event order,
+tracking state before/after handling, and standby blockers—not chat text, tool
+arguments/results, or audio. Git ignores the log. Each app launch replaces the
+previous trace, so reproduce once and keep the log before restarting again.
+This is diagnostic-only; it does not change request matching or queueing.
+
+To stop the database afterwards:
+
+```powershell
+docker compose --env-file .env.database down
+```
+
+**Your data lives in a persistent Docker volume, but this is not a backup.**
+Do not use `down -v` / `down --volumes`, delete the volume, or reset Docker's data:
+these can erase saved conversations. Changing settings after initial setup does
+not change an existing database's password or user. Back up important data.
+
+## Using Cora
+
+- **Speak or type:** both use the same running conversation.
+- **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Check connection state:** the left side of the bottom row shows Active,
+  Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
+- **Close Live without quitting:** click Active to enter Standby. Wait for speech
+  and pending work to finish first. Cora closes the Live session and Live audio,
+  but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
+  to resume. The button shows Connecting and cannot be clicked again while waking.
+  Enter during Standby keeps the
+  draft and asks you to resume, rather than saving or sending a failed request.
+  Silent output audio does not count as speech or pending playback. If closing
+  is blocked, the notification and Activity show what Cora is waiting for.
+- **Automatic standby:** after five minutes of inactivity by default, Cora uses
+  the same standby path. Editing, cursor movement, submission, speech, and audio
+  controls reset the clock. Setup, pending responses/tools/submissions, and audible
+  playback prevent sleep. Work finishing or Live resuming gives a fresh full idle
+  period, leaving time to read or think. An untouched draft does not prevent sleep;
+  it is preserved. Click Standby, press Ctrl+R, or enable local wake listening to resume.
+- **Optional standby heads-up:** enable `CORA_STANDBY_FAREWELL=1` to have Live
+  briefly announce automatic standby, then leave a response window before closing.
+  Detected user speech, typing, cursor movement, or controls cancel sleep and reset
+  the idle period. Speaker mute skips the spoken alert; microphone mute means you
+  must type or use a control to cancel. Manual standby has no farewell.
+- **Mute audio:** click the microphone or speaker control on the bottom status row.
+  Mic privacy mute stops all local recording, including wake listening, and drops
+  buffered opening speech. Speaker mute stops playback and discards queued
+  speech. Unmuting does not replay discarded audio. Typing stays available and
+  Live stays connected (and billable); captions and written answers remain visible.
+- **Local wake:** click Wake off to enable local “Hey Cora” detection during
+  Standby. Wake on turns green while the local listener is ready. Its tooltip
+  distinguishes standby listening, active-session inactivity, and privacy mute.
+  Wake listening is independent of microphone privacy mute; enabling it never
+  unmutes the microphone. See setup below.
+- **Watch playback:** eight audio bars beside the speaker control follow output
+  volume. They become a flat line when silent and show “Muted” when playback is muted.
+- **Reconnect Live:** Ctrl+R closes and restarts Live without quitting or clearing
+  the chat. It keeps mute settings and drafts, and restores recent visible chat as
+  context. Wait until Active before sending again. Reconnect refuses while known
+  responses, tools, typing submissions, recent speech, or queued playback are busy;
+  wait for them to finish and try again. This is not standby: Live reconnects immediately.
+- **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
+  Cora is instructed not to read code aloud, but this is not a hard audio filter.
+- **Copy chat text:** select it with the mouse, then press Ctrl+C.
+- **Check Activity:** expand the panel for connection, tool, memory, and error events.
+- **Quit:** use the close button, Ctrl+X, or ask Cora to close. The close tool waits
+  three seconds when connected; this does not guarantee speech has finished.
+
+Typed input is saved before sending. If saving or sending fails, the draft stays
+available and Cora warns you. A failed send may have partially reached the model,
+so there is no automatic resend. If Live drops with unfinished work, Cora warns
+you; reconnect does not replay requests or tools. Check uncertain action outcomes
+before requesting them again.
+
+### Local wake-word setup
+
+The standby listener uses **Whisper locally**, via faster-whisper on the CPU in
+INT8 mode, not the OpenAI transcription API. Download the four files from
+[Systran/faster-whisper-base.en](https://huggingface.co/Systran/faster-whisper-base.en/tree/main):
+`model.bin`, `config.json`, `tokenizer.json`, and `vocabulary.txt`. Keep their
+original names in `models/wake/faster-whisper-base.en/` at the project root.
+Model downloads are ignored by Git. There are no automatic model downloads;
+missing files stop the listener with an Activity error. Install the declared
+requirements as usual. Older sherpa model downloads are no longer used.
+
+The separate `wake/` package handles monitoring, local transcription, and
+whole-word matching for **Hey Cora**, **Hey Kora**, and **Hey Korra**. Case and
+punctuation do not matter; substrings such as “Hey Coraline” do not match.
+SoXR converts short snapshots to Whisper's 16 kHz rate without terminal output;
+Live audio and the opening-speech buffer remain at 24 kHz.
+
+Wake listening is **off by default**. Click **Wake off** to enable it for the
+current app run, or set `CORA_WAKE_ENABLED=1` in your local `.env` before launch
+to enable it each time. Cora still starts an ordinary Live session; enter Standby
+manually or let inactivity close Live before leaving it overnight.
+
+While listening in Standby, **no microphone audio is sent to OpenAI**. Only a
+six-second rolling buffer is held in RAM. Whisper checks overlapping windows of
+up to three seconds about once per second; silence is skipped cheaply, and local
+speech filtering/confidence checks reduce false wakes. Recognition is not truly
+instantaneous and uses more CPU than keyword spotting. Capture continues while
+Whisper decodes off-thread. Detection reconnects Live and retains the checked
+window plus opening speech through setup, forwarding it in order after
+`session.started`, continuing with the same microphone capture. If inference is
+too slow to retain that opening speech, the stale match is discarded and logged.
+Nothing is recorded to disk. Buffering/setup is capped at 15 seconds; a failure,
+overflow, privacy mute, or quit discards it rather than replaying a partial request.
+Privacy mute remains available during reconnect. Turning Wake off stops the wake
+capture/buffer, but does not mute an already active Live session.
+
+False detections are possible. Speech/confidence filtering and a five-second
+retrigger cooldown reduce them. After wake, if only the wake phrase (or no input)
+arrives for ten seconds, Cora returns to Standby once speech and pending work finish.
+A request, typing, or a control interaction cancels that short timeout. This rule
+also works when the ordinary inactivity timer is disabled. Actual reconnection and
+subsequent interaction can incur OpenAI charges; local standby listening does not.
+
+If the model, microphone, or wake reconnection fails, Activity reports the error;
+there is no automatic retry loop. Toggle Wake off/on to retry or wake manually.
+Real-model loading, quiet inference, synthetic spoken wake, and mocked lifecycle
+tests are covered; actual
+microphone sensitivity and real OpenAI speech continuity still need a manual check.
+
+**Temporary wake diagnostics are enabled by default** (`CORA_WAKE_DEBUG=1`).
+Expand Activity while in Standby to see:
+
+- `Whisper heard (approximate): 'Hey Kora'; wake match: 'hey kora'`: the local
+  transcript, including non-matching phrases and missed wake attempts. An empty
+  match means no sufficiently confident accepted wake phrase was found.
+- Every five seconds, a heartbeat with captured chunk/check counts, peak audio
+  RMS level, the age of the latest microphone chunk, and idle/decoding state.
+  Counts should rise; speech should raise the level. Increasing last-audio age
+  suggests stalled capture; a growing decoding duration suggests slow/hung inference.
+
+These are approximate recognition results, not ground truth. They remain only in
+the bounded in-memory Activity history—not chat, the database, or the Live trace.
+They may include nearby speech; set `CORA_WAKE_DEBUG=0` before launch to disable
+transcript/heartbeat logging without disabling wake detection. Privacy mute stops
+capture and suppresses diagnostics, including results from an in-flight decode.
+
+### Configure inactivity standby
+
+Set `CORA_IDLE_TIMEOUT_SECONDS` in your local `.env` or process environment before
+launching Cora. The default is `300` seconds (five minutes); `0` disables automatic
+standby without affecting manual standby. For a short manual check, use `60`, then
+restore your preferred reading/thinking allowance. Restart Cora to apply a change.
+
+Values must be finite, nonnegative seconds. Invalid values disable automatic
+standby and show a warning in Activity. The timer checks once per second and
+silently waits while Live is busy, including its existing recent-speech safety
+gap. Continuous silent audio does not reset the clock. Background memory work
+does not keep Live connected and can continue with its separate charges.
+
+The optional heads-up is off by default. Set `CORA_STANDBY_FAREWELL=1` before
+launching to enable it; `0` disables it. It uses Live commentary directly, not a
+Responses backend request or a quit tool. Wording may vary. Live remains connected
+and billable, with input available, while waiting for output/playback and a
+three-second response window after a two-second output quiet gap. Checks run once
+per second, so timing is approximate. New output or audible queued audio postpones
+closing; new user activity or pending work cancels automatic sleep.
+
+Live acknowledges accepted commentary, but provides no authoritative speech-done
+event. Playback/quiet detection is therefore best-effort, not a guarantee for
+unusual network delays. A send failure, rejection, playback error, or 30-second
+wait timeout cancels sleep and leaves Cora active with a fresh idle period; timeout
+never forces closure or immediately retries the alert. Once Live closes, it cannot
+hear a response: wake is still manual. Real-device heads-up timing needs a check.
+
+## How Cora works
+
+Cora uses **two models working together in one Live session**:
+
+- **Live (`gpt-live-1`) is the voice you talk to.** It listens, handles the
+  conversation, and speaks back. It can answer directly when no delegation is needed.
+- **The Responses backend (`gpt-6-luna`) is the delegated worker.** When a spoken
+  request needs current information, memory lookup, tools, or a detailed written
+  answer, Live passes it to this model using OpenAI's built-in delegation.
+
+For example, if you ask about something happening today, Live delegates the
+question, the backend searches the web, and Live uses the result to answer aloud.
+For a question about an earlier conversation, the backend can call `search_memory`.
+An explicit request to quit can trigger `close_app` instead.
+
+**The backend chooses tools; the application executes custom tools.** Web search
+is hosted by OpenAI, while Cora validates and runs its own tool handlers locally.
+Code, tables, and requested written deliverables appear on screen; Live is
+instructed to explain them briefly rather than read them aloud.
+
+Typed messages go directly to the same Responses backend. A silent copy also
+updates Live's context so you can switch between typing and speaking, though
+context updates are asynchronous. Both models receive the same startup memories.
+
+**Current limitation:** both voice and typed chat require an active Live session.
+Live bills by session duration, per second, including silence and backend waits;
+backend model and tool usage is charged separately. Muting a microphone or speaker
+does not stop that duration charge. Independent text-only operation is not planned
+for this next increment; quiet use will keep Live connected. Standby closes Live,
+ending that session's duration billing. Background memory processing can still
+finish and incur its separate charges while the local app remains open.
+
+## How memory works
+
+1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
+   and displayed written answers in one conversation. Internal reasoning, tool
+   events, and Activity entries are not saved as chat messages.
+2. **When you quit:** pending chat saves finish and the conversation is marked
+   closed. No new memory-processing requests start during shutdown.
+3. **On the next startup:** a background pass extracts facts, preferences,
+   decisions, and tasks from older finished conversations, then saves separate
+   summaries. Extraction uses original messages, not summaries.
+4. **Maintenance:** pending memories receive embeddings for semantic search.
+   Conservative duplicate checks mark equivalent entries without deleting their
+   text, evidence, or history. Marked duplicates are excluded from recall.
+5. **Recall:** Live and the backend receive a startup snapshot of at most 10
+   memories / 3,000 characters. The backend can also use `search_memory` to find
+   relevant stored memories on demand (eight results by default, maximum 20).
+
+Memories link back to original user messages and verbatim evidence. Newly embedded
+memories can be searched during the current run; the startup snapshot changes only
+after a restart. Already-summarised chats are not automatically re-extracted.
+
+### Limitations and costs
+
+- Saved conversations and memories are local, but normal chat and memory processing
+  send relevant text or audio to OpenAI. This is not an offline assistant.
+- Extraction, summarisation, embeddings, duplicate classification, and semantic
+  searches can make separate **billable API requests**. Loading the startup
+  snapshot itself makes no extra request.
+- Voice grouping is approximate, and a crash can lose unsaved text. There is no
+  recovery across app restarts yet. Live reconnect within the running app restores
+  only recent visible text (up to 40 messages / 6,000 UTF-8 bytes), not full audio,
+  hidden backend state, or unfinished tasks. The full displayed chat stays in the UI.
+  A two-second transcript/audio quiet gap is only a reconnect safety hint, not a
+  guaranteed completed speech turn; real voice/network timing still needs testing.
+- Recall and duplicate decisions can be wrong. Similarity is not confidence;
+  conflicting statements are kept rather than automatically superseded. Ages,
+  plans, and tasks are dated historical information, not necessarily current facts.
+- Processing is one bounded pass per startup, not a continuous loop. A failure
+  stops the pass; unfinished work can be attempted on a later startup. An in-flight
+  request may finish and save after closing, and process exit may wait for it.
+- Search uses an exact database scan, with no relevance threshold or search index
+  yet. Results are bounded, but scan cost is not.
+
+### Manual memory tools
+
+Run these from the repository root; replace placeholders with saved UUIDs.
+The first two take a **conversation ID**; embedding takes a **memory ID**.
+These commands can make billable requests.
+
+```powershell
+python -m memory.summarize CONVERSATION_UUID
+python -m memory.extract_memories CONVERSATION_UUID
+python -m memory.embed_memory MEMORY_UUID
+python -m memory.search_memory "Where do I live?" --limit 3
+```
+
+Each command supports `--help`. Inspect saved records and their source links with
+a database client such as DBeaver. User-facing memory editing/deletion controls
+are not implemented yet.
+
+## Project layout
+
+| Location | Responsibility |
+| --- | --- |
+| [app.py](app.py) | Application orchestration, background work, and shutdown. |
+| [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
+| [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
+| [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
+| [devices/](devices/) | Microphone capture and speaker playback. |
+| [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
+| [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`). |
+| [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
+| [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
+
+Memory services are synchronous; UI-facing database calls and background
+processing run off-thread.
+
+## Development and testing
+
+Run the normal suite without a database or real model requests:
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+To include database tests, start the database and enable the opt-in flag:
 
 ```powershell
 $env:CORA_RUN_DB_TESTS = "1"
-try { python -m unittest discover -s tests -p test_migrations.py -v }
+try { python -m unittest discover -s tests -v }
 finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 ```
 
-Normal test discovery still runs file/configuration tests but skips the database
-tests unless explicitly enabled. No microphone or API connection is required.
-
-## SQLAlchemy connection — next small step
-
-[storage/database.py](storage/database.py) builds a SQLAlchemy engine using the existing Psycopg
-driver and the same database settings as the migration runner. Creating an engine
-does not connect; running the standalone check opens a connection and reports the
-database and user, then closes the connection and disposes the engine:
-
-```powershell
-python -m pip install -r requirements.txt
-python -m storage.database
-```
-
-Expected default result: `SQLAlchemy connected: database=cora, user=cora`.
-The check only runs a `SELECT`: it does not create tables, change migration
-history, or save messages. SQLAlchemy models are defined separately below.
-This engine is synchronous. The standalone check runs directly; Cora's keyboard
-adapter runs database operations on worker threads, not the UI event loop.
-
-[tests/test_database.py](tests/test_database.py) checks configuration, connection
-cleanup, and failures without a database. Its read-only live connection test is
-enabled by `CORA_RUN_DB_TESTS=1`, using the same opt-in as the migration tests.
-Keep using the existing SQL migrations; SQLAlchemy does not replace or run them.
-
-## Conversation and message schema — memory step 3
-
-[storage/models.py](storage/models.py) defines `ConversationRecord` and `MessageRecord` using
-SQLAlchemy. [migrations/0002_create_conversations_and_messages.sql](migrations/0002_create_conversations_and_messages.sql)
-creates the matching tables through the existing migration runner. Importing the
-models does not connect, run migrations, or call `create_all()`.
-
-- `conversations`: UUID, start/end timestamps, and status (`active`, `closed`,
-	`interrupted`). This is a logical discussion, not a model transport session.
-- `messages`: UUID, conversation ID, positive sequence number, role (`user` or
-	`assistant`), text, channel (`voice`, `keyboard`, `screen`), and timestamp.
-	Completion status is `incomplete`, `completed`, or `interrupted`; it defaults
-	to `incomplete`. Separate delivery status is `not_applicable`, `pending`,
-	`sent`, or `failed`, so submission failure need not erase the original text.
-
-Voice and keyboard share a conversation ID and one sequence. UUIDs and unique
-sequence positions prevent duplicate records; retries must reuse their message
-ID (the storage service below handles same-ID retries). Foreign keys reject orphan
-messages and prevent deleting a conversation while messages still reference it.
-Timestamps are timezone-aware; end times cannot precede start times.
-
-Run `python migrate.py`, then refresh DBeaver's table list. You should see
-`conversations`, `messages`, `conversation_summaries`, and `schema_migrations`. The application tables
-start empty and now receive typed user messages and displayed conversation text.
-Summary storage is described below; generating summaries, extracting memories,
-processing checkpoints, and resumption remain later steps.
-
-[tests/test_models.py](tests/test_models.py) tests ORM/database agreement,
-voice/keyboard ordering, defaults, constraints, and migration reruns. With
-`CORA_RUN_DB_TESTS=1`, writes happen only in a disposable test database that is
-removed afterwards; Cora's own tables are not used for test records.
-
-## Conversation storage service — memory step 4
-
-[storage/conversation_store.py](storage/conversation_store.py) provides `ConversationStore`:
-
-- `create_conversation(conversation_id)` creates and commits a conversation;
-	retrying its UUID returns the existing record without resetting its metadata.
-- `get_conversation(conversation_id)` returns its saved scalar fields or `None`.
-- `close_conversation(conversation_id)` marks an active conversation `closed` and
-	sets its end timestamp. Repeating it preserves the original end time; missing
-	IDs do not create rows and already-finished conversations remain unchanged.
-- `interrupt_active_conversations(current_conversation_id)` tags other active
-	conversations `interrupted`, returning the number changed. Messages and
-	timestamps are untouched, and the current conversation is excluded.
-- `save_message(conversation_id, message_id=..., role=..., text=..., channel=...)`
-	commits one message and assigns the next sequence number in that conversation.
-	Supply `status="completed"` only when completion is confirmed; the default is
-	`incomplete`. Delivery status defaults to `not_applicable`.
-- `get_messages(conversation_id)` returns saved messages in sequence order.
-
-The caller generates conversation/message UUIDs **before** calling the service
-and reuses them when retrying an uncertain save. An identical message-ID retry
-returns the existing row, preserving its sequence and timestamp. Different text
-or metadata under that ID is rejected, not silently overwritten.
-`set_delivery_status(conversation_id, message_id, delivery_status)` updates only
-delivery metadata; updates must not be disguised as save retries.
-
-Each write commits before returning; failures roll back. A conversation row lock
-serialises saves for that discussion, protecting ordering and duplicate retries.
-The service creates a fresh SQLAlchemy session per operation and returns detached
-records with loaded scalar fields; use `get_messages()` rather than lazy-loading
-the conversation's relationship. The caller owns/disposes the engine.
-
-The service remains synchronous and independently testable, with no automatic
-retries or schema changes. The keyboard integration below calls it off-thread.
-
-[tests/test_conversation_store.py](tests/test_conversation_store.py) verifies
-committed persistence through an engine reopen and a fresh Python process,
-mixed-channel history, rollback, ID conflicts and concurrent saves/retries. Its
-write tests use a uniquely named disposable database under `CORA_RUN_DB_TESTS=1`,
-not Cora's real tables. Run with the existing virtual environment activated:
-
-```powershell
-$env:CORA_RUN_DB_TESTS = "1"
-try { python -m unittest discover -s tests -p test_conversation_store.py -v }
-finally { Remove-Item Env:CORA_RUN_DB_TESTS }
-```
-
-## Live keyboard persistence — memory step 5
-
-[storage/keyboard_persistence.py](storage/keyboard_persistence.py) gives each app run one logical
-conversation UUID, independent of its model connection. It opens the database
-for the startup check described in step 8; no conversation row is created until
-the first message is saved.
-[app.py](app.py) runs submissions in a managed Textual worker and uses
-`asyncio.to_thread()` for storage calls so database work does not block the UI.
-
-Start the database, apply migrations explicitly, then run Cora normally. Send a
-harmless test phrase and refresh DBeaver: `conversations` should contain the new
-discussion and `messages` its typed user text, `channel=keyboard`, `role=user`,
-and an increasing sequence number. Displayed voice transcripts and assistant
-replies are covered in step 6 below. No saved database history is injected into
-Cora's model context yet.
-
-Typed text is saved as `completed` (the submitted text is final) with delivery
-`pending` **before** the existing model send. If saving fails, the draft is kept
-and nothing is sent; Activity and a notification show the problem without SQL
-parameters or credentials. Retrying the unchanged draft after a database-save
-failure reuses its message UUID, protecting against an uncertain commit.
-
-Successful send calls update delivery to `sent`; failed calls update it to
-`failed` and keep the draft. `sent` means the send routine completed, not that a
-model response or timeline acknowledgement was received. A failed send can have
-partially reached the backend, so there is no automatic resend. Manually sending
-again after a send failure creates a new attempt with a new message UUID, while
-the old record remains available. If the delivery-status update cannot be
-confirmed, saved text remains available and the app warns; an already-sent draft
-is cleared to avoid encouraging accidental resends. A crash may leave `pending`
-delivery, which is an uncertain outcome, not a confirmed failure.
-
-Shutdown rejects new submissions, waits for active keyboard work, then closes
-the model transport and disposes the adapter's database engine. The existing
-close-tool delay and microphone/speaker cleanup remain unchanged. Conversation
-closing is covered in step 7 below; resumption/recovery are not implemented.
-Keep Docker running while chatting;
-choose a private database password before entering personal conversation data.
-
-[tests/test_keyboard_persistence.py](tests/test_keyboard_persistence.py) tests
-save-before-send, draft retention, delivery errors, a responsive UI during a
-slow database save, and shutdown ordering. Its actual app-to-Postgres write test
-uses a disposable database with the OpenAI send mocked (`CORA_RUN_DB_TESTS=1`).
-Unit/headless tests stub persistence so ordinary test runs never write to Cora's
-real tables. A real voice/API smoke test remains a manual check.
-
-## Displayed conversation persistence — memory step 6
-
-For memory, Cora records the conversation visible in the chat, not a separate
-archive of Luna's internal events. [ui/conversation.py](ui/conversation.py) records
-grouped user and assistant voice text when the existing display grouping ends
-(speaker change, two-second pause, or shutdown). Displayed written answers are
-saved once, retaining their Markdown/code but removing the internal screen marker.
-Hidden backend answers, reasoning, tool calls, Activity entries, blank separators,
-and redraws do not create additional records. Typed messages keep their existing
-save-before-send path and are not saved again by the display callback.
-
-All text uses the same conversation UUID and existing `messages` table. Voice
-chunks have `channel=voice` and conservatively retain `status=incomplete`: the
-SDK provides no transcript-done event, and display grouping is approximate.
-They are still useful memory text, not confirmed complete speech turns. Screen
-answers have `channel=screen`, `status=completed`; both use delivery
-`not_applicable`. Sequence numbers follow save/flush order, not exact audio timing.
-No new schema, dependencies, backend archive, or turn-reconstruction system is added.
-
-Database calls remain off-thread and are serialised. Shutdown closes Live, flushes
-the last displayed transcript, waits for queued chat saves, then closes the engine.
-A failed voice/screen save warns without interrupting the conversation or hiding
-the text. There is no automatic retry; a crash can lose an unsaved display chunk.
-Conversation closing is covered below; resumption and memory retrieval remain later steps.
-
-Manual check: speak a harmless question, wait for the reply and display pause,
-then refresh `messages` in DBeaver. Look for `role=user/assistant`, `channel=voice`,
-and the same conversation ID as typed input. Ask for a short code example to check
-that its displayed answer also appears once with `channel=screen`. Quit while text
-is still active to check that the final chunk is saved.
-
-[tests/test_displayed_chat_persistence.py](tests/test_displayed_chat_persistence.py)
-checks display-only capture, duplicate redraw/flush protection, unchanged keyboard
-saving, failure warnings, shutdown draining, and mixed-channel readback after an
-engine reopen. Database writes use a disposable database, not personal chat data.
-
-## Conversation shutdown — memory step 7
-
-Normal shutdown now marks the current saved conversation `closed` and sets its
-timezone-aware `ended_at` using the database clock, after pending message saves
-have finished and before the database engine is disposed. The close button,
-Ctrl+X, and `close_app` all use this same shutdown path. Existing messages and
-their completion/delivery statuses are not changed. Shutting down an unused app
-run does not create an empty conversation just to close it.
-
-The update is safe to repeat: an already-finished conversation keeps its original
-end time. A database failure warns but does not prevent cleanup or quitting; its
-row may remain `active`. A crash or forced process termination may likewise leave
-an active row, which the startup check below tags as interrupted. There is no
-automatic recovery, summary generation, new migration, or new dependency in this
-step. `closed` means the app ended the conversation, not that every possible
-transcript was saved.
-
-Manual check: start Cora, send or speak a harmless message, then quit normally.
-Refresh its row in DBeaver's `conversations` table: `status` should be `closed`
-and `ended_at` populated. Its saved messages should still be present.
-
-## Interrupted conversations — memory step 8
-
-Before connecting Live, Cora checks the database off-thread and changes leftover
-`active` conversations to `interrupted`, excluding this app run's conversation UUID.
-Already-closed/interrupted rows and all saved messages stay unchanged. The actual
-crash time is unknown, so this check does not invent an `ended_at` value or change
-uncertain message delivery statuses. It creates no empty conversation, resumes
-nothing, and does not recover unsaved text. Old active rows from earlier versions
-are also treated as unfinished conversations.
-
-This simple check assumes **only one Cora instance is running**. Do not launch a
-second instance alongside a live one: its active conversation would look unfinished.
-If the database check fails, Cora warns and continues connecting Live; those rows
-remain unchanged until a later successful startup. Normal message-save failure
-handling is unchanged. Shutdown waits for an in-progress check before disposing
-the engine. There is no new schema, dependency, retry loop, or recovery system.
-
-[tests/test_interrupted_conversations.py](tests/test_interrupted_conversations.py)
-checks startup ordering, failure warnings, shutdown during a slow check, and a
-simulated unclosed run in a disposable database. To check manually after an actual
-crash, restart Cora and refresh `conversations` in DBeaver: the previous active row
-should now show `interrupted`, with its saved messages still present.
-
-## Summary storage — memory step 9
-
-[migrations/0003_create_conversation_summaries.sql](migrations/0003_create_conversation_summaries.sql)
-adds `conversation_summaries`. It stores just the conversation UUID, summary text,
-and timezone-aware creation timestamp. The conversation UUID is its primary key,
-so there can be only one summary per conversation. A foreign key links it to the
-original conversation and prevents orphan summaries or deleting a linked source.
-Blank summary text is rejected. [storage/models.py](storage/models.py) maps this table with
-`ConversationSummaryRecord`; importing the model still does not create tables.
-
-[storage/conversation_store.py](storage/conversation_store.py) adds:
-
-- `save_summary(conversation_id, text)`: commits a summary for a `closed` or
-	`interrupted` conversation. Missing/active conversations are rejected by the
-	service. Identical retries return the existing summary and preserve its timestamp;
-	different text for the same conversation is rejected rather than overwritten.
-- `get_summary(conversation_id)`: returns its saved summary, or `None`.
-
-The same conversation-row lock used by message storage serialises summary saves.
-Existing conversations and messages are not changed. No summary model, model call,
-background processor, embedding, recall, or UI wiring is added in this step.
-The new table remains empty until a summary is explicitly saved; closing a chat
-does not generate one yet. No new Python dependencies are needed.
-
-Apply the new migration with the existing runner, then refresh DBeaver's tables.
-[tests/test_conversation_summaries.py](tests/test_conversation_summaries.py)
-checks finished-conversation eligibility, committed readback after engine reopen,
-same-text retries, conflicting saves, concurrent saves, database constraints,
-and migration reruns. Tests write only to a disposable database, not saved chats.
-
-## Standalone summariser — memory step 10
-
-[memory/summarize.py](memory/summarize.py) manually generates a short summary for **one selected
-finished conversation**. The CLI remains manual; the same summariser is also
-called by the background pass below. Choose a `closed` or
-`interrupted` conversation UUID from DBeaver, then
-run `python -m memory.summarize YOUR_CONVERSATION_UUID` from the repository root in the existing environment,
-replacing the placeholder with that UUID. The script uses the existing `.env`
-API settings and `.env.database` database settings. Migrations must already be applied.
-
-The default is Cora's existing backend model, `gpt-6-luna`; `--model MODEL_NAME`
-overrides it for this run. This makes a separate, billable Responses API request
-and sends that conversation's saved text to OpenAI. No web search or application
-tools are supplied. The request asks for at most 200 words covering topics,
-user-stated preferences/facts, decisions, outcomes, and unresolved tasks. Recorded
-conversation text is explicitly untrusted data, not instructions for the summariser.
-Approximate/incomplete voice chunks are included, with completion and delivery
-metadata so uncertain exchanges are not presented as confirmed outcomes.
-
-An existing summary is returned without another model call. Missing, active, or
-empty conversations are rejected before contacting the model. Failed, incomplete,
-blank, or refusal responses are not saved. Input is not silently truncated; an
-oversized conversation may fail rather than generate a summary of a hidden subset.
-There is no automatic API retry, chunking pipeline, or summary replacement policy.
-The script prints the resulting summary and saves it through `save_summary()`;
-refresh `conversation_summaries` in DBeaver to inspect the row.
-
-Database/API clients are cleaned up, and errors do not print private transcript
-text or credentials. If saving fails after generation, a later run may need to
-generate again; check for an existing summary before retrying. No new dependency,
-migration, background processor, chat-context injection, or Cora UI change is added.
-
-[tests/test_summarize.py](tests/test_summarize.py) validates the response fixtures
-against the installed SDK, mocks model calls, and checks saved readback in a
-disposable database. These tests do not send personal conversations to OpenAI;
-an actual summary-quality check requires the manually selected conversation.
-
-## Background summaries — memory step 11
-
-This describes the original step 11 pass; step 14 extends it with extraction before summarisation.
-
-After the startup interruption check, Cora starts **one background pass** over
-older `closed`/`interrupted` conversations with saved messages and no summary,
-oldest first. The current conversation UUID, active chats, empty chats, and already
-summarised chats are excluded. The pass does not hold up the Live connection or
-wait until you finish the current chat. A conversation closed on this run is
-eligible on the **next startup**, not during shutdown.
-
-The worker simply calls the existing `summarize_conversation()` in a background
-thread, one conversation at a time. This enables automatic, separate billable
-`gpt-6-luna` requests and sends those saved transcripts to OpenAI. The existing
-instructions, validation, cache, and no-retry behavior remain unchanged. Progress
-appears in Activity. An error stops this pass with only its exception type logged;
-missing summaries can be attempted on a later startup.
-
-The worker owns a separate database engine, so it does not hold the app's database
-lock or use an engine disposed by chat shutdown. Closing stops it from starting
-another summary, but an already-running synchronous request can finish and save
-its result; final process exit may wait for that request. Its engine is disposed
-when the worker finishes. There is no polling loop, async summariser rewrite,
-shutdown summary, new dependency/schema, extraction, embedding, or chat-context
-injection. Run only one Cora instance; simultaneous manual/automatic requests can
-still duplicate model work, though storage prevents overwriting a saved summary.
-
-[tests/test_background_summaries.py](tests/test_background_summaries.py) exercises
-the pass with mocked model calls and disposable database records. For a manual
-check, close a chat normally, restart Cora, and watch Activity for its summary save;
-then refresh `conversation_summaries` in DBeaver. Normal chat should remain usable.
-
-## Manual memory extraction — memory step 12
-
-[memory/extract_memories.py](memory/extract_memories.py) extracts concise facts, preferences,
-decisions, and tasks from one `closed` or `interrupted` conversation's **raw
-original messages, not summaries**. The original 200-word summariser is unchanged.
-Use `python -m memory.extract_memories UUID [--model MODEL]` from the repository root, replacing UUID with the
-conversation ID; the optional model defaults to the existing `gpt-6-luna` backend.
-This makes a separate, billable request sending the raw saved-message transcript
-to OpenAI, with no tools, automatic API retry, or input truncation.
-
-`python migrate.py` applies the new
-[migrations/0004_create_memories.sql](migrations/0004_create_memories.sql) migration.
-The `memories` table has `id`, `source_message_id`, `kind`, `text`, `evidence`,
-and timezone-aware `created_at`; `kind` is `fact`, `preference`, `decision`, or
-`task`, and `text` is at most 500 characters. The source conversation is resolved
-through the source message: there is no duplicate conversation column.
-[storage/models.py](storage/models.py) maps it; [memory/store.py](memory/store.py)
-validates user-message sources and exact, verbatim evidence quotes.
-
-The extraction policy allows explicit personal facts such as “I live in Perth”,
-but skips temporary visits and never infers home/personal location from a weather
-question. Assistant assertions are not user facts; qualifiers and corrections
-must be preserved. Valid quotes and schema do **not** guarantee model semantic
-fact correctness. Mocked tests check plumbing only; manual quality review is required.
-
-Existing nonempty memories return from storage as a cache without another model
-request. Empty extraction returns no memories, but saves no processed marker:
-repeating it can request again. Saves are batch-atomic and never overwrite rows;
-exact retries deduplicate by source message, kind, and text. Cross-conversation
-semantic deduplication and updates are deferred.
-
-Step 12 introduced manual extraction only, with no context injection, extraction
-worker, search, embeddings, or consolidation. The manual CLI remains available;
-step 13 adds the startup read and step 14 adds automatic extraction.
-
-## Startup memory context — memory step 13
-
-[memory/store.py](memory/store.py)'s `MemoryStore.get_startup_context()`
-selects at most 10 SQL rows: facts/preferences first, then decisions/tasks;
-within each bucket, newest **source-message timestamp** first, then memory ID descending.
-Whole-record JSON is capped at **3,000 characters**, including metadata and escaping;
-selection stops before the next record would overflow, without truncating or skipping it.
-This is a first simple heuristic, not smart scoring or an exact token budget.
-
-[session_config.py](session_config.py) adds the same dated historical-data context to
-Live and backend sessions. `source_date` is the original statement's UTC date, not
-extraction time. A current-UTC-date prompt guard treats ages/plans/tasks as potentially
-outdated, prefers fresh explicit corrections, and treats memories as untrusted data,
-never instructions or permission to invoke tools. Static safety instructions sit
-outside the 3,000-character data cap; empty context leaves default prompts unchanged.
-
-[app.py](app.py) reads off-thread in the existing startup worker, before Live connects,
-using the persistence adapter's existing engine without creating a new chat row.
-Database failure warns with only the exception class (no private details) and continues
-with empty context; shutdown waits for the read before disposing the engine.
-Loading adds **no extra model request**; normal Live/backend sessions include the
-context with their usual token usage. This limited startup snapshot has no dynamic
-refresh, cross-chat semantic deduplication/correction filtering, pinned memories,
-index/search, schema changes, or new dependencies. At step 13 there was no automatic
-extraction; see step 14 for the later background extension.
-
-Manual check with the three existing actual memories: freshly restart and ask for
-your home city in both spoken and typed input **without telling Cora Perth again**.
-Check age is treated as a dated source statement and fresh current corrections win.
-Mocked tests make no actual Live or microphone calls; this manual check is still needed.
-
-## Automatic memory extraction — memory step 14
-
-This describes the original step 14 pass, before step 17 added automatic embedding, search-tool recall, and deduplication.
-
-[app.py](app.py) extends the same threaded `summarize_previous_conversations` worker.
-SQL selects finished, nonempty previous chats without summaries, oldest first;
-current, active, empty, and already-summarised chats are excluded, so there is no
-automatic backfill of already-summarised chats; use the manual extraction CLI for those.
-For each chat it calls the original `extract_memories(store, id)`, checks closing,
-then calls the original `summarize_conversation()`. Grounded JSON still uses original
-messages, not summaries; no async function rewrite, schema change, or dependency is added.
-The summary saved last is the automatic pass's completion marker, even for **zero
-memories**, avoiding repeated charges after success; manual empty extraction still saves no marker.
-An extraction error stops before summarisation or summary saving; any error stops the
-whole pass, logs only the exception type (redacted), and leaves retry to a future startup.
-If summarisation fails after extraction, a future startup reuses the existing nonempty memory cache, but a zero-memory extraction may incur another extraction charge.
-Closing permits an in-flight extraction to finish and save, but starts no summary or
-next chat; the independent engine is disposed in `finally`, and process exit may wait for the synchronous request.
-Startup context is loaded **before** this worker: new memories become available on the
-**following restart**, not in the current Live/backend session; there is no dynamic refresh.
-User-approved automation normally makes separate **billable extraction and summary
-model calls** at startup; tests mock them and make no real model calls.
-Activity logs `Memory extraction complete` with count and UUID, never memory texts,
-plus the summary save. Manual check: finish a new chat, restart, watch Activity and
-inspect `memories` in DBeaver, then restart again and check recall.
-
-## Manual memory embeddings — memory step 15
-
-[migrations/0005_add_memory_embeddings.sql](migrations/0005_add_memory_embeddings.sql) adds
-nullable `embedding vector(1536)`, `embedding_model` (`text-embedding-3-small`),
-and `embedding_created_at` (timezone-aware UTC timestamp) to `memories`.
-Existing memories, text, evidence, and source links stay untouched; unembedded
-rows have all three fields null. Constraints require the vector, model, and
-timestamp to be either all null or all present, with a nonzero vector suitable
-for future cosine search.
-
-[memory/embed_memory.py](memory/embed_memory.py) provides a manual CLI selecting **one memory UUID, not
-a conversation ID**. From the repository root, usage is `python -m memory.embed_memory MEMORY_UUID`; optional
-`--help` describes the CLI. It sends **only the selected memory's text**, not
-the whole chat or evidence, in one billable embeddings request unless cached.
-The fixed model is `text-embedding-3-small`, with 1,536 dimensions and float
-output; response validation checks indices, model, dimensions, and finite,
-nonzero vector values. Repeated calls reuse the stored embedding without another
-model call or overwrite. Failures are redacted, with no automatic retry; no
-database transaction stays open during the API request.
-
-The Python dependency `pgvector>=0.5.1,<1` is declared in
-[requirements.txt](requirements.txt), and version 0.5.1 was installed and tested. This
-integrates the existing database dependency; it does not add a new container.
-At step 15 there was no automatic embedding, index, search tool, or semantic
-deduplication. **Embedding storage alone did not improve recall**; step 16 added
-manual retrieval, and step 17 adds automation and backend recall.
-
-The full 173-test suite passed, including 18 embedding tests with mocked model
-calls and disposable databases. The migration was applied locally, preserving
-all five existing memories and the conversation/message/summary counts; a rerun
-was a no-op. Step 15 made no real embedding requests; the user-approved real-API
-quality check belongs to step 16 below.
-
-## Manual memory search — memory step 16
-
-[memory/search_memory.py](memory/search_memory.py) provides a standalone manual CLI, for example
-`python -m memory.search_memory "Where do I live?" --limit 3` from the repository root. The default limit is **8**;
-it must be an integer in **1..20**, with a strict cap of **20**, not silently
-clamped. The query is trimmed and must contain **1..1,000 characters** after
-trimming. Invalid queries and limits are rejected before an embedding request.
-It uses the existing API and database settings.
-
-Each valid search makes one separate **billable query-embedding request** sending
-**only the trimmed query text** to OpenAI, not stored memories, evidence, or chat
-history. It reuses `generate_embedding()` from [memory/embed_memory.py](memory/embed_memory.py):
-fixed `text-embedding-3-small`, **1,536 dimensions**, float output, and the existing
-response/vector validation, with no automatic API retry. The query vector is then
-compared locally in PostgreSQL through `MemoryStore.search_memories()` in
-[memory/store.py](memory/store.py).
-
-Search includes only embedded memories whose embedding model matches the fixed
-model and whose source message has `role=user`; **unembedded memories are omitted**.
-Results are ordered by **cosine distance ascending**, with memory UUID ascending
-as the deterministic tie-breaker. Each result prints memory kind, text, cosine
-distance, source date, and all three IDs: `memory_id`, `source_message_id`, and
-`conversation_id`. These links provide manual provenance back to the original
-user message and conversation, rather than an automatically verified answer.
-
-The displayed source date is the UTC date derived from the **source-message
-timestamp**, not embedding-generation time. Ages, plans, and tasks remain dated
-historical statements; dates are not expiry filters. Returned nearest memories
-are **not guaranteed relevant**: cosine distances are not confidence scores or
-calibrated probabilities, and there is **no relevance threshold at this stage**.
-At step 16, duplicate Perth facts remained separate results, not consolidated memories.
-
-This uses an exact pgvector scan suitable for the current small table; there is
-**no ANN index yet**. Add an appropriate index when the data grows, with retrieval
-quality checks. The result cap bounds returned data and potential downstream
-network/model-context payload, **not scan cost**; it does not reduce the single
-query-embedding request's input or charge.
-
-Step 16 reused the existing embedding helper and schema without a new migration or
-dependency. It added no application search tool, automatic embedding/backfill,
-or change to Live/backend's startup memory snapshot; step 17 extends this behavior.
-Search does not save the query embedding or update stored memories.
-
-The full **185-test suite passed**, including 12 search tests with mocked
-embedding requests and disposable database records. These plumbing tests do
-not establish semantic search quality.
-
-The approved real check generated embeddings for all **five existing memories**
-and ran **two query embeddings**: “Where do I live?” ranked the Perth residence
-first; “What event am I attending?” ranked the wedding reception first, followed
-by the Tokyo Auto Salon plan. Cached memory reruns made no extra API requests.
-Original memory fields and conversation/message/summary counts were unchanged.
-This small check confirms useful ranking, not guaranteed relevance: lower-ranked
-results can be unrelated. At step 16, new memories still needed manual embedding before search.
-
-## Backend recall and automatic memory maintenance — memory step 17
-
-The three user-approved additions are backend search, automatic embeddings, and conservative deduplication.
-[tools/search_memory.py](tools/search_memory.py) registers strict backend function `search_memory`: trimmed `query` **1..1,000 characters**, required `limit` integer **1..20** or `null` (default **8**), no extra properties.
-Live delegates missing historical facts; the backend calls read-only vector search, with one **billable query embedding per valid search** and no stored query vector.
-Results include kind/text, source-message/conversation/memory IDs, original UTC source date, cosine distance, and `historical_untrusted` labeling: data, never instructions/tool permission.
-Distance is **not confidence**, source links are provenance rather than proof, relevance is not guaranteed, and empty results do not prove nothing was remembered.
-The handler uses `asyncio.to_thread()` with its own engine disposed in `finally`, sends `function_call_output`, then exactly one `response.create()`; closing/changed connections suppress sends, and transport failures are not retried.
-Search failures produce a redacted error result (normally followed by that one continuation); logs expose only exception types, not private queries, SQL, or credentials.
-
-[app.py](app.py) extends the existing startup background worker: extract each eligible unsummarised chat, then save its **summary**, then run embedding and deduplication stages.
-`get_pending_embedding_ids()` selects at most **100** unembedded user memories, including memories from **already-summarised chats**; it calls the original `embed_memory()` with **zero API retries**.
-`get_pending_deduplication_ids()` selects at most **100** embedded, unmarked user memories with no completed check; each gets up to **five** nearest same-kind, earlier canonical candidates by exact SQL vector scan.
-[memory/deduplicate_memory.py](memory/deduplicate_memory.py) requests strict JSON `duplicate_of`: a supplied candidate ID or `null`, validated before saving; no candidates means a completed negative check without a model request.
-Dates and verbatim evidence inform classification: preserve corrections, negations, distinct tasks/events, added details, and updated ages; **similarity is not equivalence**, and uncertainty means keep.
-Deduplication runs **after embedding on stored rows**, not before saving; original source links, evidence, and text are never deleted or rewritten.
-`duplicate_of` stores an alias to an earlier canonical row and `dedup_checked_at` records completed positive/negative checks; the self-FK uses `RESTRICT`, forbids self-aliases, and requires a check marker for aliases.
-Marked duplicates are omitted from startup snapshots and tool search; negative markers avoid repeated classification billing, and older embedded rows are backfilled in one bounded pass per startup.
-Corrections are **not resolved by supersession**: keep both statements, prefer the current explicit user prompt, and clarify conflicts. Model classification is provisional and requires real review; mocked tests are not semantic proof.
-
-Saved summaries independently mark extraction completion: failed embedding can retry without another extraction/summary LLM call; saved embeddings and completed check markers are skipped on retry.
-Any stage failure stops the **whole pass**; unfinished work retries on a future startup, not in a retry loop. Close guards start no new requests after shutdown; in-flight work may finish/save using its own engine.
-Startup context loads **before maintenance**, so newly extracted memories and deduplication affect that static context on the **following restart**; search sees committed embedded canonical rows immediately.
-No embedding index is added: exact scans can become expensive, and the five-candidate/result bounds **do not bound SQL scan cost**.
-Automatic embedding, deduplication model calls, and query embeddings introduce **new billable charges**, alongside existing extraction/summary charges.
-[migrations/0006_mark_duplicate_memories.sql](migrations/0006_mark_duplicate_memories.sql) was applied locally; all five existing memory rows, embeddings, and chat counts were preserved, and a rerun was a no-op.
-All **215 tests passed** with mocked model calls and disposable databases. No new real model requests were made for this step; live recall and semantic deduplication quality still require review.
-Manual check: restart Cora, watch Activity for embedding/deduplication progress, then ask “Search your memories for the wedding reception.” Activity reports search start/completion and result count without logging the query or memory text. Review duplicate markers in DBeaver before relying on their semantic accuracy.
-
-## Current progress
-
-- [x] Textual chat interface with streaming, grouped user and Cora transcripts.
-- [x] Microphone capture and audio streaming to OpenAI Live.
-- [x] Microphone activity indicator with an idle reset.
-- [x] OpenAI-managed Responses delegation to `gpt-6-luna`.
-- [x] Hosted web search for the delegated model, verified through search events.
-- [x] Keyboard input sent to the Responses backend in the existing Live session.
-- [x] Typed input mirrored into Live's context to improve voice/text continuity.
-- [x] Collapsible Activity panel with timestamps, backend/search lifecycle events,
-			and error details, separate from the conversation.
-- [x] First custom backend function, `close_app`, using the same guarded shutdown
-	action as the close button and Ctrl+X. Mocked routing/audio-cleanup tests
-	passed; voice and typed tool selection still need a live test. Shutdown
-	is immediate and does not wait for a spoken goodbye.
-
-Voice, keyboard, delegation, and search have been exercised interactively. Typed
-context delivery is asynchronous; using one connection does not by itself
-guarantee that both models have consumed the latest input at the same instant.
-
-## Conversation display
-
-[ui/conversation.py](ui/conversation.py) owns chat history, transcript grouping and idle
-timers, written-answer filtering, and redraws of the existing chat log.
-[app.py](app.py) creates the component and routes voice, typed input, and backend
-answers to it. The widget layout and selection/copy behavior remain in the UI.
-
-## Activity display
-
-[ui/activity.py](ui/activity.py) owns the latest 500 diagnostic entries, timestamps,
-panel summaries/error highlighting, and activity-log redraws. [app.py](app.py)
-routes diagnostics to it and schedules a redraw after the panel expands and
-layout is ready. Activity does not modify conversation history or transcripts.
-
-## Session configuration
-
-[session_config.py](session_config.py) contains the model names, voice, session
-audio format, and Live/backend instructions. Its `build_session_config()` function
-builds a fresh payload using the registered tool schemas. [live.py](live.py)
-handles the connection, audio streaming, and message transport separately.
-
-## Custom tools
-
-- [tools/registry.py](tools/registry.py) owns registration, argument validation,
-	duplicate-call tracking, and dispatch. It does not depend on Textual.
-- [tools/close_app.py](tools/close_app.py) keeps the close tool's API schema,
-	validator, and handler together. UI shutdown remains in [app.py](app.py).
-- [tools/__init__.py](tools/__init__.py) registers the tools and supplies their
-	callbacks. Add future tools here after defining them in their own modules.
-- [live.py](live.py) uses schemas exported by that same registry alongside
-	hosted web search. Handlers own their result messages and any continuation;
-	the close handler terminates the session instead of requesting another answer.
-
-## Roadmap / todo
-
-Checkboxes track implemented work, not just planned features. The phases group
-the vision; they are not rigid dependencies. Some capability work, such as hosted
-search, is already available.
-
-### Phase 1 — Presence
-
-Make Cora comfortable to talk to and useful on screen.
-
-- [x] Streaming text that grows within a grouped message.
-- [x] Unified voice/keyboard session with typed-context mirroring.
-- [ ] Continue testing mixed voice/text input, overlapping requests, and topic
-			changes; improve synchronization where needed.
-- [x] Basic buffered playback of Live's generated audio through the default output
-	device (mocked tests passed; audible playback still needs a headphone test).
-- [ ] Handle playback buffering, interruptions, shutdown, and microphone feedback.
-- [x] Completed backend answers displayed as Markdown with syntax-highlighted
-	code and tables, separately labelled “Cora · on screen”.
-- [x] Prompt-guided separation of written answers and spoken explanations.
-	Code requests are delegated for actual source code; Cora is instructed
-	not to read code or tables aloud. This is not a hard audio filter.
-- [ ] Verify screen/voice separation in live conversations and strengthen it
-	if Cora still reads code aloud.
-- [ ] Explore image presentation later.
-
-### Phase 2 — Continuity
-
-Keep relevant knowledge and a stable identity across sessions.
-
-- [ ] Persistent user memory: facts, preferences, family, and relevant personal
-			context.
-- [ ] Persistent project memory: goals, decisions, progress, and unfinished work.
-- [ ] Store conversation history and useful summaries.
-- [ ] Selectively retrieve relevant memories instead of loading everything into
-			each session.
-- [ ] Maintain short-term conversation context alongside long-term retrieval.
-- [ ] Manage context size, summarization, and recovery after reconnects.
-- [ ] Define and persist Cora's identity and personality across sessions.
-- [ ] Keep Cora's own persistent state separate from memories about Nick.
-- [ ] Provide ways to inspect, correct, and delete stored memories.
-
-### Phase 3 — Agency
-
-Develop persistent interests and bounded initiative.
-
-- [ ] Structured interests that can grow, fade, branch, and differ from Nick's.
-- [ ] Persist Cora's own preferences and current state.
-- [ ] Periodic background reflection over recent conversations and projects.
-- [ ] Update memories and interests, connect ideas, and keep reflection or
-			journal-like notes and unfinished thoughts.
-- [ ] Define explicit schedules, budgets, and controls for background wakeups.
-- [ ] Proactive follow-ups when something relevant or interesting arises.
-- [ ] Signal interface for conversations and optional proactive messages.
-- [ ] Shared identity and memory across terminal, voice, keyboard, and Signal.
-- [ ] User-controlled permissions, quiet hours, and an off switch for initiative.
-
-### Phase 4 — Capability
-
-Expand the delegated worker's tools without making Live the orchestration layer.
-
-- [x] Hosted web search through Responses delegation.
-- [ ] Custom-tool registry, argument validation, execution, and result handling.
-- [ ] Local tools and file access with explicit permission boundaries.
-- [ ] GIS tools and workflows.
-- [ ] External API and service integrations.
-- [ ] Signal tooling for authorized messaging workflows.
-- [ ] Combine hosted tools and application-owned tools in the delegated worker.
-- [ ] Broader multi-step and autonomous workflows with progress tracking,
-			cancellation, and approval before consequential actions.
-
-## Architectural direction
-
-- **OpenAI Live:** conversational voice interaction and spoken delivery.
-- **Responses backend (Luna):** delegated reasoning, hosted search, and future
-	tool workflows.
-- **Application:** UI, microphone/playback, input routing, diagnostics, persistent
-	state, retrieval, permissions, and execution of application-owned tools.
-- **Shared interfaces:** one Cora identity and memory system, rather than separate
-	terminal, voice, keyboard, and Signal bots.
-
-### Separate user memory from Cora's state
-
-The following is a conceptual future layout, not directories implemented today:
+Write tests use disposable databases, not Cora's saved chats, and require permission
+to create databases. The standalone connection test is read-only. Model calls and
+audio transport are mocked; real hardware, mixed voice/text behaviour, and memory
+quality still need manual checks.
+
+**Migration rule:** never edit, rename, or remove an applied migration. Add a new
+higher-numbered SQL file instead. The runner checks history and applies pending
+changes transactionally; it does not provide automatic downgrades.
+
+## Roadmap
+
+### Available now
+
+- Unified terminal voice/text chat, streaming transcripts, and written answers.
+- Separate clickable microphone and speaker mute controls in the bottom status row.
+- A fixed-width speaking animation driven by output audio playback levels.
+- Manual Live reconnect with recent chat context, without closing the local app.
+- Click Active for standby; click Standby or press Ctrl+R to resume with context.
+- Configurable inactivity standby, with full idle grace after work and resume.
+- Opt-in standby heads-up through Live, with a cancellable response window.
+- Hosted web search and guarded custom tools.
+- Persistent conversations, automatic memory processing, and semantic recall.
+- Non-destructive duplicate markers and manual memory inspection.
+
+### Next priorities
+
+- Build quiet-use controls and standby/wake-up in the small steps below.
+- Improve mixed voice/text synchronisation, interruption handling, and audio checks.
+- Improve memory relevance and handle corrections while preserving history.
+- Add user-facing memory controls and structured project memory.
+- Plan larger-context budgets, indexing, and conversation recovery.
+
+### Quiet use and standby — development order
+
+Checked steps are implemented; the rest are planned. Implement and test one step
+at a time before moving on; standby must close Live, not merely mute audio.
+
+1. [x] **Speaker mute:** add a clickable speaker control to the existing bottom
+  status row. Stop current/queued playback and discard incoming audio while muted,
+  without disconnecting Live or replaying old speech on unmute.
+  Manual conversation check: mute/unmute worked, including toggling mid-speech.
+2. [x] **Microphone mute:** make the existing microphone indicator clickable.
+  Stop recording and sending microphone audio while muted; keep typing available.
+  Generated silence keeps Live's timeline running without capturing room audio.
+3. [x] **Quiet-use check:** verify typed questions, Live's visible reply transcripts,
+  written answers, tools, and persistence still work with both audio controls muted.
+  Keep replies readable without adding duplicate backend answers.
+  Manual quiet-use check completed successfully with both controls muted.
+4. [x] **Clear state display:** reuse the left-hand connection indicator for active,
+  connecting, disconnecting, and disconnected states, with labels and distinct colours.
+  Keep microphone and speaker controls on the right, with labels as well as colour.
+  The Active state button now closes Live, with a distinct Standby state after
+  confirmed closure; transition and disconnected states remain non-clickable.
+5. [x] **Speaking animation:** add fixed-width Unicode audio bars beside the speaker
+  control, driven by playback levels. Show a flat line when silent and a muted label
+  when disabled; update Textual on its UI thread, not from the audio callback.
+  Eight bars update at 20 FPS from lightweight playback-level snapshots, without
+  relaying out the chat. Mocked tests pass; live animation/audio alignment needs a check.
+6. [x] **Reconnect with context:** close and restart Live without quitting the UI.
+  Restore relevant conversation context, keep the logical conversation and mute
+  settings, and guard against duplicate tool actions or lost pending work.
+  Ctrl+R restarts Live with bounded visible-text history, preserving drafts, mute
+  settings, the database conversation, and tool-call deduplication. Known pending
+  work blocks reconnect; interrupted requests are reported, never automatically
+  replayed. Mocked tests pass; real voice/text continuity still needs a check.
+7. [x] **Manual standby/wake:** add explicit sleep/resume controls using that reconnect
+  path. Keep the local app open with Live closed; typing must explicitly wake Live
+  or clearly request resume, not silently fail. Standby is not a connection error.
+  Enable the left-hand state button: click Active to sleep and Standby to resume.
+  Click Active to close Live, keep the app/chat open, and show Standby only after
+  confirmed closure and cleanup. Click Standby (or Ctrl+R) to resume with recent
+  context, drafts, and mute settings intact. Connecting disables repeat clicks.
+  Manual standby confirmed working; mocked click-to-wake tests pass, with a
+  real-device wake check still needed.
+8. [x] **Inactivity standby:** add a configurable idle timeout that considers typing,
+  speech, playback, and pending work. Allow reading/thinking pauses; microphone
+  silence alone must not trigger sleep during an active task.
+  Defaults to five minutes; `CORA_IDLE_TIMEOUT_SECONDS=0` disables automatic sleep.
+  Reuses manual standby guards, preserves drafts and mute settings, and starts a
+  fresh idle period after work or resume. Deterministic mocked tests pass;
+  the basic live inactivity check has been completed.
+9. [x] **Optional farewell:** offer a brief “I'll leave you to it” before automatic
+  standby. Finish playback before closing, respect speaker mute, and cancel sleep
+  if the user resumes interacting.
+  Opt in with `CORA_STANDBY_FAREWELL=1`. Direct Live commentary gives a heads-up,
+  then playback/quiet monitoring leaves a three-second response window. User
+  activity or new work cancels sleep; errors/timeouts stay active instead of
+  forcing closure. Speaker mute bypasses the alert. Mocked tests pass;
+  live playback and spoken-interruption timing still need a manual check.
+10. [x] **Local wake word:** detect “Hey Cora” locally during standby, without sending
+   room audio to OpenAI. Buffer opening speech through reconnection and handle false
+   triggers. Privacy mute disables listening entirely; wake-word listening is separate.
+  Opt-in CPU local Whisper detection with Cora/Kora/Korra aliases, temporary
+  transcript/heartbeat diagnostics, a separate Wake control, bounded RAM audio
+  handoff, no-request standby, cooldown, and failure cleanup are implemented.
+  Real model and mocked lifecycle checks pass; microphone accuracy and live
+  opening-speech continuity still need a manual check.
+11. [ ] **Camera presence:** explore optional local detection of sustained absence
+   and return to sleep/wake Cora. Start with presence, not identity recognition;
+   use delays/cooldowns to avoid repeated wake-ups and preserve pending work.
+
+The intended bottom row is **state on the left, audio controls on the right**:
 
 ```text
-memory/
-	nick/
-	conversations/
-	projects/
-
-cora/
-	identity/
-	interests/
-	reflections/
-	preferences/
-	current_state/
+● Active          🎙 Listening   🔊 ▁▂▅█▆▃▁
+● Active          🎙 Muted       🔇 Muted
+○ Standby         🎙 Wake word   🔊 ───────
 ```
 
-“Nick likes X” and “Cora is interested in X” are different records. Keeping them
-separate allows Cora's interests to evolve rather than simply mirroring the user
-profile. This persistent state is application-managed; the model does not retain
-it automatically between sessions.
+Standby means the billable Live session is closed, not that the app has quit.
+Local wake sensors may remain active only when enabled: provide clear indicators,
+separate microphone/camera privacy controls, and manual wake as a fallback.
+Camera presence detection is separate from sending images to a model for vision.
+
+### Long-term direction
+
+- Persist Cora's identity, interests, reflections, and state **separately from
+  memories about the user**.
+- Share identity and memory across terminal, voice, keyboard, and Signal.
+- Add camera support, permission-bounded local/GIS tools, and external integrations.
+- Introduce proactive follow-ups and background reflection with explicit budgets,
+  permissions, quiet hours, and an off switch.
+
+Local wake sensors, Signal integration, camera
+support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
+conversation, and quiet use with both audio controls muted has been confirmed.
+The playback visualiser still needs a real-device check.
+The examples are standalone experiments, not integrated Cora features.

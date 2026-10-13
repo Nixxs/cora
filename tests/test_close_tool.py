@@ -207,6 +207,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
 
         speaker = MagicMock()
         speaker.play.return_value = True
+        speaker.get_playback_level.return_value = 0.0
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
                 patch("live.AsyncOpenAI", client), patch("live.Speaker", return_value=speaker):
             app = CoraApp()

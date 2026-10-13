@@ -68,14 +68,79 @@ Screen > .screen--selection {
 
 #chat-status {
     width: 1fr;
+    min-width: 0;
     height: 1;
+    min-height: 1;
+    padding: 0;
+    border: none;
+    background: transparent;
+    content-align: left middle;
+    text-align: left;
+    text-style: none;
+    text-opacity: 100%;
     color: #8f98a8;
 }
 
-#mic-status {
+#chat-status.state-active {
+    color: #8fcca6;
+}
+
+#chat-status.state-active:hover, #chat-status.state-active:focus,
+#chat-status.state-standby:hover, #chat-status.state-standby:focus {
+    background: #202838;
+}
+
+#chat-status.state-standby {
+    color: #a6acd8;
+}
+
+#chat-status.state-connecting, #chat-status.state-disconnecting {
+    color: #e0c080;
+}
+
+#mic-status, #speaker-status, #wake-status {
     width: auto;
+    min-width: 0;
     height: 1;
+    min-height: 1;
+    margin: 0 0 0 2;
+    padding: 0;
+    border: none;
+    background: transparent;
+    text-style: none;
     color: #8f98a8;
+}
+
+#mic-status:hover, #mic-status:focus,
+#speaker-status:hover, #speaker-status:focus,
+#wake-status:hover, #wake-status:focus {
+    background: #202838;
+    color: #e0e6ef;
+}
+
+#mic-status.audio-muted, #speaker-status.audio-muted {
+    color: #f0a38a;
+}
+
+#wake-status.wake-listening {
+    color: #8fcca6;
+}
+
+#speaker-status {
+    width: 12;
+    text-align: left;
+}
+
+#speaker-level {
+    width: 8;
+    height: 1;
+    margin-left: 1;
+    content-align: center middle;
+    color: #8fcca6;
+}
+
+#speaker-level.audio-muted {
+    color: #f0a38a;
 }
 
 #input-frame {
