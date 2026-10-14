@@ -23,7 +23,7 @@ import test_keyboard_persistence as keyboard_tests
 import test_memory_store as memory_tests
 
 
-# running_app replaces the decorated method and app-level service references.
+# running_app replaces the decorated method and background service references.
 # Capture the original worker BEFORE entering it; opt-in patches go INSIDE it.
 MAINTENANCE_WORKER = CoraApp.summarize_previous_conversations
 REAL_EMBED_MEMORY = embedding.embed_memory
@@ -41,13 +41,13 @@ def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=())
     memory_store = MagicMock(spec=MemoryStore)
     memory_store.get_pending_embedding_ids.return_value = list(embedding_ids)
     memory_store.get_pending_deduplication_ids.return_value = list(dedup_ids)
-    with patch("app.build_engine", return_value=engine) as build, \
-            patch("app.ConversationStore", return_value=conversations_store) as conversation_factory, \
-            patch("app.MemoryStore", return_value=memory_store) as memory_factory, \
-            patch("app.extract_memories", return_value=[]) as extract, \
-            patch("app.summarize_conversation") as summary, \
-            patch("app.embed_memory") as embed, \
-            patch("app.deduplicate_memory", return_value=False) as dedup, \
+    with patch("memory.background.build_engine", return_value=engine) as build, \
+            patch("memory.background.ConversationStore", return_value=conversations_store) as conversation_factory, \
+            patch("memory.background.MemoryStore", return_value=memory_store) as memory_factory, \
+            patch("memory.background.extract_memories", return_value=[]) as extract, \
+            patch("memory.background.summarize_conversation") as summary, \
+            patch("memory.background.embed_memory") as embed, \
+            patch("memory.background.deduplicate_memory", return_value=False) as dedup, \
                  patch("memory.embed_memory.OpenAI") as embedding_api, \
                  patch("memory.deduplicate_memory.OpenAI") as dedup_api, \
                  patch("memory.extract_memories.OpenAI") as extraction_api, \
@@ -221,13 +221,13 @@ class MemoryMaintenanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
             # Fixture mocks startup/live transport; real worker/services are an
             # explicit opt-in INSIDE it so its patches cannot shadow ours.
             async with keyboard_tests.running_app() as (app, pilot):
-                with patch("app.build_engine", return_value=engine) as build, \
+                with patch("memory.background.build_engine", return_value=engine) as build, \
                         patch.object(engine, "dispose", side_effect=dispose) as disposal, \
-                        patch("app.MemoryStore", side_effect=MemoryStore) as memory_factory, \
-                        patch("app.embed_memory", wraps=REAL_EMBED_MEMORY) as embed, \
-                        patch("app.deduplicate_memory", wraps=REAL_DEDUPLICATE_MEMORY) as dedup, \
-                        patch("app.extract_memories") as extract, \
-                        patch("app.summarize_conversation") as summarize, \
+                        patch("memory.background.MemoryStore", side_effect=MemoryStore) as memory_factory, \
+                        patch("memory.background.embed_memory", wraps=REAL_EMBED_MEMORY) as embed, \
+                        patch("memory.background.deduplicate_memory", wraps=REAL_DEDUPLICATE_MEMORY) as dedup, \
+                        patch("memory.background.extract_memories") as extract, \
+                        patch("memory.background.summarize_conversation") as summarize, \
                         patch("memory.embed_memory.OpenAI") as embedding_api, \
                         patch("memory.deduplicate_memory.OpenAI") as dedup_api, \
                         patch("memory.extract_memories.OpenAI") as extraction_api, \

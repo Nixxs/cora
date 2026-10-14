@@ -384,7 +384,7 @@ def fake_listener():
 class WakeAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_diagnostics_are_activity_only_and_privacy_mute_suppresses_them(self):
         async with running_app() as (app, pilot):
-            app.wake_enabled = True
+            app.wake.enabled = True
             app.handle_wake_diagnostic("Whisper heard (approximate): 'Hey Kora'")
             self.assertIn("Hey Kora", app.activity.entries[-1])
             self.assertFalse(app.conversation.log_entries)
@@ -397,9 +397,9 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_debug_logging_can_be_disabled_without_disabling_wake(self):
         listener = fake_listener()
         with patch.dict("os.environ", {"CORA_WAKE_DEBUG": "0"}), \
-                patch("app.WakeListener", return_value=listener) as factory:
+                patch("wake.controller.WakeListener", return_value=listener) as factory:
             async with running_app() as (app, pilot):
-                app.wake_enabled = True
+                app.wake.enabled = True
                 app.standby = True
                 app.start_wake_listener()
                 self.assertIsNone(factory.call_args.kwargs["on_debug"])
@@ -424,10 +424,10 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                                     source=chunks, check_chunks=1, **kwargs)
             return listener
 
-        with patch("app.WakeListener", side_effect=create_listener):
+        with patch("wake.controller.WakeListener", side_effect=create_listener):
             async with restarting_app() as (app, pilot, connections, speakers, started):
                 try:
-                    app.wake_enabled = True
+                    app.wake.enabled = True
                     # Losing terminal focus must not gate standby capture or wake.
                     app.post_message(events.AppBlur())
                     await pilot.pause()
@@ -449,11 +449,11 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_opt_in_is_separate_from_privacy_mute_and_standby_only(self):
         listener = fake_listener()
         with patch.dict("os.environ", {"CORA_WAKE_ENABLED": "0"}), \
-                patch("app.WakeListener", return_value=listener) as factory:
+                patch("wake.controller.WakeListener", return_value=listener) as factory:
             async with running_app() as (app, pilot):
-                self.assertFalse(app.wake_enabled)
+                self.assertFalse(app.wake.enabled)
                 await pilot.click("#wake-status")
-                self.assertTrue(app.wake_enabled)
+                self.assertTrue(app.wake.enabled)
                 self.assertFalse(app.live.microphone_muted)
                 factory.assert_not_called()
                 app.standby = True
@@ -464,17 +464,17 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(button.has_class("wake-listening"))
                 await pilot.click("#mic-status")
                 self.assertTrue(app.live.microphone_muted)
-                self.assertTrue(app.wake_enabled)
+                self.assertTrue(app.wake.enabled)
                 listener.stop.assert_awaited_once()
-                self.assertFalse(app.wake_listening)
+                self.assertFalse(app.wake.listening)
                 self.assertIn("Privacy muted", button.tooltip)
                 self.assertFalse(app.handle_wake(listener))
 
     async def test_wake_reconnects_once_preserves_draft_and_does_not_replay_requests(self):
         listener = fake_listener()
-        with patch("app.WakeListener", return_value=listener):
+        with patch("wake.controller.WakeListener", return_value=listener):
             async with restarting_app() as (app, pilot, connections, speakers, started):
-                app.wake_enabled = True
+                app.wake.enabled = True
                 composer = app.query_one("#chat-input", ChatComposer)
                 composer.load_text("Unsent draft")
                 app.live.set_speaker_muted(True)
@@ -492,17 +492,17 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(composer.text, "Unsent draft")
                 app.persistence.save_message.assert_not_called()
                 connections[1].response.create.assert_not_called()
-                self.assertIsNotNone(app.wake_response_deadline)
+                self.assertIsNotNone(app.wake.response_deadline)
 
     async def test_wake_phrase_alone_times_out_but_request_and_typing_cancel_short_timeout(self):
         for activity in ("wake only", "request", "typing"):
             with self.subTest(activity=activity):
                 async with running_app() as (app, pilot):
                     app.live.ready = True
-                    app.wake_response_deadline = 0
+                    app.wake.response_deadline = 0
                     for delta in ("Hey", " Cora", "."):
                         app.handle_live_event(SimpleNamespace(type="session.input_transcript.delta", delta=delta))
-                    self.assertEqual(app.wake_response_deadline, 0)
+                    self.assertEqual(app.wake.response_deadline, 0)
                     if activity == "request":
                         app.handle_live_event(SimpleNamespace(type="session.input_transcript.delta", delta=" What time is it?"))
                     elif activity == "typing":
@@ -514,33 +514,33 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                         standby.assert_called_once()
                     else:
                         standby.assert_not_called()
-                        self.assertIsNone(app.wake_response_deadline)
+                        self.assertIsNone(app.wake.response_deadline)
 
     async def test_timeout_does_not_close_during_backend_work_or_playback(self):
         async with running_app() as (app, pilot):
             app.live.ready = True
-            app.wake_response_deadline = 0
-            app.pending_backend_work.add("work")
+            app.wake.response_deadline = 0
+            app.backend_work.pending.add("work")
             with patch.object(app, "action_standby") as standby:
                 app.check_wake_timeout()
                 standby.assert_not_called()
-                app.pending_backend_work.clear()
+                app.backend_work.clear()
                 app.check_wake_timeout()
                 standby.assert_called_once()
 
     async def test_wake_alias_only_does_not_count_as_a_request(self):
         async with running_app() as (app, pilot):
             for name in ("Kora", "Korra"):
-                app.wake_response_deadline = 0
-                app.wake_transcript = ""
+                app.wake.response_deadline = 0
+                app.wake.transcript = ""
                 app.handle_live_event(SimpleNamespace(type="session.input_transcript.delta", delta=f"Hey {name}."))
-                self.assertEqual(app.wake_response_deadline, 0)
+                self.assertEqual(app.wake.response_deadline, 0)
 
     async def test_privacy_mute_is_available_while_wake_reconnect_is_pending(self):
         listener = fake_listener()
-        with patch("app.WakeListener", return_value=listener):
+        with patch("wake.controller.WakeListener", return_value=listener):
             async with restarting_app() as (app, pilot, connections, speakers, started):
-                app.wake_enabled = True
+                app.wake.enabled = True
                 app.action_standby()
                 await asyncio.wait_for(app.reconnect_worker.wait(), 3)
                 entered, release = asyncio.Event(), asyncio.Event()
@@ -559,7 +559,7 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                         await pilot.click("#mic-status")
                         self.assertTrue(app.live.microphone_muted)
                         self.assertIsNone(app.live.opening_microphone)
-                        self.assertIsNone(app.wake_listener)
+                        self.assertIsNone(app.wake.listener)
                         listener.stop.assert_awaited()
                         release.set()
                         await asyncio.wait_for(started.get(), 3)
@@ -570,29 +570,29 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_wake_connection_failure_discards_audio_without_retry(self):
         listener = fake_listener()
         async with running_app() as (app, pilot):
-            app.wake_enabled = True
-            app.wake_listener = listener
+            app.wake.enabled = True
+            app.wake.listener = listener
             app.live.opening_microphone = listener
-            app.wake_reconnecting = True
+            app.wake.reconnecting = True
             worker = app.abort_wake_connection()
             await asyncio.wait_for(worker.wait(), 3)
             listener.stop.assert_awaited_once()
             self.assertTrue(app.standby)
-            self.assertTrue(app.wake_failed)
+            self.assertTrue(app.wake.failed)
             self.assertIsNone(app.live.opening_microphone)
-            with patch("app.WakeListener") as factory:
+            with patch("wake.controller.WakeListener") as factory:
                 app.start_wake_listener()
                 factory.assert_not_called()
 
     async def test_quit_stops_local_listener_and_disables_wake_control(self):
         listener = fake_listener()
         async with running_app() as (app, pilot):
-            app.wake_listener = listener
+            app.wake.listener = listener
             with patch.object(app, "exit"):
                 await app.action_disconnect_and_quit()
             listener.stop.assert_awaited_once()
             self.assertTrue(app.query_one("#wake-status", Button).disabled)
-            self.assertIsNone(app.wake_listener)
+            self.assertIsNone(app.wake.listener)
 
 
 if __name__ == "__main__":

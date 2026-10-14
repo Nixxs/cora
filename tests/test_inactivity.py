@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from app import read_idle_timeout
+from inactivity import read_idle_timeout
 from devices.speaker import Speaker
 from test_keyboard_persistence import running_app
 from test_reconnect import backend_event, restarting_app
@@ -46,7 +46,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
         for value in ("0", "invalid"):
             with self.subTest(value=value), patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": value}):
                 async with running_app() as (app, pilot):
-                    self.assertEqual(app.idle_timeout_seconds, 0)
+                    self.assertEqual(app.inactivity.timeout_seconds, 0)
                     self.assertIsNone(app.idle_standby_timer)
                     if value == "invalid":
                         self.assertIn("automatic standby disabled", "\n".join(app.activity.entries))
@@ -56,7 +56,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
     async def test_deadline_reuses_standby_once_without_notifications(self, transition, notify):
         async with idle_app() as (app, pilot, clock):
             clock.return_value = 399.9
-            app.last_idle_activity = 100
+            app.inactivity.last_activity = 100
             app.check_inactivity()
             transition.assert_not_called()
             clock.return_value = 400
@@ -69,14 +69,14 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
     @patch("app.CoraApp.action_standby")
     async def test_inactive_states_do_not_request_standby(self, standby):
         async with idle_app() as (app, pilot, clock):
-            app.last_idle_activity = 0
-            for attribute, value in (("closing", True), ("reconnecting", True), ("standby", True),
-                                     ("idle_timeout_seconds", 0)):
+            app.inactivity.last_activity = 0
+            for owner, attribute, value in ((app, "closing", True), (app, "reconnecting", True),
+                                            (app, "standby", True), (app.inactivity, "timeout_seconds", 0)):
                 with self.subTest(attribute=attribute):
-                    previous = getattr(app, attribute)
-                    setattr(app, attribute, value)
+                    previous = getattr(owner, attribute)
+                    setattr(owner, attribute, value)
                     app.check_inactivity()
-                    setattr(app, attribute, previous)
+                    setattr(owner, attribute, previous)
             app.live.ready = False
             app.connection_worker = MagicMock(is_finished=False)
             app.check_inactivity()
@@ -87,7 +87,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
     async def test_known_work_blocks_silently_and_gets_fresh_full_grace(self, standby, notify):
         async with idle_app() as (app, pilot, clock):
             cases = (
-                ("backend", lambda: app.pending_backend_work.add("pending")),
+                ("backend", lambda: app.backend_work.pending.add("pending")),
                 ("acknowledgement", lambda: app.live.pending_text_requests.add("typed")),
                 ("submission", lambda: setattr(app, "keyboard_worker", MagicMock(is_finished=False))),
                 ("playback", lambda: setattr(app.live, "speaker", MagicMock(is_playback_busy=lambda: True))),
@@ -96,19 +96,19 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
             for name, arrange in cases:
                 with self.subTest(name=name):
                     clock.return_value = 1000
-                    app.last_idle_activity = 0
-                    app.idle_was_busy = False
+                    app.inactivity.last_activity = 0
+                    app.inactivity.was_busy = False
                     arrange()
                     app.check_inactivity()
                     standby.assert_not_called()
-                    app.pending_backend_work.clear()
+                    app.backend_work.clear()
                     app.live.pending_text_requests.clear()
                     app.keyboard_worker = None
                     app.live.speaker = None
                     app.last_live_activity = 0
                     clock.return_value = 1001
                     app.check_inactivity()
-                    self.assertEqual(app.last_idle_activity, 1001)
+                    self.assertEqual(app.inactivity.last_activity, 1001)
                     clock.return_value = 1300.9
                     app.check_inactivity()
                     standby.assert_not_called()
@@ -123,14 +123,14 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
         async with idle_app() as (app, pilot, clock):
             release = asyncio.Event()
             tool = app.run_worker(release.wait(), group="tool-actions")
-            app.last_idle_activity = 0
+            app.inactivity.last_activity = 0
             app.check_inactivity()
             standby.assert_not_called()
             release.set()
             await asyncio.wait_for(tool.wait(), 3)
             clock.return_value = 1001
             app.check_inactivity()
-            self.assertEqual(app.last_idle_activity, 1001)
+            self.assertEqual(app.inactivity.last_activity, 1001)
             memory_release = asyncio.Event()
             memory = app.run_worker(memory_release.wait(), group="memory-summary")
             try:
@@ -145,18 +145,18 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
         async with idle_app() as (app, pilot, clock):
             composer = app.query_one("#chat-input", ChatComposer)
             await pilot.press("a", "b")
-            self.assertEqual(app.last_idle_activity, 1000)
+            self.assertEqual(app.inactivity.last_activity, 1000)
             clock.return_value = 1010
             await pilot.press("backspace")
-            self.assertEqual(app.last_idle_activity, 1010)
+            self.assertEqual(app.inactivity.last_activity, 1010)
             clock.return_value = 1020
             with patch("ui.composer.pyperclip.paste", return_value="pasted text"):
                 await pilot.press("ctrl+v")
             self.assertIn("pasted text", composer.text)
-            self.assertEqual(app.last_idle_activity, 1020)
+            self.assertEqual(app.inactivity.last_activity, 1020)
             clock.return_value = 1030
             await pilot.press("left")
-            self.assertEqual(app.last_idle_activity, 1030)
+            self.assertEqual(app.inactivity.last_activity, 1030)
 
     async def test_submission_and_worker_completion_between_polls_reset_clock(self):
         async with idle_app() as (app, pilot, clock):
@@ -173,11 +173,11 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
             app.live.send_text.side_effect = send
             await pilot.press("enter")
             await asyncio.wait_for(entered.wait(), 3)
-            self.assertEqual(app.last_idle_activity, 1010)
+            self.assertEqual(app.inactivity.last_activity, 1010)
             clock.return_value = 1020
             release.set()
             await asyncio.wait_for(app.keyboard_worker.wait(), 3)
-            self.assertEqual(app.last_idle_activity, 1020)
+            self.assertEqual(app.inactivity.last_activity, 1020)
 
     @patch("app.CoraApp.action_standby")
     async def test_backend_finishing_between_polls_gets_full_grace(self, standby):
@@ -185,11 +185,11 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
             for terminal in ("response.completed", "response.failed", "response.incomplete"):
                 with self.subTest(terminal=terminal):
                     clock.return_value = 1000
-                    app.last_idle_activity = 0
+                    app.inactivity.last_activity = 0
                     app.handle_live_event(backend_event("response.created"))
                     app.handle_live_event(backend_event(terminal))
-                    self.assertEqual(app.last_idle_activity, 1000)
-                    self.assertFalse(app.pending_backend_work)
+                    self.assertEqual(app.inactivity.last_activity, 1000)
+                    self.assertFalse(app.backend_work.pending)
                     clock.return_value = 1299.9
                     app.check_inactivity()
                     standby.assert_not_called()
@@ -197,9 +197,9 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
     async def test_transcripts_and_audible_audio_reset_but_silence_does_not(self):
         async with idle_app() as (app, pilot, clock):
             for kind in ("session.input_transcript.delta", "session.output_transcript.delta"):
-                app.last_idle_activity = 0
+                app.inactivity.last_activity = 0
                 app.handle_live_event(SimpleNamespace(type=kind, delta="Speech"))
-                self.assertEqual(app.last_idle_activity, 1000)
+                self.assertEqual(app.inactivity.last_activity, 1000)
             speaker = Speaker()
             app.live.speaker = speaker
             with patch("devices.speaker.sd.RawOutputStream"):
@@ -208,15 +208,15 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
                     speaker.play(silence)
                     clock.return_value = 1010
                     app.handle_live_event(SimpleNamespace(type="session.output_audio.delta", delta=silence))
-                    self.assertEqual(app.last_idle_activity, 1000)
+                    self.assertEqual(app.inactivity.last_activity, 1000)
                     speech = base64.b64encode(b"\x00\x20" * 480).decode("ascii")
                     speaker.play(speech)
                     app.handle_live_event(SimpleNamespace(type="session.output_audio.delta", delta=speech))
-                    self.assertEqual(app.last_idle_activity, 1010)
+                    self.assertEqual(app.inactivity.last_activity, 1010)
                     app.live.speaker_muted = True
                     clock.return_value = 1020
                     app.handle_live_event(SimpleNamespace(type="session.output_audio.delta", delta=speech))
-                    self.assertEqual(app.last_idle_activity, 1010)
+                    self.assertEqual(app.inactivity.last_activity, 1010)
                 finally:
                     speaker.close()
                     app.live.speaker = None
@@ -224,10 +224,10 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
     async def test_audio_control_buttons_reset_clock(self):
         async with idle_app() as (app, pilot, clock):
             await pilot.click("#mic-status")
-            self.assertEqual(app.last_idle_activity, 1000)
+            self.assertEqual(app.inactivity.last_activity, 1000)
             clock.return_value = 1010
             await pilot.click("#speaker-status")
-            self.assertEqual(app.last_idle_activity, 1010)
+            self.assertEqual(app.inactivity.last_activity, 1010)
 
     @patch("app.CoraApp.exit")
     async def test_timer_stopped_on_quit_and_unmount(self, exit_app):
@@ -250,7 +250,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
                 composer = app.query_one("#chat-input", ChatComposer)
                 composer.load_text("Unsent draft")
                 await pilot.pause()
-                app.last_idle_activity = 700
+                app.inactivity.last_activity = 700
                 app.check_inactivity()
                 await asyncio.wait_for(app.reconnect_worker.wait(), 3)
                 await pilot.pause()
@@ -269,7 +269,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertFalse(app.standby)
                 self.assertTrue(app.live.ready)
-                self.assertEqual(app.last_idle_activity, 2000)
+                self.assertEqual(app.inactivity.last_activity, 2000)
                 self.assertEqual(connections[1].session.start.call_args.kwargs["session"]["input"], history)
                 self.assertEqual(composer.text, "Unsent draft")
                 self.assertTrue(app.live.microphone_muted)

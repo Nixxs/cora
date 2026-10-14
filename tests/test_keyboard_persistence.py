@@ -84,7 +84,8 @@ async def running_app(persistence=None):
     # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
-            patch("app.MemoryStore"), patch("app.embed_memory"), patch("app.deduplicate_memory"):
+            patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
+            patch("memory.background.deduplicate_memory"):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:
