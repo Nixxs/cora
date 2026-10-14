@@ -115,6 +115,14 @@ not change an existing database's password or user. Back up important data.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
+- **Test awareness:** press Ctrl+T to queue a simulated observation that Nick
+  received a Signal message. The attention manager holds observations in arrival order while
+  Cora is speaking or processing work, or Live is disconnected/in standby. They
+  send one at a time when Live is Active and quiet; they do not wake it automatically.
+  This is background context, not a typed message or a real Signal monitor. Activity
+  shows queued/sent/failed notifications, not whether Cora spoke. The queue is
+  in memory only and is lost on app exit. Failed sends are reported, not retried,
+  because they may have partially reached Live. Speaker mute still suppresses playback.
 - **Check Activity:** expand the panel for connection, tool, memory, and error events.
 - **Quit:** use the close button, Ctrl+X, or ask Cora to close. The close tool waits
   three seconds when connected; this does not guarantee speech has finished.

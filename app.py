@@ -23,6 +23,7 @@ from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
+from attention import AttentionManager
 from backend_work import BackendWorkTracker
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
@@ -43,6 +44,7 @@ class CoraApp(App):
     BINDINGS = [
         ("ctrl+x", "disconnect_and_quit", "Quit"),
         ("ctrl+r", "reconnect", "Reconnect"),
+        Binding("ctrl+t", "test_observation", "Test awareness", priority=True, show=False),
         Binding("ctrl+c", "copy_chat_selection", "Copy selected text", priority=True, show=False),
     ]
 
@@ -154,6 +156,15 @@ class CoraApp(App):
             record_idle_activity=self.record_idle_activity,
             handle_session_event=self.handle_live_session_event,
         )
+        self.attention = AttentionManager(
+            can_deliver=self.can_deliver_observation,
+            is_closing=lambda: self.closing,
+            schedule_delivery=self.send_next_observation,
+            send_observation=lambda observation: self.live.send_observation(observation),
+            record_activity=self.record_idle_activity,
+            delivery_finished=self.observation_delivery_finished,
+            write_activity=self.activity.write,
+        )
         if self.live_trace is not None:
             self.trace_live("app.started")
             if not self.live_trace.failed:
@@ -163,6 +174,7 @@ class CoraApp(App):
                 )
         self.connection_worker = self.connect_to_cora()
         self.update_wake_control()
+        self.observation_timer = self.set_interval(0.5, self.check_observations)
         if self.inactivity.timeout_seconds > 0:
             self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
 
@@ -262,6 +274,8 @@ class CoraApp(App):
             self.activity.write("Could not write diagnostic trace; Live continues unchanged.", "Diagnostic trace unavailable")
 
     async def on_unmount(self) -> None:
+        self.attention.stop()
+        self.observation_timer.stop()
         self.cancel_standby_alert()
         self.wake.stop_timers()
         await self.stop_wake_listener()
@@ -416,6 +430,35 @@ class CoraApp(App):
             self.notify("Live ended with unfinished work. Reconnect will not retry it.", severity="warning")
         self.backend_work.clear()
 
+    def action_test_observation(self) -> None:
+        self.queue_observation(
+            "Simulated camera observation: nick just got a signal message. "
+            "Their identity is unknown."
+        )
+
+    def queue_observation(self, observation: str) -> None:
+        self.attention.submit(observation)
+
+    def can_deliver_observation(self) -> bool:
+        # The sender's own transition blocker must not block its readiness recheck.
+        return (
+            self.is_mounted and not (self.closing or self.reconnecting or self.standby)
+            and self.live.ready
+            and not any(name != "observation send" for name in self.live_transition_blockers())
+        )
+
+    def check_observations(self) -> None:
+        self.attention.check()
+
+    @work(group="observation-send")
+    async def send_next_observation(self) -> None:
+        await self.attention.deliver_next()
+
+    def observation_delivery_finished(self) -> None:
+        # Give Live a short chance to react; transcript/audio events extend this gap.
+        self.last_live_activity = monotonic()
+        self.record_idle_activity()
+
     def action_reconnect(self) -> None:
         self.record_idle_activity(user_activity=True)
         self.request_live_transition(restart=True)
@@ -431,6 +474,7 @@ class CoraApp(App):
             and not self.live.ready
         )
         keyboard_busy = self.keyboard_worker is not None and not self.keyboard_worker.is_finished
+        observation_busy = self.attention.busy
         tools_busy = any(
             worker.group == "tool-actions" and not worker.is_finished for worker in self.workers
         )
@@ -439,6 +483,7 @@ class CoraApp(App):
         return [name for name, busy in (
             ("connection setup", connecting),
             ("typed submission", keyboard_busy),
+            ("observation send", observation_busy),
             ("tool execution", tools_busy),
             ("backend response", bool(self.backend_work.pending)),
             ("typed acknowledgement", bool(self.live.pending_text_requests)),
@@ -749,6 +794,8 @@ class CoraApp(App):
         if self.closing:
             return
         self.closing = True
+        self.attention.stop()
+        self.observation_timer.stop()
         self.cancel_standby_alert()
         self.wake.response_deadline = None
         self.wake.stop_timers()
@@ -772,6 +819,11 @@ class CoraApp(App):
                     self.activity.write("Database startup worker stopped", "Database startup worker stopped")
             if self.summary_worker is not None and not self.summary_worker.is_finished:
                 self.summary_worker.cancel()
+            if self.attention.worker is not None and not self.attention.worker.is_finished:
+                try:
+                    await self.attention.worker.wait()
+                except WorkerError:
+                    self.activity.write("Observation send worker stopped", "Awareness stopped")
             if self.keyboard_worker is not None:
                 try:
                     await self.keyboard_worker.wait()
