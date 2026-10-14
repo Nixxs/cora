@@ -389,22 +389,146 @@ changes transactionally; it does not provide automatic downgrades.
 - Click Active for standby; click Standby or press Ctrl+R to resume with context.
 - Configurable inactivity standby, with full idle grace after work and resume.
 - Opt-in standby heads-up through Live, with a cancellable response window.
+- Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
+- A local event bus and attention manager for queued observations, tested with Ctrl+T.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
 
 ### Next priorities
 
-- Build quiet-use controls and standby/wake-up in the small steps below.
+- Build the interests worker on the event bus and attention manager foundations below.
+- Once interests work, add a separate self worker to develop Cora's persistent identity.
+- Add real background producers, starting with a Signal message monitor; camera
+  awareness and screen monitoring can follow independently.
+- Develop attention decisions beyond the current FIFO/quiet-period policy, so Cora
+  can bring something up during a suitable lull without interrupting Nick.
 - Improve mixed voice/text synchronisation, interruption handling, and audio checks.
 - Improve memory relevance and handle corrections while preserving history.
 - Add user-facing memory controls and structured project memory.
 - Plan larger-context budgets, indexing, and conversation recovery.
 
-### Quiet use and standby — development order
+### Subconsciousness, interests, and self — next development steps
 
-Checked steps are implemented; the rest are planned. Implement and test one step
-at a time before moving on; standby must close Live, not merely mute audio.
+Cora's subconsciousness will include background processes that keep working
+without requiring Nick to prompt every action. They can notice events, develop
+interests, and propose things worth sharing. Sometimes Cora should prompt Nick,
+not only respond to him, but background work must not automatically become speech.
+
+The intended path is **background worker → event bus → attention manager → Live**.
+The bus routes events; the attention manager decides what deserves conversational
+attention and when; Live remains responsible for speaking to Nick. The current
+attention policy only queues observations until Live is active and quiet. Relevance,
+candidate selection, and proactive conversation policy are still planned.
+
+#### Interests
+
+Cora should have a background worker that develops and explores interests over
+time. Conversations with Nick provide starting points, but Cora can follow related
+ideas and develop interests beyond the original topic. A conversation about
+restoring a car, for example, might spark an interest in older mechanical designs,
+why those designs evolved, and eventually industrial design more broadly.
+
+The interests worker should:
+
+- Periodically read new conversation memories from the database, with a persistent
+  record of what it has already processed. Start with polling; do not couple it to
+  the process that records or extracts conversation memories.
+- Identify topics worth exploring and maintain persistent interest records:
+  what the interest is, why it emerged, what Cora has learned, and what she wants
+  to explore next. These are Cora's ongoing state, separate from memories about Nick.
+- Explore selected interests during idle periods, within configured time and tool
+  budgets and permissions. Background exploration is distinct from keeping a
+  billable Live session connected and may incur its own API/tool costs.
+- Save useful findings and their sources to the database.
+- Produce conversation candidates when it finds something worth sharing.
+
+**An interest is ongoing state; a conversation candidate is a particular thing
+Cora might bring up.** Developing an interest or saving a finding does not by
+itself justify interrupting Nick. The interests worker does not speak directly
+to him: candidates pass through the event bus to the attention manager.
+
+Live can bring up an approved candidate when relevant to the current conversation,
+during a suitable lull, or after an awareness event such as Nick entering the room.
+That is a future attention policy, not an automatic wake rule: the current queue
+waits through standby and does not reconnect Live on its own. Quiet hours and an
+off switch should bound proactive initiative as it develops.
+
+Implement and test these in small increments:
+
+1. [x] **Live injection:** send a simulated observation into an active conversation
+  through commentary, without pretending it is a message from Nick.
+2. [x] **Attention foundation:** retain observations while Live is busy or unavailable,
+  then deliver FIFO, one at a time, when active and quiet.
+3. [x] **Local event bus:** route structured observation events to the attention
+  manager; support app-thread handoff from background threads. No Redis required yet.
+4. [ ] **Interest state and memory polling:** persist interests and processing
+  progress; periodically read new memories independently of memory recording.
+5. [ ] **Bounded exploration:** explore selected interests during idle periods,
+  recording useful findings, source references, and possible next questions.
+6. [ ] **Conversation candidates:** persist individual ideas worth sharing and
+  publish them to the attention mechanism, separately from ongoing interest state.
+7. [ ] **Proactive attention policy:** choose relevant candidates and suitable lulls,
+  avoid repeated sharing, and test awareness-triggered opportunities without
+  introducing automatic interruption or wake-up by default.
+
+Signal, camera, and screen monitors will use the same event path. Start camera
+awareness with presence rather than identity recognition. Any later presence-based
+sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending work,
+and provide separate camera privacy controls. Cross-process transport can be added
+when needed; it is not required for these first in-process workers.
+
+#### Self — after interests
+
+Once interests work, add a separate background worker that maintains Cora's
+evolving identity. It reads conversation memories, persistent interests, and its
+previous identity state, then reflects on those experiences to update a stored
+description of Cora's preferences, perspectives, values, and conversational
+tendencies. The goal is a developing identity of her own, not a copy of Nick's.
+
+For example, repeated exploration of older mechanical designs might lead Cora
+to develop an appreciation for repairability and understandability. That perspective
+can become part of her identity and influence later conversations.
+
+The self worker should:
+
+- Maintain persistent identity state in the database, separate from memories
+  about Nick and from ongoing interest records.
+- Make gradual, evidence-based changes rather than rewrite Cora's personality
+  after every conversation.
+- Distinguish Nick's preferences from Cora's developing preferences; learning
+  about his perspective does not automatically make it hers.
+- Preserve a stable foundation while allowing learned perspectives to evolve.
+- Record why meaningful identity changes occurred, linking them to the memories,
+  interests, or findings that informed them.
+
+Live and the delegation backend should load the current identity from the database
+when a session starts. Initially, identity changes take effect in the next session;
+updating an active session can come later. The self worker updates stored state,
+not the conversation directly. Live expresses that perspective in conversation.
+
+The relationship is **memory → interests → self → conversational expression**:
+memory records experiences; interests determine what Cora continues exploring;
+self develops how those experiences and interests shape her perspective; Live
+expresses it. Both workers are additions to the existing architecture and use the
+database for persistent state. Build interests first, then self.
+
+After the interests steps are working:
+
+1. [ ] **Identity state:** persist a stable foundation, evolving perspectives,
+  and the evidence and reasons behind meaningful changes.
+2. [ ] **Self reflection worker:** read new experiences, interests, and previous
+  identity state; make bounded, gradual updates while keeping Nick's preferences
+  distinct from Cora's.
+3. [ ] **Session identity loading:** supply the current identity to Live and its
+  delegation backend at session startup; defer active-session updates.
+
+### Quiet use and standby — largely complete
+
+The core quiet-use, standby, and local wake steps below are implemented. Remaining
+real-device checks are noted individually; standby closes Live, not merely mutes
+audio. Camera awareness is a separate future producer, not a prerequisite for
+this standby foundation.
 
 1. [x] **Speaker mute:** add a clickable speaker control to the existing bottom
   status row. Stop current/queued playback and discard incoming audio while muted,
@@ -466,9 +590,6 @@ at a time before moving on; standby must close Live, not merely mute audio.
   handoff, no-request standby, cooldown, and failure cleanup are implemented.
   Real model and mocked lifecycle checks pass; microphone accuracy and live
   opening-speech continuity still need a manual check.
-11. [ ] **Camera presence:** explore optional local detection of sustained absence
-   and return to sleep/wake Cora. Start with presence, not identity recognition;
-   use delays/cooldowns to avoid repeated wake-ups and preserve pending work.
 
 The intended bottom row is **state on the left, audio controls on the right**:
 
@@ -492,8 +613,9 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Local wake sensors, Signal integration, camera
-support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
+Local wake-word listening and the event/attention foundations are implemented.
+The interests and self workers, real Signal/camera/screen monitors, and candidate-driven
+autonomous initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.
 The examples are standalone experiments, not integrated Cora features.
