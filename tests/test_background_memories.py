@@ -224,7 +224,7 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
             return SimpleNamespace(status="completed", output=[], output_text=summary_text)
 
         try:
-            with patch("app.build_engine", return_value=background_engine) as build, \
+            with patch("memory.background.build_engine", return_value=background_engine) as build, \
                     patch.object(background_engine, "dispose", side_effect=dispose) as disposal, \
                     patch("memory.extract_memories.OpenAI") as extraction_factory, \
                     patch("memory.summarize.OpenAI") as summary_factory:

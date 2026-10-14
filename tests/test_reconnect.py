@@ -414,7 +414,7 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
             app.live.ready = True
             with patch.object(app, "reconnect_live") as reconnect, patch.object(app, "notify") as notify:
                 cases = [
-                    ("backend", lambda: app.pending_backend_work.add("response")),
+                    ("backend", lambda: app.backend_work.pending.add("response")),
                     ("keyboard", lambda: setattr(app, "keyboard_worker", MagicMock(is_finished=False))),
                     ("recent speech", lambda: app.handle_live_event(SimpleNamespace(
                         type="session.output_transcript.delta", delta="Still speaking",
@@ -427,7 +427,7 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
                         reconnect.assert_not_called()
                         self.assertFalse(app.reconnecting)
                         self.assertIn("pending work", notify.call_args.args[0])
-                        app.pending_backend_work.clear()
+                        app.backend_work.clear()
                         app.keyboard_worker = None
                         app.last_live_activity = 0.0
                     app.live.pending_text_requests.add("awaiting-ack")
@@ -458,16 +458,16 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
                     "type": "function_call", "name": "search_memory", "call_id": "call-1",
                 }))
                 app.handle_live_event(backend_event("response.completed"))
-                self.assertEqual(app.pending_backend_work, {"delegation-1"})
+                self.assertEqual(app.backend_work.pending, {"delegation-1"})
                 app.handle_live_event(backend_event("response.created", response_id="response-2"))
                 app.handle_live_event(backend_event("response.completed", response_id="response-2"))
-                self.assertEqual(app.pending_backend_work, set())
+                self.assertEqual(app.backend_work.pending, set())
                 handle.assert_called_once()
-                app.pending_backend_work.add("lost-response")
+                app.backend_work.pending.add("lost-response")
                 with patch.object(app, "notify") as notify:
                     app.handle_live_event(SimpleNamespace(type="session.closed", reason="connection_lost"))
                     self.assertIn("will not retry", notify.call_args.args[0])
-                self.assertFalse(app.pending_backend_work)
+                self.assertFalse(app.backend_work.pending)
                 app.live.send_text.assert_not_called()
 
     async def test_reconnect_is_single_flight_and_quit_during_close_cannot_start_a_new_session(self):
@@ -508,10 +508,10 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
         async with running_app() as (app, pilot):
             app.startup_complete = True
             app.live.run = AsyncMock(side_effect=RuntimeError("transport lost"))
-            app.pending_backend_work.add("lost-response")
+            app.backend_work.pending.add("lost-response")
             worker = CONNECT(app)
             await asyncio.wait_for(worker.wait(), 2)
-            self.assertFalse(app.pending_backend_work)
+            self.assertFalse(app.backend_work.pending)
             self.assertTrue(any("will not be replayed" in entry for entry in app.activity.entries))
             app.persistence.mark_interrupted_conversations.assert_not_called()
 

@@ -36,7 +36,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                 "response.created", response_id="typed-response", delegation_id="typed-delegation",
             ))
             await pilot.pause()
-            self.assertNotIn("typed-request", app.pending_backend_work)
+            self.assertNotIn("typed-request", app.backend_work.pending)
             with patch.object(app.tools, "handle_function_call") as handle:
                 # The real forwarded item has neither response nor response_id.
                 await connections[0].events.put(ResponseEvent(
@@ -51,8 +51,8 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                 ))
                 await pilot.pause()
                 handle.assert_called_once()
-            self.assertNotIn(None, app.tool_response_ids)
-            self.assertEqual(app.pending_backend_work, {"typed-delegation"})
+            self.assertNotIn(None, app.backend_work.tool_response_ids)
+            self.assertEqual(app.backend_work.pending, {"typed-delegation"})
             with patch.object(app, "notify") as notify:
                 app.action_standby()
                 self.assertIn("backend response", notify.call_args.args[0])
@@ -64,8 +64,8 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                 ))
             await pilot.pause()
             self.assertFalse(app.live.pending_text_requests)
-            self.assertFalse(app.pending_backend_work)
-            self.assertFalse(app.tool_response_ids)
+            self.assertFalse(app.backend_work.pending)
+            self.assertFalse(app.backend_work.tool_response_ids)
             await pilot.click("#chat-status")
             await asyncio.wait_for(app.reconnect_worker.wait(), 3)
             self.assertTrue(app.standby)
@@ -81,8 +81,8 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     event={"type": "response.output_item.done", "item": {"type": "function_call"}},
                 ))
                 app.handle_live_event(backend_event("response.completed"))
-            self.assertEqual(app.pending_backend_work, {"delegation-1"})
-            self.assertFalse(app.tool_response_ids)
+            self.assertEqual(app.backend_work.pending, {"delegation-1"})
+            self.assertFalse(app.backend_work.tool_response_ids)
 
     async def test_typed_reply_without_created_event_allows_standby_after_voice_chat(self):
         for first_kind in ("response.in_progress", "response.output_item.done", "response.completed"):
@@ -127,7 +127,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     ))
                     await pilot.pause()
                     self.assertFalse(app.live.pending_text_requests)
-                    self.assertFalse(app.pending_backend_work)
+                    self.assertFalse(app.backend_work.pending)
                     self.assertIn("typed_pending=0, backend_pending=0", app.activity.entries[-1])
                     await pilot.click("#chat-status")
                     await asyncio.wait_for(app.reconnect_worker.wait(), 3)
@@ -144,7 +144,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(app.keyboard_worker.wait(), 3)
                     request_id = connections[0].response.create.call_args.kwargs["event_id"]
                     self.assertTrue(app.live.pending_text_requests)
-                    self.assertIn("typed-request", app.pending_backend_work)
+                    self.assertIn("typed-request", app.backend_work.pending)
                     created = backend_event("response.created")
                     if terminal_echo_only:
                         created.client_event_id = "unrelated-command"
@@ -161,7 +161,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     await connections[0].events.put(completed)
                     await pilot.pause(0.25)
                     self.assertFalse(app.live.pending_text_requests)
-                    self.assertFalse(app.pending_backend_work)
+                    self.assertFalse(app.backend_work.pending)
                     await pilot.click("#chat-status")
                     await asyncio.wait_for(app.reconnect_worker.wait(), 3)
                     self.assertTrue(app.standby)
@@ -355,7 +355,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
         async with running_app() as (app, pilot):
             app.live.ready = True
             cases = [
-                ("backend", lambda: app.pending_backend_work.add("pending")),
+                ("backend", lambda: app.backend_work.pending.add("pending")),
                 ("typed acknowledgement", lambda: app.live.pending_text_requests.add("typed")),
                 ("keyboard submission", lambda: setattr(app, "keyboard_worker", MagicMock(is_finished=False))),
                 ("recent speech", lambda: app.handle_live_event(SimpleNamespace(
@@ -371,7 +371,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                         self.assertFalse(app.standby)
                         self.assertFalse(app.reconnecting)
                         self.assertIn("enter standby", notify.call_args.args[0])
-                        app.pending_backend_work.clear()
+                        app.backend_work.clear()
                         app.live.pending_text_requests.clear()
                         app.keyboard_worker = None
                         app.last_live_activity = 0.0
