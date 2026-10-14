@@ -116,8 +116,9 @@ not change an existing database's password or user. Back up important data.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
 - **Test awareness:** press Ctrl+T to queue a simulated observation that Nick
-  received a Signal message. The attention manager holds observations in arrival order while
-  Cora is speaking or processing work, or Live is disconnected/in standby. They
+  received a Signal message. It travels through the local event bus to the attention
+  manager, which holds observations in arrival order while Cora is speaking or
+  processing work, or Live is disconnected/in standby. They
   send one at a time when Live is Active and quiet; they do not wake it automatically.
   This is background context, not a typed message or a real Signal monitor. Activity
   shows queued/sent/failed notifications, not whether Cora spoke. The queue is
@@ -132,6 +133,21 @@ available and Cora warns you. A failed send may have partially reached the model
 so there is no automatic resend. If Live drops with unfinished work, Cora warns
 you; reconnect does not replay requests or tools. Check uncertain action outcomes
 before requesting them again.
+
+### Background event foundation
+
+The current path is **producer → local event bus → attention manager → Live**.
+Ctrl+T is the only built-in test producer; there is no Signal/camera/screen monitor yet.
+An `ObservationEvent` carries a source, text, unique ID, and UTC observation time.
+The bus routes events to synchronous subscribers; it does not decide when Cora
+speaks, persist events, or replay them. The attention manager owns the waiting queue.
+
+Publish from Cora's event-loop thread. Background threads must hand events over
+using `app.call_from_thread(app.event_bus.publish, event)` rather than invoking
+subscribers or the attention manager directly. Separate processes need a later
+transport adapter; Redis is not required by this in-process version. Closing Cora
+closes the bus and prevents further publication. Subscriber errors are reported
+without private event text, and do not stop delivery to other subscribers.
 
 ### Local wake-word setup
 

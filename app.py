@@ -25,6 +25,7 @@ from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
 from attention import AttentionManager
 from backend_work import BackendWorkTracker
+from event_bus import EventBus, ObservationEvent
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
 from live_events import LiveEventHandler
@@ -165,6 +166,10 @@ class CoraApp(App):
             delivery_finished=self.observation_delivery_finished,
             write_activity=self.activity.write,
         )
+        self.event_bus = EventBus(on_error=self.handle_event_bus_error)
+        self.event_bus.subscribe(
+            ObservationEvent, lambda event: self.attention.submit(event.content),
+        )
         if self.live_trace is not None:
             self.trace_live("app.started")
             if not self.live_trace.failed:
@@ -274,6 +279,7 @@ class CoraApp(App):
             self.activity.write("Could not write diagnostic trace; Live continues unchanged.", "Diagnostic trace unavailable")
 
     async def on_unmount(self) -> None:
+        self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
         self.cancel_standby_alert()
@@ -433,11 +439,16 @@ class CoraApp(App):
     def action_test_observation(self) -> None:
         self.queue_observation(
             "Simulated camera observation: nick just got a signal message. "
-            "Their identity is unknown."
+            "Their identity is unknown.", source="test",
         )
 
-    def queue_observation(self, observation: str) -> None:
-        self.attention.submit(observation)
+    def queue_observation(self, observation: str, *, source: str = "app") -> None:
+        self.event_bus.publish(ObservationEvent(source=source, content=observation))
+
+    def handle_event_bus_error(self, error: Exception) -> None:
+        self.activity.write(
+            f"Event subscriber failed ({type(error).__name__}); not retried.", "Event bus error",
+        )
 
     def can_deliver_observation(self) -> bool:
         # The sender's own transition blocker must not block its readiness recheck.
@@ -794,6 +805,7 @@ class CoraApp(App):
         if self.closing:
             return
         self.closing = True
+        self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
         self.cancel_standby_alert()

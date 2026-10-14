@@ -1,9 +1,11 @@
 import asyncio
 from contextlib import asynccontextmanager
 import json
+from threading import get_ident
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from event_bus import ObservationEvent
 from live import CoraLive
 from test_inactivity import idle_app
 from ui.composer import ChatComposer
@@ -73,6 +75,8 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             composer.load_text("My unfinished draft")
             await pilot.pause()
             app.inactivity.last_activity = 100
+            received = MagicMock()
+            app.event_bus.subscribe(ObservationEvent, received)
 
             await pilot.press("ctrl+t")
             await app.workers.wait_for_complete()
@@ -81,6 +85,10 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
                 "Simulated camera observation: nick just got a signal message. "
                 "Their identity is unknown."
             )
+            received.assert_called_once()
+            event = received.call_args.args[0]
+            self.assertEqual(event.source, "test")
+            self.assertEqual(event.content, app.live.send_observation.call_args.args[0])
             self.assertEqual(composer.text, "My unfinished draft")
             self.assertFalse(composer.disabled)
             self.assertEqual(app.inactivity.last_activity, clock.return_value)
@@ -247,8 +255,58 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(app.observation_timer, "stop") as stop, patch.object(app, "exit"):
                 await app.action_disconnect_and_quit()
                 stop.assert_called_once()
+            self.assertTrue(app.event_bus.closed)
+            self.assertFalse(app.event_bus.publish(ObservationEvent(source="signal", content="Too late")))
             app.queue_observation("Too late")
             app.standby = False
             app.check_observations()
             self.assertEqual(list(app.attention.pending), ["Waiting"])
             app.live.send_observation.assert_not_called()
+
+    async def test_monitor_events_route_to_attention_while_live_is_unavailable(self):
+        async with queued_app() as (app, pilot, clock):
+            app.standby = True
+            events = [
+                ObservationEvent(source="signal", content="A message arrived"),
+                ObservationEvent(source="camera", content="Someone entered"),
+                ObservationEvent(source="screen", content="Download finished"),
+            ]
+            for event in events:
+                self.assertTrue(app.event_bus.publish(event))
+            self.assertEqual(list(app.attention.pending), [event.content for event in events])
+            app.live.send_observation.assert_not_called()
+            app.standby = False
+            app.check_observations()
+            await app.attention.worker.wait()
+            app.live.send_observation.assert_awaited_once_with(events[0].content)
+
+    async def test_background_thread_can_publish_via_app_thread_handoff(self):
+        async with queued_app() as (app, pilot, clock):
+            app.standby = True
+            app_thread = get_ident()
+            subscriber_threads = []
+            app.event_bus.subscribe(ObservationEvent, lambda event: subscriber_threads.append(get_ident()))
+            event = ObservationEvent(source="signal", content="From background thread")
+            accepted = await asyncio.wait_for(
+                asyncio.to_thread(app.call_from_thread, app.event_bus.publish, event), 3,
+            )
+            self.assertTrue(accepted)
+            self.assertEqual(subscriber_threads, [app_thread])
+            self.assertEqual(list(app.attention.pending), [event.content])
+
+    async def test_bus_subscriber_failure_is_private_and_does_not_block_attention(self):
+        async with queued_app() as (app, pilot, clock):
+            app.standby = True
+            app.event_bus.subscribe(ObservationEvent, MagicMock(side_effect=ValueError("private details")))
+            event = ObservationEvent(source="signal", content="private observation")
+            self.assertTrue(app.event_bus.publish(event))
+            self.assertEqual(list(app.attention.pending), [event.content])
+            entries = "\n".join(app.activity.entries)
+            self.assertIn("Event subscriber failed (ValueError)", entries)
+            self.assertNotIn("private", entries)
+
+    async def test_unmount_closes_bus_without_explicit_quit(self):
+        async with queued_app() as (app, pilot, clock):
+            bus = app.event_bus
+        self.assertTrue(bus.closed)
+        self.assertFalse(bus.publish(ObservationEvent(source="test", content="Too late")))
