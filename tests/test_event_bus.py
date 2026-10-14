@@ -3,7 +3,7 @@ from datetime import timedelta
 import unittest
 from unittest.mock import MagicMock
 
-from event_bus import EventBus, ObservationEvent
+from subconscious.event_bus import EventBus, ObservationEvent
 
 
 class EventBusTests(unittest.TestCase):
@@ -84,7 +84,7 @@ class EventBusTests(unittest.TestCase):
     def test_default_error_logging_omits_private_text(self):
         bus = EventBus()
         bus.subscribe(ObservationEvent, MagicMock(side_effect=ValueError("private details")))
-        with self.assertLogs("event_bus", level="WARNING") as logs:
+        with self.assertLogs("subconscious.event_bus", level="WARNING") as logs:
             self.assertFalse(bus.publish(ObservationEvent(source="test", content="private event")))
         self.assertIn("ValueError", "\n".join(logs.output))
         self.assertNotIn("private", "\n".join(logs.output))

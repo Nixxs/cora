@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from attention import AttentionManager
+from subconscious.attention import AttentionManager
 
 
 class AttentionManagerTests(unittest.IsolatedAsyncioTestCase):

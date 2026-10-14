@@ -5,7 +5,7 @@ from threading import get_ident
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from event_bus import ObservationEvent
+from subconscious.event_bus import ObservationEvent
 from live import CoraLive
 from test_inactivity import idle_app
 from ui.composer import ChatComposer

@@ -23,9 +23,9 @@ from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
-from attention import AttentionManager
+from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
-from event_bus import EventBus, ObservationEvent
+from subconscious.event_bus import EventBus, ObservationEvent
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
 from live_events import LiveEventHandler

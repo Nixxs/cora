@@ -52,8 +52,8 @@ python app.py
 Keep Docker running while chatting, and run **only one Cora instance at a time**.
 The startup check treats other active conversations as interrupted.
 
-For the current typed-input investigation, a normal launch also writes
-`live-trace.log` beside `app.py`. It records command/event IDs, event order,
+A normal launch also writes a diagnostic `live-trace.log` beside `app.py`.
+It records command/event IDs, event order,
 tracking state before/after handling, and standby blockers—not chat text, tool
 arguments/results, or audio. Git ignores the log. Each app launch replaces the
 previous trace, so reproduce once and keep the log before restarting again.
@@ -80,8 +80,8 @@ not change an existing database's password or user. Back up important data.
   and pending work to finish first. Cora closes the Live session and Live audio,
   but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
   to resume. The button shows Connecting and cannot be clicked again while waking.
-  Enter during Standby keeps the
-  draft and asks you to resume, rather than saving or sending a failed request.
+  Enter during Standby keeps the draft and asks you to resume, rather than saving
+  or sending a failed request.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
 - **Automatic standby:** after five minutes of inactivity by default, Cora uses
@@ -103,14 +103,15 @@ not change an existing database's password or user. Back up important data.
 - **Local wake:** click Wake off to enable local “Hey Cora” detection during
   Standby. Wake on turns green while the local listener is ready. Its tooltip
   distinguishes standby listening, active-session inactivity, and privacy mute.
-  Wake listening is independent of microphone privacy mute; enabling it never
-  unmutes the microphone. See setup below.
+  Wake has its own enable control, but microphone privacy mute stops its listening
+  too. Enabling Wake never unmutes the microphone. See setup below.
 - **Watch playback:** eight audio bars beside the speaker control follow output
   volume. They become a flat line when silent and show “Muted” when playback is muted.
 - **Reconnect Live:** Ctrl+R closes and restarts Live without quitting or clearing
   the chat. It keeps mute settings and drafts, and restores recent visible chat as
   context. Wait until Active before sending again. Reconnect refuses while known
-  responses, tools, typing submissions, recent speech, or queued playback are busy;
+  responses, tools, typed submissions/acknowledgements, observation sends, recent
+  speech, or queued playback are busy;
   wait for them to finish and try again. This is not standby: Live reconnects immediately.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
@@ -118,8 +119,8 @@ not change an existing database's password or user. Back up important data.
 - **Test awareness:** press Ctrl+T to queue a simulated observation that Nick
   received a Signal message. It travels through the local event bus to the attention
   manager, which holds observations in arrival order while Cora is speaking or
-  processing work, or Live is disconnected/in standby. They
-  send one at a time when Live is Active and quiet; they do not wake it automatically.
+  processing work, or Live is disconnected/in standby. They send one at a time
+  when Live is Active and quiet; they do not wake it automatically.
   This is background context, not a typed message or a real Signal monitor. Activity
   shows queued/sent/failed notifications, not whether Cora spoke. The queue is
   in memory only and is lost on app exit. Failed sends are reported, not retried,
@@ -141,6 +142,15 @@ Ctrl+T is the only built-in test producer; there is no Signal/camera/screen moni
 An `ObservationEvent` carries a source, text, unique ID, and UTC observation time.
 The bus routes events to synchronous subscribers; it does not decide when Cora
 speaks, persist events, or replay them. The attention manager owns the waiting queue.
+
+These components live in the [subconscious/](subconscious/) package:
+[subconscious/event_bus.py](subconscious/event_bus.py) routes events and
+[subconscious/attention.py](subconscious/attention.py) coordinates conversational attention.
+Future interests, self, and awareness workers can be added as separate components
+in this package. Give each worker the dependencies it needs and connect it through
+events, rather than having it call Live or other workers directly. The app wires
+components together and manages their lifecycles; automatic plugin discovery and
+cross-process execution are not implemented yet.
 
 Publish from Cora's event-loop thread. Background threads must hand events over
 using `app.call_from_thread(app.event_bus.publish, event)` rather than invoking
@@ -195,8 +205,8 @@ subsequent interaction can incur OpenAI charges; local standby listening does no
 If the model, microphone, or wake reconnection fails, Activity reports the error;
 there is no automatic retry loop. Toggle Wake off/on to retry or wake manually.
 Real-model loading, quiet inference, synthetic spoken wake, and mocked lifecycle
-tests are covered; actual
-microphone sensitivity and real OpenAI speech continuity still need a manual check.
+tests are covered; actual microphone sensitivity and real OpenAI speech continuity
+still need a manual check.
 
 **Temporary wake diagnostics are enabled by default** (`CORA_WAKE_DEBUG=1`).
 Expand Activity while in Standby to see:
@@ -241,7 +251,8 @@ event. Playback/quiet detection is therefore best-effort, not a guarantee for
 unusual network delays. A send failure, rejection, playback error, or 30-second
 wait timeout cancels sleep and leaves Cora active with a fresh idle period; timeout
 never forces closure or immediately retries the alert. Once Live closes, it cannot
-hear a response: wake is still manual. Real-device heads-up timing needs a check.
+hear a response. Resume with the controls, or say "Hey Cora" if local Wake is enabled
+and the microphone is not privacy-muted. Real-device heads-up timing needs a check.
 
 ## How Cora works
 
@@ -270,8 +281,8 @@ context updates are asynchronous. Both models receive the same startup memories.
 **Current limitation:** both voice and typed chat require an active Live session.
 Live bills by session duration, per second, including silence and backend waits;
 backend model and tool usage is charged separately. Muting a microphone or speaker
-does not stop that duration charge. Independent text-only operation is not planned
-for this next increment; quiet use will keep Live connected. Standby closes Live,
+does not stop that duration charge. There is no independent text-only mode; quiet
+use keeps Live connected. Standby closes Live,
 ending that session's duration billing. Background memory processing can still
 finish and incur its separate charges while the local app remains open.
 
@@ -341,11 +352,15 @@ are not implemented yet.
 | --- | --- |
 | [app.py](app.py) | Application orchestration, background work, and shutdown. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
+| [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
+| [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
+| [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and a home for future independent background workers. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -584,19 +599,20 @@ this standby foundation.
   live playback and spoken-interruption timing still need a manual check.
 10. [x] **Local wake word:** detect “Hey Cora” locally during standby, without sending
    room audio to OpenAI. Buffer opening speech through reconnection and handle false
-   triggers. Privacy mute disables listening entirely; wake-word listening is separate.
+  triggers. Wake has a separate enable control but always honors microphone privacy mute.
   Opt-in CPU local Whisper detection with Cora/Kora/Korra aliases, temporary
   transcript/heartbeat diagnostics, a separate Wake control, bounded RAM audio
   handoff, no-request standby, cooldown, and failure cleanup are implemented.
   Real model and mocked lifecycle checks pass; microphone accuracy and live
   opening-speech continuity still need a manual check.
 
-The intended bottom row is **state on the left, audio controls on the right**:
+The bottom row has **state on the left, audio controls and a separate Wake control
+on the right**. Example states:
 
 ```text
-● Active          🎙 Listening   🔊 ▁▂▅█▆▃▁
-● Active          🎙 Muted       🔇 Muted
-○ Standby         🎙 Wake word   🔊 ───────
+● Active          🎙 Listening   🔊 Speaker  ▁▂▃▄▅▆▇█  Wake off
+● Active          🎙 Muted       🔇 Muted    Muted     Wake off
+○ Standby         🎙× Mic        🔊 Speaker  ────────  Wake on
 ```
 
 Standby means the billable Live session is closed, not that the app has quit.
