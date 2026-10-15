@@ -131,6 +131,21 @@ class StartupInterestAsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Startup interest load failed (RuntimeError); connecting without interests.", activity)
             self.assertNotIn("private SQL", activity)
 
+    async def test_later_connects_reload_context_without_repeating_startup_work(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.persistence.mark_interrupted_conversations.return_value = 0
+            app.persistence.load_startup_memory_context.side_effect = ["", PRIOR_CONTEXT]
+            app.persistence.load_startup_interest_context.side_effect = ["", INTEREST_CONTEXT]
+            sent = []
+            app.live.run = AsyncMock(side_effect=lambda *args: sent.append(
+                (app.live.memory_context, app.live.interest_context)))
+            for _ in range(2):  # launch, then waking from standby
+                app.connection_worker = CONNECT_TO_CORA(app)
+                await asyncio.wait_for(app.connection_worker.wait(), 3)
+            self.assertEqual(sent, [("", ""), (PRIOR_CONTEXT, INTEREST_CONTEXT)])
+            app.persistence.mark_interrupted_conversations.assert_called_once_with()
+            app.summarize_previous_conversations.assert_called_once_with()
+
     async def test_closing_during_the_memory_read_skips_interests(self):
         async with keyboard_tests.running_app() as (app, pilot):
             app.persistence.mark_interrupted_conversations.return_value = 0

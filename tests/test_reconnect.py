@@ -400,7 +400,8 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.tools.handled_call_ids, {"already-run"})
                 self.assertEqual(app.conversation.get_reconnect_history(), history)
             app.persistence.mark_interrupted_conversations.assert_called_once()
-            app.persistence.load_startup_memory_context.assert_called_once()
+            # Context reloads on every connect so wakes see new memories and interests.
+            self.assertEqual(app.persistence.load_startup_memory_context.call_count, 3)
             app.persistence.finish_conversation.assert_not_called()
             app.persistence.close.assert_not_called()
             self.assertTrue(all(s.close.called for s in speakers[:-1]))

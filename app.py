@@ -360,6 +360,10 @@ class CoraApp(App):
                 await self.startup_worker.wait()
                 self.startup_complete = True
                 self.summary_worker = self.summarize_previous_conversations()
+            else:
+                # Shutdown waits on startup_worker, so reuse it for later context reloads.
+                self.startup_worker = self.load_session_context()
+                await self.startup_worker.wait()
             if self.closing:
                 return
             await self.live.run(
@@ -543,6 +547,10 @@ class CoraApp(App):
     @work(group="database-startup")
     async def check_interrupted_conversations(self) -> None:
         await self.conversation_persistence.check_interrupted_conversations()
+
+    @work(group="database-startup")
+    async def load_session_context(self) -> None:
+        await self.conversation_persistence.load_session_context()
 
     @work(thread=True, group="memory-summary", exit_on_error=False)
     def summarize_previous_conversations(self) -> None:

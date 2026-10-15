@@ -57,7 +57,10 @@ class ConversationPersistence:
                     f"Tagged {count} unfinished conversation(s) as interrupted.",
                     "Unfinished conversations tagged",
                 )
+        await self.load_session_context()
 
+    async def load_session_context(self) -> None:
+        # Runs before every Live connect so waking from standby sees fresh memories and interests.
         if self.is_closing():
             return
         self.set_memory_context("")
