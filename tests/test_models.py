@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import os
 import unittest
 from unittest.mock import patch
@@ -11,7 +12,10 @@ from sqlalchemy.orm import Session, configure_mappers
 
 from storage.database import build_engine
 from migrate import apply_migrations, database_settings
-from storage.models import Base, ConversationRecord, ConversationSummaryRecord, MessageRecord
+from storage.models import (
+    Base, ConversationRecord, ConversationSummaryRecord, InterestEventMemoryRecord,
+    InterestEventRecord, InterestRecord, InterestWorkerStateRecord, MemoryRecord, MessageRecord,
+)
 
 
 class ModelDefinitionTests(unittest.TestCase):
@@ -27,7 +31,8 @@ class ModelDefinitionTests(unittest.TestCase):
             self.assertEqual(summary.text, "A brief summary")
             self.assertEqual(set(Base.metadata.tables), {
                 "public.conversations", "public.messages", "public.conversation_summaries",
-                "public.memories",
+                "public.memories", "public.interests", "public.interest_events",
+                "public.interest_event_memories", "public.interest_worker_state",
             })
             connect.assert_not_called()
 
@@ -181,7 +186,131 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 6)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 7)
+
+    def interest(self, **changes):
+        values = {
+            "title": "Older mechanical designs", "description": "Why old machines were built as they were",
+            "why_emerged": "Nick is restoring a car", "strength": 0.2,
+            "strength_at": datetime(2026, 10, 1, tzinfo=timezone.utc), "status": "emerging",
+        }
+        return InterestRecord(**{**values, **changes})
+
+    def test_interest_rows_lineage_events_and_memory_links(self):
+        self.addCleanup(self.delete_interests)
+        with Session(self.engine) as session, session.begin():
+            parent = self.interest()
+            session.add(parent)
+            session.flush()
+            child = self.interest(title="Industrial design", parent_interest_id=parent.id)
+            session.add(child)
+            session.flush()
+            event = InterestEventRecord(
+                interest_id=child.id, kind="spawn", strength_after=0.2, reason="Followed a thread",
+            )
+            session.add(event)
+            session.flush()
+            self.assertIsNotNone(child.created_at.tzinfo)
+            self.assertIsNone(child.last_reinforced_at)
+            self.assertIsNotNone(event.created_at.tzinfo)
+            self.assertIsNone(event.strength_before)
+            message = self.message(text="I have a wedding on 20 November.")
+            session.add(message)
+            session.flush()
+            memory = MemoryRecord(
+                source_message_id=message.id, kind="fact", text="Has a wedding on 20 November",
+                evidence=message.text,
+            )
+            session.add(memory)
+            session.flush()
+            session.add(InterestEventMemoryRecord(event_id=event.id, memory_id=memory.id))
+            event_id, memory_id = event.id, memory.id
+        # Forgetting a memory removes its link but keeps the event history.
+        with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.memories WHERE id = :id"), {"id": memory_id})
+        with Session(self.engine) as session:
+            self.assertIsNotNone(session.get(InterestEventRecord, event_id))
+            self.assertIsNone(session.get(InterestEventMemoryRecord, (event_id, memory_id)))
+
+    def test_invalid_interests_are_rejected_by_database(self):
+        cases = [
+            ({"title": " "}, "interests_title_check"),
+            ({"title": "x" * 201}, "interests_title_check"),
+            ({"description": ""}, "interests_description_check"),
+            ({"why_emerged": " "}, "interests_why_emerged_check"),
+            ({"strength": -0.01}, "interests_strength_check"),
+            ({"strength": 1.01}, "interests_strength_check"),
+            ({"strength": float("nan")}, "interests_strength_check"),
+            ({"status": "bored"}, "interests_status_check"),
+            ({"parent_interest_id": uuid4()}, "interests_parent_interest_id_fkey"),
+            ({"id": UUID(int=5), "parent_interest_id": UUID(int=5)}, "interests_parent_check"),
+        ]
+        for changes, constraint in cases:
+            with self.subTest(changes=changes), Session(self.engine) as session:
+                with self.assertRaises(IntegrityError) as error:
+                    with session.begin():
+                        session.add(self.interest(**changes))
+                self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
+
+    def test_invalid_interest_events_and_worker_state_are_rejected(self):
+        with Session(self.engine) as session, session.begin():
+            interest = self.interest(title="Event checks")
+            session.add(interest)
+            session.flush()
+            interest_id = interest.id
+        self.addCleanup(self.delete_interests)
+        cases = [
+            ({"kind": "explore", "strength_before": 0.1}, "interest_events_kind_check"),
+            ({"kind": "reinforce", "strength_before": 0.1, "strength_after": 1.5}, "interest_events_strength_check"),
+            ({"kind": "reinforce", "strength_before": None}, "interest_events_before_check"),
+            ({"kind": "spawn", "strength_before": 0.1}, "interest_events_before_check"),
+            ({"kind": "reinforce", "strength_before": -0.1}, "interest_events_before_check"),
+            ({"kind": "reinforce", "strength_before": 0.1, "reason": " "}, "interest_events_reason_check"),
+            ({"kind": "reinforce", "strength_before": 0.1, "interest_id": uuid4()}, "interest_events_interest_id_fkey"),
+        ]
+        for changes, constraint in cases:
+            values = {"interest_id": interest_id, "strength_after": 0.3, "reason": "Because", **changes}
+            with self.subTest(changes=changes), Session(self.engine) as session:
+                with self.assertRaises(IntegrityError) as error:
+                    with session.begin():
+                        session.add(InterestEventRecord(**values))
+                self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
+        for changes, constraint in (
+            ({"id": 2}, "interest_worker_state_singleton_check"),
+            ({"memory_cursor_id": uuid4()}, "interest_worker_state_cursor_check"),
+            ({"memory_cursor_created_at": datetime(2026, 10, 1, tzinfo=timezone.utc)},
+             "interest_worker_state_cursor_check"),
+        ):
+            with self.subTest(changes=changes), Session(self.engine) as session:
+                with self.assertRaises(IntegrityError) as error:
+                    with session.begin():
+                        session.add(InterestWorkerStateRecord(**changes))
+                self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
+
+    def test_worker_state_is_a_single_row_with_cursor_pair(self):
+        self.addCleanup(self.delete_worker_state)
+        cursor = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        with Session(self.engine) as session, session.begin():
+            state = InterestWorkerStateRecord(memory_cursor_created_at=cursor, memory_cursor_id=uuid4())
+            session.add(state)
+            session.flush()
+            self.assertEqual(state.id, 1)
+        with Session(self.engine) as session:
+            with self.assertRaises(IntegrityError):
+                with session.begin():
+                    session.add(InterestWorkerStateRecord())
+
+    def delete_interests(self):
+        with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.interest_event_memories"))
+            connection.execute(text("DELETE FROM public.interest_events"))
+            # RESTRICT is checked per row, so remove child interests before parents.
+            connection.execute(text("DELETE FROM public.interests WHERE parent_interest_id IS NOT NULL"))
+            connection.execute(text("DELETE FROM public.interests"))
+
+    def delete_worker_state(self):
+        with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.interest_worker_state"))
 
 
 if __name__ == "__main__":
