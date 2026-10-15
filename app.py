@@ -3,7 +3,7 @@ from os import getenv
 import sys
 from pathlib import Path
 from time import monotonic
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pyperclip
 from textual.actions import SkipAction
@@ -29,7 +29,8 @@ from subconscious.event_bus import EventBus, ObservationEvent
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
 from live_events import LiveEventHandler
-from memory.background import run_background_memory_pass
+from storage.conversation_persistence import ConversationPersistence
+from ui.chat_submission import ChatSubmission
 from tools import create_tool_registry
 from wake.controller import WakeController
 from wake.listener import WakeListener
@@ -48,6 +49,31 @@ class CoraApp(App):
         Binding("ctrl+t", "test_observation", "Test awareness", priority=True, show=False),
         Binding("ctrl+c", "copy_chat_selection", "Copy selected text", priority=True, show=False),
     ]
+
+    # Compatibility accessors preserve dependency injection without duplicate state.
+    @property
+    def persistence(self):
+        return self.conversation_persistence.storage
+
+    @persistence.setter
+    def persistence(self, value):
+        self.conversation_persistence.storage = value
+
+    @property
+    def pending_keyboard_message(self):
+        return self.submission.pending_message
+
+    @pending_keyboard_message.setter
+    def pending_keyboard_message(self, value):
+        self.submission.pending_message = value
+
+    @property
+    def keyboard_worker(self):
+        return self.submission.worker
+
+    @keyboard_worker.setter
+    def keyboard_worker(self, value):
+        self.submission.worker = value
 
     def compose(self) -> ComposeResult:
         with Vertical(id="chat-panel"):
@@ -82,16 +108,17 @@ class CoraApp(App):
             self.query_one("#activity-panel", Collapsible),
             self.query_one("#activity-output", RichLog),
         )
-        self.persistence = KeyboardPersistence()
-        self.database_lock = asyncio.Lock()
-        self.chat_workers = []
-        self.chat_recording_closed = False
+        self.conversation_persistence = ConversationPersistence(
+            KeyboardPersistence(), schedule_save=self.save_chat_message,
+            is_closing=lambda: self.closing,
+            set_memory_context=lambda context: setattr(self.live, "memory_context", context),
+            write_activity=self.activity.write,
+            notify=lambda message, **options: self.notify(message, **options),
+        )
         self.conversation = Conversation(
             self.query_one("#chat-output", RichLog), self.set_timer, self.activity.write,
             record_message=self.record_chat_message,
         )
-        self.pending_keyboard_message = None
-        self.keyboard_worker = None
         self.startup_worker = None
         self.summary_worker = None
         self.closing = False
@@ -129,6 +156,15 @@ class CoraApp(App):
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
+        self.submission = ChatSubmission(
+            persistence=self.conversation_persistence, conversation=self.conversation,
+            live=self.live, backend_work=self.backend_work,
+            is_closing=lambda: self.closing, is_reconnecting=lambda: self.reconnecting,
+            is_standby=lambda: self.standby, schedule=self.submit_keyboard_message,
+            record_activity=self.record_idle_activity, write_activity=self.activity.write,
+            notify=lambda message, **options: self.notify(message, **options),
+            trace=self.trace_live,
+        )
         self.wake = WakeController(
             live=self.live, control=self.query_one("#wake-status", Button),
             enabled=getenv("CORA_WAKE_ENABLED", "0").strip() == "1",
@@ -289,109 +325,20 @@ class CoraApp(App):
         if self.idle_standby_timer is not None:
             self.idle_standby_timer.stop()
 
+    # Textual owns worker scheduling and cancellation; coordinators own the work.
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
-        self.record_idle_activity(user_activity=True)
-        message = event.text.strip()
-        composer = event.composer
-
-        if not message or composer.disabled or self.closing or self.reconnecting:
-            return
-        if self.standby:
-            self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
-            return
-
-        composer.disabled = True
-        self.conversation.flush_transcript()
-        if self.pending_keyboard_message is None or self.pending_keyboard_message[0] != message:
-            self.pending_keyboard_message = (message, uuid4())
-        message_id = self.pending_keyboard_message[1]
-        self.keyboard_worker = self.submit_keyboard_message(message, message_id, composer)
+        self.submission.submitted(event)
 
     @work(group="keyboard-submit")
-    async def submit_keyboard_message(
-        self, message: str, message_id: UUID, composer: ChatComposer
-    ) -> None:
-        try:
-            if self.closing:
-                return
-            try:
-                await self.call_database(self.persistence.save_message, message_id, message)
-            except Exception as error:
-                # SQL errors may include query parameters: never log private text/credentials.
-                self.activity.write(
-                    f"Database save failed ({type(error).__name__}). Draft kept; nothing sent.",
-                    "Database save failed",
-                )
-                self.notify("Message not sent: database save failed. Draft kept.", severity="error")
-                return
-            self.activity.write(
-                f"Keyboard message saved: conversation_id={self.persistence.conversation_id}, "
-                f"message_id={message_id}",
-                "Keyboard message saved",
-            )
-            if self.closing:
-                # Saved text remains pending; shutdown must not start a new send.
-                return
-            try:
-                self.backend_work.start_typed_request()
-                self.trace_live("typed.submit", message_id=str(message_id))
-                await self.live.send_text(message)
-                self.trace_live("typed.sent", message_id=str(message_id))
-            except Exception as error:
-                self.backend_work.finish_typed_request()
-                self.trace_live("typed.failed", message_id=str(message_id), error_type=type(error).__name__)
-                # A failed send may have reached the backend partially; do not auto-retry it.
-                self.pending_keyboard_message = None
-                await self.record_keyboard_delivery(message_id, "failed")
-                self.activity.write(f"Text send error: {error}", "Text send error")
-                return
-
-            self.pending_keyboard_message = None
-            await self.record_keyboard_delivery(message_id, "sent")
-            self.conversation.flush_transcript()
-            self.conversation.write_log(f"You: {message}")
-            self.conversation.write_log("")
-            composer.clear()
-        finally:
-            self.record_idle_activity()
-            composer.disabled = self.closing or self.reconnecting
-            if not composer.disabled:
-                composer.focus()
-
-    async def record_keyboard_delivery(self, message_id: UUID, status: str) -> None:
-        try:
-            await self.call_database(self.persistence.record_delivery, message_id, status)
-        except Exception as error:
-            self.activity.write(
-                f"Could not confirm database delivery status '{status}' for message_id={message_id} "
-                f"({type(error).__name__}). Text was already saved.",
-                "Delivery status error",
-            )
-            self.notify("Text saved, but database delivery status could not be confirmed.", severity="warning")
-
-    async def call_database(self, operation, *args):
-        # Serialise off-thread calls, including lazy engine creation and shutdown.
-        async with self.database_lock:
-            return await asyncio.to_thread(operation, *args)
+    async def submit_keyboard_message(self, message: str, message_id: UUID, composer: ChatComposer) -> None:
+        await self.submission.submit_keyboard_message(message, message_id, composer)
 
     def record_chat_message(self, role: str, text: str, channel: str) -> None:
-        if self.chat_recording_closed:
-            return
-        self.chat_workers = [worker for worker in self.chat_workers if not worker.is_finished]
-        self.chat_workers.append(self.save_chat_message(uuid4(), role, text, channel))
+        self.conversation_persistence.record_chat_message(role, text, channel)
 
     @work(group="chat-save")
     async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
-        try:
-            await self.call_database(self.persistence.save_chat_message, message_id, role, text, channel)
-        except Exception as error:
-            self.activity.write(
-                f"Chat save failed ({type(error).__name__}); displayed text remains available.",
-                "Chat save failed",
-            )
-            self.notify("Conversation text could not be saved to the database.", severity="warning")
-        else:
-            self.activity.write(f"Chat text saved: role={role}, channel={channel}", "Chat text saved")
+        await self.conversation_persistence.save_chat_message(message_id, role, text, channel)
 
     @work
     async def connect_to_cora(self) -> None:
@@ -545,8 +492,7 @@ class CoraApp(App):
             if self.closing:
                 return
             self.conversation.flush_transcript()
-            for worker in self.chat_workers:
-                await worker.wait()
+            await self.conversation_persistence.wait_for_saves()
             if self.closing:
                 return
             self.live.conversation_history = self.conversation.get_reconnect_history()
@@ -586,46 +532,14 @@ class CoraApp(App):
 
     @work(group="database-startup")
     async def check_interrupted_conversations(self) -> None:
-        try:
-            count = await self.call_database(self.persistence.mark_interrupted_conversations)
-        except Exception as error:
-            self.activity.write(
-                f"Interrupted conversation check failed ({type(error).__name__})",
-                "Database startup check failed",
-            )
-            self.notify("Could not tag unfinished conversations in the database.", severity="warning")
-        else:
-            if count:
-                self.activity.write(
-                    f"Tagged {count} unfinished conversation(s) as interrupted.",
-                    "Unfinished conversations tagged",
-                )
-
-        if self.closing:
-            return
-        self.live.memory_context = ""
-        try:
-            context = await self.call_database(self.persistence.load_startup_memory_context)
-        except Exception as error:
-            self.activity.write(
-                f"Startup memory load failed ({type(error).__name__}); connecting without memories.",
-                "Memory context unavailable",
-            )
-            self.notify("Could not load saved memories; connecting without them.", severity="warning")
-        else:
-            if not self.closing:
-                self.live.memory_context = context
-                self.activity.write(
-                    f"Startup memory context loaded ({len(context)} characters).", "Memory context loaded",
-                )
+        await self.conversation_persistence.check_interrupted_conversations()
 
     @work(thread=True, group="memory-summary", exit_on_error=False)
     def summarize_previous_conversations(self) -> None:
         worker = get_current_worker()
-        run_background_memory_pass(
-            self.persistence.conversation_id,
+        self.conversation_persistence.summarize_previous_conversations(
             should_stop=lambda: self.closing or worker.is_cancelled,
-            write_activity=lambda message, summary: self.call_from_thread(
+            dispatch_activity=lambda message, summary: self.call_from_thread(
                 self.activity.write, message, summary,
             ),
         )
@@ -851,28 +765,9 @@ class CoraApp(App):
             try:
                 if self.connection_worker is not None:
                     self.connection_worker.cancel()
-                self.conversation.flush_transcript()
-                self.chat_recording_closed = True
-                for worker in self.chat_workers:
-                    try:
-                        await worker.wait()
-                    except WorkerError:
-                        self.activity.write("Chat save worker stopped", "Chat save worker stopped")
-                try:
-                    await self.call_database(self.persistence.finish_conversation)
-                except Exception as error:
-                    self.activity.write(
-                        f"Conversation close failed ({type(error).__name__})",
-                        "Conversation close failed",
-                    )
-                    self.notify("Conversation end could not be saved to the database.", severity="warning")
+                await self.conversation_persistence.finish(self.conversation.flush_transcript)
             finally:
-                try:
-                    await self.call_database(self.persistence.close)
-                except Exception as error:
-                    self.activity.write(f"Database cleanup failed ({type(error).__name__})", "Database cleanup failed")
-                finally:
-                    self.exit()
+                self.exit()
 
 if __name__ == "__main__":
     app = CoraApp()

@@ -151,7 +151,7 @@ class DisplayedChatAppTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(order, [
                         "Wait for the save.", "Last answer.", "conversation closed", "engine closed",
                     ])
-                    self.assertTrue(app.chat_recording_closed)
+                    self.assertTrue(app.conversation_persistence.recording_closed)
                     app.record_chat_message("assistant", "Too late", "voice")
                     self.assertEqual(app.persistence.save_chat_message.call_count, 2)
                     exit_app.assert_called_once()
