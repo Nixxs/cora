@@ -369,18 +369,18 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             prior_rows = {table: connection.execute(text(f"SELECT * FROM public.{table}")).all()
                           for table in tables}
         before = {row.id: snapshot(row) for row in self.memories.get_memories(self.conversation_id)}
-        # Roll back migrations 0006 and the later 0007 (history must stay a prefix of the
+        # Roll back migrations 0006 and the later 0007-0008 (history must stay a prefix of the
         # files) in this uniquely named fixture, then apply the actual live migrations
         # to populated pre-0006 rows (no synthetic SQL).
+        later = ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql",
+                 "0008_create_interest_explorations.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
-            connection.execute("DROP TABLE public.interest_event_memories, public.interest_events, "
-                               "public.interest_worker_state, public.interests")
+            connection.execute("DROP TABLE public.interest_explorations, public.interest_event_memories, "
+                               "public.interest_events, public.interest_worker_state, public.interests")
             connection.execute("ALTER TABLE public.memories DROP COLUMN duplicate_of, "
                                "DROP COLUMN dedup_checked_at")
-            connection.execute("DELETE FROM public.schema_migrations WHERE name IN "
-                               "('0006_mark_duplicate_memories.sql', '0007_create_interests.sql')")
-            self.assertEqual(apply_migrations(connection),
-                             ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql"])
+            connection.execute("DELETE FROM public.schema_migrations WHERE name = ANY(%s)", (later,))
+            self.assertEqual(apply_migrations(connection), later)
             self.assertEqual(apply_migrations(connection), [])
         with self.engine.connect() as connection:
             for table in tables:

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid
 from sqlalchemy import text as sql_text
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 MEMORY_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -218,3 +219,44 @@ class InterestWorkerStateRecord(Base):
     memory_cursor_id: Mapped[UUID | None] = mapped_column(Uuid)
     last_evolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class InterestExplorationRecord(Base):
+    """One attempt by Cora to explore an interest; only 'found' attempts carry a finding."""
+
+    __tablename__ = "interest_explorations"
+    __table_args__ = (
+        CheckConstraint("status IN ('running', 'found', 'failed')", name="interest_explorations_status_check"),
+        CheckConstraint(
+            "(status = 'running') = (finished_at IS NULL) "
+            "AND (finished_at IS NULL OR finished_at >= started_at)",
+            name="interest_explorations_finished_check",
+        ),
+        CheckConstraint(
+            "(status = 'found') = (finding IS NOT NULL) "
+            "AND (finding IS NULL OR (btrim(finding) <> '' AND char_length(finding) <= 2000))",
+            name="interest_explorations_finding_check",
+        ),
+        CheckConstraint(
+            "cardinality(next_questions) <= 3 AND (status = 'found' OR cardinality(next_questions) = 0)",
+            name="interest_explorations_next_questions_check",
+        ),
+        CheckConstraint(
+            "cardinality(sources) <= 10 AND (status = 'found' OR cardinality(sources) = 0)",
+            name="interest_explorations_sources_check",
+        ),
+        Index("interest_explorations_started_at_idx", "started_at"),
+        Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    interest_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.interests.id", name="interest_explorations_interest_id_fkey", ondelete="RESTRICT"),
+    )
+    status: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finding: Mapped[str | None] = mapped_column(Text)
+    next_questions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    sources: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)

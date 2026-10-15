@@ -69,6 +69,7 @@ class InterestStoreDatabaseTests(unittest.TestCase):
         # Only in the disposable DB created above. Children before parents.
         with self.engine.begin() as connection:
             connection.execute(text("DELETE FROM public.interest_worker_state"))
+            connection.execute(text("DELETE FROM public.interest_explorations"))
             connection.execute(text("DELETE FROM public.interest_event_memories"))
             connection.execute(text("DELETE FROM public.interest_events"))
             connection.execute(text("DELETE FROM public.interests WHERE parent_interest_id IS NOT NULL"))

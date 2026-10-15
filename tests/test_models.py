@@ -14,7 +14,8 @@ from storage.database import build_engine
 from migrate import apply_migrations, database_settings
 from storage.models import (
     Base, ConversationRecord, ConversationSummaryRecord, InterestEventMemoryRecord,
-    InterestEventRecord, InterestRecord, InterestWorkerStateRecord, MemoryRecord, MessageRecord,
+    InterestEventRecord, InterestExplorationRecord, InterestRecord, InterestWorkerStateRecord,
+    MemoryRecord, MessageRecord,
 )
 
 
@@ -33,6 +34,7 @@ class ModelDefinitionTests(unittest.TestCase):
                 "public.conversations", "public.messages", "public.conversation_summaries",
                 "public.memories", "public.interests", "public.interest_events",
                 "public.interest_event_memories", "public.interest_worker_state",
+                "public.interest_explorations",
             })
             connect.assert_not_called()
 
@@ -186,7 +188,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 7)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 8)
 
     def interest(self, **changes):
         values = {
@@ -287,6 +289,43 @@ class ModelDatabaseTests(unittest.TestCase):
                         session.add(InterestWorkerStateRecord(**changes))
                 self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
 
+    def test_invalid_explorations_are_rejected_by_database(self):
+        with Session(self.engine) as session, session.begin():
+            interest = self.interest(title="Exploration checks")
+            session.add(interest)
+            session.flush()
+            interest_id = interest.id
+        self.addCleanup(self.delete_interests)
+        start = datetime(2026, 10, 15, tzinfo=timezone.utc)
+        found = {"status": "found", "finished_at": start, "finding": "Something new"}
+        cases = [
+            ({"status": "paused", "finished_at": start}, "interest_explorations_status_check"),
+            ({"finished_at": start}, "interest_explorations_finished_check"),
+            ({"status": "failed"}, "interest_explorations_finished_check"),
+            ({**found, "finished_at": start.replace(day=14)}, "interest_explorations_finished_check"),
+            ({"finding": "Too early"}, "interest_explorations_finding_check"),
+            ({**found, "finding": None}, "interest_explorations_finding_check"),
+            ({**found, "finding": " "}, "interest_explorations_finding_check"),
+            ({**found, "finding": "x" * 2001}, "interest_explorations_finding_check"),
+            ({**found, "next_questions": ["a", "b", "c", "d"]}, "interest_explorations_next_questions_check"),
+            ({"next_questions": ["Not yet"]}, "interest_explorations_next_questions_check"),
+            ({**found, "sources": ["https://example.com"] * 11}, "interest_explorations_sources_check"),
+            ({"status": "failed", "finished_at": start, "sources": ["https://example.com"]},
+             "interest_explorations_sources_check"),
+            ({"interest_id": uuid4()}, "interest_explorations_interest_id_fkey"),
+        ]
+        for changes, constraint in cases:
+            values = {"interest_id": interest_id, "status": "running", "started_at": start, **changes}
+            with self.subTest(changes=changes), Session(self.engine) as session:
+                with self.assertRaises(IntegrityError) as error:
+                    with session.begin():
+                        session.add(InterestExplorationRecord(**values))
+                self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
+        with Session(self.engine) as session, session.begin():
+            session.add(InterestExplorationRecord(interest_id=interest_id, status="running", started_at=start))
+        with self.engine.connect() as connection, self.assertRaises(IntegrityError):
+            connection.execute(text("DELETE FROM public.interests WHERE id = :id"), {"id": interest_id})
+
     def test_worker_state_is_a_single_row_with_cursor_pair(self):
         self.addCleanup(self.delete_worker_state)
         cursor = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -302,6 +341,7 @@ class ModelDatabaseTests(unittest.TestCase):
 
     def delete_interests(self):
         with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.interest_explorations"))
             connection.execute(text("DELETE FROM public.interest_event_memories"))
             connection.execute(text("DELETE FROM public.interest_events"))
             # RESTRICT is checked per row, so remove child interests before parents.
