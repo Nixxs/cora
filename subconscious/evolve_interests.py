@@ -4,6 +4,7 @@ Usage: python -m subconscious.evolve_interests [--dry-run]
 """
 
 import argparse
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import sys
 
@@ -20,12 +21,14 @@ EVOLVE_EVERY = timedelta(hours=24)
 MIN_NEW_MEMORIES = 3
 
 
-def evolve_interests(store: InterestStore, client: OpenAI, model: str = BACKEND_MODEL, *, now: datetime) -> str:
-    """Run one evolution cycle if it is due and return a one-line outcome."""
+def evolve_interests(
+    store: InterestStore, client: OpenAI, model: str = BACKEND_MODEL, *, now: datetime,
+) -> str | None:
+    """Run one evolution cycle if it is due; return a one-line outcome, or None if not due."""
     validate_now(now)
     last = store.last_evolved_at()
     if last is not None and now - last < EVOLVE_EVERY:
-        return "Interests already evolved in the last 24 hours."
+        return None
     batch = store.read_new_memories()
     if not batch.memories:
         if store.advance_memory_cursor(batch):
@@ -44,6 +47,23 @@ def evolve_interests(store: InterestStore, client: OpenAI, model: str = BACKEND_
     if evolution.refused:
         changes.append(f"{evolution.refused} refused (live interests full)")
     return f"Evolved from {len(batch.memories)} memories: {'; '.join(changes) or 'no changes'}."
+
+
+def run_interest_cycle(*, should_stop: Callable[[], bool]) -> str | None:
+    """One background cycle with its own engine, so an in-flight request can finish at shutdown."""
+    engine = None
+    try:
+        if should_stop():
+            return None
+        engine = build_engine()
+        with OpenAI(max_retries=0) as client:
+            outcome = evolve_interests(InterestStore(engine), client, now=datetime.now(timezone.utc))
+    except Exception as error:
+        outcome = f"Interest cycle stopped ({type(error).__name__})."
+    finally:
+        if engine is not None:
+            engine.dispose()
+    return None if should_stop() else outcome
 
 
 def preview_interests(store: InterestStore, client: OpenAI, model: str = BACKEND_MODEL, *, now: datetime) -> str:
@@ -85,7 +105,7 @@ def main() -> None:
             engine.dispose()
     except Exception as error:
         sys.exit(f"Interests not evolved ({type(error).__name__}). Check database and API settings.")
-    print(outcome)
+    print(outcome or "Interests already evolved in the last 24 hours.")
 
 
 if __name__ == "__main__":

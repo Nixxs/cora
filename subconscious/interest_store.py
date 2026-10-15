@@ -7,6 +7,7 @@ race. Callers pass `now`, so one cycle uses one consistent clock reading.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 from math import isfinite
 import sys
 from typing import TYPE_CHECKING
@@ -37,6 +38,7 @@ MEMORY_BATCH_LIMIT = 50
 # created_at is the saving transaction's start time, so a slow save can commit a row
 # older than one already read. Skipping very recent rows lets those saves land first.
 MEMORY_COMMIT_MARGIN = timedelta(minutes=5)
+INTEREST_CONTEXT_MAX_CHARS = 3000
 
 Cursor = tuple[datetime, UUID]
 
@@ -121,6 +123,27 @@ class InterestStore:
                 InterestRecord.strength.desc(), InterestRecord.created_at, InterestRecord.id,
             ))
             return [snapshot(record) for record in records]
+
+    def get_startup_context(self, *, now: datetime) -> str:
+        """Live interests as bounded JSON of whole records, strongest first; read-only."""
+        validate_now(now)
+        ranked = []
+        for interest in self.list_interests():
+            # Read-time settling only; saving decay is left to the evolution cycle.
+            strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
+            if status != "dormant":
+                ranked.append((strength, {
+                    "title": interest.title, "description": interest.description, "status": status,
+                }))
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        selected, context = [], ""
+        for _, record in ranked:
+            candidate = json.dumps([*selected, record], ensure_ascii=False)
+            if len(candidate) > INTEREST_CONTEXT_MAX_CHARS:
+                break
+            selected.append(record)
+            context = candidate
+        return context
 
     def read_new_memories(self, limit: int = MEMORY_BATCH_LIMIT) -> MemoryBatch:
         """Read memories after the saved cursor, stopping at the first one not yet ready.

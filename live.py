@@ -24,6 +24,7 @@ class CoraLive:
         self.session_close_confirmed = False
         self.microphone_task = None
         self.memory_context = ""
+        self.interest_context = ""
         self.conversation_history = []
         self.pending_text_requests = set()
         self._text_request_order = deque()
@@ -52,6 +53,7 @@ class CoraLive:
                     await connection.session.start(
                         session=build_session_config(
                             self.tool_schemas(), self.memory_context, self.conversation_history,
+                            interest_context=self.interest_context,
                         )
                     )
 

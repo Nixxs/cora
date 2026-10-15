@@ -26,6 +26,7 @@ from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
 from subconscious.event_bus import EventBus, ObservationEvent
+from subconscious.evolve_interests import run_interest_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
 from live_events import LiveEventHandler
@@ -37,6 +38,10 @@ from wake.listener import WakeListener
 
 
 load_dotenv()
+
+# Cheap when not due: the 24-hour gate is one database read. Also lets memories extracted
+# at startup clear the store's 5-minute commit margin before the first check.
+INTEREST_CHECK_SECONDS = 10 * 60
 
 
 class CoraApp(App):
@@ -112,6 +117,7 @@ class CoraApp(App):
             KeyboardPersistence(), schedule_save=self.save_chat_message,
             is_closing=lambda: self.closing,
             set_memory_context=lambda context: setattr(self.live, "memory_context", context),
+            set_interest_context=lambda context: setattr(self.live, "interest_context", context),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )
@@ -121,6 +127,8 @@ class CoraApp(App):
         )
         self.startup_worker = None
         self.summary_worker = None
+        self.interest_worker = None
+        self.interest_outcome = None
         self.closing = False
         self.reconnecting = False
         self.standby = False
@@ -216,6 +224,7 @@ class CoraApp(App):
         self.connection_worker = self.connect_to_cora()
         self.update_wake_control()
         self.observation_timer = self.set_interval(0.5, self.check_observations)
+        self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)
         if self.inactivity.timeout_seconds > 0:
             self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
 
@@ -318,6 +327,7 @@ class CoraApp(App):
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
+        self.interest_timer.stop()
         self.cancel_standby_alert()
         self.wake.stop_timers()
         await self.stop_wake_listener()
@@ -544,6 +554,21 @@ class CoraApp(App):
             ),
         )
 
+    def check_interests(self) -> None:
+        # Single flight: a slow model call simply delays the next check.
+        if self.closing or (self.interest_worker is not None and not self.interest_worker.is_finished):
+            return
+        self.interest_worker = self.evolve_interests()
+
+    @work(thread=True, group="interests", exit_on_error=False)
+    def evolve_interests(self) -> None:
+        worker = get_current_worker()
+        outcome = run_interest_cycle(should_stop=lambda: self.closing or worker.is_cancelled)
+        # Repeated outcomes (e.g. the same failure every check) are written once.
+        if outcome is not None and outcome != self.interest_outcome:
+            self.interest_outcome = outcome
+            self.call_from_thread(self.activity.write, outcome, "Interests")
+
     def handle_live_event(self, event) -> None:
         if event.type in (
             "session.input_transcript.delta", "session.output_transcript.delta",
@@ -722,6 +747,7 @@ class CoraApp(App):
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
+        self.interest_timer.stop()
         self.cancel_standby_alert()
         self.wake.response_deadline = None
         self.wake.stop_timers()
@@ -745,6 +771,8 @@ class CoraApp(App):
                     self.activity.write("Database startup worker stopped", "Database startup worker stopped")
             if self.summary_worker is not None and not self.summary_worker.is_finished:
                 self.summary_worker.cancel()
+            if self.interest_worker is not None and not self.interest_worker.is_finished:
+                self.interest_worker.cancel()
             if self.attention.worker is not None and not self.attention.worker.is_finished:
                 try:
                     await self.attention.worker.wait()

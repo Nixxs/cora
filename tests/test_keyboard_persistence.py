@@ -84,6 +84,7 @@ async def running_app(persistence=None):
     # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
+            patch("app.run_interest_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
             patch("memory.background.deduplicate_memory"):
         app = CoraApp()
@@ -92,6 +93,7 @@ async def running_app(persistence=None):
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
                 persistence.load_startup_memory_context.return_value = ""
+                persistence.load_startup_interest_context.return_value = ""
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

@@ -1,13 +1,15 @@
 from dataclasses import replace
 from datetime import timedelta
+import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from subconscious.evolve_interests import EVOLVE_EVERY, evolve_interests, preview_interests
+from subconscious.evolve_interests import EVOLVE_EVERY, evolve_interests, preview_interests, run_interest_cycle
 from subconscious.interest_proposals import Proposal, Reinforcement, Spawn
 from subconscious.interest_store import Evolution, InterestStore, MemoryBatch, NewMemory
 import test_interest_proposals as proposal_tests
+import test_keyboard_persistence as keyboard_tests
 
 NOW = proposal_tests.NOW
 CAR = proposal_tests.CAR
@@ -43,14 +45,14 @@ class EvolveInterestsTests(unittest.TestCase):
 
     def test_runs_at_most_once_per_24_hours(self):
         self.store.last_evolved_at.return_value = NOW - EVOLVE_EVERY + timedelta(seconds=1)
-        self.assertEqual(self.evolve(), "Interests already evolved in the last 24 hours.")
+        self.assertIsNone(self.evolve())
         self.store.read_new_memories.assert_not_called()
         self.store.last_evolved_at.return_value = NOW - EVOLVE_EVERY
         self.assertTrue(self.evolve().startswith("Evolved"))
 
     def test_a_clock_moved_backwards_waits_instead_of_running(self):
         self.store.last_evolved_at.return_value = NOW + timedelta(days=1)
-        self.assertEqual(self.evolve(), "Interests already evolved in the last 24 hours.")
+        self.assertIsNone(self.evolve())
 
     def test_batches_without_new_memories_never_call_the_model(self):
         for advanced, waiting, outcome in (
@@ -102,6 +104,69 @@ class EvolveInterestsTests(unittest.TestCase):
         )))
         self.store.apply_evolution.assert_not_called()
         self.store.advance_memory_cursor.assert_not_called()
+
+
+class RunInterestCycleTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = MagicMock()
+        for name, value in (("build_engine", self.engine), ("OpenAI", MagicMock()),
+                            ("evolve_interests", "Evolved from 3 memories: no changes.")):
+            patcher = patch(f"subconscious.evolve_interests.{name}", return_value=value)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+
+    def test_cycle_uses_its_own_engine_and_client_and_disposes(self):
+        self.assertEqual(run_interest_cycle(should_stop=lambda: False), "Evolved from 3 memories: no changes.")
+        self.OpenAI.assert_called_once_with(max_retries=0)
+        store, client = self.evolve_interests.call_args.args
+        self.assertIs(store.engine, self.engine)
+        self.assertIs(client, self.OpenAI.return_value.__enter__.return_value)
+        self.engine.dispose.assert_called_once_with()
+
+    def test_failures_report_only_the_error_type_and_dispose(self):
+        self.evolve_interests.side_effect = RuntimeError("private memory text and API key")
+        self.assertEqual(run_interest_cycle(should_stop=lambda: False),
+                         "Interest cycle stopped (RuntimeError).")
+        self.engine.dispose.assert_called_once_with()
+
+    def test_stopping_skips_the_cycle_or_hides_its_outcome(self):
+        self.assertIsNone(run_interest_cycle(should_stop=lambda: True))
+        self.build_engine.assert_not_called()
+        answers = iter((False, True))
+        self.assertIsNone(run_interest_cycle(should_stop=lambda: next(answers)))
+        self.engine.dispose.assert_called_once_with()
+
+
+class AppInterestWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_checks_are_single_flight_and_stop_when_closing(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            running = MagicMock(is_finished=False)
+            with patch.object(app, "evolve_interests", return_value=running) as start:
+                app.check_interests()
+                app.check_interests()
+                start.assert_called_once_with()
+                running.is_finished = True
+                app.check_interests()
+                self.assertEqual(start.call_count, 2)
+                app.interest_worker = None
+                app.closing = True
+                app.check_interests()
+                self.assertEqual(start.call_count, 2)
+                app.closing = False
+
+    async def test_worker_writes_each_new_outcome_once_off_the_ui_thread(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            outcomes = iter(("Interest cycle stopped (APIConnectionError).",) * 2 + (None, "No new memories."))
+            with patch("app.run_interest_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
+                for _ in range(4):
+                    app.check_interests()
+                    await asyncio.wait_for(app.interest_worker.wait(), 5)
+            self.assertEqual(app.interest_worker.group, "interests")
+            self.assertFalse(cycle.call_args.kwargs["should_stop"]())
+            await pilot.pause()
+            entries = "\n".join(app.activity.entries)
+            self.assertEqual(entries.count("Interest cycle stopped (APIConnectionError)."), 1)
+            self.assertIn("No new memories.", entries)
 
 
 if __name__ == "__main__":
