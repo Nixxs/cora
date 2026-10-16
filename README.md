@@ -84,6 +84,11 @@ not change an existing database's password or user. Back up important data.
   or sending a failed request.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
+- **Ask Cora for standby:** say something like “go to standby”. She may also
+  choose standby herself once a conversation has clearly wound down, for example
+  after you say goodnight. She gives a short sign-off, then enters Standby once
+  speech and pending work finish. If that takes more than 30 seconds, she stays
+  active and Activity notes it. This uses the same standby path as clicking Active.
 - **Automatic standby:** after five minutes of inactivity by default, Cora uses
   the same standby path. Editing, cursor movement, submission, speech, and audio
   controls reset the clock. Setup, pending responses/tools/submissions, and audible
@@ -270,7 +275,8 @@ For example, if you ask about something happening today, Live delegates the
 question, the backend searches the web, and Live uses the result to answer aloud.
 For a question about an earlier conversation, the backend can call `search_memory`.
 Asked how she came to one of her interests or findings, it can call `recall_interest`.
-An explicit request to quit can trigger `close_app` instead.
+An explicit request to quit can trigger `close_app` instead, and a request to
+rest (or Cora deciding to) can trigger `enter_standby`.
 
 **The backend chooses tools; the application executes custom tools.** Web search
 is hosted by OpenAI, while Cora validates and runs its own tool handlers locally.
@@ -453,7 +459,7 @@ python -m subconscious.interests.explore_interest
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`). |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -494,6 +500,7 @@ changes transactionally; it does not provide automatic downgrades.
 - A fixed-width speaking animation driven by output audio playback levels.
 - Manual Live reconnect with recent chat context, without closing the local app.
 - Click Active for standby; click Standby or press Ctrl+R to resume with context.
+- Ask Cora to go to standby, or let her choose it when a conversation winds down.
 - Configurable inactivity standby, with full idle grace after work and resume.
 - Opt-in standby heads-up through Live, with a cancellable response window.
 - Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
@@ -511,14 +518,14 @@ changes transactionally; it does not provide automatic downgrades.
   capable model, while delegation needs fast responses. Defaults should stay
   unchanged until a model is chosen. Changing the embedding model also needs a
   migration and re-embedding stored memories.
-- Once interests work, add a separate self worker to develop Cora's persistent identity.
+- Add a separate self worker to develop Cora's persistent identity, now that interests work.
 - Add real background producers, starting with a Signal message monitor; camera
   awareness and screen monitoring can follow independently.
 - Develop attention decisions beyond the current FIFO/quiet-period policy: choose
   findings by relevance to the conversation, and add quiet hours and an off switch.
 - Improve mixed voice/text synchronisation, interruption handling, and audio checks.
 - Improve memory relevance and handle corrections while preserving history.
-- Add memory fading/forgetting, so time-bound details (for example a event date)
+- Add memory fading/forgetting, so time-bound details (for example an event date)
   lose prominence once they have passed, rather than staying in recall forever.
   Duplicate markers reference their canonical memory, so removing one needs its
   duplicates handled first.
@@ -736,9 +743,10 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Local wake-word listening and the event/attention foundations are implemented.
-The interests and self workers, real Signal/camera/screen monitors, and candidate-driven
-autonomous initiative are not built yet. Speaker mute has been checked in a live
+Local wake-word listening, the event/attention foundations, and the interests
+worker (with lull-based findings) are implemented. The self worker, real
+Signal/camera/screen monitors, and relevance- or awareness-driven initiative
+are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.
 The examples are standalone experiments, not integrated Cora features.
