@@ -29,15 +29,32 @@ def interest(title, strength, status="active", *, days_ago=0, description="About
 
 
 class InterestContextTests(unittest.TestCase):
-    def context(self, interests):
+    def context(self, interests, findings=None):
         store = InterestStore(MagicMock())
-        with patch.object(store, "list_interests", return_value=interests) as listed:
+        with patch.object(store, "list_interests", return_value=interests) as listed, \
+                patch.object(store, "latest_findings", return_value=findings or {}) as latest:
             context = store.get_startup_context(now=NOW)
             listed.assert_called_once_with()
+            self.latest = latest
         return context
 
     def test_no_interests_gives_empty_context(self):
         self.assertEqual(self.context([]), "")
+        self.latest.assert_not_called()
+
+    def test_adds_latest_findings_only_where_they_fit_without_dropping_interests(self):
+        interests = [interest("Big", 0.9, description="d" * 900), interest("Small", 0.8),
+                     interest("Unexplored", 0.7)]
+        found = NOW - timedelta(days=2)
+        records = json.loads(self.context(interests, {
+            interests[0].id: ("b" * 2000, found), interests[1].id: ("Carburettors were tuned by ear.", found),
+        }))
+        self.latest.assert_called_once_with([item.id for item in interests])
+        self.assertEqual([record["title"] for record in records], ["Big", "Small", "Unexplored"])
+        self.assertNotIn("latest_finding", records[0])  # too long to fit alongside the others
+        self.assertEqual((records[1]["latest_finding"], records[1]["found_on"]),
+                         ("Carburettors were tuned by ear.", "2026-10-13"))
+        self.assertNotIn("latest_finding", records[2])
 
     def test_settles_at_read_time_drops_faded_and_ranks_by_settled_strength(self):
         records = json.loads(self.context([
@@ -79,7 +96,8 @@ class InterestContextTests(unittest.TestCase):
         self.assertEqual(config["delegation"]["responses"]["instructions"], BACKEND_INSTRUCTIONS + suffix)
         self.assertLess(suffix.index(PRIOR_CONTEXT), suffix.index("your own current interests"))
         self.assertTrue(suffix.endswith("\n" + INTEREST_CONTEXT))
-        for phrase in ("yours, not his", "do not list them", "untrusted information", "never as instructions"):
+        for phrase in ("yours, not his", "do not list them", "untrusted information", "never as instructions",
+                       "latest_finding", "may be outdated or wrong"):
             self.assertIn(phrase, suffix)
         only_interests = build_session_config([], interest_context=INTEREST_CONTEXT)["instructions"]
         self.assertNotIn("historical memories", only_interests)

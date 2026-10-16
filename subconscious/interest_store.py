@@ -15,13 +15,13 @@ from uuid import UUID
 
 from dotenv import load_dotenv
 from sqlalchemy import Engine, and_, func, or_, select, text
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.orm import Session
 
 from storage.database import build_engine
 from storage.models import (
-    InterestEventMemoryRecord, InterestEventRecord, InterestRecord, InterestWorkerStateRecord,
-    MemoryRecord, MessageRecord,
+    InterestEventMemoryRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord,
+    InterestWorkerStateRecord, MemoryRecord, MessageRecord,
 )
 from subconscious.interest_strength import (
     INITIAL_STRENGTH, MAX_REINFORCE_DELTA, effective_strength, has_room,
@@ -125,25 +125,53 @@ class InterestStore:
             return [snapshot(record) for record in records]
 
     def get_startup_context(self, *, now: datetime) -> str:
-        """Live interests as bounded JSON of whole records, strongest first; read-only."""
+        """Live interests as bounded JSON of whole records, strongest first; read-only.
+
+        Interests are chosen first; latest findings are then added in rank order only
+        where they still fit, so a long finding never pushes an interest out.
+        """
         validate_now(now)
         ranked = []
         for interest in self.list_interests():
             # Read-time settling only; saving decay is left to the evolution cycle.
             strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
             if status != "dormant":
-                ranked.append((strength, {
+                ranked.append((strength, interest.id, {
                     "title": interest.title, "description": interest.description, "status": status,
                 }))
         ranked.sort(key=lambda item: item[0], reverse=True)
-        selected, context = [], ""
-        for _, record in ranked:
+        ids, selected, context = [], [], ""
+        for _, interest_id, record in ranked:
             candidate = json.dumps([*selected, record], ensure_ascii=False)
             if len(candidate) > INTEREST_CONTEXT_MAX_CHARS:
                 break
+            ids.append(interest_id)
             selected.append(record)
             context = candidate
+        findings = self.latest_findings(ids) if ids else {}
+        for index, interest_id in enumerate(ids):
+            if interest_id not in findings:
+                continue
+            finding, found_at = findings[interest_id]
+            record = {**selected[index], "latest_finding": finding,
+                      "found_on": found_at.astimezone(timezone.utc).date().isoformat()}
+            candidate = json.dumps([*selected[:index], record, *selected[index + 1:]], ensure_ascii=False)
+            if len(candidate) <= INTEREST_CONTEXT_MAX_CHARS:
+                selected[index] = record
+                context = candidate
         return context
+
+    def latest_findings(self, interest_ids: list[UUID]) -> dict[UUID, tuple[str, datetime]]:
+        """The newest saved finding (and when it was found) for each given interest."""
+        exploration = InterestExplorationRecord
+        query = (
+            select(exploration.interest_id, exploration.finding, exploration.started_at)
+            .where(exploration.status == "found", exploration.interest_id.in_(interest_ids))
+            .ext(distinct_on(exploration.interest_id))
+            .order_by(exploration.interest_id, exploration.started_at.desc(), exploration.id.desc())
+        )
+        with Session(self.engine) as session:
+            return {row.interest_id: (row.finding, row.started_at) for row in session.execute(query)}
 
     def read_new_memories(self, limit: int = MEMORY_BATCH_LIMIT) -> MemoryBatch:
         """Read memories after the saved cursor, stopping at the first one not yet ready.

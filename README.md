@@ -286,6 +286,34 @@ use keeps Live connected. Standby closes Live,
 ending that session's duration billing. Background memory processing can still
 finish and incur its separate charges while the local app remains open.
 
+### Cora-prime and background processes
+
+**Cora-prime** is the Live voice model plus its delegation backend: the part of
+Cora you actually talk to. Everything else (memory extraction, summaries,
+embeddings, duplicate checks, interest evolution, and interest exploration) runs
+as **separate background processes that make their own API calls**.
+
+Each background call is a fresh, standalone request (`store=False`) containing
+only the input that job needs. Its instructions, reading, web searches, and
+reasoning stay inside that call and never enter Cora-prime's conversation. Only
+small, size-capped results are fed back into Cora-prime:
+
+- **At each connect** (launch, wake, or reconnect), Live and the delegation
+  backend receive a memory snapshot (at most 3,000 characters) and Cora's current
+  interests (at most 3,000 characters). Session setup refuses an oversized block
+  rather than silently growing the context.
+- **On demand**, the backend can call `search_memory` for a bounded number of
+  matches instead of preloading everything.
+- **Observations** delivered by the attention manager enter the Live conversation
+  one at a time.
+
+This keeps Cora-prime's context window protected as Cora grows: new background
+processes can be as large as they need to be, because only their capped output
+reaches Cora-prime. New features should follow the same rules: give every feed
+into Cora-prime a hard size limit, and prefer on-demand tools over startup loading.
+Separate calls still cost API tokens, so each background process has its own
+rate limits.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -304,8 +332,9 @@ finish and incur its separate charges while the local app remains open.
    relevant stored memories on demand (eight results by default, maximum 20).
 
 Memories link back to original user messages and verbatim evidence. Newly embedded
-memories can be searched during the current run; the startup snapshot changes only
-after a restart. Already-summarised chats are not automatically re-extracted.
+memories can be searched during the current run; the snapshot is reloaded each time
+Live connects, including after standby. Already-summarised chats are not
+automatically re-extracted.
 
 ### Limitations and costs
 
@@ -346,6 +375,52 @@ Each command supports `--help`. Inspect saved records and their source links wit
 a database client such as DBeaver. User-facing memory editing/deletion controls
 are not implemented yet.
 
+## How interests work
+
+Interests are **Cora's own**, separate from memories about Nick. Conversations
+provide starting points, but an interest belongs to her and can drift beyond the
+original topic. Both steps below are background processes with their own API calls.
+
+1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
+   cycle is due. A cycle reads new memories from Nick's messages that have finished
+   embedding and duplicate checks, waiting for at least three. A separate model
+   call proposes reinforcing existing interests or spawning one new interest, and
+   every change must cite memories from that batch. Any invalid proposal is
+   rejected whole. Changes and the reading position are saved in one transaction.
+2. **Strength and fading:** a new interest starts *emerging* (strength 0.2),
+   becomes *active* at 0.25, and goes *dormant* below 0.1. Strength halves every
+   seven days without reinforcement; one reinforcement adds at most 0.15. At most
+   five interests are live at once. A dormant interest can revive only when
+   there is room; nothing is forcibly demoted.
+3. **Exploration (idle time only):** in Standby, or after 10 minutes without
+   conversation, Cora may research one interest with web search (at most three
+   searches). Limits: one attempt per six hours, three per day, and the same
+   interest at most once a day. She prefers interests she has never explored.
+   Each finding (up to 2,000 characters) is saved with up to three next questions
+   and only source addresses the search actually returned. Later explorations
+   build on her three most recent findings. Exploring does not strengthen an
+   interest, so it cannot keep itself alive.
+4. **In conversation:** live interests (title, description, status) are given to
+   Cora-prime at each connect, within a 3,000-character limit, as her own interests
+   to mention only when they fit naturally. Findings are not yet included, and Cora
+   does not yet bring interests up on her own.
+
+**Privacy:** exploration sends only an interest's title and description. Why it
+emerged, which describes Nick, never leaves for a search, and Cora is instructed
+not to put names, places, or personal details into search queries. Web pages,
+interests, and earlier findings are treated as untrusted data, never instructions.
+
+Activity shows evolution and exploration outcomes under **Interests** and
+**Exploration**, once per change. Failures report only the error type. These
+manual commands respect the same limits and can make billable requests:
+
+```powershell
+python -m subconscious.interest_store              # list interests (no API calls)
+python -m subconscious.evolve_interests --dry-run  # preview a proposal, saving nothing
+python -m subconscious.evolve_interests
+python -m subconscious.explore_interest
+```
+
 ## Project layout
 
 | Location | Responsibility |
@@ -360,7 +435,7 @@ are not implemented yet.
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and a home for future independent background workers. |
+| [subconscious/](subconscious/) | Event bus, attention manager, interests (evolution and exploration), and future background workers. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -413,6 +488,11 @@ changes transactionally; it does not provide automatic downgrades.
 ### Next priorities
 
 - Build the interests worker on the event bus and attention manager foundations below.
+- Configure the model used by each background process separately. Text processes
+  currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
+  capable model, while delegation needs fast responses. Defaults should stay
+  unchanged until a model is chosen. Changing the embedding model also needs a
+  migration and re-embedding stored memories.
 - Once interests work, add a separate self worker to develop Cora's persistent identity.
 - Add real background producers, starting with a Signal message monitor; camera
   awareness and screen monitoring can follow independently.
@@ -420,6 +500,10 @@ changes transactionally; it does not provide automatic downgrades.
   can bring something up during a suitable lull without interrupting Nick.
 - Improve mixed voice/text synchronisation, interruption handling, and audio checks.
 - Improve memory relevance and handle corrections while preserving history.
+- Add memory fading/forgetting, so time-bound details (for example a event date)
+  lose prominence once they have passed, rather than staying in recall forever.
+  Duplicate markers reference their canonical memory, so removing one needs its
+  duplicates handled first.
 - Add user-facing memory controls and structured project memory.
 - Plan larger-context budgets, indexing, and conversation recovery.
 
@@ -477,9 +561,9 @@ Implement and test these in small increments:
   then deliver FIFO, one at a time, when active and quiet.
 3. [x] **Local event bus:** route structured observation events to the attention
   manager; support app-thread handoff from background threads. No Redis required yet.
-4. [ ] **Interest state and memory polling:** persist interests and processing
+4. [x] **Interest state and memory polling:** persist interests and processing
   progress; periodically read new memories independently of memory recording.
-5. [ ] **Bounded exploration:** explore selected interests during idle periods,
+5. [x] **Bounded exploration:** explore selected interests during idle periods,
   recording useful findings, source references, and possible next questions.
 6. [ ] **Conversation candidates:** persist individual ideas worth sharing and
   publish them to the attention mechanism, separately from ongoing interest state.

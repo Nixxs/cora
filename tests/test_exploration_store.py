@@ -1,6 +1,7 @@
 """Exploration attempts: validation plus opt-in disposable PostgreSQL tests."""
 
 from datetime import datetime, timedelta, timezone
+import json
 import os
 import threading
 import unittest
@@ -156,6 +157,23 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
         self.start(NOW + timedelta(days=2))
         self.assertEqual(self.explorations.start_next(now=NOW).reason, "too soon")
+
+    def test_startup_context_carries_only_the_newest_finding_per_interest(self):
+        other = self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
+        titles = {self.interest.id: self.interest.title, other.id: other.title}
+        older = self.start()
+        self.explorations.finish(older.id, "Older finding", [], [], now=NOW)
+        failed = self.start(NOW + timedelta(hours=6, seconds=1))
+        self.explorations.fail(failed.id, now=NOW + timedelta(hours=7))
+        later = NOW + timedelta(hours=24, seconds=2)
+        newer = self.start(later)
+        self.assertEqual(newer.interest_id, older.interest_id)
+        self.explorations.finish(newer.id, "Newer finding", [], [], now=later)
+        self.assertEqual(self.interests.latest_findings([older.interest_id, failed.interest_id]),
+                         {older.interest_id: ("Newer finding", later)})
+        records = json.loads(self.interests.get_startup_context(now=later))
+        self.assertEqual({record["title"]: record.get("latest_finding") for record in records},
+                         {titles[older.interest_id]: "Newer finding", titles[failed.interest_id]: None})
 
     def test_a_start_waits_for_a_concurrent_start_and_sees_its_attempt(self):
         self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
