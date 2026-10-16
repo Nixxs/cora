@@ -85,6 +85,7 @@ async def running_app(persistence=None):
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
             patch("app.run_interest_cycle", return_value=None), \
+            patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
             patch("memory.background.deduplicate_memory"):
         app = CoraApp()

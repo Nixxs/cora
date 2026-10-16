@@ -4,6 +4,7 @@ Usage: python -m subconscious.explore_interest
 """
 
 import argparse
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -145,6 +146,23 @@ def explore_next(store: ExplorationStore, client: OpenAI, model: str = BACKEND_M
     if saved is None:
         return f"Explored {title}, but the attempt had expired; finding discarded."
     return f"Explored {title}: saved a finding ({len(saved.sources)} sources)."
+
+
+def run_exploration_cycle(*, should_stop: Callable[[], bool]) -> str | None:
+    """One background attempt with its own engine, so an in-flight request can finish at shutdown."""
+    engine = None
+    try:
+        if should_stop():
+            return None
+        engine = build_engine()
+        with OpenAI(max_retries=0) as client:
+            outcome = explore_next(ExplorationStore(engine), client, now=datetime.now(timezone.utc))
+    except Exception as error:
+        outcome = f"Exploration stopped ({type(error).__name__})."
+    finally:
+        if engine is not None:
+            engine.dispose()
+    return None if should_stop() else outcome
 
 
 def main() -> None:

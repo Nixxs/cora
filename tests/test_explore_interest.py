@@ -1,21 +1,24 @@
 """Exploring one interest with web search: mocked APIs and opt-in disposable databases only."""
 
 from datetime import timedelta
+import asyncio
 import json
 import os
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from openai.types.responses import Response
 
+import app as app_module
 from subconscious.exploration_store import Exploration, ExplorationStore, Start
 from subconscious.explore_interest import (
-    EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, Discovery, explore, explore_next,
+    EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, Discovery, explore, explore_next, run_exploration_cycle,
 )
 from subconscious.interest_store import Interest
 import test_exploration_store as exploration_tests
 import test_interest_store as interest_tests
+import test_keyboard_persistence as keyboard_tests
 from test_propose_interests import objects
 
 NOW = interest_tests.NOW
@@ -189,6 +192,91 @@ class ExploreNextDatabaseTests(unittest.TestCase):
         self.assertEqual(sent, [{"finding": FINDING["finding"], "next_questions": FINDING["next_questions"]}])
         self.assertEqual([item.status for item in self.explorations.list_recent()], ["failed", "found"])
         self.assertEqual(explore_next(self.explorations, self.client, now=later), "Not exploring: too soon.")
+
+
+class RunExplorationCycleTests(unittest.TestCase):
+    def setUp(self):
+        self.engine = MagicMock()
+        for name, value in (("build_engine", self.engine), ("OpenAI", MagicMock()),
+                            ("explore_next", "Not exploring: too soon.")):
+            patcher = patch(f"subconscious.explore_interest.{name}", return_value=value)
+            setattr(self, name, patcher.start())
+            self.addCleanup(patcher.stop)
+
+    def test_cycle_uses_its_own_engine_and_client_and_disposes(self):
+        self.assertEqual(run_exploration_cycle(should_stop=lambda: False), "Not exploring: too soon.")
+        self.OpenAI.assert_called_once_with(max_retries=0)
+        store, client = self.explore_next.call_args.args
+        self.assertIs(store.engine, self.engine)
+        self.assertIs(client, self.OpenAI.return_value.__enter__.return_value)
+        self.engine.dispose.assert_called_once_with()
+
+    def test_failures_report_only_the_error_type_and_dispose(self):
+        self.explore_next.side_effect = RuntimeError("private finding text and API key")
+        self.assertEqual(run_exploration_cycle(should_stop=lambda: False), "Exploration stopped (RuntimeError).")
+        self.engine.dispose.assert_called_once_with()
+
+    def test_stopping_skips_the_cycle_or_hides_its_outcome(self):
+        self.assertIsNone(run_exploration_cycle(should_stop=lambda: True))
+        self.build_engine.assert_not_called()
+        answers = iter((False, True))
+        self.assertIsNone(run_exploration_cycle(should_stop=lambda: next(answers)))
+        self.engine.dispose.assert_called_once_with()
+
+
+class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
+    async def test_explores_only_in_standby_or_after_a_quiet_spell(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            quiet = app.inactivity.last_activity + app_module.EXPLORE_IDLE_SECONDS
+            with patch("app.monotonic", return_value=quiet - 1):
+                self.assertFalse(app.can_explore())  # Not connected and not in standby.
+                app.live.ready = True
+                self.assertFalse(app.can_explore())  # Talking recently.
+                app.standby = True
+                self.assertTrue(app.can_explore())
+                app.reconnecting = True
+                self.assertFalse(app.can_explore())  # Waking up.
+                app.reconnecting = False
+                app.standby = False
+            with patch("app.monotonic", return_value=quiet):
+                self.assertTrue(app.can_explore())
+                with patch.object(app, "live_transition_blockers", return_value=["typed submission"]):
+                    self.assertFalse(app.can_explore())
+                app.closing = True
+                self.assertFalse(app.can_explore())
+                app.closing = False
+            app.live.ready = False
+
+    async def test_checks_are_single_flight_and_respect_the_gate(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            running = MagicMock(is_finished=False)
+            with patch.object(app, "explore_interest", return_value=running) as start, \
+                    patch.object(app, "can_explore", return_value=True) as gate:
+                app.check_exploration()
+                app.check_exploration()
+                start.assert_called_once_with()
+                running.is_finished = True
+                app.check_exploration()
+                self.assertEqual(start.call_count, 2)
+                app.exploration_worker = None
+                gate.return_value = False
+                app.check_exploration()
+                self.assertEqual(start.call_count, 2)
+
+    async def test_worker_writes_each_new_outcome_once_off_the_ui_thread(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            outcomes = iter(("Not exploring: too soon.",) * 2 + (None, "Explored Sailing: nothing new found."))
+            with patch("app.run_exploration_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle, \
+                    patch.object(app, "can_explore", return_value=True):
+                for _ in range(4):
+                    app.check_exploration()
+                    await asyncio.wait_for(app.exploration_worker.wait(), 5)
+            self.assertEqual(app.exploration_worker.group, "exploration")
+            self.assertFalse(cycle.call_args.kwargs["should_stop"]())
+            await pilot.pause()
+            entries = "\n".join(app.activity.entries)
+            self.assertEqual(entries.count("Not exploring: too soon."), 1)
+            self.assertIn("Explored Sailing: nothing new found.", entries)
 
 
 if __name__ == "__main__":
