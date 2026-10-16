@@ -2,11 +2,17 @@
 
 from datetime import datetime, timedelta, timezone
 import os
+import threading
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+from sqlalchemy import select, text
+from sqlalchemy.orm import Session
+
+from storage.models import InterestExplorationRecord
 from subconscious.exploration_store import LIST_LIMIT, ExplorationStore
+from subconscious.interest_strength import HALF_LIFE
 import test_interest_store as interest_tests
 
 NOW = interest_tests.NOW
@@ -33,7 +39,7 @@ class ExplorationValidationTests(unittest.TestCase):
                 with self.subTest(args=args), self.assertRaises(ValueError):
                     store.finish(uuid4(), *args, now=NOW)
             naive = datetime(2026, 10, 15)
-            for call in (lambda: store.start(uuid4(), now=naive), lambda: store.fail(uuid4(), now=naive),
+            for call in (lambda: store.start_next(now=naive), lambda: store.fail(uuid4(), now=naive),
                          lambda: store.finish(uuid4(), *FINDING, now=naive)):
                 with self.assertRaises(ValueError):
                     call()
@@ -53,8 +59,18 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         self.explorations = ExplorationStore(self.engine)
         self.interest = self.interests.spawn(*interest_tests.spawn_args(), now=NOW)
 
+    def start(self, now=NOW):
+        result = self.explorations.start_next(now=now)
+        self.assertEqual(result.reason, "started")
+        return result.exploration
+
+    def attempts(self):
+        with Session(self.engine) as session:
+            return list(session.scalars(select(InterestExplorationRecord).order_by(
+                InterestExplorationRecord.started_at)))
+
     def test_an_attempt_runs_then_records_a_cleaned_finding_once(self):
-        started = self.explorations.start(self.interest.id, now=NOW)
+        started = self.start()
         self.assertEqual((started.status, started.finished_at, started.finding), ("running", None, None))
         self.assertEqual((started.next_questions, started.sources), ((), ()))
         found = self.explorations.finish(
@@ -74,25 +90,89 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(self.explorations.list_recent(), [found])
 
     def test_a_failed_attempt_keeps_no_finding_and_cannot_be_finished_later(self):
-        started = self.explorations.start(self.interest.id, now=NOW)
+        started = self.start()
         failed = self.explorations.fail(started.id, now=NOW - timedelta(hours=1))  # clock moved back
         self.assertEqual((failed.status, failed.finding, failed.finished_at), ("failed", None, NOW))
         self.assertIsNone(self.explorations.finish(started.id, *FINDING, now=NOW))
         self.assertEqual(self.explorations.list_recent(), [failed])
 
-    def test_unknown_attempts_and_interests_are_errors(self):
+    def test_unknown_attempts_are_errors(self):
         with self.assertRaises(LookupError):
             self.explorations.finish(uuid4(), *FINDING, now=NOW)
         with self.assertRaises(LookupError):
             self.explorations.fail(uuid4(), now=NOW)
-        with self.assertRaises(Exception):
-            self.explorations.start(uuid4(), now=NOW)
         self.assertEqual(self.explorations.list_recent(), [])
 
     def test_recent_attempts_are_newest_first_and_limited(self):
-        ids = [self.explorations.start(self.interest.id, now=NOW + timedelta(hours=n)).id for n in range(3)]
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        ids = [self.start(NOW + timedelta(hours=6 * n)).id for n in range(3)]
         self.assertEqual([item.id for item in self.explorations.list_recent(2)], ids[:0:-1])
         self.assertEqual([item.id for item in self.explorations.list_recent()], ids[::-1])
+
+    def test_one_attempt_per_six_hours_counting_failed_attempts(self):
+        self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
+        self.explorations.fail(self.start().id, now=NOW)
+        for hours in (1, 5.9):
+            self.assertEqual(self.explorations.start_next(now=NOW + timedelta(hours=hours)).reason, "too soon")
+        self.start(NOW + timedelta(hours=6, seconds=1))
+
+    def test_at_most_three_attempts_in_any_24_hours(self):
+        for title in ("Second", "Third", "Fourth"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        for hours in (0, 6.1, 12.2):
+            self.start(NOW + timedelta(hours=hours))
+        self.assertEqual(self.explorations.start_next(now=NOW + timedelta(hours=18.3)).reason, "daily limit")
+        self.start(NOW + timedelta(hours=24, seconds=1))  # the first attempt has left the window
+
+    def test_each_interest_waits_a_day_and_least_recently_explored_goes_first(self):
+        second = self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
+        self.interests.reinforce(second.id, 0.15, "Stronger", now=NOW)
+        order = [self.explorations.start_next(now=NOW + timedelta(hours=hours)) for hours in (0, 6.1, 12.2)]
+        # Strongest unexplored first, then the other, then both are cooling down.
+        self.assertEqual([result.reason for result in order], ["started", "started", "no eligible interest"])
+        self.assertEqual([result.interest.id for result in order[:2]], [second.id, self.interest.id])
+        self.assertEqual(order[0].interest.title, "Second")
+        self.assertEqual(self.start(NOW + timedelta(hours=24, seconds=1)).interest_id, second.id)
+
+    def test_dormant_and_faded_interests_are_never_explored(self):
+        later = NOW + 2 * HALF_LIFE  # 0.2 decays to 0.05: still stored as emerging, but faded
+        self.assertEqual(self.explorations.start_next(now=later).reason, "no eligible interest")
+        self.interests.settle_all(later)  # now stored as dormant
+        self.assertEqual(self.explorations.start_next(now=later).reason, "no eligible interest")
+        self.assertEqual(self.attempts(), [])
+
+    def test_abandoned_running_attempts_fail_but_still_count(self):
+        started = self.start()
+        self.assertEqual(self.explorations.start_next(now=NOW + timedelta(minutes=29)).reason, "too soon")
+        self.assertEqual(self.attempts()[0].status, "running")
+        later = NOW + timedelta(minutes=31)
+        self.assertEqual(self.explorations.start_next(now=later).reason, "too soon")
+        [record] = self.attempts()
+        self.assertEqual((record.status, record.finished_at), ("failed", later))
+        self.assertIsNone(self.explorations.finish(started.id, *FINDING, now=later))
+
+    def test_attempts_from_a_later_clock_still_block(self):
+        self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
+        self.start(NOW + timedelta(days=2))
+        self.assertEqual(self.explorations.start_next(now=NOW).reason, "too soon")
+
+    def test_a_start_waits_for_a_concurrent_start_and_sees_its_attempt(self):
+        self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
+        results = []
+        with self.engine.connect() as other, other.begin():
+            other.execute(text("LOCK TABLE public.interest_explorations IN SHARE ROW EXCLUSIVE MODE"))
+            other.execute(text(
+                "INSERT INTO public.interest_explorations (interest_id, status, started_at, next_questions, sources) "
+                "VALUES (:interest_id, 'running', :now, '{}', '{}')"
+            ), {"interest_id": self.interest.id, "now": NOW})
+            thread = threading.Thread(target=lambda: results.append(self.explorations.start_next(now=NOW)))
+            thread.start()
+            thread.join(0.5)
+            self.assertTrue(thread.is_alive())  # blocked by the other transaction's lock
+        thread.join(5)
+        self.assertEqual([result.reason for result in results], ["too soon"])
+        self.assertEqual(len(self.attempts()), 1)
 
 
 if __name__ == "__main__":

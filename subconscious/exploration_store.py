@@ -6,15 +6,16 @@ limits on how often she explores can count every attempt, including failed ones.
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import Engine, select
+from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
 
-from storage.models import InterestExplorationRecord
-from subconscious.interest_store import clean_text, validate_now
+from storage.models import InterestExplorationRecord, InterestRecord
+from subconscious.interest_store import Interest, clean_text, snapshot as interest_snapshot, validate_now
+from subconscious.interest_strength import settle
 
 FINDING_MAX_CHARS = 2000
 QUESTION_MAX_CHARS = 300
@@ -22,6 +23,12 @@ SOURCE_MAX_CHARS = 2000
 MAX_NEXT_QUESTIONS = 3
 MAX_SOURCES = 10
 LIST_LIMIT = 50
+# Every attempt counts, including failed and running ones, so a broken API is not retried often.
+MIN_GAP = timedelta(hours=6)
+DAILY_LIMIT = 3
+INTEREST_COOLDOWN = timedelta(hours=24)
+# A running attempt this old was abandoned (e.g. the app closed mid-search).
+STALE_AFTER = timedelta(minutes=30)
 
 
 @dataclass(frozen=True)
@@ -34,6 +41,13 @@ class Exploration:
     finding: str | None
     next_questions: tuple[str, ...]
     sources: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Start:
+    reason: str  # started, too soon, daily limit or no eligible interest
+    exploration: Exploration | None = None
+    interest: Interest | None = None
 
 
 def snapshot(record: InterestExplorationRecord) -> Exploration:
@@ -73,13 +87,46 @@ class ExplorationStore:
     def __init__(self, engine: Engine):
         self.engine = engine
 
-    def start(self, interest_id: UUID, *, now: datetime) -> Exploration:
+    def start_next(self, *, now: datetime) -> Start:
+        """Start exploring the next eligible interest, if the limits allow one now."""
         validate_now(now)
+        attempts = InterestExplorationRecord
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
-            record = InterestExplorationRecord(interest_id=interest_id, status="running", started_at=now)
+            # One starter at a time, so two workers can never both pass the limits.
+            session.execute(text("LOCK TABLE public.interest_explorations IN SHARE ROW EXCLUSIVE MODE"))
+            session.execute(update(attempts).where(
+                attempts.status == "running", attempts.started_at <= now - STALE_AFTER,
+            ).values(status="failed", finished_at=now).execution_options(synchronize_session=False))
+
+            # Attempts stamped in the future (clock moved back) count as recent.
+            recent = session.scalars(select(attempts.started_at).where(
+                attempts.started_at > now - timedelta(hours=24),
+            )).all()
+            if any(started_at > now - MIN_GAP for started_at in recent):
+                return Start("too soon")
+            if len(recent) >= DAILY_LIMIT:
+                return Start("daily limit")
+
+            last_explored = dict(session.execute(
+                select(attempts.interest_id, func.max(attempts.started_at)).group_by(attempts.interest_id),
+            ).all())
+            candidates = []
+            for interest in session.scalars(select(InterestRecord).where(InterestRecord.status != "dormant")):
+                strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
+                explored = last_explored.get(interest.id)
+                if status == "dormant" or (explored is not None and explored > now - INTEREST_COOLDOWN):
+                    continue
+                # Never explored first, then least recently explored, then strongest.
+                candidates.append((explored is not None, explored or now, -strength,
+                                   interest.created_at, interest.id, interest))
+            if not candidates:
+                return Start("no eligible interest")
+            interest = min(candidates, key=lambda candidate: candidate[:5])[5]
+
+            record = attempts(interest_id=interest.id, status="running", started_at=now)
             session.add(record)
             session.flush()
-            return snapshot(record)
+            return Start("started", snapshot(record), interest_snapshot(interest))
 
     def finish(
         self, exploration_id: UUID, finding: str, next_questions: Iterable[str], sources: Iterable[str],
