@@ -52,6 +52,8 @@ EXPLORE_IDLE_SECONDS = 10 * 60
 # The store's limits (4h gap, 2 a day, fresh findings) decide how often she really does.
 FINDING_CHECK_SECONDS = 2 * 60
 FINDING_IDLE_SECONDS = 90
+# Cora's own standby request waits for her sign-off; give up rather than surprise Nick later.
+REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
 
 
 class CoraApp(App):
@@ -149,6 +151,8 @@ class CoraApp(App):
         self.backend_work = BackendWorkTracker()
         self.last_live_activity = 0.0
         self.idle_standby_timer = None
+        self.requested_standby_timer = None
+        self.requested_standby_deadline = 0.0
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -172,6 +176,7 @@ class CoraApp(App):
             get_connection=lambda: self.live.connection,
             is_closing=lambda: self.closing or self.reconnecting,
             shutdown=lambda: self.action_disconnect_and_quit(),
+            request_standby=self.request_standby,
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
         )
@@ -356,6 +361,7 @@ class CoraApp(App):
         self.audio_status.stop()
         if self.idle_standby_timer is not None:
             self.idle_standby_timer.stop()
+        self.stop_requested_standby()
 
     # Textual owns worker scheduling and cancellation; coordinators own the work.
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
@@ -460,6 +466,27 @@ class CoraApp(App):
     def action_standby(self) -> None:
         if self.live.ready and not self.standby:
             self.request_live_transition(restart=False)
+
+    def request_standby(self) -> None:
+        """Cora asked for standby: enter it once her sign-off and other work finish."""
+        self.requested_standby_deadline = monotonic() + REQUESTED_STANDBY_TIMEOUT_SECONDS
+        if self.requested_standby_timer is None:
+            self.requested_standby_timer = self.set_interval(0.5, self.check_requested_standby)
+
+    def stop_requested_standby(self) -> None:
+        if self.requested_standby_timer is not None:
+            self.requested_standby_timer.stop()
+            self.requested_standby_timer = None
+
+    def check_requested_standby(self) -> None:
+        if self.closing or self.reconnecting or self.standby or not self.live.ready:
+            self.stop_requested_standby()
+        elif monotonic() >= self.requested_standby_deadline:
+            self.stop_requested_standby()
+            self.activity.write("Requested standby timed out; staying active.", "Standby cancelled")
+        elif not self.live_transition_blockers():
+            self.stop_requested_standby()
+            self.action_standby()
 
     def live_transition_blockers(self) -> list[str]:
         """Share exactly the same safety checks for manual and automatic standby."""
@@ -824,6 +851,7 @@ class CoraApp(App):
         self.audio_status.stop()
         if self.idle_standby_timer is not None:
             self.idle_standby_timer.stop()
+        self.stop_requested_standby()
         self.update_speaking_animation()
         self.query_one("#close-button", Button).disabled = True
         self.query_one("#mic-status", Button).disabled = True

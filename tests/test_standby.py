@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -407,6 +408,59 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(app.closing)
                 connect.assert_not_called()
                 exit_app.assert_called_once()
+
+    async def test_enter_standby_tool_waits_for_sign_off_then_enters_standby(self):
+        async with restarting_app() as (app, pilot, connections, speakers, started):
+            connection = connections[0]
+            await connection.events.put(backend_event("response.created", response_id="tool-response"))
+            await connection.events.put(ResponseEvent(
+                type="response.event", event_id="tool-item", delegation_id="delegation-1",
+                event={"type": "response.output_item.done", "item": {
+                    "type": "function_call", "call_id": "call-standby", "name": "enter_standby",
+                    "arguments": "{}", "status": "completed",
+                }},
+            ))
+            await connection.events.put(backend_event("response.completed", response_id="tool-response"))
+            await pilot.pause()
+            tools = [worker.wait() for worker in app.workers if worker.group == "tool-actions"]
+            await asyncio.wait_for(asyncio.gather(*tools), 3)
+            item = connection.response.item.create.call_args.kwargs["item"]
+            self.assertEqual((item["type"], item["call_id"]), ("function_call_output", "call-standby"))
+            self.assertEqual(json.loads(item["output"])["status"], "standby_scheduled")
+            connection.response.create.assert_awaited_once_with()
+            self.assertIsNotNone(app.requested_standby_timer)
+            # Her sign-off (the tool continuation) is still pending.
+            app.check_requested_standby()
+            self.assertIsNotNone(app.requested_standby_timer)
+            connection.session.close.assert_not_called()
+            for kind in ("response.created", "response.completed"):
+                await connection.events.put(backend_event(kind, response_id="sign-off"))
+            await pilot.pause()
+            app.last_live_activity = 0.0
+            app.check_requested_standby()
+            self.assertIsNone(app.requested_standby_timer)
+            await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+            self.assertTrue(app.standby)
+            connection.session.close.assert_awaited_once()
+
+    async def test_requested_standby_times_out_or_stops_when_superseded(self):
+        for case in ("timeout", "closing"):
+            with self.subTest(case=case):
+                async with running_app() as (app, pilot):
+                    app.live.ready = True
+                    app.backend_work.pending.add("busy")
+                    with patch.object(app, "action_standby") as standby:
+                        app.request_standby()
+                        if case == "timeout":
+                            app.requested_standby_deadline = 0.0
+                        else:
+                            app.reconnecting = True
+                        app.check_requested_standby()
+                        self.assertIsNone(app.requested_standby_timer)
+                        standby.assert_not_called()
+                    timed_out = "Requested standby timed out" in "\n".join(app.activity.entries)
+                    self.assertEqual(timed_out, case == "timeout")
+                    app.reconnecting = False
 
 
 class PlaybackBusyTests(unittest.TestCase):

@@ -115,7 +115,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(app.closing)
                     self.assertEqual(
                         [schema["name"] for schema in app.live.tool_schemas()],
-                        ["close_app", "search_memory", "recall_interest", "echo", "other_tool"],
+                        ["close_app", "search_memory", "recall_interest", "enter_standby", "echo", "other_tool"],
                     )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):
