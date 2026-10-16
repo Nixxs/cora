@@ -43,10 +43,10 @@ async def mocked_pass(app, ids, *, blocked=False):
             raise TimeoutError("Test did not release summary")
 
     engine.dispose.side_effect = lambda: loop.call_soon_threadsafe(disposed.set)
-    with patch("app.build_engine", return_value=engine) as build, \
-            patch("app.ConversationStore", return_value=store) as construct, \
-            patch("app.summarize_conversation", side_effect=summarize) as summary, \
-            patch("app.extract_memories", return_value=[]) as extraction:
+    with patch("memory.background.build_engine", return_value=engine) as build, \
+            patch("memory.background.ConversationStore", return_value=store) as construct, \
+            patch("memory.background.summarize_conversation", side_effect=summarize) as summary, \
+            patch("memory.background.extract_memories", return_value=[]) as extraction:
         summary.extraction = extraction
         try:
             yield engine, store, summary, started, disposed, threads, build, construct
@@ -231,10 +231,10 @@ class BackgroundSummaryDatabaseTests(unittest.IsolatedAsyncioTestCase):
             return summarize_tests.response_fixture("The user prefers small development steps.")
 
         try:
-            with patch("app.build_engine", return_value=background_engine) as build, \
+            with patch("memory.background.build_engine", return_value=background_engine) as build, \
                     patch.object(background_engine, "dispose", side_effect=dispose), \
                     patch("memory.summarize.OpenAI") as factory, \
-                    patch("app.extract_memories", return_value=[]) as extraction:
+                    patch("memory.background.extract_memories", return_value=[]) as extraction:
                 client = MagicMock()
                 client.responses.create.side_effect = model_response
                 factory.return_value.__enter__.return_value = client

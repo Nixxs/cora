@@ -91,7 +91,7 @@ class SpeakingAnimationTests(unittest.IsolatedAsyncioTestCase):
             await pilot.click("#speaker-status")
             self.assertEqual(indicator.render_line(0).text.strip(), "Muted")
             self.assertTrue(indicator.has_class("audio-muted"))
-            self.assertEqual(list(app.speaker_levels), list("────────"))
+            self.assertEqual(list(app.audio_status.speaker_levels), list("────────"))
             await pilot.pause(0.25)
             await pilot.click("#speaker-status")
             self.assertFalse(indicator.has_class("audio-muted"))
@@ -128,7 +128,8 @@ class SpeakingAnimationTests(unittest.IsolatedAsyncioTestCase):
             indicator = app.query_one("#speaker-level", Static)
             self.assertIn("█", indicator.render_line(0).text)
             before = list(app.conversation.log_entries)
-            with patch.object(app.speaker_level_timer, "stop", wraps=app.speaker_level_timer.stop) as stop, \
+            timer = app.audio_status.speaker_level_timer
+            with patch.object(timer, "stop", wraps=timer.stop) as stop, \
                     patch.object(app, "exit"):
                 await app.action_disconnect_and_quit()
                 stop.assert_called_once_with()

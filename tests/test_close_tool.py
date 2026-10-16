@@ -115,7 +115,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(app.closing)
                     self.assertEqual(
                         [schema["name"] for schema in app.live.tool_schemas()],
-                        ["close_app", "search_memory", "echo", "other_tool"],
+                        ["close_app", "search_memory", "recall_interest", "enter_standby", "echo", "other_tool"],
                     )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):
@@ -244,7 +244,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     self.assertFalse(backend["parallel_tool_calls"])
                     self.assertEqual(backend["tools"][0], {"type": "web_search"})
                     self.assertEqual(backend["tools"][1:], app.tools.schemas())
-                    self.assertEqual(backend["tools"][3]["name"], "example")
+                    self.assertEqual(backend["tools"][-1]["name"], "example")
                     tool = backend["tools"][1]
                     self.assertEqual(tool["name"], "close_app")
                     self.assertTrue(tool["strict"])

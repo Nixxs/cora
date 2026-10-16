@@ -7,6 +7,13 @@
 			"command": "& 'd:/Development/cora/.venv/Scripts/python.exe' -m pip install -r requirements.txt; if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed' }",
 			"isBackground": false,
 			"problemMatcher": []
+		},
+		{
+			"label": "Verify backend tracker refactor",
+			"type": "shell",
+			"command": "& 'd:/Development/cora/.venv/Scripts/python.exe' -m unittest discover -s tests; if ($LASTEXITCODE -ne 0) { throw 'Test suite failed' }; git diff --check; if ($LASTEXITCODE -ne 0) { throw 'Whitespace validation failed' }",
+			"isBackground": false,
+			"problemMatcher": []
 		}
 	]
 }

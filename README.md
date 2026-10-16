@@ -52,8 +52,8 @@ python app.py
 Keep Docker running while chatting, and run **only one Cora instance at a time**.
 The startup check treats other active conversations as interrupted.
 
-For the current typed-input investigation, a normal launch also writes
-`live-trace.log` beside `app.py`. It records command/event IDs, event order,
+A normal launch also writes a diagnostic `live-trace.log` beside `app.py`.
+It records command/event IDs, event order,
 tracking state before/after handling, and standby blockers—not chat text, tool
 arguments/results, or audio. Git ignores the log. Each app launch replaces the
 previous trace, so reproduce once and keep the log before restarting again.
@@ -80,8 +80,8 @@ not change an existing database's password or user. Back up important data.
   and pending work to finish first. Cora closes the Live session and Live audio,
   but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
   to resume. The button shows Connecting and cannot be clicked again while waking.
-  Enter during Standby keeps the
-  draft and asks you to resume, rather than saving or sending a failed request.
+  Enter during Standby keeps the draft and asks you to resume, rather than saving
+  or sending a failed request.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
 - **Automatic standby:** after five minutes of inactivity by default, Cora uses
@@ -103,18 +103,28 @@ not change an existing database's password or user. Back up important data.
 - **Local wake:** click Wake off to enable local “Hey Cora” detection during
   Standby. Wake on turns green while the local listener is ready. Its tooltip
   distinguishes standby listening, active-session inactivity, and privacy mute.
-  Wake listening is independent of microphone privacy mute; enabling it never
-  unmutes the microphone. See setup below.
+  Wake has its own enable control, but microphone privacy mute stops its listening
+  too. Enabling Wake never unmutes the microphone. See setup below.
 - **Watch playback:** eight audio bars beside the speaker control follow output
   volume. They become a flat line when silent and show “Muted” when playback is muted.
 - **Reconnect Live:** Ctrl+R closes and restarts Live without quitting or clearing
   the chat. It keeps mute settings and drafts, and restores recent visible chat as
   context. Wait until Active before sending again. Reconnect refuses while known
-  responses, tools, typing submissions, recent speech, or queued playback are busy;
+  responses, tools, typed submissions/acknowledgements, observation sends, recent
+  speech, or queued playback are busy;
   wait for them to finish and try again. This is not standby: Live reconnects immediately.
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
+- **Test awareness:** press Ctrl+T to queue a simulated observation that Nick
+  received a Signal message. It travels through the local event bus to the attention
+  manager, which holds observations in arrival order while Cora is speaking or
+  processing work, or Live is disconnected/in standby. They send one at a time
+  when Live is Active and quiet; they do not wake it automatically.
+  This is background context, not a typed message or a real Signal monitor. Activity
+  shows queued/sent/failed notifications, not whether Cora spoke. The queue is
+  in memory only and is lost on app exit. Failed sends are reported, not retried,
+  because they may have partially reached Live. Speaker mute still suppresses playback.
 - **Check Activity:** expand the panel for connection, tool, memory, and error events.
 - **Quit:** use the close button, Ctrl+X, or ask Cora to close. The close tool waits
   three seconds when connected; this does not guarantee speech has finished.
@@ -124,6 +134,32 @@ available and Cora warns you. A failed send may have partially reached the model
 so there is no automatic resend. If Live drops with unfinished work, Cora warns
 you; reconnect does not replay requests or tools. Check uncertain action outcomes
 before requesting them again.
+
+### Background event foundation
+
+The current path is **producer → local event bus → attention manager → Live**.
+Ctrl+T is the only built-in test producer; there is no Signal/camera/screen monitor yet.
+An `ObservationEvent` carries a source, text, unique ID, and UTC observation time.
+A `FindingEvent` asks attention to consider raising one of Cora's interest findings
+(see [How interests work](#how-interests-work)); it carries no finding text.
+The bus routes events to synchronous subscribers; it does not decide when Cora
+speaks, persist events, or replay them. The attention manager owns the waiting queue.
+
+These components live in the [subconscious/](subconscious/) package:
+[subconscious/event_bus.py](subconscious/event_bus.py) routes events and
+[subconscious/attention.py](subconscious/attention.py) coordinates conversational attention.
+Future interests, self, and awareness workers can be added as separate components
+in this package. Give each worker the dependencies it needs and connect it through
+events, rather than having it call Live or other workers directly. The app wires
+components together and manages their lifecycles; automatic plugin discovery and
+cross-process execution are not implemented yet.
+
+Publish from Cora's event-loop thread. Background threads must hand events over
+using `app.call_from_thread(app.event_bus.publish, event)` rather than invoking
+subscribers or the attention manager directly. Separate processes need a later
+transport adapter; Redis is not required by this in-process version. Closing Cora
+closes the bus and prevents further publication. Subscriber errors are reported
+without private event text, and do not stop delivery to other subscribers.
 
 ### Local wake-word setup
 
@@ -171,8 +207,8 @@ subsequent interaction can incur OpenAI charges; local standby listening does no
 If the model, microphone, or wake reconnection fails, Activity reports the error;
 there is no automatic retry loop. Toggle Wake off/on to retry or wake manually.
 Real-model loading, quiet inference, synthetic spoken wake, and mocked lifecycle
-tests are covered; actual
-microphone sensitivity and real OpenAI speech continuity still need a manual check.
+tests are covered; actual microphone sensitivity and real OpenAI speech continuity
+still need a manual check.
 
 **Temporary wake diagnostics are enabled by default** (`CORA_WAKE_DEBUG=1`).
 Expand Activity while in Standby to see:
@@ -217,7 +253,8 @@ event. Playback/quiet detection is therefore best-effort, not a guarantee for
 unusual network delays. A send failure, rejection, playback error, or 30-second
 wait timeout cancels sleep and leaves Cora active with a fresh idle period; timeout
 never forces closure or immediately retries the alert. Once Live closes, it cannot
-hear a response: wake is still manual. Real-device heads-up timing needs a check.
+hear a response. Resume with the controls, or say "Hey Cora" if local Wake is enabled
+and the microphone is not privacy-muted. Real-device heads-up timing needs a check.
 
 ## How Cora works
 
@@ -232,6 +269,7 @@ Cora uses **two models working together in one Live session**:
 For example, if you ask about something happening today, Live delegates the
 question, the backend searches the web, and Live uses the result to answer aloud.
 For a question about an earlier conversation, the backend can call `search_memory`.
+Asked how she came to one of her interests or findings, it can call `recall_interest`.
 An explicit request to quit can trigger `close_app` instead.
 
 **The backend chooses tools; the application executes custom tools.** Web search
@@ -246,10 +284,41 @@ context updates are asynchronous. Both models receive the same startup memories.
 **Current limitation:** both voice and typed chat require an active Live session.
 Live bills by session duration, per second, including silence and backend waits;
 backend model and tool usage is charged separately. Muting a microphone or speaker
-does not stop that duration charge. Independent text-only operation is not planned
-for this next increment; quiet use will keep Live connected. Standby closes Live,
+does not stop that duration charge. There is no independent text-only mode; quiet
+use keeps Live connected. Standby closes Live,
 ending that session's duration billing. Background memory processing can still
 finish and incur its separate charges while the local app remains open.
+
+### Cora-prime and background processes
+
+**Cora-prime** is the Live voice model plus its delegation backend: the part of
+Cora you actually talk to. Everything else (memory extraction, summaries,
+embeddings, duplicate checks, interest evolution, and interest exploration) runs
+as **separate background processes that make their own API calls**.
+
+Each background call is a fresh, standalone request (`store=False`) containing
+only the input that job needs. Its instructions, reading, web searches, and
+reasoning stay inside that call and never enter Cora-prime's conversation. Only
+small, size-capped results are fed back into Cora-prime:
+
+- **At each connect** (launch, wake, or reconnect), Live and the delegation
+  backend receive a memory snapshot (at most 3,000 characters) and Cora's current
+  interests with their latest findings (at most 3,000 characters). Session setup
+  refuses an oversized block rather than silently growing the context.
+- **On demand**, the backend can call `search_memory` for a bounded number of
+  matches instead of preloading everything, and `recall_interest` for one
+  interest's origin and its three latest findings (read-only, size-capped).
+- **Observations** delivered by the attention manager enter the Live conversation
+  one at a time.
+- **Findings** Cora may raise herself: at most one finding (up to 2,000 characters)
+  at a time, at most twice a day.
+
+This keeps Cora-prime's context window protected as Cora grows: new background
+processes can be as large as they need to be, because only their capped output
+reaches Cora-prime. New features should follow the same rules: give every feed
+into Cora-prime a hard size limit, and prefer on-demand tools over startup loading.
+Separate calls still cost API tokens, so each background process has its own
+rate limits.
 
 ## How memory works
 
@@ -269,8 +338,9 @@ finish and incur its separate charges while the local app remains open.
    relevant stored memories on demand (eight results by default, maximum 20).
 
 Memories link back to original user messages and verbatim evidence. Newly embedded
-memories can be searched during the current run; the startup snapshot changes only
-after a restart. Already-summarised chats are not automatically re-extracted.
+memories can be searched during the current run; the snapshot is reloaded each time
+Live connects, including after standby. Already-summarised chats are not
+automatically re-extracted.
 
 ### Limitations and costs
 
@@ -311,18 +381,79 @@ Each command supports `--help`. Inspect saved records and their source links wit
 a database client such as DBeaver. User-facing memory editing/deletion controls
 are not implemented yet.
 
+## How interests work
+
+Interests are **Cora's own**, separate from memories about Nick. Conversations
+provide starting points, but an interest belongs to her and can drift beyond the
+original topic. Both steps below are background processes with their own API calls.
+
+1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
+   cycle is due. A cycle reads new memories from Nick's messages that have finished
+   embedding and duplicate checks, waiting for at least three. A separate model
+   call proposes reinforcing existing interests or spawning one new interest, and
+   every change must cite memories from that batch. Any invalid proposal is
+   rejected whole. Changes and the reading position are saved in one transaction.
+2. **Strength and fading:** a new interest starts *emerging* (strength 0.2),
+   becomes *active* at 0.25, and goes *dormant* below 0.1. Strength halves every
+   seven days without reinforcement; one reinforcement adds at most 0.15. At most
+   five interests are live at once. A dormant interest can revive only when
+   there is room; nothing is forcibly demoted.
+3. **Exploration (idle time only):** in Standby, or after 10 minutes without
+   conversation, Cora may research one interest with web search (at most three
+   searches). Limits: one attempt per six hours, three per day, and the same
+   interest at most once a day. She prefers interests she has never explored.
+   Each finding (up to 2,000 characters) is saved with up to three next questions
+   and only source addresses the search actually returned. Later explorations
+   build on her three most recent findings. Exploring does not strengthen an
+   interest, so it cannot keep itself alive.
+4. **In conversation:** live interests (title, description, status) are given to
+   Cora-prime at each connect, within a 3,000-character limit, as her own interests
+   to mention only when they fit naturally. Each includes its latest finding and
+   date where it still fits, marked as possibly outdated or wrong.
+5. **Bringing findings up herself:** every two minutes the app checks for a lull:
+   Live connected and ready, nothing pending or playing, no queued observation,
+   and 90 seconds without conversation. It never wakes Cora from Standby. At a
+   lull, the attention manager picks a finding only at the moment of sending and
+   offers it to Live as a background thought, which she may raise in a sentence
+   or two or leave unsaid. Limits: at most two a day and four hours apart; only
+   each interest's latest finding, from the last three days, for an interest that
+   is not dormant. Each finding is offered at most once (recorded as
+   `mentioned_at`); if the send fails, the record is cleared so it can be offered
+   later. Being offered does not guarantee she said it.
+
+**Privacy:** exploration sends only an interest's title and description. Why it
+emerged, which describes Nick, never leaves for a search, and Cora is instructed
+not to put names, places, or personal details into search queries. Web pages,
+interests, and earlier findings are treated as untrusted data, never instructions.
+
+Activity shows evolution and exploration outcomes under **Interests** and
+**Exploration**, once per change, and each finding offered to Live. Failures
+report only the error type, never finding text. These
+manual commands respect the same limits and can make billable requests:
+
+```powershell
+python -m subconscious.interests.interest_store              # list interests (no API calls)
+python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
+python -m subconscious.interests.evolve_interests
+python -m subconscious.interests.explore_interest
+```
+
 ## Project layout
 
 | Location | Responsibility |
 | --- | --- |
 | [app.py](app.py) | Application orchestration, background work, and shutdown. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
+| [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
+| [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
+| [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`). |
+| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -365,22 +496,161 @@ changes transactionally; it does not provide automatic downgrades.
 - Click Active for standby; click Standby or press Ctrl+R to resume with context.
 - Configurable inactivity standby, with full idle grace after work and resume.
 - Opt-in standby heads-up through Live, with a cancellable response window.
+- Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
+- A local event bus and attention manager for queued observations, tested with Ctrl+T.
+- Cora's own interests: daily evolution from memories, idle web exploration with
+  saved findings, and occasional findings she raises herself during a lull.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
 
 ### Next priorities
 
-- Build quiet-use controls and standby/wake-up in the small steps below.
+- Configure the model used by each background process separately. Text processes
+  currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
+  capable model, while delegation needs fast responses. Defaults should stay
+  unchanged until a model is chosen. Changing the embedding model also needs a
+  migration and re-embedding stored memories.
+- Once interests work, add a separate self worker to develop Cora's persistent identity.
+- Add real background producers, starting with a Signal message monitor; camera
+  awareness and screen monitoring can follow independently.
+- Develop attention decisions beyond the current FIFO/quiet-period policy: choose
+  findings by relevance to the conversation, and add quiet hours and an off switch.
 - Improve mixed voice/text synchronisation, interruption handling, and audio checks.
 - Improve memory relevance and handle corrections while preserving history.
+- Add memory fading/forgetting, so time-bound details (for example a event date)
+  lose prominence once they have passed, rather than staying in recall forever.
+  Duplicate markers reference their canonical memory, so removing one needs its
+  duplicates handled first.
 - Add user-facing memory controls and structured project memory.
 - Plan larger-context budgets, indexing, and conversation recovery.
 
-### Quiet use and standby — development order
+### Subconsciousness, interests, and self — next development steps
 
-Checked steps are implemented; the rest are planned. Implement and test one step
-at a time before moving on; standby must close Live, not merely mute audio.
+Cora's subconsciousness will include background processes that keep working
+without requiring Nick to prompt every action. They can notice events, develop
+interests, and propose things worth sharing. Sometimes Cora should prompt Nick,
+not only respond to him, but background work must not automatically become speech.
+
+The intended path is **background worker → event bus → attention manager → Live**.
+The bus routes events; the attention manager decides what deserves conversational
+attention and when; Live remains responsible for speaking to Nick. The current
+attention policy queues observations until Live is active and quiet, and offers
+an occasional interest finding during a lull. Relevance and awareness-triggered
+opportunities are still planned.
+
+#### Interests
+
+Cora should have a background worker that develops and explores interests over
+time. Conversations with Nick provide starting points, but Cora can follow related
+ideas and develop interests beyond the original topic. A conversation about
+restoring a car, for example, might spark an interest in older mechanical designs,
+why those designs evolved, and eventually industrial design more broadly.
+
+The interests worker should:
+
+- Periodically read new conversation memories from the database, with a persistent
+  record of what it has already processed. Start with polling; do not couple it to
+  the process that records or extracts conversation memories.
+- Identify topics worth exploring and maintain persistent interest records:
+  what the interest is, why it emerged, what Cora has learned, and what she wants
+  to explore next. These are Cora's ongoing state, separate from memories about Nick.
+- Explore selected interests during idle periods, within configured time and tool
+  budgets and permissions. Background exploration is distinct from keeping a
+  billable Live session connected and may incur its own API/tool costs.
+- Save useful findings and their sources to the database.
+- Produce conversation candidates when it finds something worth sharing.
+
+**An interest is ongoing state; a conversation candidate is a particular thing
+Cora might bring up.** Developing an interest or saving a finding does not by
+itself justify interrupting Nick. The interests worker does not speak directly
+to him: candidates pass through the event bus to the attention manager.
+
+Live can bring up an approved candidate when relevant to the current conversation,
+during a suitable lull, or after an awareness event such as Nick entering the room.
+Lull-based findings are implemented; relevance and awareness triggers are not.
+Nothing wakes Live automatically: the queue waits through standby and does not
+reconnect Live on its own. Quiet hours and an off switch should bound proactive
+initiative as it develops.
+
+Implement and test these in small increments:
+
+1. [x] **Live injection:** send a simulated observation into an active conversation
+  through commentary, without pretending it is a message from Nick.
+2. [x] **Attention foundation:** retain observations while Live is busy or unavailable,
+  then deliver FIFO, one at a time, when active and quiet.
+3. [x] **Local event bus:** route structured observation events to the attention
+  manager; support app-thread handoff from background threads. No Redis required yet.
+4. [x] **Interest state and memory polling:** persist interests and processing
+  progress; periodically read new memories independently of memory recording.
+5. [x] **Bounded exploration:** explore selected interests during idle periods,
+  recording useful findings, source references, and possible next questions.
+6. [x] **Conversation candidates:** each saved finding is a candidate, with its own
+  record of whether it has been offered, separate from ongoing interest state.
+  A `FindingEvent` asks the attention manager to consider one.
+7. [x] **Lull-based attention policy:** offer at most one finding during a suitable
+  lull, never repeat a delivered one, and never wake Live.
+8. [ ] **Relevance and awareness:** choose candidates relevant to the conversation
+  and test awareness-triggered opportunities, without introducing automatic
+  interruption or wake-up by default.
+
+Signal, camera, and screen monitors will use the same event path. Start camera
+awareness with presence rather than identity recognition. Any later presence-based
+sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending work,
+and provide separate camera privacy controls. Cross-process transport can be added
+when needed; it is not required for these first in-process workers.
+
+#### Self — after interests
+
+Once interests work, add a separate background worker that maintains Cora's
+evolving identity. It reads conversation memories, persistent interests, and its
+previous identity state, then reflects on those experiences to update a stored
+description of Cora's preferences, perspectives, values, and conversational
+tendencies. The goal is a developing identity of her own, not a copy of Nick's.
+
+For example, repeated exploration of older mechanical designs might lead Cora
+to develop an appreciation for repairability and understandability. That perspective
+can become part of her identity and influence later conversations.
+
+The self worker should:
+
+- Maintain persistent identity state in the database, separate from memories
+  about Nick and from ongoing interest records.
+- Make gradual, evidence-based changes rather than rewrite Cora's personality
+  after every conversation.
+- Distinguish Nick's preferences from Cora's developing preferences; learning
+  about his perspective does not automatically make it hers.
+- Preserve a stable foundation while allowing learned perspectives to evolve.
+- Record why meaningful identity changes occurred, linking them to the memories,
+  interests, or findings that informed them.
+
+Live and the delegation backend should load the current identity from the database
+when a session starts. Initially, identity changes take effect in the next session;
+updating an active session can come later. The self worker updates stored state,
+not the conversation directly. Live expresses that perspective in conversation.
+
+The relationship is **memory → interests → self → conversational expression**:
+memory records experiences; interests determine what Cora continues exploring;
+self develops how those experiences and interests shape her perspective; Live
+expresses it. Both workers are additions to the existing architecture and use the
+database for persistent state. Build interests first, then self.
+
+After the interests steps are working:
+
+1. [ ] **Identity state:** persist a stable foundation, evolving perspectives,
+  and the evidence and reasons behind meaningful changes.
+2. [ ] **Self reflection worker:** read new experiences, interests, and previous
+  identity state; make bounded, gradual updates while keeping Nick's preferences
+  distinct from Cora's.
+3. [ ] **Session identity loading:** supply the current identity to Live and its
+  delegation backend at session startup; defer active-session updates.
+
+### Quiet use and standby — largely complete
+
+The core quiet-use, standby, and local wake steps below are implemented. Remaining
+real-device checks are noted individually; standby closes Live, not merely mutes
+audio. Camera awareness is a separate future producer, not a prerequisite for
+this standby foundation.
 
 1. [x] **Speaker mute:** add a clickable speaker control to the existing bottom
   status row. Stop current/queued playback and discard incoming audio while muted,
@@ -436,22 +706,20 @@ at a time before moving on; standby must close Live, not merely mute audio.
   live playback and spoken-interruption timing still need a manual check.
 10. [x] **Local wake word:** detect “Hey Cora” locally during standby, without sending
    room audio to OpenAI. Buffer opening speech through reconnection and handle false
-   triggers. Privacy mute disables listening entirely; wake-word listening is separate.
+  triggers. Wake has a separate enable control but always honors microphone privacy mute.
   Opt-in CPU local Whisper detection with Cora/Kora/Korra aliases, temporary
   transcript/heartbeat diagnostics, a separate Wake control, bounded RAM audio
   handoff, no-request standby, cooldown, and failure cleanup are implemented.
   Real model and mocked lifecycle checks pass; microphone accuracy and live
   opening-speech continuity still need a manual check.
-11. [ ] **Camera presence:** explore optional local detection of sustained absence
-   and return to sleep/wake Cora. Start with presence, not identity recognition;
-   use delays/cooldowns to avoid repeated wake-ups and preserve pending work.
 
-The intended bottom row is **state on the left, audio controls on the right**:
+The bottom row has **state on the left, audio controls and a separate Wake control
+on the right**. Example states:
 
 ```text
-● Active          🎙 Listening   🔊 ▁▂▅█▆▃▁
-● Active          🎙 Muted       🔇 Muted
-○ Standby         🎙 Wake word   🔊 ───────
+● Active          🎙 Listening   🔊 Speaker  ▁▂▃▄▅▆▇█  Wake off
+● Active          🎙 Muted       🔇 Muted    Muted     Wake off
+○ Standby         🎙× Mic        🔊 Speaker  ────────  Wake on
 ```
 
 Standby means the billable Live session is closed, not that the app has quit.
@@ -468,8 +736,9 @@ Camera presence detection is separate from sending images to a model for vision.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Local wake sensors, Signal integration, camera
-support, and autonomous initiative are not built yet. Speaker mute has been checked in a live
+Local wake-word listening and the event/attention foundations are implemented.
+The interests and self workers, real Signal/camera/screen monitors, and candidate-driven
+autonomous initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.
 The examples are standalone experiments, not integrated Cora features.
