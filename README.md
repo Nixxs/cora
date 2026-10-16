@@ -269,6 +269,7 @@ Cora uses **two models working together in one Live session**:
 For example, if you ask about something happening today, Live delegates the
 question, the backend searches the web, and Live uses the result to answer aloud.
 For a question about an earlier conversation, the backend can call `search_memory`.
+Asked how she came to one of her interests or findings, it can call `recall_interest`.
 An explicit request to quit can trigger `close_app` instead.
 
 **The backend chooses tools; the application executes custom tools.** Web search
@@ -305,7 +306,8 @@ small, size-capped results are fed back into Cora-prime:
   interests with their latest findings (at most 3,000 characters). Session setup
   refuses an oversized block rather than silently growing the context.
 - **On demand**, the backend can call `search_memory` for a bounded number of
-  matches instead of preloading everything.
+  matches instead of preloading everything, and `recall_interest` for one
+  interest's origin and its three latest findings (read-only, size-capped).
 - **Observations** delivered by the attention manager enter the Live conversation
   one at a time.
 - **Findings** Cora may raise herself: at most one finding (up to 2,000 characters)
@@ -451,7 +453,7 @@ python -m subconscious.explore_interest
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, interests (evolution and exploration), and future background workers. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`). |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
