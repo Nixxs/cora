@@ -77,7 +77,7 @@ class RecallInterestToolTests(unittest.IsolatedAsyncioTestCase):
                 validate_arguments(arguments)
         registry = create_tool_registry(
             get_connection=lambda: self.current, is_closing=lambda: self.closing,
-            shutdown=AsyncMock(), write_debug=self.log, schedule=MagicMock(),
+            shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=MagicMock(),
         )
         self.assertEqual(registry.schemas()[2], SCHEMA)
         self.build.assert_not_called()

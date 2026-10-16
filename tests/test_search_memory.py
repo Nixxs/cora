@@ -564,10 +564,10 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
             validate_arguments(arguments)
         registry = create_tool_registry(
             get_connection=lambda: self.current, is_closing=lambda: self.closing,
-            shutdown=AsyncMock(), write_debug=self.log, schedule=MagicMock(),
+            shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=MagicMock(),
         )
         self.assertEqual([schema["name"] for schema in registry.schemas()],
-                         ["close_app", "search_memory", "recall_interest"])
+                         ["close_app", "search_memory", "recall_interest", "enter_standby"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
 
@@ -624,7 +624,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
         schedule = MagicMock()
         registry = create_tool_registry(
             get_connection=lambda: self.current, is_closing=lambda: False,
-            shutdown=AsyncMock(), write_debug=self.log, schedule=schedule,
+            shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=schedule,
         )
         invalid = [{}, {"query": "q", "extra": "PRIVATE"}]
         invalid += [{"query": value} for value in ("", " \n\t", "x" * 1001, None, True, 4, [], {})]
@@ -818,7 +818,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
                 tools = connection.session.start.call_args.kwargs["session"]["delegation"]["responses"]["tools"]
                 self.assertEqual(tools[0], {"type": "web_search"})
                 self.assertEqual([tool["name"] for tool in tools[1:]],
-                                 ["close_app", "search_memory", "recall_interest"])
+                                 ["close_app", "search_memory", "recall_interest", "enter_standby"])
                 self.assertEqual(tools[2], SCHEMA)
                 self.search.assert_called_once_with(self.store_type.return_value, "PRIVATE question", limit=8)
                 self.engine.dispose.assert_called_once_with()
