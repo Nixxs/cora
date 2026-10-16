@@ -157,12 +157,15 @@ class ExplorationStore:
             record.finished_at = max(now, record.started_at)
             return snapshot(record)
 
-    def list_recent(self, limit: int = 10) -> list[Exploration]:
-        """Newest attempts first."""
+    def list_recent(self, limit: int = 10, *, interest_id: UUID | None = None) -> list[Exploration]:
+        """Newest attempts first, optionally for one interest."""
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= LIST_LIMIT:
             raise ValueError(f"Exploration list limit must be an integer from 1 to {LIST_LIMIT}")
+        query = select(InterestExplorationRecord)
+        if interest_id is not None:
+            query = query.where(InterestExplorationRecord.interest_id == interest_id)
         with Session(self.engine) as session:
-            records = session.scalars(select(InterestExplorationRecord).order_by(
+            records = session.scalars(query.order_by(
                 InterestExplorationRecord.started_at.desc(), InterestExplorationRecord.id.desc(),
             ).limit(limit))
             return [snapshot(record) for record in records]
