@@ -8,8 +8,8 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
-from subconscious.exploration_store import LIST_LIMIT, Exploration
-from subconscious.interest_store import Interest
+from subconscious.interests.exploration_store import LIST_LIMIT, Exploration
+from subconscious.interests.interest_store import Interest
 from tools import create_tool_registry
 from tools.recall_interest import ERROR_RESULT, SCHEMA, RecallInterestTool, validate_arguments
 

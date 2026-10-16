@@ -23,13 +23,13 @@ from storage.models import (
     InterestEventMemoryRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord,
     InterestWorkerStateRecord, MemoryRecord, MessageRecord,
 )
-from subconscious.interest_strength import (
+from subconscious.interests.interest_strength import (
     INITIAL_STRENGTH, MAX_REINFORCE_DELTA, effective_strength, has_room,
     needs_room, next_status, reinforce, settle,
 )
 
 if TYPE_CHECKING:  # interest_proposals imports this module
-    from subconscious.interest_proposals import Proposal
+    from subconscious.interests.interest_proposals import Proposal
 
 TITLE_MAX_CHARS = 200
 TEXT_MAX_CHARS = 1000

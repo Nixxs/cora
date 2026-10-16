@@ -9,7 +9,7 @@ from uuid import uuid4
 import app as app_module
 from live import CoraLive
 from subconscious.event_bus import FindingEvent
-from subconscious.exploration_store import Mention, claim_mention_now, release_mention_now
+from subconscious.interests.exploration_store import Mention, claim_mention_now, release_mention_now
 from test_observations import queued_app
 
 FOUND_AT = datetime(2026, 10, 15, 23, 30, tzinfo=timezone(timedelta(hours=-5)))  # 16 Oct in UTC
@@ -63,8 +63,8 @@ class FindingDeliveryTests(unittest.IsolatedAsyncioTestCase):
 
     def test_database_wrappers_use_and_dispose_their_own_engine(self):
         engine = MagicMock()
-        with patch("subconscious.exploration_store.build_engine", return_value=engine), \
-                patch("subconscious.exploration_store.ExplorationStore") as store:
+        with patch("subconscious.interests.exploration_store.build_engine", return_value=engine), \
+                patch("subconscious.interests.exploration_store.ExplorationStore") as store:
             store.return_value.claim_mention.return_value = MENTION
             store.return_value.release_mention.return_value = True
             self.assertIs(claim_mention_now(), MENTION)

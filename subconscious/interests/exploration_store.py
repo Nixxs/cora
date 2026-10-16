@@ -15,8 +15,8 @@ from sqlalchemy.orm import Session
 
 from storage.database import build_engine
 from storage.models import InterestExplorationRecord, InterestRecord
-from subconscious.interest_store import Interest, clean_text, snapshot as interest_snapshot, validate_now
-from subconscious.interest_strength import settle
+from subconscious.interests.interest_store import Interest, clean_text, snapshot as interest_snapshot, validate_now
+from subconscious.interests.interest_strength import settle
 
 FINDING_MAX_CHARS = 2000
 QUESTION_MAX_CHARS = 300

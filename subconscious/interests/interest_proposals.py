@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from uuid import UUID
 
-from subconscious.interest_store import (
+from subconscious.interests.interest_store import (
     TITLE_MAX_CHARS, Interest, NewMemory, clean_text, validate_delta,
 )
 

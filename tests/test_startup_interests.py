@@ -11,7 +11,7 @@ from app import CoraApp
 from live import CoraLive
 from session_config import BACKEND_INSTRUCTIONS, LIVE_INSTRUCTIONS, build_session_config
 from storage.keyboard_persistence import KeyboardPersistence
-from subconscious.interest_store import Interest, InterestStore
+from subconscious.interests.interest_store import Interest, InterestStore
 import test_keyboard_persistence as keyboard_tests
 from test_startup_memories import PRIOR_CONTEXT, fake_live_transport
 

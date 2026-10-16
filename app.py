@@ -26,9 +26,9 @@ from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
 from subconscious.event_bus import EventBus, FindingEvent, ObservationEvent
-from subconscious.evolve_interests import run_interest_cycle
-from subconscious.exploration_store import claim_mention_now, release_mention_now
-from subconscious.explore_interest import run_exploration_cycle
+from subconscious.interests.evolve_interests import run_interest_cycle
+from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
+from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
 from live_events import LiveEventHandler

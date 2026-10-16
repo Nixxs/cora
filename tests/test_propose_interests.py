@@ -3,9 +3,9 @@ import json
 import unittest
 from unittest.mock import MagicMock
 
-from subconscious.interest_proposals import Proposal, Reinforcement
-from subconscious.interest_store import Interest
-from subconscious.propose_interests import INTEREST_INSTRUCTIONS, INTEREST_SCHEMA, propose_interests
+from subconscious.interests.interest_proposals import Proposal, Reinforcement
+from subconscious.interests.interest_store import Interest
+from subconscious.interests.propose_interests import INTEREST_INSTRUCTIONS, INTEREST_SCHEMA, propose_interests
 import test_interest_proposals as proposal_tests
 from test_summarize import response_fixture
 

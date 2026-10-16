@@ -6,9 +6,9 @@ import json
 
 from openai import OpenAI
 
-from subconscious.interest_proposals import REINFORCE_FIELDS, SPAWN_FIELDS, Proposal, validate_proposal
-from subconscious.interest_store import Interest, NewMemory, validate_now
-from subconscious.interest_strength import MAX_REINFORCE_DELTA, settle
+from subconscious.interests.interest_proposals import REINFORCE_FIELDS, SPAWN_FIELDS, Proposal, validate_proposal
+from subconscious.interests.interest_store import Interest, NewMemory, validate_now
+from subconscious.interests.interest_strength import MAX_REINFORCE_DELTA, settle
 
 INTEREST_INSTRUCTIONS = (
     "You tend Cora's own interests: the things Cora herself has become curious about "

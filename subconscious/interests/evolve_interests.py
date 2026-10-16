@@ -1,6 +1,6 @@
 """Evolve Cora's interests from new memories, at most once a day.
 
-Usage: python -m subconscious.evolve_interests [--dry-run]
+Usage: python -m subconscious.interests.evolve_interests [--dry-run]
 """
 
 import argparse
@@ -13,9 +13,9 @@ from openai import OpenAI
 
 from session_config import BACKEND_MODEL
 from storage.database import build_engine
-from subconscious.interest_proposals import Proposal
-from subconscious.interest_store import Interest, InterestStore, validate_now
-from subconscious.propose_interests import propose_interests
+from subconscious.interests.interest_proposals import Proposal
+from subconscious.interests.interest_store import Interest, InterestStore, validate_now
+from subconscious.interests.propose_interests import propose_interests
 
 EVOLVE_EVERY = timedelta(hours=24)
 MIN_NEW_MEMORIES = 3

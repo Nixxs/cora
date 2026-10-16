@@ -2,8 +2,8 @@ from datetime import datetime, timezone
 import unittest
 from uuid import uuid4
 
-from subconscious.interest_proposals import Proposal, Reinforcement, Spawn, validate_proposal
-from subconscious.interest_store import Interest, NewMemory
+from subconscious.interests.interest_proposals import Proposal, Reinforcement, Spawn, validate_proposal
+from subconscious.interests.interest_store import Interest, NewMemory
 
 NOW = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
 CAR = Interest(uuid4(), "Old mechanical design", "Why older machines were built as they were",

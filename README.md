@@ -432,10 +432,10 @@ report only the error type, never finding text. These
 manual commands respect the same limits and can make billable requests:
 
 ```powershell
-python -m subconscious.interest_store              # list interests (no API calls)
-python -m subconscious.evolve_interests --dry-run  # preview a proposal, saving nothing
-python -m subconscious.evolve_interests
-python -m subconscious.explore_interest
+python -m subconscious.interests.interest_store              # list interests (no API calls)
+python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
+python -m subconscious.interests.evolve_interests
+python -m subconscious.interests.explore_interest
 ```
 
 ## Project layout
@@ -452,7 +452,7 @@ python -m subconscious.explore_interest
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, interests (evolution and exploration), and future background workers. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |

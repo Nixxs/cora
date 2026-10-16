@@ -16,9 +16,9 @@ from storage.models import (
     MEMORY_EMBEDDING_DIMENSIONS, MEMORY_EMBEDDING_MODEL, InterestEventMemoryRecord,
     InterestEventRecord, InterestRecord, InterestWorkerStateRecord, MemoryRecord,
 )
-from subconscious.interest_proposals import Proposal, Reinforcement, Spawn
-from subconscious.interest_store import FADE_REASON, MEMORY_BATCH_LIMIT, InterestStore, MemoryBatch
-from subconscious.interest_strength import (
+from subconscious.interests.interest_proposals import Proposal, Reinforcement, Spawn
+from subconscious.interests.interest_store import FADE_REASON, MEMORY_BATCH_LIMIT, InterestStore, MemoryBatch
+from subconscious.interests.interest_strength import (
     HALF_LIFE, INITIAL_STRENGTH, MAX_LIVE_INTERESTS, MAX_REINFORCE_DELTA, reinforce,
 )
 import test_conversation_summaries as summary_tests
@@ -34,7 +34,7 @@ class InterestStoreValidationTests(unittest.TestCase):
     def test_invalid_inputs_are_rejected_before_connecting(self):
         engine = MagicMock()
         store = InterestStore(engine)
-        with patch("subconscious.interest_store.Session") as session:
+        with patch("subconscious.interests.interest_store.Session") as session:
             for args in (
                 ("", *spawn_args()[1:]), (" \n", *spawn_args()[1:]), ("x" * 201, *spawn_args()[1:]),
                 (spawn_args()[0], "", *spawn_args()[2:]), (*spawn_args()[:2], " ", spawn_args()[3]),

@@ -12,8 +12,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from storage.models import InterestExplorationRecord
-from subconscious.exploration_store import LIST_LIMIT, ExplorationStore
-from subconscious.interest_strength import HALF_LIFE
+from subconscious.interests.exploration_store import LIST_LIMIT, ExplorationStore
+from subconscious.interests.interest_strength import HALF_LIFE
 import test_interest_store as interest_tests
 
 NOW = interest_tests.NOW
@@ -26,7 +26,7 @@ class ExplorationValidationTests(unittest.TestCase):
         engine = MagicMock()
         store = ExplorationStore(engine)
         finding, questions, sources = FINDING
-        with patch("subconscious.exploration_store.Session") as session:
+        with patch("subconscious.interests.exploration_store.Session") as session:
             for args in (
                 ("", questions, sources), ("x" * 2001, questions, sources), (None, questions, sources),
                 (finding, "One question", sources), (finding, ["a", "b", "c", "d"], sources),

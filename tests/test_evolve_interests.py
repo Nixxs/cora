@@ -5,9 +5,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from subconscious.evolve_interests import EVOLVE_EVERY, evolve_interests, preview_interests, run_interest_cycle
-from subconscious.interest_proposals import Proposal, Reinforcement, Spawn
-from subconscious.interest_store import Evolution, InterestStore, MemoryBatch, NewMemory
+from subconscious.interests.evolve_interests import EVOLVE_EVERY, evolve_interests, preview_interests, run_interest_cycle
+from subconscious.interests.interest_proposals import Proposal, Reinforcement, Spawn
+from subconscious.interests.interest_store import Evolution, InterestStore, MemoryBatch, NewMemory
 import test_interest_proposals as proposal_tests
 import test_keyboard_persistence as keyboard_tests
 
@@ -29,7 +29,7 @@ class EvolveInterestsTests(unittest.TestCase):
         self.store.list_interests.return_value = [CAR]
         self.store.apply_evolution.return_value = Evolution((CAR,), None, 0)
         self.client = MagicMock()
-        patcher = patch("subconscious.evolve_interests.propose_interests", return_value=Proposal((), None))
+        patcher = patch("subconscious.interests.evolve_interests.propose_interests", return_value=Proposal((), None))
         self.propose = patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -111,7 +111,7 @@ class RunInterestCycleTests(unittest.TestCase):
         self.engine = MagicMock()
         for name, value in (("build_engine", self.engine), ("OpenAI", MagicMock()),
                             ("evolve_interests", "Evolved from 3 memories: no changes.")):
-            patcher = patch(f"subconscious.evolve_interests.{name}", return_value=value)
+            patcher = patch(f"subconscious.interests.evolve_interests.{name}", return_value=value)
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
 

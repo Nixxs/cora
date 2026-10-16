@@ -11,11 +11,11 @@ from uuid import uuid4
 from openai.types.responses import Response
 
 import app as app_module
-from subconscious.exploration_store import Exploration, ExplorationStore, Start
-from subconscious.explore_interest import (
+from subconscious.interests.exploration_store import Exploration, ExplorationStore, Start
+from subconscious.interests.explore_interest import (
     EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, Discovery, explore, explore_next, run_exploration_cycle,
 )
-from subconscious.interest_store import Interest
+from subconscious.interests.interest_store import Interest
 import test_exploration_store as exploration_tests
 import test_interest_store as interest_tests
 import test_keyboard_persistence as keyboard_tests
@@ -202,7 +202,7 @@ class RunExplorationCycleTests(unittest.TestCase):
         self.engine = MagicMock()
         for name, value in (("build_engine", self.engine), ("OpenAI", MagicMock()),
                             ("explore_next", "Not exploring: too soon.")):
-            patcher = patch(f"subconscious.explore_interest.{name}", return_value=value)
+            patcher = patch(f"subconscious.interests.explore_interest.{name}", return_value=value)
             setattr(self, name, patcher.start())
             self.addCleanup(patcher.stop)
 

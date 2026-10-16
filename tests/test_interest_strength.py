@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 import unittest
 
-from subconscious.interest_strength import (
+from subconscious.interests.interest_strength import (
     ACTIVE_THRESHOLD, DORMANT_THRESHOLD, HALF_LIFE, INITIAL_STRENGTH,
     MAX_COUNTED_ELAPSED, MAX_LIVE_INTERESTS, effective_strength, has_room,
     needs_room, next_status, reinforce, settle,

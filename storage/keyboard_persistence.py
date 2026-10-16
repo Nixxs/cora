@@ -8,7 +8,7 @@ from sqlalchemy import Engine
 from .conversation_store import ConversationStore
 from .database import build_engine
 from memory.store import MemoryStore
-from subconscious.interest_store import InterestStore
+from subconscious.interests.interest_store import InterestStore
 
 
 class KeyboardPersistence:

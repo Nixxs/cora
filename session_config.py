@@ -4,7 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 
 from memory.store import STARTUP_MEMORY_MAX_CHARS
-from subconscious.interest_store import INTEREST_CONTEXT_MAX_CHARS
+from subconscious.interests.interest_store import INTEREST_CONTEXT_MAX_CHARS
 
 
 LIVE_MODEL = "gpt-live-1"

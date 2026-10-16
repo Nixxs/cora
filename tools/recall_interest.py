@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 import json
 
 from storage.database import build_engine
-from subconscious.exploration_store import LIST_LIMIT, ExplorationStore
-from subconscious.interest_proposals import title_key
-from subconscious.interest_store import TITLE_MAX_CHARS, InterestStore
-from subconscious.interest_strength import settle
+from subconscious.interests.exploration_store import LIST_LIMIT, ExplorationStore
+from subconscious.interests.interest_proposals import title_key
+from subconscious.interests.interest_store import TITLE_MAX_CHARS, InterestStore
+from subconscious.interests.interest_strength import settle
 
 RECALLED_FINDINGS = 3
 RECALLED_SOURCES = 3

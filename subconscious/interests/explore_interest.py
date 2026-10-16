@@ -1,6 +1,6 @@
 """Let Cora explore one of her own interests on the web, within the exploration limits.
 
-Usage: python -m subconscious.explore_interest
+Usage: python -m subconscious.interests.explore_interest
 """
 
 import argparse
@@ -15,11 +15,11 @@ from openai import OpenAI
 
 from session_config import BACKEND_MODEL
 from storage.database import build_engine
-from subconscious.exploration_store import (
+from subconscious.interests.exploration_store import (
     FINDING_MAX_CHARS, LIST_LIMIT, MAX_NEXT_QUESTIONS, MAX_SOURCES, QUESTION_MAX_CHARS,
     Exploration, ExplorationStore, clean_questions, clean_sources,
 )
-from subconscious.interest_store import Interest, clean_text, validate_now
+from subconscious.interests.interest_store import Interest, clean_text, validate_now
 
 MAX_SEARCHES = 3
 PREVIOUS_FINDINGS = 3
