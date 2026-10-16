@@ -108,27 +108,18 @@ class ExtractMemoriesTests(unittest.TestCase):
         self.store.get_summary.assert_not_called()
         self.store.save_summary.assert_not_called()
 
-    def test_visit_and_weather_mock_empty_output_produces_no_memory_writes(self):
+    def test_empty_output_saves_an_empty_batch_and_policy_covers_visits_corrections_and_qualifiers(self):
         # These fixtures do not prove that a real model distinguishes the examples.
         self.set_output({"memories": []})
         self.memories.save_memories.return_value = []
-        for content in ("I am visiting Perth this week", "What is the weather in Perth?"):
-            with self.subTest(content=content):
-                self.source.text = content
-                self.memories.save_memories.reset_mock()
-                self.assertEqual(self.extract(), [])
-                # The empty batch reaches the adapter; MemoryStore's no-session
-                # empty-batch test separately verifies that it writes nothing.
-                self.memories.save_memories.assert_called_once_with(self.conversation_id, [])
-                instructions = self.client.responses.create.call_args.kwargs["instructions"]
-                self.assertIn("'I live in Perth'", instructions)
-                self.assertIn("'I am visiting Perth this week'", instructions)
-                self.assertIn("'What is the weather in Perth?'", instructions)
-                self.assertIn("skip temporary visits", instructions)
-
-    def test_policy_instructions_cover_untrusted_data_corrections_and_qualifiers(self):
+        self.source.text = "I am visiting Perth this week"
+        self.assertEqual(self.extract(), [])
+        # MemoryStore's no-session empty-batch test separately verifies it writes nothing.
+        self.memories.save_memories.assert_called_once_with(self.conversation_id, [])
         instructions = extraction.MEMORY_INSTRUCTIONS
-        for policy in ("user's own words", "not assistant assertions", "exact verbatim quote",
+        for policy in ("'I live in Perth'", "'I am visiting Perth this week'",
+                       "'What is the weather in Perth?'", "skip temporary visits",
+                       "user's own words", "not assistant assertions", "exact verbatim quote",
                        "one contiguous substring", "Do not add surrounding quotation marks",
                        "insert ellipses", "copy it too",
                        "conditions, negations, uncertainty and time qualifiers", "latest explicit statement",

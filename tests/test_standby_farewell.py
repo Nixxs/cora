@@ -46,6 +46,8 @@ async def alert_app():
 class StandbyAlertTransportTests(unittest.IsolatedAsyncioTestCase):
     async def test_direct_commentary_does_not_create_backend_work(self):
         live = CoraLive()
+        with self.assertRaises(RuntimeError):
+            await live.send_standby_alert("disconnected")
         live.ready = True
         live.connection = MagicMock()
         live.connection.session.commentary.append = AsyncMock()
@@ -61,10 +63,6 @@ class StandbyAlertTransportTests(unittest.IsolatedAsyncioTestCase):
         live.speaker_muted = True
         await live.send_standby_alert("alert-2")
         live.connection.session.commentary.append.assert_awaited_once()
-
-    async def test_disconnected_transport_cannot_send_alert(self):
-        with self.assertRaises(RuntimeError):
-            await CoraLive().send_standby_alert("alert-1")
 
 
 class StandbyFarewellTests(unittest.IsolatedAsyncioTestCase):
@@ -140,12 +138,6 @@ class StandbyFarewellTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNone(app.inactivity.alert)
                     standby.assert_not_called()
 
-    async def test_empty_input_transcript_is_not_a_user_response(self):
-        async with alert_app() as (app, pilot, clock):
-            app.handle_live_event(SimpleNamespace(type="session.input_transcript.delta", delta=""))
-            self.assertIsNotNone(app.inactivity.alert)
-            self.assertIsNone(app.inactivity.alert.last_output_at)
-
     @patch("app.CoraApp.action_standby")
     async def test_later_output_restarts_quiet_and_response_window(self, standby):
         async with alert_app() as (app, pilot, clock):
@@ -168,6 +160,10 @@ class StandbyFarewellTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_oh_wait_during_response_window_cancels_and_grants_full_idle(self):
         async with alert_app() as (app, pilot, clock):
+            # An empty input transcript is not a user response.
+            app.handle_live_event(SimpleNamespace(type="session.input_transcript.delta", delta=""))
+            self.assertIsNotNone(app.inactivity.alert)
+            self.assertIsNone(app.inactivity.alert.last_output_at)
             acknowledge(app)
             output(app)
             clock.return_value = 1002
@@ -182,26 +178,34 @@ class StandbyFarewellTests(unittest.IsolatedAsyncioTestCase):
             app.live.send_standby_alert.assert_awaited_once()
             self.assertTrue(app.live.ready)
 
-    async def test_typing_and_audio_control_cancel_pending_sleep(self):
-        for interaction in ("typing", "mute"):
-            with self.subTest(interaction=interaction):
+    async def test_user_activity_backend_work_and_failures_cancel_without_closing_or_retrying(self):
+        async def typing(app, pilot):
+            await pilot.press("a")
+
+        async def mute(app, pilot):
+            await pilot.click("#speaker-status")
+
+        async def backend_work(app, pilot):
+            app.handle_live_event(backend_event("response.created"))
+            app.handle_live_event(backend_event("response.completed"))
+
+        async def rejected(app, pilot):
+            app.handle_live_event(SimpleNamespace(type="error", error=SimpleNamespace(
+                message="Rejected", client_event_id=app.inactivity.alert.event_id,
+            )))
+
+        async def playback_failure(app, pilot):
+            app.handle_audio_status(False, "Playback failed")
+
+        for interrupt in (typing, mute, backend_work, rejected, playback_failure):
+            with self.subTest(interrupt.__name__):
                 async with alert_app() as (app, pilot, clock):
-                    if interaction == "typing":
-                        await pilot.press("a")
-                    else:
-                        await pilot.click("#speaker-status")
+                    await interrupt(app, pilot)
+                    # Cancelled immediately, not only at the next check.
                     self.assertIsNone(app.inactivity.alert)
                     app.check_inactivity()
                     app.live.close.assert_not_called()
                     app.live.send_standby_alert.assert_awaited_once()
-
-    async def test_new_backend_work_cancels_even_between_checks(self):
-        async with alert_app() as (app, pilot, clock):
-            app.handle_live_event(backend_event("response.created"))
-            app.handle_live_event(backend_event("response.completed"))
-            self.assertIsNone(app.inactivity.alert)
-            app.check_inactivity()
-            app.live.close.assert_not_called()
 
     async def test_new_tool_work_cancels_at_check(self):
         async with alert_app() as (app, pilot, clock):
@@ -214,21 +218,6 @@ class StandbyFarewellTests(unittest.IsolatedAsyncioTestCase):
             finally:
                 release.set()
                 await asyncio.wait_for(tool.wait(), 3)
-
-    async def test_rejection_and_playback_failure_do_not_close_or_retry(self):
-        for failure in ("rejected", "audio"):
-            with self.subTest(failure=failure):
-                async with alert_app() as (app, pilot, clock):
-                    if failure == "rejected":
-                        app.handle_live_event(SimpleNamespace(type="error", error=SimpleNamespace(
-                            message="Rejected", client_event_id=app.inactivity.alert.event_id,
-                        )))
-                    else:
-                        app.handle_audio_status(False, "Playback failed")
-                    self.assertIsNone(app.inactivity.alert)
-                    app.check_inactivity()
-                    app.live.close.assert_not_called()
-                    app.live.send_standby_alert.assert_awaited_once()
 
     async def test_send_failure_preserves_draft_and_stays_active(self):
         async with idle_app() as (app, pilot, clock):

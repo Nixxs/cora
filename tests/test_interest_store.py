@@ -128,14 +128,13 @@ class InterestStoreDatabaseTests(unittest.TestCase):
                          ("spawn", None, INITIAL_STRENGTH, "Came up twice"))
         self.assertEqual(self.links(event.id), {memory_id})
 
-    def test_spawn_is_refused_when_live_cap_is_full_and_writes_nothing(self):
-        self.fill(MAX_LIVE_INTERESTS)
+    def test_live_cap_refuses_spawns_but_never_live_reinforcement(self):
+        interests = self.fill(MAX_LIVE_INTERESTS)
         self.assertIsNone(self.interests.spawn(*spawn_args("One too many"), now=NOW))
         self.assertEqual(len(self.interests.list_interests(include_dormant=True)), MAX_LIVE_INTERESTS)
         self.assertEqual(len(self.events()), MAX_LIVE_INTERESTS)
-
-    def test_interests_that_decayed_to_dormant_free_room_before_being_settled(self):
-        self.fill(MAX_LIVE_INTERESTS)
+        self.assertEqual(self.interests.reinforce(interests[0].id, 0.15, "More", now=NOW).status, "active")
+        # Interests that decayed to dormant free room before being settled.
         later = NOW + HALF_LIFE + timedelta(days=1)  # 0.2 decays below 0.1
         self.assertIsNotNone(self.interests.spawn(*spawn_args("New"), now=later))
 
@@ -152,6 +151,8 @@ class InterestStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(event.kind, "reinforce")
         self.assertAlmostEqual(event.strength_before, settled)
         self.assertEqual(self.links(event.id), {memory_id})
+        with self.assertRaises(LookupError):
+            self.interests.reinforce(uuid4(), 0.1, "Because", now=NOW)
 
     def test_reinforcing_a_faded_interest_records_fade_then_reinforce(self):
         interest = self.interests.spawn(*spawn_args(), now=NOW)
@@ -186,14 +187,6 @@ class InterestStoreDatabaseTests(unittest.TestCase):
                     for _ in range(2)]
         self.assertEqual(statuses, ["dormant", "active"])
         self.assertEqual(self.events(dormant.id)[-1].kind, "revive")
-
-    def test_reinforcing_a_live_interest_never_needs_room(self):
-        interests = self.fill(MAX_LIVE_INTERESTS)
-        self.assertEqual(self.interests.reinforce(interests[0].id, 0.15, "More", now=NOW).status, "active")
-
-    def test_unknown_interest_is_rejected(self):
-        with self.assertRaises(LookupError):
-            self.interests.reinforce(uuid4(), 0.1, "Because", now=NOW)
 
     def test_settle_all_decays_fades_and_lists_by_strength(self):
         weak = self.interests.spawn(*spawn_args("Weak"), now=NOW)
@@ -281,12 +274,10 @@ class MemoryCursorDatabaseTests(unittest.TestCase):
     def at(self, minutes):
         return self.base + timedelta(minutes=minutes)
 
-    def test_no_memories_reads_an_empty_batch(self):
-        batch = self.interests.read_new_memories()
-        self.assertEqual(batch, MemoryBatch((), None, None, False))
-        self.assertFalse(self.interests.advance_memory_cursor(batch))
-
     def test_reads_oldest_first_and_passes_over_duplicates(self):
+        empty = self.interests.read_new_memories()
+        self.assertEqual(empty, MemoryBatch((), None, None, False))
+        self.assertFalse(self.interests.advance_memory_cursor(empty))
         first = self.saved(self.at(0), content="Lives in Perth")
         second = self.saved(self.at(1), content="Restoring a 1968 car")
         duplicate = self.saved(self.at(2), duplicate_of=first, content="Lives in Perth, WA")
@@ -300,6 +291,8 @@ class MemoryCursorDatabaseTests(unittest.TestCase):
         self.assertFalse(self.interests.advance_memory_cursor(again))
 
     def test_stops_at_the_first_memory_not_yet_ready(self):
+        # Memories from non-user messages are never read, so they never block the cursor.
+        self.saved(self.at(-1), embedded=False, checked=False, role="assistant")
         first = self.saved(self.at(0))
         pending = self.saved(self.at(1), embedded=False, checked=False)
         later = self.saved(self.at(2))
@@ -340,11 +333,6 @@ class MemoryCursorDatabaseTests(unittest.TestCase):
         self.assertTrue(self.interests.advance_memory_cursor(full))
         self.assertFalse(self.interests.advance_memory_cursor(short))
         self.assertEqual(self.interests.read_new_memories().after, (self.at(1), second))
-
-    def test_memories_from_non_user_messages_never_block_the_cursor(self):
-        self.saved(self.at(0), embedded=False, checked=False, role="assistant")
-        user = self.saved(self.at(1))
-        self.assertEqual(self.ids(self.interests.read_new_memories()), [user])
 
     def state(self):
         with Session(self.engine) as session:

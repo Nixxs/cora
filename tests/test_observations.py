@@ -46,7 +46,7 @@ class ObservationTransportTests(unittest.IsolatedAsyncioTestCase):
         second = live.connection.session.commentary.append.call_args.kwargs
         self.assertNotEqual(command["event_id"], second["event_id"])
 
-    async def test_disconnected_or_unready_transport_rejects_observation(self):
+    async def test_unready_transport_rejects_and_failure_is_not_retried(self):
         for connected, ready in ((False, False), (False, True), (True, False)):
             with self.subTest(connected=connected, ready=ready):
                 live = CoraLive()
@@ -58,7 +58,6 @@ class ObservationTransportTests(unittest.IsolatedAsyncioTestCase):
                     await live.send_observation("Someone entered.")
                 connection.session.commentary.append.assert_not_called()
 
-    async def test_transport_failure_is_not_retried(self):
         live = CoraLive()
         live.ready = True
         live.connection = MagicMock()
@@ -141,19 +140,28 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             app.live.send_observation.assert_awaited_once()
             self.assertFalse(app.attention.pending)
 
-    async def test_send_failure_is_reported_without_private_text_or_retry(self):
+    async def test_send_failure_is_private_not_retried_and_does_not_block_the_queue(self):
         async with queued_app() as (app, pilot, clock):
-            app.live.send_observation = AsyncMock(side_effect=OSError("private payload"))
-            app.action_test_observation()
-            await app.attention.worker.wait()
-            clock.return_value += 3
+            app.standby = True
+            app.queue_observation("First")
+            app.queue_observation("Second")
+            app.live.send_observation.side_effect = [OSError("private payload"), None]
+            app.standby = False
             app.check_observations()
-            app.live.send_observation.assert_awaited_once()
+            await app.attention.worker.wait()
             entries = "\n".join(app.activity.entries)
             self.assertIn("Observation send failed (OSError)", entries)
             self.assertNotIn("private payload", entries)
             self.assertNotIn("Observation sent", entries)
             self.assertTrue(app.live.ready)
+            self.assertEqual(list(app.attention.pending), ["Second"])
+            clock.return_value += 2
+            app.check_observations()
+            await app.attention.worker.wait()
+            self.assertEqual(
+                [call.args[0] for call in app.live.send_observation.await_args_list],
+                ["First", "Second"],
+            )
             self.assertFalse(app.attention.pending)
 
     async def test_queue_delivers_in_arrival_order_with_a_gap_between_items(self):
@@ -230,24 +238,6 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             app.live.send_observation.assert_awaited_once_with("Waiting")
             self.assertFalse(app.attention.pending)
 
-    async def test_failed_item_does_not_prevent_remaining_queue_delivery(self):
-        async with queued_app() as (app, pilot, clock):
-            app.standby = True
-            app.queue_observation("First")
-            app.queue_observation("Second")
-            app.live.send_observation.side_effect = [OSError("offline"), None]
-            app.standby = False
-            app.check_observations()
-            await app.attention.worker.wait()
-            self.assertEqual(list(app.attention.pending), ["Second"])
-            clock.return_value += 2
-            app.check_observations()
-            await app.attention.worker.wait()
-            self.assertEqual(
-                [call.args[0] for call in app.live.send_observation.await_args_list],
-                ["First", "Second"],
-            )
-
     async def test_shutdown_stops_delivery_and_rejects_new_items(self):
         async with queued_app() as (app, pilot, clock):
             app.standby = True
@@ -263,22 +253,30 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(app.attention.pending), ["Waiting"])
             app.live.send_observation.assert_not_called()
 
-    async def test_monitor_events_route_to_attention_while_live_is_unavailable(self):
+    async def test_monitor_events_route_to_attention_despite_failing_subscribers(self):
         async with queued_app() as (app, pilot, clock):
             app.standby = True
+            app.event_bus.subscribe(ObservationEvent, MagicMock(side_effect=ValueError("private details")))
             events = [
-                ObservationEvent(source="signal", content="A message arrived"),
+                ObservationEvent(source="signal", content="A private message arrived"),
                 ObservationEvent(source="camera", content="Someone entered"),
                 ObservationEvent(source="screen", content="Download finished"),
             ]
             for event in events:
                 self.assertTrue(app.event_bus.publish(event))
             self.assertEqual(list(app.attention.pending), [event.content for event in events])
+            entries = "\n".join(app.activity.entries)
+            self.assertIn("Event subscriber failed (ValueError)", entries)
+            self.assertNotIn("private", entries)
             app.live.send_observation.assert_not_called()
             app.standby = False
             app.check_observations()
             await app.attention.worker.wait()
             app.live.send_observation.assert_awaited_once_with(events[0].content)
+            bus = app.event_bus
+        # Unmounting closes the bus even without an explicit quit.
+        self.assertTrue(bus.closed)
+        self.assertFalse(bus.publish(ObservationEvent(source="test", content="Too late")))
 
     async def test_background_thread_can_publish_via_app_thread_handoff(self):
         async with queued_app() as (app, pilot, clock):
@@ -293,20 +291,3 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(accepted)
             self.assertEqual(subscriber_threads, [app_thread])
             self.assertEqual(list(app.attention.pending), [event.content])
-
-    async def test_bus_subscriber_failure_is_private_and_does_not_block_attention(self):
-        async with queued_app() as (app, pilot, clock):
-            app.standby = True
-            app.event_bus.subscribe(ObservationEvent, MagicMock(side_effect=ValueError("private details")))
-            event = ObservationEvent(source="signal", content="private observation")
-            self.assertTrue(app.event_bus.publish(event))
-            self.assertEqual(list(app.attention.pending), [event.content])
-            entries = "\n".join(app.activity.entries)
-            self.assertIn("Event subscriber failed (ValueError)", entries)
-            self.assertNotIn("private", entries)
-
-    async def test_unmount_closes_bus_without_explicit_quit(self):
-        async with queued_app() as (app, pilot, clock):
-            bus = app.event_bus
-        self.assertTrue(bus.closed)
-        self.assertFalse(bus.publish(ObservationEvent(source="test", content="Too late")))

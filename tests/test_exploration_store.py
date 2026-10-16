@@ -91,19 +91,19 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         self.assertIsNone(self.explorations.fail(started.id, now=NOW))
         self.assertEqual(self.explorations.list_recent(), [found])
 
-    def test_a_failed_attempt_keeps_no_finding_and_cannot_be_finished_later(self):
-        started = self.start()
-        failed = self.explorations.fail(started.id, now=NOW - timedelta(hours=1))  # clock moved back
-        self.assertEqual((failed.status, failed.finding, failed.finished_at), ("failed", None, NOW))
-        self.assertIsNone(self.explorations.finish(started.id, *FINDING, now=NOW))
-        self.assertEqual(self.explorations.list_recent(), [failed])
-
-    def test_unknown_attempts_are_errors(self):
+    def test_a_failed_attempt_keeps_no_finding_and_is_never_finished_or_mentioned(self):
         with self.assertRaises(LookupError):
             self.explorations.finish(uuid4(), *FINDING, now=NOW)
         with self.assertRaises(LookupError):
             self.explorations.fail(uuid4(), now=NOW)
         self.assertEqual(self.explorations.list_recent(), [])
+        started = self.start()
+        failed = self.explorations.fail(started.id, now=NOW - timedelta(hours=1))  # clock moved back
+        self.assertEqual((failed.status, failed.finding, failed.finished_at), ("failed", None, NOW))
+        self.assertIsNone(self.explorations.finish(started.id, *FINDING, now=NOW))
+        self.assertEqual(self.explorations.list_recent(), [failed])
+        self.assertIsNone(self.explorations.claim_mention(now=NOW))
+        self.assertEqual(self.mentioned_at(), {None: None})
 
     def test_recent_attempts_are_newest_first_and_limited(self):
         for title in ("Second", "Third"):
@@ -222,11 +222,6 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
             ), {"id": other.id})
         self.assertIsNone(self.explorations.claim_mention(now=stale + timedelta(days=1)))
         self.assertIsNone(self.mentioned_at()["Stale"])
-
-    def test_failed_attempts_are_never_mentioned(self):
-        self.explorations.fail(self.start().id, now=NOW)
-        self.assertIsNone(self.explorations.claim_mention(now=NOW))
-        self.assertEqual(self.mentioned_at(), {None: None})
 
     def test_a_released_claim_can_be_offered_again_and_frees_the_limits(self):
         self.found("Carburettors were tuned by ear")
