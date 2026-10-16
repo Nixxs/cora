@@ -5,6 +5,7 @@ from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_argum
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
+from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, validate_arguments as validate_random_number_arguments
 
 
 def create_tool_registry(
@@ -19,4 +20,6 @@ def create_tool_registry(
     registry.register(RECALL_SCHEMA, validate_recall_arguments, recall.handle)
     standby = StandbyTool(get_connection, is_closing, request_standby, write_debug)
     registry.register(STANDBY_SCHEMA, validate_standby_arguments, standby.handle)
+    random_number = RandomNumberTool(get_connection, is_closing, write_debug)
+    registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     return registry

@@ -459,7 +459,7 @@ python -m subconscious.interests.explore_interest
 | [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`). |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -490,6 +490,53 @@ quality still need manual checks.
 **Migration rule:** never edit, rename, or remove an applied migration. Add a new
 higher-numbered SQL file instead. The runner checks history and applies pending
 changes transactionally; it does not provide automatic downgrades.
+
+### Adding a custom tool
+
+Custom tools live in [tools/](tools/). Each tool is one module, registered once in
+[tools/__init__.py](tools/__init__.py); the registry then exports its schema to the
+Live session and dispatches the backend's calls to its handler. A tool module
+provides three things:
+
+1. **`SCHEMA`:** a strict function schema. `parameters` must be an object, every
+   property must be listed in `required`, and `additionalProperties` must be
+   `False`. The `description` tells the backend when to use the tool, so be specific.
+2. **`validate_arguments(arguments)`:** raise `ValueError` for anything outside the
+   schema (missing or extra keys, wrong types, and bools posing as integers). The
+   registry rejects invalid calls before the handler runs; a rejected call is logged
+   and gets no reply.
+3. **A class with `async handle(call_id, arguments)`:**
+   - return early if `is_closing()` or there is no connection;
+   - do the work, using `asyncio.to_thread` for blocking database, file, or network calls;
+   - check again that the app is not closing and the connection has not changed;
+   - send one `function_call_output` with a JSON result, then call
+     `connection.response.create()` so Cora continues;
+   - catch every exception and log it with `write_debug`.
+
+```python
+from .my_tool import MyTool, SCHEMA as MY_SCHEMA, validate_arguments as validate_my_arguments
+
+# inside create_tool_registry(...)
+my_tool = MyTool(get_connection, is_closing, write_debug)
+registry.register(MY_SCHEMA, validate_my_arguments, my_tool.handle)
+```
+
+If a tool needs an app action (as `close_app` and `enter_standby` do), add that
+callback as a parameter of `create_tool_registry` and pass it in from [app.py](app.py).
+
+Guidelines:
+
+- Keep results small and size-capped; tool output enters Cora-prime's context.
+- Treat external or stored text in results as untrusted data, and say so in a
+  `note` field. Use `note` to tell Cora how to respond (for example, "Say the
+  number briefly.").
+- Never retry the transport after a failure; send an error result once instead.
+- Tool schemas are sent when a Live session starts, so restart Cora to try a new tool.
+
+Examples: [tools/enter_standby.py](tools/enter_standby.py) (no arguments),
+[tools/random_number.py](tools/random_number.py) (validated integer arguments), and
+[tools/recall_interest.py](tools/recall_interest.py) (an off-thread database read
+and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_tool.py).
 
 ## Roadmap
 
