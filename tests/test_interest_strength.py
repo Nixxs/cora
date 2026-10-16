@@ -11,45 +11,44 @@ START = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
 
 
 class EffectiveStrengthTests(unittest.TestCase):
-    def test_no_elapsed_time_keeps_strength(self):
-        self.assertEqual(effective_strength(0.8, START, START), 0.8)
-
-    def test_one_half_life_halves_strength(self):
-        self.assertAlmostEqual(effective_strength(0.8, START, START + HALF_LIFE), 0.4)
-
-    def test_two_half_lives_quarter_strength(self):
-        self.assertAlmostEqual(effective_strength(0.8, START, START + 2 * HALF_LIFE), 0.2)
+    def test_decay_by_elapsed_time(self):
+        cases = (
+            ("no time", 0.8, timedelta(0), {}, 0.8),
+            ("one half-life", 0.8, HALF_LIFE, {}, 0.4),
+            ("two half-lives", 0.8, 2 * HALF_LIFE, {}, 0.2),
+            ("clock backwards", 0.5, timedelta(days=-3), {}, 0.5),
+            ("custom half-life", 1.0, timedelta(days=1), {"half_life": timedelta(days=1)}, 0.5),
+        )
+        for name, strength, elapsed, options, expected in cases:
+            with self.subTest(name):
+                self.assertAlmostEqual(
+                    effective_strength(strength, START, START + elapsed, **options), expected,
+                )
 
     def test_long_absence_is_capped(self):
         capped = effective_strength(0.8, START, START + MAX_COUNTED_ELAPSED)
         self.assertAlmostEqual(capped, 0.2)
         self.assertEqual(effective_strength(0.8, START, START + timedelta(days=365)), capped)
 
-    def test_clock_going_backwards_does_not_increase_strength(self):
-        self.assertEqual(effective_strength(0.5, START, START - timedelta(days=3)), 0.5)
-
-    def test_custom_half_life(self):
-        result = effective_strength(1.0, START, START + timedelta(days=1), half_life=timedelta(days=1))
-        self.assertAlmostEqual(result, 0.5)
-
     def test_rejects_naive_timestamps_and_invalid_inputs(self):
-        with self.assertRaises(ValueError):
-            effective_strength(0.5, datetime(2026, 10, 1), START)
-        with self.assertRaises(ValueError):
-            effective_strength(0.5, START, datetime(2026, 10, 2))
-        with self.assertRaises(ValueError):
-            effective_strength(1.5, START, START)
-        with self.assertRaises(ValueError):
-            effective_strength(float("nan"), START, START)
-        with self.assertRaises(ValueError):
-            effective_strength(0.5, START, START, half_life=timedelta(0))
+        cases = (
+            (0.5, datetime(2026, 10, 1), START, {}),
+            (0.5, START, datetime(2026, 10, 2), {}),
+            (1.5, START, START, {}),
+            (float("nan"), START, START, {}),
+            (0.5, START, START, {"half_life": timedelta(0)}),
+        )
+        for strength, strength_at, now, options in cases:
+            with self.subTest(strength=strength, strength_at=strength_at, now=now, options=options):
+                with self.assertRaises(ValueError):
+                    effective_strength(strength, strength_at, now, **options)
 
 
 class ReinforceTests(unittest.TestCase):
     def test_reinforcement_moves_a_fraction_of_remaining_room(self):
         self.assertAlmostEqual(reinforce(0.2, 0.15), 0.2 + 0.15 * 0.8)
-
-    def test_strong_interests_gain_less_than_weak_ones(self):
+        self.assertEqual(reinforce(0.4, 0.0), 0.4)
+        # Strong interests gain less than weak ones.
         self.assertGreater(reinforce(0.2, 0.15) - 0.2, reinforce(0.8, 0.15) - 0.8)
 
     def test_never_exceeds_one(self):
@@ -59,9 +58,6 @@ class ReinforceTests(unittest.TestCase):
         self.assertLessEqual(strength, 1.0)
         self.assertEqual(reinforce(1.0, 0.5), 1.0)
 
-    def test_zero_delta_changes_nothing(self):
-        self.assertEqual(reinforce(0.4, 0.0), 0.4)
-
     def test_rejects_invalid_values(self):
         for strength, delta in ((-0.1, 0.1), (0.5, -0.1), (0.5, 1.1), (True, 0.1), (0.5, float("inf"))):
             with self.subTest(strength=strength, delta=delta):
@@ -70,37 +66,30 @@ class ReinforceTests(unittest.TestCase):
 
 
 class StatusTests(unittest.TestCase):
-    def test_new_interest_starts_emerging_between_thresholds(self):
+    def test_status_transitions_with_hysteresis(self):
         self.assertGreater(INITIAL_STRENGTH, DORMANT_THRESHOLD)
         self.assertLess(INITIAL_STRENGTH, ACTIVE_THRESHOLD)
-        self.assertEqual(next_status("emerging", INITIAL_STRENGTH), "emerging")
-
-    def test_becoming_active_and_dormant(self):
-        self.assertEqual(next_status("emerging", ACTIVE_THRESHOLD), "active")
-        self.assertEqual(next_status("emerging", 0.05), "dormant")
-        self.assertEqual(next_status("active", 0.05), "dormant")
-        self.assertEqual(next_status("dormant", 0.5), "active")
-
-    def test_hysteresis_keeps_status_between_thresholds(self):
-        self.assertEqual(next_status("active", 0.15), "active")
-        self.assertEqual(next_status("dormant", 0.15), "dormant")
-
-    def test_threshold_boundaries(self):
-        self.assertEqual(next_status("active", DORMANT_THRESHOLD), "active")
-        self.assertEqual(next_status("active", DORMANT_THRESHOLD - 0.001), "dormant")
-        self.assertEqual(next_status("dormant", ACTIVE_THRESHOLD - 0.001), "dormant")
+        cases = (
+            ("emerging", INITIAL_STRENGTH, "emerging"),
+            ("emerging", ACTIVE_THRESHOLD, "active"),
+            ("emerging", 0.05, "dormant"),
+            ("active", 0.05, "dormant"),
+            ("dormant", 0.5, "active"),
+            # Between the thresholds the current status is kept.
+            ("active", 0.15, "active"),
+            ("dormant", 0.15, "dormant"),
+            ("active", DORMANT_THRESHOLD, "active"),
+            ("active", DORMANT_THRESHOLD - 0.001, "dormant"),
+            ("dormant", ACTIVE_THRESHOLD - 0.001, "dormant"),
+        )
+        for status, strength, expected in cases:
+            with self.subTest(status=status, strength=strength):
+                self.assertEqual(next_status(status, strength), expected)
 
     def test_rejects_unknown_status_and_invalid_strength(self):
-        with self.assertRaises(ValueError):
-            next_status("bored", 0.5)
-        with self.assertRaises(ValueError):
-            next_status("active", 2)
-
-    def test_decay_then_status_fades_an_unreinforced_interest(self):
-        strength = effective_strength(0.6, START, START + MAX_COUNTED_ELAPSED)
-        self.assertEqual(next_status("active", strength), "active")
-        strength = effective_strength(strength, START, START + MAX_COUNTED_ELAPSED)
-        self.assertEqual(next_status("active", strength), "dormant")
+        for status, strength in (("bored", 0.5), ("active", 2)):
+            with self.subTest(status=status, strength=strength), self.assertRaises(ValueError):
+                next_status(status, strength)
 
 
 class SettleTests(unittest.TestCase):
@@ -109,9 +98,7 @@ class SettleTests(unittest.TestCase):
         self.assertAlmostEqual(strength, 0.3)
         self.assertEqual(status, "active")
         self.assertEqual(settle(0.15, START, "emerging", START + HALF_LIFE)[1], "dormant")
-
-    def test_settle_never_revives_a_dormant_interest(self):
-        # Even a corrupt dormant row above the active threshold stays dormant.
+        # Settling never revives a dormant interest, even a corrupt row above the threshold.
         self.assertEqual(settle(0.9, START, "dormant", START), (0.9, "dormant"))
         self.assertEqual(settle(0.2, START, "dormant", START + HALF_LIFE)[1], "dormant")
 
@@ -135,15 +122,18 @@ class SettleTests(unittest.TestCase):
 
 
 class LiveCapTests(unittest.TestCase):
-    def test_spawns_and_revivals_need_room(self):
-        self.assertTrue(needs_room(None, "emerging"))
-        self.assertTrue(needs_room("dormant", "active"))
-
-    def test_live_changes_and_staying_dormant_do_not_need_room(self):
-        self.assertFalse(needs_room("emerging", "active"))
-        self.assertFalse(needs_room("active", "active"))
-        self.assertFalse(needs_room("active", "dormant"))
-        self.assertFalse(needs_room("dormant", "dormant"))
+    def test_only_spawns_and_revivals_need_room(self):
+        cases = (
+            (None, "emerging", True),
+            ("dormant", "active", True),
+            ("emerging", "active", False),
+            ("active", "active", False),
+            ("active", "dormant", False),
+            ("dormant", "dormant", False),
+        )
+        for before, after, expected in cases:
+            with self.subTest(before=before, after=after):
+                self.assertIs(needs_room(before, after), expected)
 
     def test_has_room_below_the_cap(self):
         self.assertTrue(has_room(0))

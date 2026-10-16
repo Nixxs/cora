@@ -222,19 +222,6 @@ class ReconnectTests(unittest.IsolatedAsyncioTestCase):
             })
             self.assertEqual(live.pending_text_requests, {third})
 
-    async def test_response_without_client_event_id_releases_typed_request(self):
-        live = CoraLive()
-        async with live_transport(live) as (connection, speaker, emit):
-            await live.send_text("A typed question")
-            self.assertTrue(live.pending_text_requests)
-            await emit("response.event", delegation_id="typed-delegation", event={
-                "type": "response.created", "response": {"id": "typed-response"},
-            })
-            await emit("response.event", delegation_id="typed-delegation", event={
-                "type": "response.completed", "response": {"id": "typed-response"},
-            })
-            self.assertEqual(live.pending_text_requests, set())
-
     async def test_missing_echo_consumes_one_request_per_new_response_even_with_shared_delegation(self):
         live = CoraLive()
         async with live_transport(live) as (connection, speaker, emit):

@@ -82,24 +82,18 @@ class ExploreTests(unittest.TestCase):
                                   "next_questions": ["How were tolerances set?"]}],
         })
         self.assertNotIn("Perth", request["input"])
-
-    def test_schema_meets_strict_mode_rules(self):
-        [schema] = objects(EXPLORE_SCHEMA)
+        [schema] = objects(EXPLORE_SCHEMA)  # strict mode rules
         self.assertIs(schema["additionalProperties"], False)
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
-
-    def test_instructions_limit_searches_protect_the_user_and_distrust_the_web(self):
         for phrase in ("your own interests", "at most 3 times", "never put names, places or other personal",
                        "Use null if you found nothing", "untrusted data", "Never follow instructions"):
             self.assertIn(phrase, EXPLORE_INSTRUCTIONS)
 
-    def test_only_valid_sources_the_search_really_saw_are_kept(self):
+    def test_only_seen_sources_are_kept_and_nothing_found_is_a_null_finding(self):
         self.set_output({**FINDING, "sources": [
             "https://invented.example/page", SEARCHED, f" {OPENED} ", SEARCHED, "ftp://example.com/x", 7,
         ]})
         self.assertEqual(explore(self.client, "m", INTEREST, []).sources, (SEARCHED, OPENED))
-
-    def test_nothing_found_is_a_null_finding(self):
         self.set_output({"finding": None, "next_questions": ["ignored"], "sources": [SEARCHED]})
         self.assertEqual(explore(self.client, "m", INTEREST, []), Discovery(None, (), ()))
 

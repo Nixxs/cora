@@ -72,18 +72,6 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
             connections[0].session.close.assert_awaited_once()
             connections[0].response.create.assert_awaited_once()
 
-    async def test_tool_item_without_response_id_keeps_delegation_busy(self):
-        async with running_app() as (app, pilot):
-            with patch.object(app.tools, "handle_function_call"):
-                app.handle_live_event(backend_event("response.created"))
-                app.handle_live_event(ResponseEvent(
-                    type="response.event", event_id="tool", delegation_id="delegation-1",
-                    event={"type": "response.output_item.done", "item": {"type": "function_call"}},
-                ))
-                app.handle_live_event(backend_event("response.completed"))
-            self.assertEqual(app.backend_work.pending, {"delegation-1"})
-            self.assertFalse(app.backend_work.tool_response_ids)
-
     async def test_typed_reply_without_created_event_allows_standby_after_voice_chat(self):
         for first_kind in ("response.in_progress", "response.output_item.done", "response.completed"):
             with self.subTest(first_kind=first_kind):

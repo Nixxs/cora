@@ -74,16 +74,23 @@ class DeduplicateMemoryTests(unittest.TestCase):
         self.store.get_source_created_at.return_value = SOURCE_DATE
         self.store.save_deduplication.side_effect = lambda _id, _text, target, *args: target is not None
 
-    def test_missing_and_unembedded_rejected_without_api_or_save(self):
+    def test_missing_unembedded_or_candidate_free_memories_need_no_api(self):
         for memory, error in ((None, LookupError), (memory_fixture(embedding=None), ValueError)):
             with self.subTest(memory=memory):
                 self.store.get_memory.return_value = memory
                 with self.assertRaises(error):
                     dedup.deduplicate_memory(self.store, self.memory.id)
-        self.factory.assert_not_called()
-        self.client.responses.create.assert_not_called()
         self.store.get_duplicate_candidates.assert_not_called()
         self.store.save_deduplication.assert_not_called()
+        # With no candidates it is marked checked, without a source lookup.
+        self.store.get_memory.return_value = self.memory
+        self.store.get_duplicate_candidates.return_value = []
+        self.assertFalse(dedup.deduplicate_memory(self.store, self.memory.id))
+        self.store.get_duplicate_candidates.assert_called_once_with(self.memory)
+        self.store.save_deduplication.assert_called_once_with(self.memory.id, self.memory.text, None)
+        self.store.get_source_created_at.assert_not_called()
+        self.factory.assert_not_called()
+        self.client.responses.create.assert_not_called()
 
     def test_checked_positive_and_negative_cache_skip_candidates_api_and_save(self):
         for target in (None, self.candidate.memory_id):
@@ -100,15 +107,6 @@ class DeduplicateMemoryTests(unittest.TestCase):
         self.store.get_duplicate_candidates.assert_not_called()
         self.store.get_source_created_at.assert_not_called()
         self.store.save_deduplication.assert_not_called()
-
-    def test_no_candidates_marks_negative_without_api_or_source_lookup(self):
-        self.store.get_duplicate_candidates.return_value = []
-        self.assertFalse(dedup.deduplicate_memory(self.store, self.memory.id))
-        self.store.get_duplicate_candidates.assert_called_once_with(self.memory)
-        self.store.save_deduplication.assert_called_once_with(self.memory.id, self.memory.text, None)
-        self.store.get_source_created_at.assert_not_called()
-        self.factory.assert_not_called()
-        self.client.responses.create.assert_not_called()
 
     def test_request_preserves_original_evidence_dates_and_strict_backend_schema(self):
         original = vars(self.memory).copy()

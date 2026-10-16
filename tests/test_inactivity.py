@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from inactivity import read_idle_timeout
+from inactivity import InactivityController, read_idle_timeout
 from devices.speaker import Speaker
 from test_keyboard_persistence import running_app
 from test_reconnect import backend_event, restarting_app
@@ -25,20 +25,165 @@ async def idle_app():
 
 
 class IdleConfigurationTests(unittest.TestCase):
-    def test_default_is_five_minutes(self):
+    def test_default_seconds_zero_disable_and_invalid_values(self):
         with patch.dict("os.environ", {}, clear=True):
             self.assertEqual(read_idle_timeout(), 300.0)
-
-    def test_seconds_and_zero_disable(self):
         for value, expected in (("0", 0), ("60", 60), ("0.5", 0.5)):
             with self.subTest(value=value), patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": value}):
                 self.assertEqual(read_idle_timeout(), expected)
-
-    def test_invalid_negative_and_nonfinite_values_rejected(self):
         for value in ("", "invalid", "-1", "nan", "inf", "-inf", "1e309"):
             with self.subTest(value=value), patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": value}):
                 with self.assertRaises(ValueError):
                     read_idle_timeout()
+
+
+class InactivityControllerTests(unittest.TestCase):
+    """Deterministic idle and heads-up timing without a Textual app."""
+
+    def setUp(self):
+        self.clock = MagicMock(return_value=0.0)
+        self.can_standby = MagicMock(return_value=True)
+        self.speaker_muted = MagicMock(return_value=False)
+        self.blockers = MagicMock(return_value=[])
+        self.worker = MagicMock(is_finished=False)
+        self.send_alert = MagicMock(return_value=self.worker)
+        self.standby = MagicMock()
+        self.write = MagicMock()
+        self.controller = InactivityController(
+            timeout_seconds=300, farewell_enabled=False, clock=self.clock,
+            can_standby=self.can_standby, speaker_muted=self.speaker_muted,
+            transition_blockers=self.blockers, send_alert=self.send_alert,
+            enter_standby=self.standby, write_activity=self.write,
+        )
+
+    def start_alert(self):
+        self.controller.farewell_enabled = True
+        self.clock.return_value = 300.0
+        self.controller.check()
+        return self.controller.alert
+
+    def test_deadline_and_activity_reset_use_injected_clock(self):
+        self.clock.return_value = 299.9
+        self.controller.check()
+        self.standby.assert_not_called()
+        self.controller.record_activity()
+        self.clock.return_value = 599.8
+        self.controller.check()
+        self.standby.assert_not_called()
+        self.clock.return_value = 600.0
+        self.controller.check()
+        self.standby.assert_called_once_with()
+        self.send_alert.assert_not_called()
+
+    def test_work_and_first_idle_check_grant_full_grace(self):
+        self.clock.return_value = 400.0
+        self.blockers.return_value = ["backend response"]
+        self.controller.check()
+        self.assertTrue(self.controller.was_busy)
+        self.blockers.return_value = []
+        self.clock.return_value = 500.0
+        self.controller.check()
+        self.assertFalse(self.controller.was_busy)
+        self.assertEqual(self.controller.last_activity, 500.0)
+        self.clock.return_value = 799.9
+        self.controller.check()
+        self.standby.assert_not_called()
+        self.clock.return_value = 800.0
+        self.controller.check()
+        self.standby.assert_called_once_with()
+
+    def test_heads_up_is_single_flight_and_requires_matching_ack_and_output(self):
+        alert = self.start_alert()
+        self.controller.check()
+        self.send_alert.assert_called_once_with(alert)
+        self.assertIs(self.controller.alert_worker, self.worker)
+        self.controller.acknowledge("unrelated")
+        self.assertFalse(alert.accepted)
+        self.controller.acknowledge(alert.event_id)
+        self.assertTrue(alert.accepted)
+        self.clock.return_value = 310.0
+        self.controller.check()
+        self.assertIsNone(alert.quiet_since)
+        self.standby.assert_not_called()
+
+    def test_output_quiet_gap_and_response_window_precede_standby(self):
+        alert = self.start_alert()
+        self.controller.acknowledge(alert.event_id)
+        self.controller.record_output()
+        self.clock.return_value = 301.9
+        self.controller.check()
+        self.assertIsNone(alert.quiet_since)
+        self.clock.return_value = 302.0
+        self.controller.check()
+        self.assertEqual(alert.quiet_since, 302.0)
+        self.clock.return_value = 304.9
+        self.controller.check()
+        self.standby.assert_not_called()
+        self.clock.return_value = 305.0
+        self.controller.check()
+        self.assertIsNone(self.controller.alert)
+        self.standby.assert_called_once_with()
+
+    def test_playback_and_later_output_restart_quiet_window(self):
+        alert = self.start_alert()
+        self.controller.acknowledge(alert.event_id)
+        self.controller.record_output()
+        self.clock.return_value = 302.0
+        self.controller.check()
+        self.blockers.return_value = ["standby heads-up", "audio playback", "recent speech"]
+        self.clock.return_value = 304.0
+        self.controller.check()
+        self.assertIsNone(alert.quiet_since)
+        self.blockers.return_value = ["standby heads-up"]
+        self.controller.check()
+        self.controller.record_output()
+        self.assertEqual(alert.last_output_at, 304.0)
+        self.assertIsNone(alert.quiet_since)
+        self.standby.assert_not_called()
+
+    def test_alert_timeout_cancels_send_without_closing_and_refreshes_idle(self):
+        self.start_alert()
+        self.clock.return_value = 330.0
+        self.controller.check()
+        self.assertIsNone(self.controller.alert)
+        self.worker.cancel.assert_called_once_with()
+        self.assertEqual(self.controller.last_activity, 330.0)
+        self.assertIn("timed out", self.write.call_args.args[0])
+        self.controller.check()
+        self.standby.assert_not_called()
+        self.send_alert.assert_called_once()
+
+    def test_handled_send_failure_does_not_cancel_its_own_worker(self):
+        self.start_alert()
+        self.controller.was_busy = True
+        self.controller.cancel_alert("Send failed", cancel_send=False)
+        self.assertIsNone(self.controller.alert)
+        self.assertFalse(self.controller.was_busy)
+        self.worker.cancel.assert_not_called()
+        self.controller.cancel_alert()
+        self.standby.assert_not_called()
+
+    def test_new_work_or_inactive_lifecycle_cancels_alert(self):
+        for state in ("work", "lifecycle", "disabled"):
+            with self.subTest(state=state):
+                self.setUp()
+                self.start_alert()
+                if state == "work":
+                    self.blockers.return_value = ["tool execution"]
+                elif state == "lifecycle":
+                    self.can_standby.return_value = False
+                else:
+                    self.controller.timeout_seconds = 0
+                self.controller.check()
+                self.assertIsNone(self.controller.alert)
+                self.worker.cancel.assert_called_once_with()
+                self.standby.assert_not_called()
+
+    def test_muted_speaker_bypasses_heads_up(self):
+        self.speaker_muted.return_value = True
+        self.start_alert()
+        self.send_alert.assert_not_called()
+        self.standby.assert_called_once_with()
 
 
 class InactivityTests(unittest.IsolatedAsyncioTestCase):
@@ -141,7 +286,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
                 memory_release.set()
                 await asyncio.wait_for(memory.wait(), 3)
 
-    async def test_typing_deleting_pasting_and_cursor_movement_reset_clock(self):
+    async def test_typing_pasting_cursor_movement_and_audio_buttons_reset_clock(self):
         async with idle_app() as (app, pilot, clock):
             composer = app.query_one("#chat-input", ChatComposer)
             await pilot.press("a", "b")
@@ -157,6 +302,12 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
             clock.return_value = 1030
             await pilot.press("left")
             self.assertEqual(app.inactivity.last_activity, 1030)
+            clock.return_value = 1040
+            await pilot.click("#mic-status")
+            self.assertEqual(app.inactivity.last_activity, 1040)
+            clock.return_value = 1050
+            await pilot.click("#speaker-status")
+            self.assertEqual(app.inactivity.last_activity, 1050)
 
     async def test_submission_and_worker_completion_between_polls_reset_clock(self):
         async with idle_app() as (app, pilot, clock):
@@ -220,14 +371,6 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     speaker.close()
                     app.live.speaker = None
-
-    async def test_audio_control_buttons_reset_clock(self):
-        async with idle_app() as (app, pilot, clock):
-            await pilot.click("#mic-status")
-            self.assertEqual(app.inactivity.last_activity, 1000)
-            clock.return_value = 1010
-            await pilot.click("#speaker-status")
-            self.assertEqual(app.inactivity.last_activity, 1010)
 
     @patch("app.CoraApp.exit")
     async def test_timer_stopped_on_quit_and_unmount(self, exit_app):
