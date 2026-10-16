@@ -85,6 +85,9 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0004_create_memories.sql",
             "0005_add_memory_embeddings.sql",
             "0006_mark_duplicate_memories.sql",
+            "0007_create_interests.sql",
+            "0008_create_interest_explorations.sql",
+            "0009_add_finding_mentions.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

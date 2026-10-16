@@ -1,5 +1,6 @@
 """Lazy chat storage adapter; call its methods off the UI thread."""
 
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
@@ -7,6 +8,7 @@ from sqlalchemy import Engine
 from .conversation_store import ConversationStore
 from .database import build_engine
 from memory.store import MemoryStore
+from subconscious.interests.interest_store import InterestStore
 
 
 class KeyboardPersistence:
@@ -28,6 +30,9 @@ class KeyboardPersistence:
     def load_startup_memory_context(self) -> str:
         # Share the existing owned/injected engine; do not create a chat row.
         return MemoryStore(self._get_store().engine).get_startup_context()
+
+    def load_startup_interest_context(self) -> str:
+        return InterestStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
 
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()

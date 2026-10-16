@@ -86,14 +86,17 @@ def generate_memories(client: OpenAI, model: str, messages: list[MessageRecord])
         if (not isinstance(row, dict) or set(row) != {"source_message_id", "kind", "text", "evidence"}
                 or not all(isinstance(value, str) for value in row.values())):
             raise ValueError("Invalid memory fields")
-        candidate = MemoryCandidate(UUID(row["source_message_id"]), row["kind"], row["text"].strip(), row["evidence"])
+        # Skip an ungrounded memory rather than lose the whole chat's memories to it.
+        try:
+            source_id = UUID(row["source_message_id"])
+        except ValueError:
+            continue
+        candidate = MemoryCandidate(source_id, row["kind"], row["text"].strip(), row["evidence"])
         source = sources.get(candidate.source_message_id)
-        if source is None or source.role != "user":
-            raise ValueError("Memory must cite a source user message")
-        if candidate.kind not in MEMORY_KINDS or not candidate.text or len(candidate.text) > 500:
-            raise ValueError("Invalid memory kind or text")
-        if not candidate.evidence.strip() or candidate.evidence not in source.text:
-            raise ValueError("Memory evidence must quote its source exactly")
+        if (source is None or source.role != "user" or candidate.kind not in MEMORY_KINDS
+                or not candidate.text or len(candidate.text) > 500
+                or not candidate.evidence.strip() or candidate.evidence not in source.text):
+            continue
         if candidate not in candidates:
             candidates.append(candidate)
     return candidates
