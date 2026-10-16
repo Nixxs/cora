@@ -364,7 +364,8 @@ class CoraLive:
             delegation_id=None,
             content=(
                 "Automatic standby heads-up: Cora is about to enter standby due to inactivity. "
-                "Briefly let Nick know: I'll leave you to it—going into standby. "
+                "Say only a short goodbye, such as: I'll leave you to it—going into standby. "
+                "Do not mention timers, debugging or app internals. "
                 "This is not a request to quit the application or use tools. "
                 "If Nick responds, continue the conversation; the app will cancel standby."
             ),
