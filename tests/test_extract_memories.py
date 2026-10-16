@@ -168,7 +168,7 @@ class ExtractMemoriesTests(unittest.TestCase):
                     self.extract()
         self.memories.save_memories.assert_not_called()
 
-    def test_invalid_candidates_reject_whole_batch_even_after_valid_candidate(self):
+    def test_invalid_candidates_are_skipped_and_valid_ones_kept(self):
         assistant = message_fixture(role="assistant")
         self.store.get_messages.return_value.append(assistant)
         cases = [
@@ -178,12 +178,13 @@ class ExtractMemoriesTests(unittest.TestCase):
             {"evidence": "I live  in Perth"}, {"evidence": ""}, {"evidence": " \n"},
             {"text": ""}, {"text": " \n"}, {"text": "x" * 501}, {"kind": "location"},
         ]
+        valid = MemoryCandidate(self.source.id, "fact", "The user lives in Perth.", "I live in Perth")
         for changes in cases:
             with self.subTest(changes=changes):
-                self.set_output({"memories": [memory_row(self.source), memory_row(self.source, **changes)]})
-                with self.assertRaises(ValueError):
-                    self.extract()
-        self.memories.save_memories.assert_not_called()
+                self.memories.save_memories.reset_mock()
+                self.set_output({"memories": [memory_row(self.source, **changes), memory_row(self.source)]})
+                self.extract()
+                self.memories.save_memories.assert_called_once_with(self.conversation_id, [valid])
 
     def test_incomplete_failed_and_refused_responses_are_not_saved(self):
         for response in (summarize_tests.response_fixture(status="incomplete"),

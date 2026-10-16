@@ -1,8 +1,8 @@
 """Check the model's proposed interest changes before anything is saved.
 
 The model may reinforce interests it was shown, spawn at most one new interest, or do
-nothing. Every change must cite memories from the batch it was given. Like memory
-extraction, any invalid part rejects the whole proposal, so the batch is retried later.
+nothing. Every change must cite memories from the batch it was given. Any invalid part
+rejects the whole proposal, so the batch is retried later.
 """
 
 from collections.abc import Sequence
