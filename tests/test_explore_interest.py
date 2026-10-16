@@ -22,6 +22,7 @@ import test_keyboard_persistence as keyboard_tests
 from test_propose_interests import objects
 
 NOW = interest_tests.NOW
+ENDED = NOW + timedelta(seconds=40)
 INTEREST = Interest(uuid4(), "Old mechanical design", "Why older machines were built as they were",
                     "Nick is restoring a car in Perth", 0.3, NOW, "active", None, NOW, None)
 SEARCHED = "https://example.com/carburettors"
@@ -139,22 +140,23 @@ class ExploreNextTests(unittest.TestCase):
 
     def test_a_finding_is_saved_with_the_three_latest_earlier_findings(self):
         self.store.finish.return_value = earlier()
-        outcome = explore_next(self.store, self.client, "m", now=NOW)
+        outcome = explore_next(self.store, self.client, "m", now=NOW, clock=lambda: ENDED)
         self.assertEqual(outcome, "Explored Old mechanical design: saved a finding (1 sources).")
+        self.store.start_next.assert_called_once_with(now=NOW)
         self.store.list_recent.assert_called_once_with(50, interest_id=INTEREST.id)
         sent = json.loads(self.client.responses.create.call_args.kwargs["input"])["earlier_findings"]
         self.assertEqual([item["finding"] for item in sent], ["Newest", "Second", "Third"])
         self.store.finish.assert_called_once_with(
-            self.attempt.id, FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,), now=NOW,
+            self.attempt.id, FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,), now=ENDED,
         )
         self.store.fail.assert_not_called()
 
     def test_nothing_found_or_an_expired_attempt_saves_nothing(self):
         self.client.responses.create.return_value = explore_response(
             {"finding": None, "next_questions": [], "sources": []})
-        self.assertEqual(explore_next(self.store, self.client, now=NOW),
+        self.assertEqual(explore_next(self.store, self.client, now=NOW, clock=lambda: ENDED),
                          "Explored Old mechanical design: nothing new found.")
-        self.store.fail.assert_called_once_with(self.attempt.id, now=NOW)
+        self.store.fail.assert_called_once_with(self.attempt.id, now=ENDED)
         self.client.responses.create.return_value = explore_response(FINDING)
         self.store.finish.return_value = None
         self.assertIn("finding discarded", explore_next(self.store, self.client, now=NOW))
@@ -166,8 +168,8 @@ class ExploreNextTests(unittest.TestCase):
                 self.store.fail.side_effect = fail_error
                 self.client.responses.create.side_effect = TimeoutError("api")
                 with self.assertRaises(TimeoutError):
-                    explore_next(self.store, self.client, now=NOW)
-                self.store.fail.assert_called_once_with(self.attempt.id, now=NOW)
+                    explore_next(self.store, self.client, now=NOW, clock=lambda: ENDED)
+                self.store.fail.assert_called_once_with(self.attempt.id, now=ENDED)
                 self.store.finish.assert_not_called()
 
 
@@ -181,9 +183,10 @@ class ExploreNextDatabaseTests(unittest.TestCase):
 
     def test_findings_are_saved_and_fed_into_the_next_exploration_of_the_same_interest(self):
         self.client.responses.create.return_value = explore_response(FINDING)
-        self.assertIn("saved a finding", explore_next(self.explorations, self.client, now=NOW))
+        self.assertIn("saved a finding", explore_next(self.explorations, self.client, now=NOW, clock=lambda: ENDED))
         [found] = self.explorations.list_recent()
         self.assertEqual((found.status, found.finding, found.sources), ("found", FINDING["finding"], (SEARCHED,)))
+        self.assertEqual((found.started_at, found.finished_at), (NOW, ENDED))
         later = NOW + timedelta(hours=24, seconds=1)
         self.client.responses.create.side_effect = TimeoutError("api")
         with self.assertRaises(TimeoutError):

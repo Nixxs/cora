@@ -18,6 +18,15 @@ class ObservationEvent:
     occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@dataclass(frozen=True)
+class FindingEvent:
+    """One of Cora's findings may be worth raising; attention picks and claims it at delivery."""
+
+    source: str
+    event_id: UUID = field(default_factory=uuid4)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 Event = TypeVar("Event")
 
 

@@ -245,6 +245,7 @@ class InterestExplorationRecord(Base):
             "cardinality(sources) <= 10 AND (status = 'found' OR cardinality(sources) = 0)",
             name="interest_explorations_sources_check",
         ),
+        CheckConstraint("mentioned_at IS NULL OR status = 'found'", name="interest_explorations_mentioned_check"),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
         {"schema": "public"},
@@ -260,3 +261,4 @@ class InterestExplorationRecord(Base):
     finding: Mapped[str | None] = mapped_column(Text)
     next_questions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     sources: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
+    mentioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

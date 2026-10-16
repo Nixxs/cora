@@ -6,13 +6,14 @@ limits on how often she explores can count every attempt, including failed ones.
 
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from uuid import UUID
 
 from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
 
+from storage.database import build_engine
 from storage.models import InterestExplorationRecord, InterestRecord
 from subconscious.interest_store import Interest, clean_text, snapshot as interest_snapshot, validate_now
 from subconscious.interest_strength import settle
@@ -29,6 +30,10 @@ DAILY_LIMIT = 3
 INTEREST_COOLDOWN = timedelta(hours=24)
 # A running attempt this old was abandoned (e.g. the app closed mid-search).
 STALE_AFTER = timedelta(minutes=30)
+# Raising a finding herself: only each interest's latest, while fresh, and rarely.
+MENTION_GAP = timedelta(hours=4)
+MENTION_DAILY_LIMIT = 2
+MENTION_FRESH_FOR = timedelta(days=3)
 
 
 @dataclass(frozen=True)
@@ -41,6 +46,15 @@ class Exploration:
     finding: str | None
     next_questions: tuple[str, ...]
     sources: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class Mention:
+    exploration_id: UUID
+    interest_title: str
+    finding: str
+    found_at: datetime
+    mentioned_at: datetime
 
 
 @dataclass(frozen=True)
@@ -157,6 +171,46 @@ class ExplorationStore:
             record.finished_at = max(now, record.started_at)
             return snapshot(record)
 
+    def claim_mention(self, *, now: datetime) -> Mention | None:
+        """Mark a finding as mentioned before it is offered, if the limits allow one now."""
+        validate_now(now)
+        attempts = InterestExplorationRecord
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            # One claimer at a time, so two workers can never both pass the limits.
+            session.execute(text("LOCK TABLE public.interest_explorations IN SHARE ROW EXCLUSIVE MODE"))
+            # Mentions stamped in the future (clock moved back) count as recent.
+            recent = session.scalars(select(attempts.mentioned_at).where(
+                attempts.mentioned_at > now - timedelta(hours=24),
+            )).all()
+            if len(recent) >= MENTION_DAILY_LIMIT or any(at > now - MENTION_GAP for at in recent):
+                return None
+
+            rows = session.execute(select(attempts, InterestRecord).join(
+                InterestRecord, InterestRecord.id == attempts.interest_id,
+            ).where(
+                attempts.status == "found", attempts.finished_at > now - MENTION_FRESH_FOR,
+            ).order_by(attempts.started_at.desc(), attempts.id.desc())).all()
+            seen = set()
+            for record, interest in rows:
+                # An older finding is superseded by the interest's latest, mentioned or not.
+                if interest.id in seen:
+                    continue
+                seen.add(interest.id)
+                status = settle(interest.strength, interest.strength_at, interest.status, now)[1]
+                if record.mentioned_at is None and status != "dormant":
+                    record.mentioned_at = now
+                    return Mention(record.id, interest.title, record.finding, record.finished_at, now)
+            return None
+
+    def release_mention(self, mention: Mention) -> bool:
+        """Undo a claim whose send failed, unless the finding was claimed again since."""
+        attempts = InterestExplorationRecord
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(update(attempts).where(
+                attempts.id == mention.exploration_id, attempts.mentioned_at == mention.mentioned_at,
+            ).values(mentioned_at=None).execution_options(synchronize_session=False))
+            return result.rowcount == 1
+
     def list_recent(self, limit: int = 10, *, interest_id: UUID | None = None) -> list[Exploration]:
         """Newest attempts first, optionally for one interest."""
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= LIST_LIMIT:
@@ -178,3 +232,20 @@ class ExplorationStore:
         if record is None:
             raise LookupError("Exploration does not exist")
         return record if record.status == "running" else None
+
+
+# Thin wrappers for the app, run off its event loop; each uses and disposes its own engine.
+def claim_mention_now() -> Mention | None:
+    engine = build_engine()
+    try:
+        return ExplorationStore(engine).claim_mention(now=datetime.now(timezone.utc))
+    finally:
+        engine.dispose()
+
+
+def release_mention_now(mention: Mention) -> bool:
+    engine = build_engine()
+    try:
+        return ExplorationStore(engine).release_mention(mention)
+    finally:
+        engine.dispose()

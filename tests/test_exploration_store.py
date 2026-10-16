@@ -41,7 +41,8 @@ class ExplorationValidationTests(unittest.TestCase):
                     store.finish(uuid4(), *args, now=NOW)
             naive = datetime(2026, 10, 15)
             for call in (lambda: store.start_next(now=naive), lambda: store.fail(uuid4(), now=naive),
-                         lambda: store.finish(uuid4(), *FINDING, now=naive)):
+                         lambda: store.finish(uuid4(), *FINDING, now=naive),
+                         lambda: store.claim_mention(now=naive)):
                 with self.assertRaises(ValueError):
                     call()
             for limit in (0, LIST_LIMIT + 1, True, 1.0):
@@ -174,6 +175,72 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         records = json.loads(self.interests.get_startup_context(now=later))
         self.assertEqual({record["title"]: record.get("latest_finding") for record in records},
                          {titles[older.interest_id]: "Newer finding", titles[failed.interest_id]: None})
+
+    def found(self, finding, now=NOW):
+        self.explorations.finish(self.start(now).id, finding, [], [], now=now)
+
+    def mentioned_at(self):
+        return {record.finding: record.mentioned_at for record in self.attempts()}
+
+    def test_a_fresh_finding_is_claimed_once_before_it_is_offered(self):
+        self.found("Carburettors were tuned by ear")
+        later = NOW + timedelta(minutes=5)
+        mention = self.explorations.claim_mention(now=later)
+        self.assertEqual((mention.interest_title, mention.finding, mention.found_at),
+                         (self.interest.title, "Carburettors were tuned by ear", NOW))
+        self.assertEqual(self.mentioned_at(), {"Carburettors were tuned by ear": later})
+        self.assertIsNone(self.explorations.claim_mention(now=later + timedelta(days=1)))
+        self.assertEqual(self.mentioned_at(), {"Carburettors were tuned by ear": later})
+
+    def test_mentions_wait_four_hours_and_at_most_two_a_day(self):
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        for n, finding in enumerate(("First", "Second", "Third")):
+            self.found(finding, NOW + timedelta(hours=6.1 * n))
+        first = NOW + timedelta(hours=13)
+        claims = [self.explorations.claim_mention(now=first + timedelta(hours=hours))
+                  for hours in (0, 3.9, 4.1, 8.2, 24.1)]
+        # Newest first; then too soon, the next, the daily limit, and the oldest a day later.
+        self.assertEqual([claim and claim.finding for claim in claims],
+                         ["Third", None, "Second", None, "First"])
+
+    def test_only_each_interests_latest_fresh_finding_from_a_live_interest(self):
+        self.found("Older")
+        later = NOW + timedelta(hours=24, seconds=1)
+        self.found("Newer", later)
+        self.assertEqual(self.explorations.claim_mention(now=later).finding, "Newer")
+        # The older finding is superseded, never raised afterwards.
+        self.assertIsNone(self.explorations.claim_mention(now=later + timedelta(days=1)))
+
+        other = self.interests.spawn(*interest_tests.spawn_args("Second"), now=later)
+        stale = later + timedelta(hours=6, seconds=1)
+        self.found("Stale", stale)
+        self.assertIsNone(self.explorations.claim_mention(now=stale + timedelta(days=3)))
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.interests SET status = 'dormant', strength = 0.05 WHERE id = :id"
+            ), {"id": other.id})
+        self.assertIsNone(self.explorations.claim_mention(now=stale + timedelta(days=1)))
+        self.assertIsNone(self.mentioned_at()["Stale"])
+
+    def test_failed_attempts_are_never_mentioned(self):
+        self.explorations.fail(self.start().id, now=NOW)
+        self.assertIsNone(self.explorations.claim_mention(now=NOW))
+        self.assertEqual(self.mentioned_at(), {None: None})
+
+    def test_a_released_claim_can_be_offered_again_and_frees_the_limits(self):
+        self.found("Carburettors were tuned by ear")
+        mention = self.explorations.claim_mention(now=NOW)
+        self.assertEqual(mention.mentioned_at, NOW)
+        self.assertTrue(self.explorations.release_mention(mention))
+        self.assertFalse(self.explorations.release_mention(mention))  # already released
+        self.assertEqual(self.mentioned_at(), {"Carburettors were tuned by ear": None})
+        later = NOW + timedelta(minutes=1)  # the released claim no longer counts toward the gap
+        again = self.explorations.claim_mention(now=later)
+        self.assertEqual(again.exploration_id, mention.exploration_id)
+        # An old claim never undoes a newer one.
+        self.assertFalse(self.explorations.release_mention(mention))
+        self.assertEqual(self.mentioned_at(), {"Carburettors were tuned by ear": later})
 
     def test_a_start_waits_for_a_concurrent_start_and_sees_its_attempt(self):
         self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)

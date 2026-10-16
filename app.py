@@ -25,8 +25,9 @@ from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
-from subconscious.event_bus import EventBus, ObservationEvent
+from subconscious.event_bus import EventBus, FindingEvent, ObservationEvent
 from subconscious.evolve_interests import run_interest_cycle
+from subconscious.exploration_store import claim_mention_now, release_mention_now
 from subconscious.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from live import CoraLive
@@ -47,6 +48,10 @@ INTEREST_CHECK_SECONDS = 10 * 60
 EXPLORE_CHECK_SECONDS = 10 * 60
 # Explore only in standby or after this long without conversation.
 EXPLORE_IDLE_SECONDS = 10 * 60
+# Offer a finding only into a lull this long, well before the default 5-minute standby.
+# The store's limits (4h gap, 2 a day, fresh findings) decide how often she really does.
+FINDING_CHECK_SECONDS = 2 * 60
+FINDING_IDLE_SECONDS = 90
 
 
 class CoraApp(App):
@@ -216,11 +221,17 @@ class CoraApp(App):
             record_activity=self.record_idle_activity,
             delivery_finished=self.observation_delivery_finished,
             write_activity=self.activity.write,
+            claim_finding=lambda: asyncio.to_thread(claim_mention_now),
+            send_finding=lambda mention: self.live.send_finding(
+                mention.interest_title, mention.finding, mention.found_at,
+            ),
+            release_finding=lambda mention: asyncio.to_thread(release_mention_now, mention),
         )
         self.event_bus = EventBus(on_error=self.handle_event_bus_error)
         self.event_bus.subscribe(
             ObservationEvent, lambda event: self.attention.submit(event.content),
         )
+        self.event_bus.subscribe(FindingEvent, lambda event: self.attention.submit_finding())
         if self.live_trace is not None:
             self.trace_live("app.started")
             if not self.live_trace.failed:
@@ -233,6 +244,7 @@ class CoraApp(App):
         self.observation_timer = self.set_interval(0.5, self.check_observations)
         self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
+        self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
         if self.inactivity.timeout_seconds > 0:
             self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
 
@@ -337,6 +349,7 @@ class CoraApp(App):
         self.observation_timer.stop()
         self.interest_timer.stop()
         self.exploration_timer.stop()
+        self.finding_timer.stop()
         self.cancel_standby_alert()
         self.wake.stop_timers()
         await self.stop_wake_listener()
@@ -611,6 +624,18 @@ class CoraApp(App):
             self.exploration_outcome = outcome
             self.call_from_thread(self.activity.write, outcome, "Exploration")
 
+    def can_offer_finding(self) -> bool:
+        # Only into a quiet, connected conversation: never wakes Live from standby.
+        return (
+            self.can_deliver_observation() and not self.live_transition_blockers()
+            and not self.attention.pending
+            and monotonic() - self.inactivity.last_activity >= FINDING_IDLE_SECONDS
+        )
+
+    def check_findings(self) -> None:
+        if self.can_offer_finding():
+            self.event_bus.publish(FindingEvent(source="interests"))
+
     def handle_live_event(self, event) -> None:
         if event.type in (
             "session.input_transcript.delta", "session.output_transcript.delta",
@@ -791,6 +816,7 @@ class CoraApp(App):
         self.observation_timer.stop()
         self.interest_timer.stop()
         self.exploration_timer.stop()
+        self.finding_timer.stop()
         self.cancel_standby_alert()
         self.wake.response_deadline = None
         self.wake.stop_timers()

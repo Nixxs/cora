@@ -188,7 +188,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 8)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 9)
 
     def interest(self, **changes):
         values = {
@@ -313,6 +313,9 @@ class ModelDatabaseTests(unittest.TestCase):
             ({"status": "failed", "finished_at": start, "sources": ["https://example.com"]},
              "interest_explorations_sources_check"),
             ({"interest_id": uuid4()}, "interest_explorations_interest_id_fkey"),
+            ({"mentioned_at": start}, "interest_explorations_mentioned_check"),
+            ({"status": "failed", "finished_at": start, "mentioned_at": start},
+             "interest_explorations_mentioned_check"),
         ]
         for changes, constraint in cases:
             values = {"interest_id": interest_id, "status": "running", "started_at": start, **changes}

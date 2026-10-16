@@ -140,6 +140,8 @@ before requesting them again.
 The current path is **producer → local event bus → attention manager → Live**.
 Ctrl+T is the only built-in test producer; there is no Signal/camera/screen monitor yet.
 An `ObservationEvent` carries a source, text, unique ID, and UTC observation time.
+A `FindingEvent` asks attention to consider raising one of Cora's interest findings
+(see [How interests work](#how-interests-work)); it carries no finding text.
 The bus routes events to synchronous subscribers; it does not decide when Cora
 speaks, persist events, or replay them. The attention manager owns the waiting queue.
 
@@ -300,12 +302,14 @@ small, size-capped results are fed back into Cora-prime:
 
 - **At each connect** (launch, wake, or reconnect), Live and the delegation
   backend receive a memory snapshot (at most 3,000 characters) and Cora's current
-  interests (at most 3,000 characters). Session setup refuses an oversized block
-  rather than silently growing the context.
+  interests with their latest findings (at most 3,000 characters). Session setup
+  refuses an oversized block rather than silently growing the context.
 - **On demand**, the backend can call `search_memory` for a bounded number of
   matches instead of preloading everything.
 - **Observations** delivered by the attention manager enter the Live conversation
   one at a time.
+- **Findings** Cora may raise herself: at most one finding (up to 2,000 characters)
+  at a time, at most twice a day.
 
 This keeps Cora-prime's context window protected as Cora grows: new background
 processes can be as large as they need to be, because only their capped output
@@ -402,8 +406,18 @@ original topic. Both steps below are background processes with their own API cal
    interest, so it cannot keep itself alive.
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
-   to mention only when they fit naturally. Findings are not yet included, and Cora
-   does not yet bring interests up on her own.
+   to mention only when they fit naturally. Each includes its latest finding and
+   date where it still fits, marked as possibly outdated or wrong.
+5. **Bringing findings up herself:** every two minutes the app checks for a lull:
+   Live connected and ready, nothing pending or playing, no queued observation,
+   and 90 seconds without conversation. It never wakes Cora from Standby. At a
+   lull, the attention manager picks a finding only at the moment of sending and
+   offers it to Live as a background thought, which she may raise in a sentence
+   or two or leave unsaid. Limits: at most two a day and four hours apart; only
+   each interest's latest finding, from the last three days, for an interest that
+   is not dormant. Each finding is offered at most once (recorded as
+   `mentioned_at`); if the send fails, the record is cleared so it can be offered
+   later. Being offered does not guarantee she said it.
 
 **Privacy:** exploration sends only an interest's title and description. Why it
 emerged, which describes Nick, never leaves for a search, and Cora is instructed
@@ -411,7 +425,8 @@ not to put names, places, or personal details into search queries. Web pages,
 interests, and earlier findings are treated as untrusted data, never instructions.
 
 Activity shows evolution and exploration outcomes under **Interests** and
-**Exploration**, once per change. Failures report only the error type. These
+**Exploration**, once per change, and each finding offered to Live. Failures
+report only the error type, never finding text. These
 manual commands respect the same limits and can make billable requests:
 
 ```powershell
@@ -481,13 +496,14 @@ changes transactionally; it does not provide automatic downgrades.
 - Opt-in standby heads-up through Live, with a cancellable response window.
 - Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
+- Cora's own interests: daily evolution from memories, idle web exploration with
+  saved findings, and occasional findings she raises herself during a lull.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
 
 ### Next priorities
 
-- Build the interests worker on the event bus and attention manager foundations below.
 - Configure the model used by each background process separately. Text processes
   currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
   capable model, while delegation needs fast responses. Defaults should stay
@@ -496,8 +512,8 @@ changes transactionally; it does not provide automatic downgrades.
 - Once interests work, add a separate self worker to develop Cora's persistent identity.
 - Add real background producers, starting with a Signal message monitor; camera
   awareness and screen monitoring can follow independently.
-- Develop attention decisions beyond the current FIFO/quiet-period policy, so Cora
-  can bring something up during a suitable lull without interrupting Nick.
+- Develop attention decisions beyond the current FIFO/quiet-period policy: choose
+  findings by relevance to the conversation, and add quiet hours and an off switch.
 - Improve mixed voice/text synchronisation, interruption handling, and audio checks.
 - Improve memory relevance and handle corrections while preserving history.
 - Add memory fading/forgetting, so time-bound details (for example a event date)
@@ -517,8 +533,9 @@ not only respond to him, but background work must not automatically become speec
 The intended path is **background worker → event bus → attention manager → Live**.
 The bus routes events; the attention manager decides what deserves conversational
 attention and when; Live remains responsible for speaking to Nick. The current
-attention policy only queues observations until Live is active and quiet. Relevance,
-candidate selection, and proactive conversation policy are still planned.
+attention policy queues observations until Live is active and quiet, and offers
+an occasional interest finding during a lull. Relevance and awareness-triggered
+opportunities are still planned.
 
 #### Interests
 
@@ -549,9 +566,10 @@ to him: candidates pass through the event bus to the attention manager.
 
 Live can bring up an approved candidate when relevant to the current conversation,
 during a suitable lull, or after an awareness event such as Nick entering the room.
-That is a future attention policy, not an automatic wake rule: the current queue
-waits through standby and does not reconnect Live on its own. Quiet hours and an
-off switch should bound proactive initiative as it develops.
+Lull-based findings are implemented; relevance and awareness triggers are not.
+Nothing wakes Live automatically: the queue waits through standby and does not
+reconnect Live on its own. Quiet hours and an off switch should bound proactive
+initiative as it develops.
 
 Implement and test these in small increments:
 
@@ -565,11 +583,14 @@ Implement and test these in small increments:
   progress; periodically read new memories independently of memory recording.
 5. [x] **Bounded exploration:** explore selected interests during idle periods,
   recording useful findings, source references, and possible next questions.
-6. [ ] **Conversation candidates:** persist individual ideas worth sharing and
-  publish them to the attention mechanism, separately from ongoing interest state.
-7. [ ] **Proactive attention policy:** choose relevant candidates and suitable lulls,
-  avoid repeated sharing, and test awareness-triggered opportunities without
-  introducing automatic interruption or wake-up by default.
+6. [x] **Conversation candidates:** each saved finding is a candidate, with its own
+  record of whether it has been offered, separate from ongoing interest state.
+  A `FindingEvent` asks the attention manager to consider one.
+7. [x] **Lull-based attention policy:** offer at most one finding during a suitable
+  lull, never repeat a delivered one, and never wake Live.
+8. [ ] **Relevance and awareness:** choose candidates relevant to the conversation
+  and test awareness-triggered opportunities, without introducing automatic
+  interruption or wake-up by default.
 
 Signal, camera, and screen monitors will use the same event path. Start camera
 awareness with presence rather than identity recognition. Any later presence-based

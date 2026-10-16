@@ -3,7 +3,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from subconscious.attention import AttentionManager
+from subconscious.attention import FINDING_REQUEST, AttentionManager
+
+MENTION = SimpleNamespace(finding="Private finding text")
 
 
 class AttentionManagerTests(unittest.IsolatedAsyncioTestCase):
@@ -15,11 +17,15 @@ class AttentionManagerTests(unittest.IsolatedAsyncioTestCase):
         self.record_activity = MagicMock()
         self.finished = MagicMock()
         self.activity = MagicMock()
+        self.claim = AsyncMock(return_value=MENTION)
+        self.send_finding = AsyncMock()
+        self.release = AsyncMock(return_value=True)
         self.manager = AttentionManager(
             can_deliver=self.ready, is_closing=self.closing,
             schedule_delivery=self.schedule, send_observation=self.send,
             record_activity=self.record_activity, delivery_finished=self.finished,
-            write_activity=self.activity,
+            write_activity=self.activity, claim_finding=self.claim,
+            send_finding=self.send_finding, release_finding=self.release,
         )
 
     async def deliver_scheduled(self):
@@ -152,3 +158,85 @@ class AttentionManagerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.manager.busy)
         self.assertEqual(list(self.manager.pending), ["Second"])
         self.finished.assert_called_once()
+
+    async def test_finding_waits_unclaimed_once_then_is_claimed_and_sent_at_delivery(self):
+        self.manager.submit_finding()
+        self.manager.submit_finding()
+        self.assertEqual(list(self.manager.pending), [FINDING_REQUEST])
+        self.claim.assert_not_called()
+        self.record_activity.assert_not_called()  # waiting must not reset idle time
+
+        self.ready.return_value = True
+        self.manager.check()
+        await self.deliver_scheduled()
+        self.claim.assert_awaited_once()
+        self.send_finding.assert_awaited_once_with(MENTION)
+        self.release.assert_not_called()
+        self.record_activity.assert_called_once()
+        self.finished.assert_called_once()
+        self.assertIn("Finding offered to Live.", str(self.activity.call_args_list))
+        self.assertFalse(self.manager.pending)
+
+    async def test_nothing_to_claim_sends_nothing_and_stays_quiet(self):
+        self.claim.return_value = None
+        self.ready.return_value = True
+        self.manager.submit_finding()
+        await self.deliver_scheduled()
+        self.send_finding.assert_not_called()
+        self.record_activity.assert_not_called()
+        self.finished.assert_not_called()
+        self.activity.assert_not_called()
+        self.assertFalse(self.manager.busy)
+
+    async def test_failed_send_releases_the_claim_without_logging_the_finding(self):
+        self.send_finding.side_effect = OSError("private error details")
+        self.ready.return_value = True
+        self.manager.submit_finding()
+        await self.deliver_scheduled()
+        self.release.assert_awaited_once_with(MENTION)
+        self.finished.assert_called_once()
+        log = str(self.activity.call_args_list)
+        self.assertIn("Finding send failed (OSError); it can be offered later.", log)
+        self.assertNotIn("private", log.lower())
+        self.assertNotIn("Private finding text", log)
+
+    async def test_claim_is_released_if_live_became_busy_during_the_database_call(self):
+        self.ready.return_value = True
+
+        async def claim():
+            self.ready.return_value = False
+            return MENTION
+
+        self.claim.side_effect = claim
+        self.manager.submit_finding()
+        await self.deliver_scheduled()
+        self.send_finding.assert_not_called()
+        self.release.assert_awaited_once_with(MENTION)
+        self.finished.assert_not_called()
+        self.assertIn("Live became busy", str(self.activity.call_args_list))
+
+    async def test_claim_and_release_errors_report_only_their_type(self):
+        self.ready.return_value = True
+        self.claim.side_effect = OSError("private database details")
+        self.manager.submit_finding()
+        await self.deliver_scheduled()
+        self.send_finding.assert_not_called()
+        self.assertIn("Finding check failed (OSError).", str(self.activity.call_args_list))
+
+        self.claim.side_effect = None
+        self.send_finding.side_effect = TimeoutError()
+        self.release.side_effect = OSError("private database details")
+        self.manager.submit_finding()
+        await self.deliver_scheduled()
+        log = str(self.activity.call_args_list)
+        self.assertIn("Finding send failed (TimeoutError); release failed (OSError).", log)
+        self.assertNotIn("private", log)
+
+    async def test_closing_or_stopped_rejects_finding_requests(self):
+        self.closing.return_value = True
+        self.manager.submit_finding()
+        self.closing.return_value = False
+        self.manager.stop()
+        self.manager.submit_finding()
+        self.assertFalse(self.manager.pending)
+        self.schedule.assert_not_called()

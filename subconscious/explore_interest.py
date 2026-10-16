@@ -122,8 +122,18 @@ def explore(client: OpenAI, model: str, interest: Interest, previous: list[Explo
     )
 
 
-def explore_next(store: ExplorationStore, client: OpenAI, model: str = BACKEND_MODEL, *, now: datetime) -> str:
-    """Explore the next eligible interest if the limits allow; return a one-line outcome."""
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def explore_next(
+    store: ExplorationStore, client: OpenAI, model: str = BACKEND_MODEL, *,
+    now: datetime, clock: Callable[[], datetime] = utc_now,
+) -> str:
+    """Explore the next eligible interest if the limits allow; return a one-line outcome.
+
+    `now` is the start time; `clock` stamps when the attempt actually ended.
+    """
     validate_now(now)
     start = store.start_next(now=now)
     if start.exploration is None:
@@ -134,12 +144,12 @@ def explore_next(store: ExplorationStore, client: OpenAI, model: str = BACKEND_M
                     if item.status == "found"][:PREVIOUS_FINDINGS]
         discovery = explore(client, model, start.interest, previous)
         if discovery.finding is None:
-            store.fail(attempt, now=now)
+            store.fail(attempt, now=clock())
             return f"Explored {title}: nothing new found."
-        saved = store.finish(attempt, discovery.finding, discovery.next_questions, discovery.sources, now=now)
+        saved = store.finish(attempt, discovery.finding, discovery.next_questions, discovery.sources, now=clock())
     except BaseException:
         try:
-            store.fail(attempt, now=now)
+            store.fail(attempt, now=clock())
         except Exception:
             pass  # Left running, it is marked failed once stale.
         raise
@@ -156,7 +166,7 @@ def run_exploration_cycle(*, should_stop: Callable[[], bool]) -> str | None:
             return None
         engine = build_engine()
         with OpenAI(max_retries=0) as client:
-            outcome = explore_next(ExplorationStore(engine), client, now=datetime.now(timezone.utc))
+            outcome = explore_next(ExplorationStore(engine), client, now=utc_now())
     except Exception as error:
         outcome = f"Exploration stopped ({type(error).__name__})."
     finally:
@@ -174,7 +184,7 @@ def main() -> None:
         engine = build_engine()
         try:
             store = ExplorationStore(engine)
-            now = datetime.now(timezone.utc)
+            now = utc_now()
             with OpenAI(max_retries=0) as client:
                 outcome = explore_next(store, client, args.model, now=now)
             latest = store.list_recent(1)
