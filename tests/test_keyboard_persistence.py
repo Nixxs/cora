@@ -103,7 +103,8 @@ async def running_app(persistence=None):
             patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
             patch("memory.background.deduplicate_memory"), \
-            patch("memory.background.appraise_waiting_conversations"):
+            patch("memory.background.appraise_waiting_conversations"), \
+            patch("memory.background.update_relationships"):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:
@@ -112,6 +113,8 @@ async def running_app(persistence=None):
                 persistence.load_startup_memory_context.return_value = ""
                 persistence.load_startup_interest_context.return_value = ""
                 persistence.load_startup_identity_context.return_value = ""
+                persistence.load_relationship_context.return_value = ""
+                persistence.load_relationship_values.return_value = None
                 persistence.load_person_name.return_value = None
                 persistence.load_last_talked_at.return_value = None
             app.persistence = persistence

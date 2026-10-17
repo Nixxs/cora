@@ -17,6 +17,8 @@ from storage.database import build_engine
 from storage.models import InterestExplorationRecord, InterestRecord
 from subconscious.interests.interest_store import Interest, clean_text, snapshot as interest_snapshot, validate_now
 from subconscious.interests.interest_strength import settle
+from subconscious.relationship.relationship_rules import BASELINE
+from subconscious.relationship.relationship_store import RelationshipStore
 
 FINDING_MAX_CHARS = 2000
 REACTION_MAX_CHARS = 500
@@ -35,6 +37,21 @@ STALE_AFTER = timedelta(minutes=30)
 MENTION_GAP = timedelta(hours=4)
 MENTION_DAILY_LIMIT = 2
 MENTION_FRESH_FOR = timedelta(days=3)
+# Warmth scales both mention limits the same amount each way from baseline (0.5): fully warm
+# halves the gap, fully cool doubles it, and the daily limit moves by one only at the far ends.
+MENTION_GAP_SCALE = 2
+FOND_WARMTH = 0.7
+COOL_WARMTH = 0.3
+
+
+def mention_limits(warmth: float) -> tuple[timedelta, int]:
+    """Return (gap, daily limit) for raising findings; baseline warmth keeps the defaults."""
+    gap = MENTION_GAP * MENTION_GAP_SCALE ** (2 * (BASELINE.warmth - warmth))
+    if warmth >= FOND_WARMTH:
+        return gap, MENTION_DAILY_LIMIT + 1
+    if warmth < COOL_WARMTH:
+        return gap, MENTION_DAILY_LIMIT - 1
+    return gap, MENTION_DAILY_LIMIT
 
 
 @dataclass(frozen=True)
@@ -175,9 +192,10 @@ class ExplorationStore:
             record.finished_at = max(now, record.started_at)
             return snapshot(record)
 
-    def claim_mention(self, *, now: datetime) -> Mention | None:
+    def claim_mention(self, *, now: datetime, warmth: float = BASELINE.warmth) -> Mention | None:
         """Mark a finding as mentioned before it is offered, if the limits allow one now."""
         validate_now(now)
+        gap, daily_limit = mention_limits(warmth)
         attempts = InterestExplorationRecord
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             # One claimer at a time, so two workers can never both pass the limits.
@@ -186,7 +204,7 @@ class ExplorationStore:
             recent = session.scalars(select(attempts.mentioned_at).where(
                 attempts.mentioned_at > now - timedelta(hours=24),
             )).all()
-            if len(recent) >= MENTION_DAILY_LIMIT or any(at > now - MENTION_GAP for at in recent):
+            if len(recent) >= daily_limit or any(at > now - gap for at in recent):
                 return None
 
             rows = session.execute(select(attempts, InterestRecord).join(
@@ -242,7 +260,10 @@ class ExplorationStore:
 def claim_mention_now() -> Mention | None:
     engine = build_engine()
     try:
-        return ExplorationStore(engine).claim_mention(now=datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        # Before any relationship update she raises findings at the baseline rate.
+        values = RelationshipStore(engine).current_values(now) or BASELINE
+        return ExplorationStore(engine).claim_mention(now=now, warmth=values.warmth)
     finally:
         engine.dispose()
 

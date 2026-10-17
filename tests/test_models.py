@@ -16,7 +16,8 @@ from storage.models import (
     Base, ConversationRecord, ConversationSummaryRecord, IdentityEventEvidenceRecord, IdentityEventRecord,
     IdentityEventTraitRecord, IdentityTraitRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
     InterestEventMemoryRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord,
-    InterestWorkerStateRecord, MemoryRecord, MessageRecord, PersonRecord,
+    InterestWorkerStateRecord, MemoryRecord, MessageRecord, PersonRecord, RelationshipEventRecord,
+    RelationshipRecord,
 )
 
 
@@ -38,6 +39,7 @@ class ModelDefinitionTests(unittest.TestCase):
                 "public.interest_explorations", "public.people", "public.identity_traits",
                 "public.identity_events", "public.identity_event_traits", "public.identity_event_evidence",
                 "public.identity_worker_state", "public.interaction_appraisals",
+                "public.relationships", "public.relationship_events",
             })
             connect.assert_not_called()
 
@@ -191,7 +193,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 13)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 14)
 
     def interest(self, **changes):
         values = {
@@ -565,6 +567,84 @@ class ModelDatabaseTests(unittest.TestCase):
                     session.add(self.appraisal(**changes))
                 with session.begin():
                     session.execute(text("DELETE FROM public.interaction_appraisals"))
+
+    def delete_relationships(self):
+        with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.relationship_events"))
+            connection.execute(text("DELETE FROM public.relationships"))
+        self.delete_appraisals()
+
+    def relationship_event(self, **changes):
+        values = {
+            "person_id": self.person_id, "kind": "appraisal", "conversation_id": self.conversation_id,
+            "trust": 0.5, "warmth": 0.55, "familiarity": 0.1,
+        }
+        return RelationshipEventRecord(**{**values, **changes})
+
+    def add_appraised_relationship(self):
+        self.addCleanup(self.delete_relationships)
+        with Session(self.engine) as session, session.begin():
+            person = PersonRecord(display_name="Nick")
+            session.add(person)
+            session.flush()
+            self.person_id = person.id
+            session.add(self.appraisal())
+            session.add(RelationshipRecord(person_id=person.id, trust=0.5, warmth=0.5, familiarity=0))
+
+    def test_relationship_history_applies_each_appraisal_once_and_keeps_resets(self):
+        self.add_appraised_relationship()
+        with Session(self.engine) as session, session.begin():
+            event = self.relationship_event()
+            session.add_all([event, self.relationship_event(
+                kind="reset", conversation_id=None, reason="Back to baseline after testing",
+                trust=0.5, warmth=0.5, familiarity=0.1,
+            )])
+            session.flush()
+            self.assertIsNotNone(event.created_at.tzinfo)
+            self.assertIsNotNone(session.get(RelationshipRecord, self.person_id).updated_at.tzinfo)
+        with Session(self.engine) as session:
+            with self.assertRaises(IntegrityError) as error:
+                with session.begin():
+                    session.add(self.relationship_event())
+            self.assertEqual(error.exception.orig.diag.constraint_name, "relationship_events_conversation_id_key")
+        # History keeps its relationship, appraisals and person.
+        for statement in (
+            "DELETE FROM public.relationships", "DELETE FROM public.interaction_appraisals",
+            "DELETE FROM public.people",
+        ):
+            with self.subTest(statement=statement), self.engine.connect() as connection:
+                with self.assertRaises(IntegrityError):
+                    connection.execute(text(statement))
+
+    def test_invalid_relationships_are_rejected_by_database(self):
+        self.add_appraised_relationship()
+        for record, constraint in (
+            (RelationshipRecord(person_id=uuid4(), trust=0.5, warmth=0.5, familiarity=0),
+             "relationships_person_id_fkey"),
+            (self.relationship_event(person_id=uuid4()), "relationship_events_person_id_fkey"),
+            (self.relationship_event(conversation_id=uuid4()), "relationship_events_conversation_id_fkey"),
+            (self.relationship_event(kind="drift"), "relationship_events_kind_check"),
+            (self.relationship_event(conversation_id=None), "relationship_events_kind_check"),
+            (self.relationship_event(reason="Extra"), "relationship_events_kind_check"),
+            (self.relationship_event(kind="reset", conversation_id=None), "relationship_events_kind_check"),
+            (self.relationship_event(kind="reset", conversation_id=None, reason=" "),
+             "relationship_events_reason_check"),
+            (self.relationship_event(kind="reset", conversation_id=None, reason="x" * 1001),
+             "relationship_events_reason_check"),
+            (self.relationship_event(trust=1.01), "relationship_events_values_check"),
+            (self.relationship_event(familiarity=-0.01), "relationship_events_values_check"),
+        ):
+            with self.subTest(record=record), Session(self.engine) as session:
+                with self.assertRaises(IntegrityError) as error:
+                    with session.begin():
+                        session.add(record)
+                self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
+        for column in ("trust", "warmth", "familiarity"):
+            for value in (-0.01, 1.01):
+                with self.subTest(column=column, value=value), self.engine.connect() as connection:
+                    with self.assertRaises(IntegrityError) as error:
+                        connection.execute(text(f"UPDATE public.relationships SET {column} = {value}"))
+                    self.assertEqual(error.exception.orig.diag.constraint_name, "relationships_values_check")
 
 
 if __name__ == "__main__":

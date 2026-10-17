@@ -11,6 +11,8 @@ from .people_store import PeopleStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.interests.interest_store import InterestStore
+from subconscious.relationship.relationship_rules import RelationshipValues
+from subconscious.relationship.relationship_store import RelationshipStore
 
 
 class KeyboardPersistence:
@@ -38,6 +40,12 @@ class KeyboardPersistence:
 
     def load_startup_identity_context(self) -> str:
         return IdentityStore(self._get_store().engine).get_startup_context()
+
+    def load_relationship_context(self) -> str:
+        return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
+
+    def load_relationship_values(self) -> RelationshipValues | None:
+        return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))
 
     def load_person_name(self) -> str | None:
         person = PeopleStore(self._get_store().engine).current_person()

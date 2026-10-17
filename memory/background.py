@@ -6,6 +6,7 @@ from uuid import UUID
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from subconscious.relationship.appraise_conversation import appraise_waiting_conversations
+from subconscious.relationship.relationship_store import update_relationships
 
 from .deduplicate_memory import deduplicate_memory
 from .embed_memory import embed_memory
@@ -68,6 +69,9 @@ def run_background_memory_pass(
         # Last, so a first-run backfill never delays memories; it reports its own failures.
         if not should_stop():
             appraise_waiting_conversations(engine, should_stop=should_stop, write_activity=write_activity)
+        # Applies whatever appraisals are saved, even if appraising stopped early.
+        if not should_stop():
+            update_relationships(engine, write_activity=write_activity)
     except Exception as error:
         if not should_stop():
             write_activity(

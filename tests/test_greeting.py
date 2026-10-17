@@ -5,8 +5,10 @@ import json
 import unittest
 
 from greeting import (
-    NO_HOOK_CHANCE, choose_hook, finding_hook, greeting_brief, last_thread_hook, part_of_day, time_since,
+    NO_HOOK_CHANCE, choose_hook, finding_hook, greeting_brief, last_thread_hook, part_of_day,
+    relationship_note, time_since,
 )
+from subconscious.relationship.relationship_rules import BASELINE, RelationshipValues
 
 PERTH = timezone(timedelta(hours=8))
 NOW = datetime(2026, 10, 17, 19, 30, tzinfo=PERTH)  # a Saturday evening
@@ -89,6 +91,37 @@ class GreetingHookTests(unittest.TestCase):
         self.assertIn('found: "Some anemones clone themselves."', hook)
         self.assertIn("own discovery", hook)
         self.assertIn("may be outdated or wrong", hook)
+
+
+class RelationshipGreetingTests(unittest.TestCase):
+    def values(self, warmth=0.5, familiarity=0.2):
+        return RelationshipValues(trust=0.5, warmth=warmth, familiarity=familiarity)
+
+    def test_familiarity_and_warmth_tiers(self):
+        for values, expected in (
+            (self.values(), ""),
+            (BASELINE, "still getting to know each other"),
+            (self.values(familiarity=0.4), "relaxed, familiar hello"),
+            (self.values(warmth=0.55), "glad to see them"),
+            (self.values(warmth=0.44), "brief and polite, without sulking or hinting at why"),
+        ):
+            with self.subTest(values=values):
+                note = relationship_note(values)
+                if expected:
+                    self.assertIn(expected, note)
+                else:
+                    self.assertEqual(note, "")
+
+    def test_note_comes_before_the_hook_and_is_omitted_when_unknown_or_plain(self):
+        hook = last_thread_hook("We planned a garden.")
+        last = NOW - timedelta(days=1)
+        warm = self.values(warmth=0.8, familiarity=0.8)
+        brief = greeting_brief("Nick", last, NOW, hook, warm)
+        self.assertEqual(brief, " ".join((greeting_brief("Nick", last, NOW), relationship_note(warm), hook)))
+        for relationship in (None, self.values()):
+            with self.subTest(relationship=relationship):
+                self.assertEqual(greeting_brief("Nick", last, NOW, relationship=relationship),
+                                 greeting_brief("Nick", last, NOW))
 
 
 if __name__ == "__main__":

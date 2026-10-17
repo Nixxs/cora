@@ -321,7 +321,8 @@ small, size-capped results are fed back into Cora-prime:
 - **Observations** delivered by the attention manager enter the Live conversation
   one at a time.
 - **Findings** Cora may raise herself: at most one finding (up to 2,000 characters)
-  at a time, at most twice a day.
+  at a time, normally at most twice a day (three times when she's fond of the
+  person, once when she feels hurt).
 
 This keeps Cora-prime's context window protected as Cora grows: new background
 processes can be as large as they need to be, because only their capped output
@@ -344,7 +345,8 @@ rate limits.
    startup for older conversations and again each time Cora enters standby, so a
    conversation's memories can be ready by the time she wakes. Extraction uses
    original messages, not summaries. Once memory work is done, the same pass
-   appraises how each finished conversation went (see Relationship).
+   appraises how each finished conversation went and updates her relationship
+   with the person from those appraisals (see Relationship).
 4. **Maintenance:** pending memories receive embeddings for semantic search.
    Conservative duplicate checks mark equivalent entries without deleting their
    text, evidence, or history. Marked duplicates are excluded from recall.
@@ -432,7 +434,9 @@ original topic. Both steps below are background processes with their own API cal
    and 90 seconds without conversation. It never wakes Cora from Standby. At a
    lull, the attention manager picks a finding only at the moment of sending and
    offers it to Live as a background thought, which she may raise in a sentence
-   or two or leave unsaid. Limits: at most two a day and four hours apart; only
+   or two or leave unsaid. Limits: normally at most two a day and four hours
+   apart, scaled by how warm she feels toward the person (see Relationship step
+   5); only
    each interest's latest finding, from the last three days, for an interest that
    is not dormant. Each finding is offered at most once (recorded as
    `mentioned_at`); if the send fails, the record is cleared so it can be offered
@@ -464,13 +468,13 @@ python -m subconscious.interests.explore_interest
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
-| [greeting.py](greeting.py) | Facts for Cora's opening greeting (time of day, time since you last talked, name). |
+| [greeting.py](greeting.py) | Facts for Cora's opening greeting (time of day, time since you last talked, name, how she feels about you). |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals and relationship updates. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -591,7 +595,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   findings, claimed like any other mention (so the usual gap and daily limit
   apply) and released if the greeting is not sent; with nothing fresh to share
   she falls back to the last thread. A first meeting has no hook. Personal-memory
-  hooks wait for familiarity in the relationship work.
+  hooks wait for familiarity in the relationship work. The launch brief also
+  carries a line from the current relationship (see Relationship step 6).
 - Configure the model used by each background process separately. Text processes
   currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
   capable model, while delegation needs fast responses. Defaults should stay
@@ -825,8 +830,8 @@ After the interests steps are working:
 1. [x] **Appraisals:** judge each finished conversation once, from its original
   messages: how the person treated her (warm, neutral, curt or hostile), whether
   frustration was at a bug or situation or aimed at her, whether she made a
-  mistake, and who made amends. Conversations spent testing or debugging Cora are
-  marked `development` and never shape the relationship. Migration 0013 adds the
+  mistake, and who made amends. Conversations spent building or debugging Cora are
+  marked `development`; they still count, because they are real time together. Migration 0013 adds the
   `interaction_appraisals` table (apply with `python migrate.py`): one row per
   conversation, linked to the person, never edited or deleted.
   [subconscious/relationship/appraisal.py](subconscious/relationship/appraisal.py)
@@ -854,6 +859,67 @@ After the interests steps are working:
   python -m subconscious.relationship.appraise_conversation --limit 5 --dry-run  # show five, save nothing
   python -m subconscious.relationship.appraise_conversation                      # appraise and save all waiting
   ```
+2. [x] **Relationship state:** migration 0014 adds
+  `relationships`, one row per person holding trust, warmth and familiarity, each
+  from 0 to 1, and `relationship_events`, an append-only history (apply with
+  `python migrate.py`). Every event stores the values after it, so any event is a
+  snapshot to restore. An `appraisal` event names the appraisal it applied, and
+  each appraisal can be applied only once. A `reset` event needs a reason and
+  deletes nothing: appraisals, people and older events stay. Baselines, step
+  sizes and the slow drift back to baseline live in code.
+3. [x] **Relationship updates (applied in the background):**
+  [subconscious/relationship/relationship_rules.py](subconscious/relationship/relationship_rules.py)
+  says how one appraised conversation moves the values. A stranger starts at
+  trust 0.5, warmth 0.5 and familiarity 0. Each step moves a small fraction of the
+  way toward 1 or 0, so values stay in bounds. Losses are bigger than gains: a
+  warm conversation adds a little warmth, while curt and hostile ones take more.
+  Friction aimed at Cora costs trust unless the person made amends; then trust
+  grows a little and the warmth lost is halved. Frustration at a bug or situation
+  costs no trust, and Cora's own mistakes don't change how she feels about the
+  person. Every conversation, including development ones, adds a little
+  familiarity, which never falls. Trust and warmth drift halfway back to baseline
+  every 30 days.
+  [subconscious/relationship/relationship_store.py](subconscious/relationship/relationship_store.py)
+  applies them: right after appraising, the background pass applies every saved
+  appraisal not yet applied, oldest conversation first. The person's row starts
+  at the baseline, and drift is measured between conversation start times, so a
+  first-run catch-up of past conversations ends where living them would have.
+  Each appraisal is applied once and leaves a `relationship_events` row with the
+  values after it. Activity shows one "Relationship updated" line per pass with
+  the new values; a failure is retried on the next pass.
+4. [x] **Relationship in the prompt:**
+  [subconscious/relationship/relationship_context.py](subconscious/relationship/relationship_context.py)
+  turns the values into a few plain sentences, words rather than numbers, such
+  as "You know the person fairly well by now. You feel warm toward them and
+  enjoy talking with them. You trust them." The middle wording sits close around
+  the baseline, so one hostile conversation already reads as "a little cooler".
+  `RelationshipStore.get_startup_context(now)` describes the current person after
+  drifting to now, or returns nothing before any appraisal has been applied. Every
+  connect, including waking from standby, loads it fresh and adds it to both
+  prompts after her self-view and before memories. The prompt says it colours her
+  tone, warmth and how much she volunteers, but never her honesty, how well she
+  helps or which tools she uses; closeness means more candour, not more
+  agreement, and feeling cooler means more reserved, never rude, guilt-tripping
+  or needy. Activity logs only its size; if it fails to load she connects
+  without it, keeping everything else.
+5. [x] **Warmth shapes how readily she raises findings:**
+  `mention_limits` in
+  [subconscious/interests/exploration_store.py](subconscious/interests/exploration_store.py)
+  scales the finding limits from current warmth, by the same amount either way
+  from the 0.5 baseline. The gap between findings is four hours at baseline,
+  shrinking to two when fully warm and growing to eight when fully cool. The
+  daily limit stays at two, rising to three once she is very fond (warmth 0.7 or
+  more) and falling to one when she feels hurt (below 0.3), so she never floods
+  the chat and never stops sharing altogether. Before any relationship update the
+  baseline applies. The opening greeting's finding hook uses the same limits.
+6. [x] **Relationship shapes the opening greeting:** `relationship_note` in
+  [greeting.py](greeting.py) adds at most two short lines to the launch brief,
+  before any hook, using the same tier boundaries as the prompt. Low familiarity
+  asks for friendly rather than familiar, high familiarity for a relaxed hello;
+  warmth of 0.55 or more lets her be glad to see you, below 0.45 keeps it brief
+  and polite without sulking or hinting at why. Middling values add nothing. The
+  greeting loads the values fresh; if that fails, Activity says so and she
+  greets without them. The welcome back after Standby is unchanged.
 
 ### Quiet use and standby — largely complete
 

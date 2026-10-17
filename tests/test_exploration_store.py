@@ -12,7 +12,9 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from storage.models import InterestExplorationRecord
-from subconscious.interests.exploration_store import LIST_LIMIT, ExplorationStore
+from subconscious.interests.exploration_store import (
+    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, ExplorationStore, mention_limits,
+)
 from subconscious.interests.interest_strength import HALF_LIFE
 import test_interest_store as interest_tests
 
@@ -53,6 +55,19 @@ class ExplorationValidationTests(unittest.TestCase):
                     store.list_recent(limit)
             session.assert_not_called()
         engine.connect.assert_not_called()
+
+    def test_warmth_scales_mention_limits_the_same_amount_each_way(self):
+        self.assertEqual(mention_limits(0.5), (MENTION_GAP, MENTION_DAILY_LIMIT))
+        self.assertEqual(mention_limits(1.0), (MENTION_GAP / 2, MENTION_DAILY_LIMIT + 1))
+        self.assertEqual(mention_limits(0.0), (MENTION_GAP * 2, MENTION_DAILY_LIMIT - 1))
+        for lean in (0.1, 0.25, 0.4):
+            with self.subTest(lean=lean):
+                warmer, cooler = mention_limits(0.5 + lean)[0], mention_limits(0.5 - lean)[0]
+                self.assertLess(warmer, MENTION_GAP)
+                self.assertAlmostEqual(warmer / MENTION_GAP, MENTION_GAP / cooler)
+        self.assertEqual([mention_limits(warmth)[1] for warmth in (0.29, 0.3, 0.69, 0.7)],
+                         [MENTION_DAILY_LIMIT - 1, MENTION_DAILY_LIMIT, MENTION_DAILY_LIMIT,
+                          MENTION_DAILY_LIMIT + 1])
 
 
 @unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")
@@ -212,6 +227,22 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         # Newest first; then too soon, the next, the daily limit, and the oldest a day later.
         self.assertEqual([claim and claim.finding for claim in claims],
                          ["Third", None, "Second", None, "First"])
+
+    def test_warmth_lets_findings_come_sooner_and_coolness_later(self):
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        for n, finding in enumerate(("First", "Second", "Third")):
+            self.found(finding, NOW + timedelta(hours=6.1 * n))
+        first = NOW + timedelta(hours=13)
+        self.assertEqual(self.explorations.claim_mention(now=first).finding, "Third")
+        # Five hours on, baseline may raise another but cool still waits.
+        later = first + timedelta(hours=5)
+        self.assertIsNone(self.explorations.claim_mention(now=later, warmth=0.0))
+        self.assertEqual(self.explorations.claim_mention(now=later, warmth=0.5).finding, "Second")
+        # Two hours after that, only fond allows a third in one day.
+        soon = later + timedelta(hours=2.1)
+        self.assertIsNone(self.explorations.claim_mention(now=soon, warmth=0.5))
+        self.assertEqual(self.explorations.claim_mention(now=soon, warmth=1.0).finding, "First")
 
     def test_only_each_interests_latest_fresh_finding_from_a_live_interest(self):
         self.found("Older")

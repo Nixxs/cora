@@ -430,7 +430,7 @@ class IdentityWorkerStateRecord(Base):
 
 
 class InteractionAppraisalRecord(Base):
-    """How one finished conversation went with the person; 'development' ones never shape the relationship."""
+    """How one finished conversation went with the person; 'development' marks working on Cora herself."""
 
     __tablename__ = "interaction_appraisals"
     __table_args__ = (
@@ -468,3 +468,70 @@ class InteractionAppraisalRecord(Base):
     appraised_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"),
     )
+
+
+class RelationshipRecord(Base):
+    """How Cora currently feels about one person; each value runs from 0 to 1."""
+
+    __tablename__ = "relationships"
+    __table_args__ = (
+        CheckConstraint(
+            "trust >= 0 AND trust <= 1 AND warmth >= 0 AND warmth <= 1 "
+            "AND familiarity >= 0 AND familiarity <= 1",
+            name="relationships_values_check",
+        ),
+        {"schema": "public"},
+    )
+
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="relationships_person_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    trust: Mapped[float] = mapped_column(Double)
+    warmth: Mapped[float] = mapped_column(Double)
+    familiarity: Mapped[float] = mapped_column(Double)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class RelationshipEventRecord(Base):
+    """Append-only relationship history; values are the state after the event, so each is a snapshot."""
+
+    __tablename__ = "relationship_events"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", name="relationship_events_conversation_id_key"),
+        CheckConstraint(
+            "kind IN ('appraisal', 'reset') "
+            "AND (kind = 'appraisal') = (conversation_id IS NOT NULL) "
+            "AND (kind = 'reset') = (reason IS NOT NULL)",
+            name="relationship_events_kind_check",
+        ),
+        CheckConstraint(
+            "trust >= 0 AND trust <= 1 AND warmth >= 0 AND warmth <= 1 "
+            "AND familiarity >= 0 AND familiarity <= 1",
+            name="relationship_events_values_check",
+        ),
+        CheckConstraint(
+            "reason IS NULL OR (btrim(reason) <> '' AND char_length(reason) <= 1000)",
+            name="relationship_events_reason_check",
+        ),
+        Index("relationship_events_person_id_created_at_idx", "person_id", "created_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.relationships.person_id", name="relationship_events_person_id_fkey", ondelete="RESTRICT"),
+    )
+    kind: Mapped[str] = mapped_column(Text)
+    # The appraisal this event applied; each appraisal is applied at most once.
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.interaction_appraisals.conversation_id", name="relationship_events_conversation_id_fkey",
+            ondelete="RESTRICT",
+        ),
+    )
+    trust: Mapped[float] = mapped_column(Double)
+    warmth: Mapped[float] = mapped_column(Double)
+    familiarity: Mapped[float] = mapped_column(Double)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

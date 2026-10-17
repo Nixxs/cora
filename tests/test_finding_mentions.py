@@ -10,6 +10,7 @@ import app as app_module
 from live import CoraLive
 from subconscious.event_bus import FindingEvent
 from subconscious.interests.exploration_store import Mention, claim_mention_now, release_mention_now
+from subconscious.relationship.relationship_rules import BASELINE, RelationshipValues
 from test_observations import queued_app
 
 FOUND_AT = datetime(2026, 10, 15, 23, 30, tzinfo=timezone(timedelta(hours=-5)))  # 16 Oct in UTC
@@ -64,15 +65,24 @@ class FindingDeliveryTests(unittest.IsolatedAsyncioTestCase):
     def test_database_wrappers_use_and_dispose_their_own_engine(self):
         engine = MagicMock()
         with patch("subconscious.interests.exploration_store.build_engine", return_value=engine), \
+                patch("subconscious.interests.exploration_store.RelationshipStore") as relationships, \
                 patch("subconscious.interests.exploration_store.ExplorationStore") as store:
+            relationships.return_value.current_values.return_value = RelationshipValues(0.6, 0.9, 0.4)
             store.return_value.claim_mention.return_value = MENTION
             store.return_value.release_mention.return_value = True
             self.assertIs(claim_mention_now(), MENTION)
+            # Before any relationship update the baseline warmth applies.
+            relationships.return_value.current_values.return_value = None
+            self.assertIs(claim_mention_now(), MENTION)
             self.assertTrue(release_mention_now(MENTION))
-        now = store.return_value.claim_mention.call_args.kwargs["now"]
+        relationships.assert_called_with(engine)
+        warm, unknown = store.return_value.claim_mention.call_args_list
+        now = warm.kwargs["now"]
         self.assertEqual(now.utcoffset(), timedelta(0))
+        relationships.return_value.current_values.assert_any_call(now)
+        self.assertEqual((warm.kwargs["warmth"], unknown.kwargs["warmth"]), (0.9, BASELINE.warmth))
         store.return_value.release_mention.assert_called_once_with(MENTION)
-        self.assertEqual(engine.dispose.call_count, 2)
+        self.assertEqual(engine.dispose.call_count, 3)
 
 
 class FindingTransportTests(unittest.IsolatedAsyncioTestCase):

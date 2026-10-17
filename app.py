@@ -136,6 +136,7 @@ class CoraApp(App):
             set_memory_context=lambda context: setattr(self.live, "memory_context", context),
             set_interest_context=lambda context: setattr(self.live, "interest_context", context),
             set_identity_context=lambda context: setattr(self.live, "identity_context", context),
+            set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
@@ -385,6 +386,7 @@ class CoraApp(App):
         if kind == "launch":
             last_talked_at = self.conversation_persistence.last_talked_at
             hook, mention = await self.choose_launch_hook(last_talked_at)
+            relationship = await self.conversation_persistence.load_relationship_values()
             # The launch greeting stays pending while waiting, so typing or speaking still cancels it.
             if self.pending_greeting != "launch":
                 self.activity.write("Opening greeting skipped: the person spoke first", "Greeting skipped")
@@ -392,7 +394,7 @@ class CoraApp(App):
                 return
             self.pending_greeting = None
             brief = greeting_brief(
-                self.live.person_name, last_talked_at, datetime.now().astimezone(), hook,
+                self.live.person_name, last_talked_at, datetime.now().astimezone(), hook, relationship,
             )
             send, sent = self.live.send_greeting(brief), "Opening greeting sent"
         else:

@@ -12,14 +12,15 @@ SUMMARY_WAIT_SECONDS = 30
 
 class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
-                 set_memory_context, set_interest_context, set_identity_context, set_person_name,
-                 write_activity, notify):
+                 set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
+                 set_person_name, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
         self.is_closing = is_closing
         self.set_memory_context = set_memory_context
         self.set_interest_context = set_interest_context
         self.set_identity_context = set_identity_context
+        self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
         self.write_activity = write_activity
         self.notify = notify
@@ -154,6 +155,25 @@ class ConversationPersistence:
                     f"Startup identity context loaded ({len(context)} characters).", "Identity context loaded",
                 )
 
+        # The relationship loads on its own too; without it she talks as she would to anyone.
+        if self.is_closing():
+            return
+        self.set_relationship_context("")
+        try:
+            context = await self.call_database(self.storage.load_relationship_context)
+        except Exception as error:
+            self.write_activity(
+                f"Startup relationship load failed ({type(error).__name__}); connecting without it.",
+                "Relationship context unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_relationship_context(context)
+                self.write_activity(
+                    f"Startup relationship context loaded ({len(context)} characters).",
+                    "Relationship context loaded",
+                )
+
     def summarize_previous_conversations(self, should_stop, dispatch_activity) -> None:
         try:
             run_background_memory_pass(
@@ -181,6 +201,17 @@ class ConversationPersistence:
             self.write_activity(
                 f"Last summary load failed ({type(error).__name__}); greeting without it.",
                 "Last thread unavailable",
+            )
+            return None
+
+    async def load_relationship_values(self):
+        """Current relationship values for the greeting; None if unknown or not loaded."""
+        try:
+            return await self.call_database(self.storage.load_relationship_values)
+        except Exception as error:
+            self.write_activity(
+                f"Relationship load failed ({type(error).__name__}); greeting without it.",
+                "Greeting relationship unavailable",
             )
             return None
 

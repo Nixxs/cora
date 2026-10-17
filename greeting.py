@@ -4,8 +4,15 @@ from datetime import datetime
 import json
 import random
 
+from subconscious.relationship.relationship_rules import RelationshipValues
+
 # Greeting with no hook this often, even when one is available, so it never feels scripted.
 NO_HOOK_CHANCE = 1 / 3
+# These match the session prompt's wording tiers, so the greeting agrees with how she feels.
+NEW_FAMILIARITY = 0.15
+KNOWN_FAMILIARITY = 0.4
+COOL_WARMTH = 0.45
+WARM_WARMTH = 0.55
 
 
 def last_thread_hook(summary: str) -> str:
@@ -54,8 +61,24 @@ def time_since(last_talked_at: datetime, now: datetime) -> str:
     return "over a month ago"
 
 
+def relationship_note(values: RelationshipValues) -> str:
+    """How the relationship colours the hello; empty when it is unremarkable."""
+    notes = []
+    if values.familiarity < NEW_FAMILIARITY:
+        notes.append("You are still getting to know each other, so be friendly rather than familiar.")
+    elif values.familiarity >= KNOWN_FAMILIARITY:
+        notes.append("You know each other well, so a relaxed, familiar hello fits.")
+    if values.warmth < COOL_WARMTH:
+        notes.append("You feel a little cooler toward them right now, so keep it brief and polite, "
+                     "without sulking or hinting at why.")
+    elif values.warmth >= WARM_WARMTH:
+        notes.append("You are glad to see them, so let that warmth show.")
+    return " ".join(notes)
+
+
 def greeting_brief(
     person_name: str | None, last_talked_at: datetime | None, now: datetime, hook: str | None = None,
+    relationship: RelationshipValues | None = None,
 ) -> str:
     """Describe who Cora is greeting and when; `now` must be timezone-aware local time."""
     facts = [f"It is {now:%A} {part_of_day(now)}."]
@@ -68,6 +91,8 @@ def greeting_brief(
         facts.append(f"Their name is {json.dumps(person_name, ensure_ascii=False)}.")
     else:
         facts.append("You do not know their name yet; you may ask it, but do not guess.")
+    if relationship is not None and (note := relationship_note(relationship)):
+        facts.append(note)
     if hook:
         facts.append(hook)
     return " ".join(facts)

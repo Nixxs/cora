@@ -10,6 +10,7 @@ from uuid import uuid4
 from greeting import finding_hook, last_thread_hook
 from live import CoraLive
 from subconscious.interests.exploration_store import Mention
+from subconscious.relationship.relationship_rules import RelationshipValues
 import test_keyboard_persistence as keyboard_tests
 
 
@@ -101,6 +102,21 @@ class AppGreetingTests(GreetingAppCase):
             activity = "\n".join(app.activity.entries)
             self.assertIn("Greeting send failed (RuntimeError)", activity)
             self.assertNotIn("private details", activity)
+
+    async def test_relationship_shapes_the_brief_and_a_failed_load_greets_without_it(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.prepare(app)
+            app.persistence.load_relationship_values.return_value = RelationshipValues(0.5, 0.8, 0.8)
+            await self.start_session(app, pilot)
+            self.assertIn("glad to see them", app.live.send_greeting.await_args.args[0])
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.prepare(app)
+            app.persistence.load_relationship_values.side_effect = RuntimeError("private SQL")
+            await self.start_session(app, pilot)
+            app.live.send_greeting.assert_awaited_once()
+            activity = "\n".join(app.activity.entries)
+            self.assertIn("Relationship load failed (RuntimeError); greeting without it.", activity)
+            self.assertNotIn("private SQL", activity)
 
 
 class LastThreadHookTests(GreetingAppCase):
