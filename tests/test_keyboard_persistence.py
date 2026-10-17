@@ -102,7 +102,8 @@ async def running_app(persistence=None):
             patch("app.run_identity_cycle", return_value=None), \
             patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
-            patch("memory.background.deduplicate_memory"):
+            patch("memory.background.deduplicate_memory"), \
+            patch("memory.background.appraise_waiting_conversations"):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:

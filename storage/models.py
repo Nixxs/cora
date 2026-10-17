@@ -6,7 +6,9 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid,
+)
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -425,3 +427,44 @@ class IdentityWorkerStateRecord(Base):
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1, server_default="1")
     last_reflected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class InteractionAppraisalRecord(Base):
+    """How one finished conversation went with the person; 'development' ones never shape the relationship."""
+
+    __tablename__ = "interaction_appraisals"
+    __table_args__ = (
+        CheckConstraint("setting IN ('everyday', 'development')", name="interaction_appraisals_setting_check"),
+        CheckConstraint("tone IN ('warm', 'neutral', 'curt', 'hostile')", name="interaction_appraisals_tone_check"),
+        CheckConstraint(
+            "friction IN ('none', 'at_situation', 'at_cora')", name="interaction_appraisals_friction_check",
+        ),
+        CheckConstraint(
+            "repair IN ('none', 'person', 'cora', 'both') "
+            "AND (repair NOT IN ('person', 'both') OR friction = 'at_cora') "
+            "AND (repair NOT IN ('cora', 'both') OR cora_mistake)",
+            name="interaction_appraisals_repair_check",
+        ),
+        CheckConstraint(
+            "btrim(reason) <> '' AND char_length(reason) <= 1000", name="interaction_appraisals_reason_check",
+        ),
+        Index("interaction_appraisals_person_id_appraised_at_idx", "person_id", "appraised_at"),
+        {"schema": "public"},
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.conversations.id", name="interaction_appraisals_conversation_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="interaction_appraisals_person_id_fkey", ondelete="RESTRICT"),
+    )
+    setting: Mapped[str] = mapped_column(Text)
+    tone: Mapped[str] = mapped_column(Text)
+    friction: Mapped[str] = mapped_column(Text)
+    cora_mistake: Mapped[bool] = mapped_column(Boolean)
+    repair: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    appraised_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"),
+    )

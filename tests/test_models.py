@@ -14,9 +14,9 @@ from storage.database import build_engine
 from migrate import apply_migrations, database_settings
 from storage.models import (
     Base, ConversationRecord, ConversationSummaryRecord, IdentityEventEvidenceRecord, IdentityEventRecord,
-    IdentityEventTraitRecord, IdentityTraitRecord, IdentityWorkerStateRecord, InterestEventMemoryRecord,
-    InterestEventRecord, InterestExplorationRecord, InterestRecord, InterestWorkerStateRecord,
-    MemoryRecord, MessageRecord,
+    IdentityEventTraitRecord, IdentityTraitRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
+    InterestEventMemoryRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord,
+    InterestWorkerStateRecord, MemoryRecord, MessageRecord, PersonRecord,
 )
 
 
@@ -37,7 +37,7 @@ class ModelDefinitionTests(unittest.TestCase):
                 "public.interest_event_memories", "public.interest_worker_state",
                 "public.interest_explorations", "public.people", "public.identity_traits",
                 "public.identity_events", "public.identity_event_traits", "public.identity_event_evidence",
-                "public.identity_worker_state",
+                "public.identity_worker_state", "public.interaction_appraisals",
             })
             connect.assert_not_called()
 
@@ -191,7 +191,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 12)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 13)
 
     def interest(self, **changes):
         values = {
@@ -498,6 +498,73 @@ class ModelDatabaseTests(unittest.TestCase):
             session.add(state)
             session.flush()
             self.assertEqual((state.id, state.last_reflected_at), (1, None))
+
+    def delete_appraisals(self):
+        with self.engine.begin() as connection:
+            connection.execute(text("DELETE FROM public.interaction_appraisals"))
+            connection.execute(text("DELETE FROM public.people"))
+
+    def appraisal(self, **changes):
+        values = {
+            "conversation_id": self.conversation_id, "person_id": self.person_id, "setting": "everyday",
+            "tone": "warm", "friction": "none", "cora_mistake": False, "repair": "none",
+            "reason": "An easy chat about engines",
+        }
+        return InteractionAppraisalRecord(**{**values, **changes})
+
+    def test_appraisals_keep_one_row_per_conversation_and_their_history(self):
+        self.addCleanup(self.delete_appraisals)
+        with Session(self.engine) as session, session.begin():
+            person = PersonRecord(display_name="Nick")
+            session.add(person)
+            session.flush()
+            self.person_id = person.id
+            appraisal = self.appraisal(friction="at_cora", cora_mistake=True, repair="both")
+            session.add(appraisal)
+            session.flush()
+            self.assertIsNotNone(appraisal.appraised_at.tzinfo)
+        with Session(self.engine) as session:
+            with self.assertRaises(IntegrityError):
+                with session.begin():
+                    session.add(self.appraisal())
+        # Appraised conversations and people cannot be deleted from under their appraisals.
+        for statement in ("DELETE FROM public.conversations", "DELETE FROM public.people"):
+            with self.subTest(statement=statement), self.engine.connect() as connection:
+                with self.assertRaises(IntegrityError):
+                    connection.execute(text(statement))
+
+    def test_invalid_appraisals_are_rejected_by_database(self):
+        self.addCleanup(self.delete_appraisals)
+        with Session(self.engine) as session, session.begin():
+            person = PersonRecord()
+            session.add(person)
+            session.flush()
+            self.person_id = person.id
+        for changes, constraint in (
+            ({"setting": "test"}, "interaction_appraisals_setting_check"),
+            ({"tone": "cold"}, "interaction_appraisals_tone_check"),
+            ({"friction": "some"}, "interaction_appraisals_friction_check"),
+            ({"repair": "apology"}, "interaction_appraisals_repair_check"),
+            # The person makes amends only for friction aimed at Cora; Cora only for her mistake.
+            ({"friction": "at_situation", "repair": "person"}, "interaction_appraisals_repair_check"),
+            ({"friction": "at_cora", "repair": "both"}, "interaction_appraisals_repair_check"),
+            ({"repair": "cora"}, "interaction_appraisals_repair_check"),
+            ({"reason": " "}, "interaction_appraisals_reason_check"),
+            ({"reason": "x" * 1001}, "interaction_appraisals_reason_check"),
+            ({"conversation_id": uuid4()}, "interaction_appraisals_conversation_id_fkey"),
+            ({"person_id": uuid4()}, "interaction_appraisals_person_id_fkey"),
+        ):
+            with self.subTest(changes=changes), Session(self.engine) as session:
+                with self.assertRaises(IntegrityError) as error:
+                    with session.begin():
+                        session.add(self.appraisal(**changes))
+                self.assertEqual(error.exception.orig.diag.constraint_name, constraint)
+        for changes in ({"cora_mistake": True, "repair": "cora"}, {"friction": "at_cora", "repair": "person"}):
+            with self.subTest(valid=changes), Session(self.engine) as session:
+                with session.begin():
+                    session.add(self.appraisal(**changes))
+                with session.begin():
+                    session.execute(text("DELETE FROM public.interaction_appraisals"))
 
 
 if __name__ == "__main__":

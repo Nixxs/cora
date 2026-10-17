@@ -5,6 +5,7 @@ from uuid import UUID
 
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
+from subconscious.relationship.appraise_conversation import appraise_waiting_conversations
 
 from .deduplicate_memory import deduplicate_memory
 from .embed_memory import embed_memory
@@ -64,6 +65,9 @@ def run_background_memory_pass(
                     f"Memory checked: memory_id={memory_id}, duplicate={duplicate}",
                     "Memory deduplication checked",
                 )
+        # Last, so a first-run backfill never delays memories; it reports its own failures.
+        if not should_stop():
+            appraise_waiting_conversations(engine, should_stop=should_stop, write_activity=write_activity)
     except Exception as error:
         if not should_stop():
             write_activity(

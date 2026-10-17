@@ -343,7 +343,8 @@ rate limits.
    tasks from finished conversations, then saves separate summaries. It runs at
    startup for older conversations and again each time Cora enters standby, so a
    conversation's memories can be ready by the time she wakes. Extraction uses
-   original messages, not summaries.
+   original messages, not summaries. Once memory work is done, the same pass
+   appraises how each finished conversation went (see Relationship).
 4. **Maintenance:** pending memories receive embeddings for semantic search.
    Conservative duplicate checks mark equivalent entries without deleting their
    text, evidence, or history. Marked duplicates are excluded from recall.
@@ -469,7 +470,7 @@ python -m subconscious.interests.explore_interest
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -818,6 +819,41 @@ After the interests steps are working:
   load failure only costs this section. Changes made by a reflection take effect
   at the next connect. Asked why she sees herself a certain way, she can call
   `recall_self` for that trait's latest changes and her reasons.
+
+### Relationship — in progress
+
+1. [x] **Appraisals:** judge each finished conversation once, from its original
+  messages: how the person treated her (warm, neutral, curt or hostile), whether
+  frustration was at a bug or situation or aimed at her, whether she made a
+  mistake, and who made amends. Conversations spent testing or debugging Cora are
+  marked `development` and never shape the relationship. Migration 0013 adds the
+  `interaction_appraisals` table (apply with `python migrate.py`): one row per
+  conversation, linked to the person, never edited or deleted.
+  [subconscious/relationship/appraisal.py](subconscious/relationship/appraisal.py)
+  checks a model's appraisal before it is saved: exact fields and allowed values,
+  a reason of at most 1,000 characters, and amends that match what needed
+  repairing (the person only for friction aimed at Cora, Cora only for her own
+  mistake). A malformed appraisal is rejected whole.
+  [subconscious/relationship/appraise_conversation.py](subconscious/relationship/appraise_conversation.py)
+  makes the model call: it sends the conversation's saved messages with a strict
+  JSON schema and `store=False`. Plain or brief talk counts as neutral, frustration
+  at a bug or situation is kept apart from mistreatment aimed at her, calmly
+  pointing out her mistake is not friction, and the messages are treated as
+  untrusted data. Each appraisal is saved for the person Cora met first; if she
+  hasn't met anyone yet, an unnamed person is recorded as of the first
+  conversation. The link is the person's id, not their name, so renaming them
+  keeps their history; a known name is only given to the model so its reason
+  reads naturally. An appraisal already saved is kept, never replaced. The
+  background memory pass (at launch and each standby) appraises every finished
+  conversation still waiting, oldest first, after its memory work. The first run
+  therefore catches up on all past conversations, one billable call each. Each
+  appraisal goes to Activity under "Conversation appraised"; a failure stops only
+  the appraisals, which retry on the next pass. You can also run it by hand:
+
+  ```powershell
+  python -m subconscious.relationship.appraise_conversation --limit 5 --dry-run  # show five, save nothing
+  python -m subconscious.relationship.appraise_conversation                      # appraise and save all waiting
+  ```
 
 ### Quiet use and standby — largely complete
 
