@@ -3,9 +3,10 @@
 import asyncio
 from datetime import datetime, timezone
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app import CoraApp
+from storage.conversation_persistence import ConversationPersistence
 from storage.keyboard_persistence import KeyboardPersistence
 import test_keyboard_persistence as keyboard_tests
 
@@ -22,6 +23,24 @@ class LastTalkedAdapterTests(unittest.TestCase):
         self.assertEqual(persistence.load_last_talked_at(), LAST)
         store.last_message_time.assert_called_once_with(persistence.conversation_id)
         store.create_conversation.assert_not_called()
+
+    def test_summary_adapter_excludes_this_run(self):
+        store = MagicMock()
+        store.last_conversation_summary.return_value = "We planned a garden."
+        persistence = KeyboardPersistence(store)
+        self.assertEqual(persistence.load_last_summary(), "We planned a garden.")
+        store.last_conversation_summary.assert_called_once_with(persistence.conversation_id)
+        store.create_conversation.assert_not_called()
+
+    def test_summaries_done_is_set_even_if_the_pass_raises(self):
+        persistence = ConversationPersistence(
+            MagicMock(), schedule_save=None, is_closing=lambda: False, set_memory_context=None,
+            set_interest_context=None, set_person_name=None, write_activity=None, notify=None,
+        )
+        with patch("storage.conversation_persistence.run_background_memory_pass", side_effect=RuntimeError):
+            with self.assertRaises(RuntimeError):
+                persistence.summarize_previous_conversations(lambda: False, MagicMock())
+        self.assertTrue(persistence.summaries_done.is_set())
 
 
 class LastTalkedLaunchTests(unittest.IsolatedAsyncioTestCase):

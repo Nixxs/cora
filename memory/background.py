@@ -17,6 +17,7 @@ def run_background_memory_pass(
     current_conversation_id: UUID, *,
     should_stop: Callable[[], bool],
     write_activity: Callable[[str, str], None],
+    summaries_done: Callable[[], None] = lambda: None,
 ) -> None:
     # Own a separate engine so an in-flight request can finish during shutdown.
     engine = None
@@ -41,6 +42,8 @@ def run_background_memory_pass(
                 write_activity(
                     f"Summary saved: conversation_id={conversation_id}", "Memory summary saved",
                 )
+        # The launch greeting waits for this rather than for embeddings and deduplication.
+        summaries_done()
         if should_stop():
             return
         memory_store = MemoryStore(engine)

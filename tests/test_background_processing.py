@@ -27,6 +27,20 @@ class BackgroundProcessingTests(unittest.TestCase):
             "Background memory pass stopped (RuntimeError).", "Memory processing failed",
         )
 
+    def test_summaries_done_fires_before_embeddings(self):
+        order = MagicMock()
+        store = order.store
+        store.get_unsummarized_conversation_ids.return_value = []
+        with patch("memory.background.build_engine"), \
+                patch("memory.background.ConversationStore", return_value=store), \
+                patch("memory.background.MemoryStore", return_value=order.memory_store):
+            run_background_memory_pass(
+                uuid4(), should_stop=lambda: False, write_activity=MagicMock(),
+                summaries_done=order.summaries_done,
+            )
+        names = [call[0] for call in order.mock_calls]
+        self.assertLess(names.index("summaries_done"), names.index("memory_store.get_pending_embedding_ids"))
+
 
 if __name__ == "__main__":
     unittest.main()

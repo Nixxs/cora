@@ -1,8 +1,13 @@
 """Serialized foreground storage and conversation persistence lifecycle."""
 import asyncio
+import threading
+from time import monotonic
 from uuid import UUID, uuid4
 from textual.worker import WorkerError
 from memory.background import run_background_memory_pass
+
+# How long the launch greeting waits for the last conversation to be summarized.
+SUMMARY_WAIT_SECONDS = 30
 
 
 class ConversationPersistence:
@@ -23,6 +28,8 @@ class ConversationPersistence:
         # have never talked; loaded=False means unknown, so a stranger intro would be wrong.
         self.last_talked_at = None
         self.last_talked_loaded = False
+        # Set from the background pass thread once this launch's summaries are written.
+        self.summaries_done = threading.Event()
 
     async def call_database(self, operation, *args):
         # Serialise off-thread calls, including lazy engine creation and shutdown.
@@ -128,11 +135,34 @@ class ConversationPersistence:
                 )
 
     def summarize_previous_conversations(self, should_stop, dispatch_activity) -> None:
-        run_background_memory_pass(
-            self.storage.conversation_id,
-            should_stop=should_stop,
-            write_activity=dispatch_activity,
-        )
+        try:
+            run_background_memory_pass(
+                self.storage.conversation_id,
+                should_stop=should_stop,
+                write_activity=dispatch_activity,
+                summaries_done=self.summaries_done.set,
+            )
+        finally:
+            self.summaries_done.set()
+
+    async def load_last_summary(self) -> str | None:
+        """Wait (capped) for this launch's summaries, then load the last conversation's summary."""
+        deadline = monotonic() + SUMMARY_WAIT_SECONDS
+        while not self.summaries_done.is_set():
+            if self.is_closing() or monotonic() >= deadline:
+                self.write_activity(
+                    "Summaries not ready; greeting without the last thread.", "Last thread skipped",
+                )
+                return None
+            await asyncio.sleep(0.25)
+        try:
+            return await self.call_database(self.storage.load_last_summary)
+        except Exception as error:
+            self.write_activity(
+                f"Last summary load failed ({type(error).__name__}); greeting without it.",
+                "Last thread unavailable",
+            )
+            return None
 
     async def wait_for_saves(self) -> None:
         for worker in self.workers:

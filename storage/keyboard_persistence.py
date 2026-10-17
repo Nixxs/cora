@@ -42,6 +42,9 @@ class KeyboardPersistence:
     def load_last_talked_at(self) -> datetime | None:
         return self._get_store().last_message_time(self.conversation_id)
 
+    def load_last_summary(self) -> str | None:
+        return self._get_store().last_conversation_summary(self.conversation_id)
+
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()
         store.create_conversation(self.conversation_id)

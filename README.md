@@ -568,7 +568,17 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   the newest message from any earlier run, and the first Live session of a launch
   sends it as a note so she speaks first. Clicking to resume from Standby gets a
   short welcome back instead. Typing or speaking before she connects cancels
-  either, and Ctrl+R or waking her by voice never greets.
+  either, and Ctrl+R or waking her by voice never greets. The launch brief can
+  carry at most one optional hook, with about a 1 in 3 chance of none so it never
+  feels scripted. The last-thread hook is her own summary of your last
+  conversation: the greeting waits (up to 30 seconds) for that launch's
+  background summaries, and skips the hook if they are slow, the last
+  conversation has no summary, or loading fails. Typing or speaking while she
+  waits still cancels the greeting. The other hook is one of her own recent
+  findings, claimed like any other mention (so the usual gap and daily limit
+  apply) and released if the greeting is not sent; with nothing fresh to share
+  she falls back to the last thread. A first meeting has no hook. Personal-memory
+  hooks wait for familiarity in the relationship work.
 - Configure the model used by each background process separately. Text processes
   currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
   capable model, while delegation needs fast responses. Defaults should stay

@@ -31,7 +31,7 @@ from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
-from greeting import greeting_brief
+from greeting import choose_hook, finding_hook, greeting_brief, last_thread_hook
 from live import CoraLive
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
@@ -341,12 +341,51 @@ class CoraApp(App):
                     f"Heads-up send failed ({type(error).__name__}); staying active.", cancel_send=False,
                 )
 
-    @work(group="greeting")
+    async def choose_launch_hook(self, last_talked_at):
+        """Return (hook text, claimed finding to release if the greeting is not sent)."""
+        kind = choose_hook(["finding", "last_thread"] if last_talked_at else [])
+        if kind == "finding":
+            # Claiming counts as a mention, so the usual gap and daily limit apply.
+            try:
+                mention = await asyncio.to_thread(claim_mention_now)
+            except Exception as error:
+                self.activity.write(
+                    f"Greeting finding check failed ({type(error).__name__})", "Greeting finding unavailable",
+                )
+                mention = None
+            if mention is not None:
+                return finding_hook(mention.interest_title, mention.finding), mention
+            kind = "last_thread"  # nothing fresh to share
+        if kind == "last_thread":
+            summary = await self.conversation_persistence.load_last_summary()
+            if summary:
+                return last_thread_hook(summary), None
+        return None, None
+
+    async def release_greeting_finding(self, mention) -> None:
+        if mention is None:
+            return
+        try:
+            await asyncio.to_thread(release_mention_now, mention)
+        except Exception as error:
+            self.activity.write(
+                f"Greeting finding release failed ({type(error).__name__})", "Greeting finding failed",
+            )
+
+    @work(group="greeting", exclusive=True)
     async def send_greeting(self, kind: str) -> None:
+        mention = None
         if kind == "launch":
+            last_talked_at = self.conversation_persistence.last_talked_at
+            hook, mention = await self.choose_launch_hook(last_talked_at)
+            # The launch greeting stays pending while waiting, so typing or speaking still cancels it.
+            if self.pending_greeting != "launch":
+                self.activity.write("Opening greeting skipped: the person spoke first", "Greeting skipped")
+                await self.release_greeting_finding(mention)
+                return
+            self.pending_greeting = None
             brief = greeting_brief(
-                self.live.person_name, self.conversation_persistence.last_talked_at,
-                datetime.now().astimezone(),
+                self.live.person_name, last_talked_at, datetime.now().astimezone(), hook,
             )
             send, sent = self.live.send_greeting(brief), "Opening greeting sent"
         else:
@@ -355,6 +394,7 @@ class CoraApp(App):
             await asyncio.wait_for(send, timeout=5)
         except Exception as error:
             self.activity.write(f"Greeting send failed ({type(error).__name__})", "Greeting skipped")
+            await self.release_greeting_finding(mention)
         else:
             self.activity.write(sent, "Greeting")
 
@@ -715,12 +755,14 @@ class CoraApp(App):
             self.inactivity.was_busy = False
             self.set_connection_state("active")
             self.activity.write("Live session started", "Connected")
-            kind, self.pending_greeting = self.pending_greeting, None
+            kind = self.pending_greeting
             # An unknown last talk must not become a stranger introduction.
-            if kind == "welcome_back" or (
-                kind == "launch" and self.conversation_persistence.last_talked_loaded
-            ):
-                self.send_greeting(kind)
+            if kind == "launch" and self.conversation_persistence.last_talked_loaded:
+                self.send_greeting(kind)  # clears pending_greeting once it is sent
+            else:
+                self.pending_greeting = None
+                if kind == "welcome_back":
+                    self.send_greeting(kind)
 
         elif event.type == "session.commentary.appended":
             self.inactivity.acknowledge(event.client_event_id)

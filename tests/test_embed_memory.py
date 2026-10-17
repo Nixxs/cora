@@ -267,7 +267,8 @@ class EmbedMemoryTests(unittest.TestCase):
         cases = [(["--help"], 0), ([], 2), (["not-a-uuid"], 2),
                  ([str(uuid4()), str(uuid4())], 2), (["--conversation-id", str(uuid4())], 2)]
         with patch("memory.embed_memory.load_dotenv") as dotenv, \
-            patch("memory.embed_memory.build_engine") as engine:
+            patch("memory.embed_memory.build_engine") as engine, \
+            patch.dict(os.environ, {"COLUMNS": "200"}):  # argparse wraps help to the terminal width
             for args, code in cases:
                 with self.subTest(args=args), patch("sys.argv", ["embed_memory.py", *args]), \
                         patch("sys.stdout", new_callable=StringIO) as output, \

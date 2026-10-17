@@ -2,6 +2,32 @@
 
 from datetime import datetime
 import json
+import random
+
+# Greeting with no hook this often, even when one is available, so it never feels scripted.
+NO_HOOK_CHANCE = 1 / 3
+
+
+def last_thread_hook(summary: str) -> str:
+    return (
+        f"Your own summary of your last conversation: {json.dumps(summary, ensure_ascii=False)}. "
+        "You may pick that thread up if it feels natural."
+    )
+
+
+def finding_hook(interest_title: str, finding: str) -> str:
+    return (
+        f"While exploring your interest {json.dumps(interest_title, ensure_ascii=False)} you recently "
+        f"found: {json.dumps(finding, ensure_ascii=False)}. You may mention it as your own discovery "
+        "if it feels natural; it may be outdated or wrong."
+    )
+
+
+def choose_hook(options: list, rng=random):
+    """Pick at most one option, sometimes none; callers pass hook kinds or hook texts."""
+    if not options or rng.random() < NO_HOOK_CHANCE:
+        return None
+    return rng.choice(options)
 
 
 def part_of_day(now: datetime) -> str:
@@ -28,7 +54,9 @@ def time_since(last_talked_at: datetime, now: datetime) -> str:
     return "over a month ago"
 
 
-def greeting_brief(person_name: str | None, last_talked_at: datetime | None, now: datetime) -> str:
+def greeting_brief(
+    person_name: str | None, last_talked_at: datetime | None, now: datetime, hook: str | None = None,
+) -> str:
     """Describe who Cora is greeting and when; `now` must be timezone-aware local time."""
     facts = [f"It is {now:%A} {part_of_day(now)}."]
     if last_talked_at is None:
@@ -40,4 +68,6 @@ def greeting_brief(person_name: str | None, last_talked_at: datetime | None, now
         facts.append(f"Their name is {json.dumps(person_name, ensure_ascii=False)}.")
     else:
         facts.append("You do not know their name yet; you may ask it, but do not guess.")
+    if hook:
+        facts.append(hook)
     return " ".join(facts)
