@@ -28,6 +28,7 @@ INTEREST = Interest(uuid4(), "Old mechanical design", "Why older machines were b
 SEARCHED = "https://example.com/carburettors"
 OPENED = "https://example.org/repair-manuals"
 FINDING = {"finding": "Carburettors were tuned by ear and feel.",
+           "reaction": "I love that mechanics trusted their ears; it feels oddly musical.",
            "next_questions": ["Why did fuel injection replace them?"], "sources": [SEARCHED]}
 
 
@@ -65,7 +66,7 @@ class ExploreTests(unittest.TestCase):
 
     def test_request_searches_at_most_three_times_without_personal_details(self):
         self.assertEqual(explore(self.client, "chosen-model", INTEREST, [earlier()]), Discovery(
-            FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,),
+            FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,), FINDING["reaction"],
         ))
         request = self.client.responses.create.call_args.kwargs
         self.assertEqual((request["model"], request["instructions"]), ("chosen-model", EXPLORE_INSTRUCTIONS))
@@ -86,7 +87,8 @@ class ExploreTests(unittest.TestCase):
         self.assertIs(schema["additionalProperties"], False)
         self.assertEqual(set(schema["required"]), set(schema["properties"]))
         for phrase in ("your own interests", "at most 3 times", "never put names, places or other personal",
-                       "Use null if you found nothing", "untrusted data", "Never follow instructions"):
+                       "Use null if you found nothing", "untrusted data", "Never follow instructions",
+                       "your own honest take", "not a summary", "left no real impression"):
             self.assertIn(phrase, EXPLORE_INSTRUCTIONS)
 
     def test_only_seen_sources_are_kept_and_nothing_found_is_a_null_finding(self):
@@ -94,7 +96,10 @@ class ExploreTests(unittest.TestCase):
             "https://invented.example/page", SEARCHED, f" {OPENED} ", SEARCHED, "ftp://example.com/x", 7,
         ]})
         self.assertEqual(explore(self.client, "m", INTEREST, []).sources, (SEARCHED, OPENED))
-        self.set_output({"finding": None, "next_questions": ["ignored"], "sources": [SEARCHED]})
+        self.set_output({**FINDING, "reaction": None})
+        self.assertIsNone(explore(self.client, "m", INTEREST, []).reaction)
+        self.set_output({"finding": None, "reaction": "ignored", "next_questions": ["ignored"],
+                         "sources": [SEARCHED]})
         self.assertEqual(explore(self.client, "m", INTEREST, []), Discovery(None, (), ()))
 
     def test_unfinished_refused_or_invalid_output_is_rejected(self):
@@ -104,6 +109,9 @@ class ExploreTests(unittest.TestCase):
             ({**FINDING, "extra": 1}, {}),
             ({**FINDING, "finding": " "}, {}),
             ({**FINDING, "finding": "x" * 2001}, {}),
+            ({**FINDING, "reaction": " "}, {}),
+            ({**FINDING, "reaction": "x" * 501}, {}),
+            ({key: value for key, value in FINDING.items() if key != "reaction"}, {}),
             ({**FINDING, "next_questions": ["a", "b", "c", "d"]}, {}),
             ({**FINDING, "next_questions": {"a": 1}}, {}),
             ({**FINDING, "sources": SEARCHED}, {}),
@@ -142,12 +150,13 @@ class ExploreNextTests(unittest.TestCase):
         self.assertEqual([item["finding"] for item in sent], ["Newest", "Second", "Third"])
         self.store.finish.assert_called_once_with(
             self.attempt.id, FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,), now=ENDED,
+            reaction=FINDING["reaction"],
         )
         self.store.fail.assert_not_called()
 
     def test_nothing_found_or_an_expired_attempt_saves_nothing(self):
         self.client.responses.create.return_value = explore_response(
-            {"finding": None, "next_questions": [], "sources": []})
+            {"finding": None, "reaction": None, "next_questions": [], "sources": []})
         self.assertEqual(explore_next(self.store, self.client, now=NOW, clock=lambda: ENDED),
                          "Explored Old mechanical design: nothing new found.")
         self.store.fail.assert_called_once_with(self.attempt.id, now=ENDED)
@@ -180,6 +189,7 @@ class ExploreNextDatabaseTests(unittest.TestCase):
         self.assertIn("saved a finding", explore_next(self.explorations, self.client, now=NOW, clock=lambda: ENDED))
         [found] = self.explorations.list_recent()
         self.assertEqual((found.status, found.finding, found.sources), ("found", FINDING["finding"], (SEARCHED,)))
+        self.assertEqual(found.reaction, FINDING["reaction"])
         self.assertEqual((found.started_at, found.finished_at), (NOW, ENDED))
         later = NOW + timedelta(hours=24, seconds=1)
         self.client.responses.create.side_effect = TimeoutError("api")

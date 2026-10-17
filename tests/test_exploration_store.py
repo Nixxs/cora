@@ -39,6 +39,9 @@ class ExplorationValidationTests(unittest.TestCase):
             ):
                 with self.subTest(args=args), self.assertRaises(ValueError):
                     store.finish(uuid4(), *args, now=NOW)
+            for reaction in ("", " ", "x" * 501, 5):
+                with self.subTest(reaction=reaction), self.assertRaises(ValueError):
+                    store.finish(uuid4(), *FINDING, now=NOW, reaction=reaction)
             naive = datetime(2026, 10, 15)
             for call in (lambda: store.start_next(now=naive), lambda: store.fail(uuid4(), now=naive),
                          lambda: store.finish(uuid4(), *FINDING, now=naive),
@@ -86,9 +89,15 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(found.next_questions, ("How did fuel injection replace them?",))
         self.assertEqual(found.sources, ("https://example.com/a", "http://example.org/b"))
         self.assertEqual(found.finished_at, NOW + timedelta(minutes=2))
+        self.assertIsNone(found.reaction)
         self.assertEqual(self.explorations.list_recent(), [found])
         self.assertIsNone(self.explorations.finish(started.id, *FINDING, now=NOW))
         self.assertIsNone(self.explorations.fail(started.id, now=NOW))
+        self.assertEqual(self.explorations.list_recent(), [found])
+
+    def test_a_finding_keeps_her_cleaned_reaction(self):
+        found = self.explorations.finish(self.start().id, *FINDING, now=NOW, reaction="  Lovely, and odd.  ")
+        self.assertEqual(found.reaction, "Lovely, and odd.")
         self.assertEqual(self.explorations.list_recent(), [found])
 
     def test_a_failed_attempt_keeps_no_finding_and_is_never_finished_or_mentioned(self):

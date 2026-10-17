@@ -19,6 +19,7 @@ from subconscious.interests.interest_store import Interest, clean_text, snapshot
 from subconscious.interests.interest_strength import settle
 
 FINDING_MAX_CHARS = 2000
+REACTION_MAX_CHARS = 500
 QUESTION_MAX_CHARS = 300
 SOURCE_MAX_CHARS = 2000
 MAX_NEXT_QUESTIONS = 3
@@ -46,6 +47,7 @@ class Exploration:
     finding: str | None
     next_questions: tuple[str, ...]
     sources: tuple[str, ...]
+    reaction: str | None = None  # her own take on the finding, if she had one
 
 
 @dataclass(frozen=True)
@@ -67,7 +69,7 @@ class Start:
 def snapshot(record: InterestExplorationRecord) -> Exploration:
     return Exploration(
         record.id, record.interest_id, record.status, record.started_at, record.finished_at,
-        record.finding, tuple(record.next_questions), tuple(record.sources),
+        record.finding, tuple(record.next_questions), tuple(record.sources), record.reaction,
     )
 
 
@@ -144,10 +146,12 @@ class ExplorationStore:
 
     def finish(
         self, exploration_id: UUID, finding: str, next_questions: Iterable[str], sources: Iterable[str],
-        *, now: datetime,
+        *, now: datetime, reaction: str | None = None,
     ) -> Exploration | None:
         """Record what was found; None if the attempt is no longer running."""
         finding = clean_text(finding, "finding", FINDING_MAX_CHARS)
+        if reaction is not None:
+            reaction = clean_text(reaction, "reaction", REACTION_MAX_CHARS)
         next_questions = clean_questions(next_questions)
         sources = clean_sources(sources)
         validate_now(now)
@@ -155,7 +159,7 @@ class ExplorationStore:
             record = self._running(session, exploration_id)
             if record is None:
                 return None
-            record.status, record.finding = "found", finding
+            record.status, record.finding, record.reaction = "found", finding, reaction
             record.next_questions, record.sources = next_questions, sources
             record.finished_at = max(now, record.started_at)
             return snapshot(record)

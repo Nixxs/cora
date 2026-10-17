@@ -410,7 +410,9 @@ original topic. Both steps below are background processes with their own API cal
    searches). Limits: one attempt per six hours, three per day, and the same
    interest at most once a day. She prefers interests she has never explored.
    Each finding (up to 2,000 characters) is saved with up to three next questions
-   and only source addresses the search actually returned. Later explorations
+   and only source addresses the search actually returned. She may also save her
+   own short reaction to it (up to 500 characters): what she thought of it and why,
+   kept as evidence for later reflection on who she is. Later explorations
    build on her three most recent findings. Exploring does not strengthen an
    interest, so it cannot keep itself alive.
 4. **In conversation:** live interests (title, description, status) are given to
@@ -734,6 +736,25 @@ After the interests steps are working:
   can edit it. Re-run the voice baseline after some conversations to compare.
 3. [ ] **Identity state:** persist evolving perspectives on top of the fixed
   foundation, and the evidence and reasons behind meaningful changes.
+  In progress: findings now keep Cora's own short reaction, and migration 0012
+  adds the tables (apply with `python migrate.py`). `identity_traits` holds her
+  values, preferences (like/dislike a subject), perspectives and tendencies with a
+  confidence; a trait is held while active at 0.5 or more. `identity_events` is
+  the append-only history of each trait forming, being revised or retired, with
+  the reason. Each event links the traits it relied on (`identity_event_traits`)
+  and the experience behind it (`identity_event_evidence`: an interest change, a
+  finding or a conversation summary); none of these can be deleted from under it.
+  `identity_worker_state` records when she last reflected. Nothing writes them yet.
+  The rules for changing them are plain code in
+  [subconscious/identity/identity_rules.py](subconscious/identity/identity_rules.py):
+  each reflection may form, revise and retire at most one trait each. New traits
+  start at confidence 0.4 or less, so none is held until a later reflection
+  supports it, and a revision moves confidence by at most 0.2. At most 12 traits
+  are held and 24 active. A value must rest on at least two other held traits that
+  are not values; there are at most 5 learned values, and values change at most
+  once a week. Every new or revised trait needs evidence, and values, preferences
+  and perspectives need some of her own experience (an interest change or finding),
+  not only conversations. A repeat or contrary trait must revise the existing one.
 4. [ ] **Self reflection worker:** read new experiences, interests, and previous
   identity state; make bounded, gradual updates while keeping the person's preferences
   distinct from Cora's.
