@@ -34,7 +34,7 @@ class ModelDefinitionTests(unittest.TestCase):
                 "public.conversations", "public.messages", "public.conversation_summaries",
                 "public.memories", "public.interests", "public.interest_events",
                 "public.interest_event_memories", "public.interest_worker_state",
-                "public.interest_explorations",
+                "public.interest_explorations", "public.people",
             })
             connect.assert_not_called()
 
@@ -188,7 +188,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 9)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 10)
 
     def interest(self, **changes):
         values = {

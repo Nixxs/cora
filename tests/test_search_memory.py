@@ -566,8 +566,10 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
             get_connection=lambda: self.current, is_closing=lambda: self.closing,
             shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=MagicMock(),
         )
-        self.assertEqual([schema["name"] for schema in registry.schemas()],
-                         ["close_app", "search_memory", "recall_interest", "enter_standby"])
+        # random_number is a developer example tool; ignore it here.
+        self.assertEqual([schema["name"] for schema in registry.schemas()
+                          if schema["name"] != "random_number"],
+                         ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
 
@@ -817,8 +819,10 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(app.workers.wait_for_complete(), 3)
                 tools = connection.session.start.call_args.kwargs["session"]["delegation"]["responses"]["tools"]
                 self.assertEqual(tools[0], {"type": "web_search"})
-                self.assertEqual([tool["name"] for tool in tools[1:]],
-                                 ["close_app", "search_memory", "recall_interest", "enter_standby"])
+                # random_number is a developer example tool; ignore it here.
+                self.assertEqual([tool["name"] for tool in tools[1:] if tool["name"] != "random_number"],
+                                 ["close_app", "search_memory", "recall_interest", "enter_standby",
+                                  "set_person_name"])
                 self.assertEqual(tools[2], SCHEMA)
                 self.search.assert_called_once_with(self.store_type.return_value, "PRIVATE question", limit=8)
                 self.engine.dispose.assert_called_once_with()

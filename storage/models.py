@@ -123,6 +123,24 @@ class MemoryRecord(Base):
     dedup_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class PersonRecord(Base):
+    """Someone Cora talks with; display_name is NULL until she is told it."""
+
+    __tablename__ = "people"
+    __table_args__ = (
+        CheckConstraint(
+            "display_name IS NULL OR (display_name = btrim(display_name) "
+            "AND display_name <> '' AND char_length(display_name) <= 100)",
+            name="people_display_name_check",
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    display_name: Mapped[str | None] = mapped_column(Text)
+    first_met_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
 class InterestRecord(Base):
     """One of Cora's own interests; strength is a snapshot taken at strength_at."""
 

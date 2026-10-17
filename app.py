@@ -52,7 +52,7 @@ EXPLORE_IDLE_SECONDS = 10 * 60
 # The store's limits (4h gap, 2 a day, fresh findings) decide how often she really does.
 FINDING_CHECK_SECONDS = 2 * 60
 FINDING_IDLE_SECONDS = 90
-# Cora's own standby request waits for her sign-off; give up rather than surprise Nick later.
+# Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
 REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
 
 
@@ -130,6 +130,7 @@ class CoraApp(App):
             is_closing=lambda: self.closing,
             set_memory_context=lambda context: setattr(self.live, "memory_context", context),
             set_interest_context=lambda context: setattr(self.live, "interest_context", context),
+            set_person_name=lambda name: setattr(self.live, "person_name", name),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )
@@ -427,7 +428,7 @@ class CoraApp(App):
 
     def action_test_observation(self) -> None:
         self.queue_observation(
-            "Simulated camera observation: nick just got a signal message. "
+            "Simulated camera observation: the person just got a signal message. "
             "Their identity is unknown.", source="test",
         )
 

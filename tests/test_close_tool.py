@@ -113,9 +113,12 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     validate_other.assert_called_once_with({"count": 3})
                     close.assert_not_called()
                     self.assertFalse(app.closing)
+                    # random_number is a developer example tool; ignore it here.
                     self.assertEqual(
-                        [schema["name"] for schema in app.live.tool_schemas()],
-                        ["close_app", "search_memory", "recall_interest", "enter_standby", "echo", "other_tool"],
+                        [schema["name"] for schema in app.live.tool_schemas()
+                         if schema["name"] != "random_number"],
+                        ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
+                         "echo", "other_tool"],
                     )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):

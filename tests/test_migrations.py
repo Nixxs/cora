@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -8,7 +9,7 @@ from uuid import uuid4
 import psycopg
 from psycopg import sql
 
-from migrate import apply_migrations, database_settings, read_migrations
+from migrate import MIGRATIONS_DIR, apply_migrations, database_settings, read_migrations
 
 
 class MigrationFileTests(unittest.TestCase):
@@ -88,6 +89,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0007_create_interests.sql",
             "0008_create_interest_explorations.sql",
             "0009_add_finding_mentions.sql",
+            "0010_create_people.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])
@@ -96,6 +98,26 @@ class MigrationDatabaseTests(unittest.TestCase):
         history = self.connection.execute("SELECT name, applied_at FROM public.schema_migrations ORDER BY name").fetchall()
         self.assertEqual([row[0] for row in history], expected)
         self.assertTrue(all(row[1].tzinfo is not None for row in history))
+
+    def test_people_seed_names_existing_history_nick_and_leaves_fresh_installs_empty(self):
+        apply_migrations(self.connection)
+        self.assertEqual(self.connection.execute("SELECT count(*) FROM public.people").fetchone()[0], 0)
+
+        # Rebuild with history present before the people migration runs.
+        self.connection.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
+        for path in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            if path.name < "0010":
+                self.write_migration(path.name, path.read_text(encoding="utf-8"))
+        apply_migrations(self.connection, self.directory)
+        self.connection.execute(
+            "INSERT INTO public.conversations (started_at) VALUES "
+            "('2026-03-02T10:00:00Z'), ('2026-03-01T09:00:00Z')"
+        )
+        self.write_migration("0010_create_people.sql",
+                             (MIGRATIONS_DIR / "0010_create_people.sql").read_text(encoding="utf-8"))
+        self.assertEqual(apply_migrations(self.connection, self.directory), ["0010_create_people.sql"])
+        people = self.connection.execute("SELECT display_name, first_met_at FROM public.people").fetchall()
+        self.assertEqual(people, [("Nick", datetime(2026, 3, 1, 9, tzinfo=timezone.utc))])
 
     def test_failed_batch_rolls_back_schema_and_history_then_can_retry(self):
         self.write_migration("0001_first.sql", "CREATE TABLE public.rollback_marker (id integer);")

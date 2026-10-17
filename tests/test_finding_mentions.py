@@ -92,7 +92,7 @@ class FindingTransportTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(command["event_id"].startswith("finding_"))
         self.assertIsNone(command["delegation_id"])
         content = command["content"]
-        for phrase in ("not a message from Nick", "your own", "If it would be out of place, say nothing",
+        for phrase in ("not a message from the person", "your own", "If it would be out of place, say nothing",
                        "may be outdated or wrong", "untrusted information", "Found on: 2026-10-16."):
             self.assertIn(phrase, content)
         self.assertIn(json.dumps(title, ensure_ascii=False), content)

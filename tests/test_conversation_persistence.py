@@ -11,7 +11,7 @@ class ConversationPersistenceTests(unittest.IsolatedAsyncioTestCase):
     def coordinator(self):
         return ConversationPersistence(
             MagicMock(), schedule_save=MagicMock(), is_closing=lambda: False,
-            set_memory_context=MagicMock(), set_interest_context=MagicMock(),
+            set_memory_context=MagicMock(), set_interest_context=MagicMock(), set_person_name=MagicMock(),
             write_activity=MagicMock(), notify=MagicMock(),
         )
 

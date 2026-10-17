@@ -276,7 +276,8 @@ question, the backend searches the web, and Live uses the result to answer aloud
 For a question about an earlier conversation, the backend can call `search_memory`.
 Asked how she came to one of her interests or findings, it can call `recall_interest`.
 An explicit request to quit can trigger `close_app` instead, and a request to
-rest (or Cora deciding to) can trigger `enter_standby`.
+rest (or Cora deciding to) can trigger `enter_standby`. When the person tells her
+their name, `set_person_name` saves it for the next connect.
 
 **The backend chooses tools; the application executes custom tools.** Web search
 is hosted by OpenAI, while Cora validates and runs its own tool handlers locally.
@@ -456,10 +457,10 @@ python -m subconscious.interests.explore_interest
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
-| [storage/](storage/) | Database connection, ORM models, and conversation persistence. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `random_number`). |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -691,12 +692,34 @@ database for persistent state. Build interests first, then self.
 
 After the interests steps are working:
 
-1. [ ] **Identity state:** persist a stable foundation, evolving perspectives,
-  and the evidence and reasons behind meaningful changes.
-2. [ ] **Self reflection worker:** read new experiences, interests, and previous
-  identity state; make bounded, gradual updates while keeping Nick's preferences
+0. [x] **Voice baseline:** measure how often Cora shares her own view rather than
+  handing the conversation back, so prompt and identity changes can be compared.
+  A model call labels her latest spoken and typed turns (written answers are
+  skipped); nothing is saved, and each run makes billable requests:
+
+  ```powershell
+  python -m subconscious.identity.measure_voice --limit 60
+  ```
+
+1. [x] **People:** a `people` table records who Cora talks with and when they
+  first met. The name stays empty until she is told it. An install with history
+  is seeded as Nick from its first conversation; a fresh install starts with
+  nobody, so Cora meets a stranger. Apply it with `python migrate.py`. Prompts and
+  tool descriptions no longer hard-code a name: each connect loads the stored name
+  into both prompts, and without one Cora is told not to guess. When the person
+  states their name, `set_person_name` saves it (creating the person on a fresh
+  install); it takes effect from the next connect.
+2. [x] **Foundation:** `CORA_FOUNDATION` in [session_config.py](session_config.py)
+  opens both prompts, before the name, memories and interests. It describes her
+  character: her own views, a participant rather than an interviewer, and honesty
+  and reliability that mood never changes. It lives in code so nothing at runtime
+  can edit it. Re-run the voice baseline after some conversations to compare.
+3. [ ] **Identity state:** persist evolving perspectives on top of the fixed
+  foundation, and the evidence and reasons behind meaningful changes.
+4. [ ] **Self reflection worker:** read new experiences, interests, and previous
+  identity state; make bounded, gradual updates while keeping the person's preferences
   distinct from Cora's.
-3. [ ] **Session identity loading:** supply the current identity to Live and its
+5. [ ] **Session identity loading:** supply the current identity to Live and its
   delegation backend at session startup; defer active-session updates.
 
 ### Quiet use and standby — largely complete

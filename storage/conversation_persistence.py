@@ -7,12 +7,13 @@ from memory.background import run_background_memory_pass
 
 class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
-                 set_memory_context, set_interest_context, write_activity, notify):
+                 set_memory_context, set_interest_context, set_person_name, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
         self.is_closing = is_closing
         self.set_memory_context = set_memory_context
         self.set_interest_context = set_interest_context
+        self.set_person_name = set_person_name
         self.write_activity = write_activity
         self.notify = notify
         self.lock = asyncio.Lock()
@@ -61,6 +62,21 @@ class ConversationPersistence:
 
     async def load_session_context(self) -> None:
         # Runs before every Live connect so waking from standby sees fresh memories and interests.
+        if self.is_closing():
+            return
+        # Without a name Cora treats the person as someone she has not been introduced to.
+        self.set_person_name(None)
+        try:
+            name = await self.call_database(self.storage.load_person_name)
+        except Exception as error:
+            self.write_activity(
+                f"Person load failed ({type(error).__name__}); connecting without a name.",
+                "Person unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_person_name(name)
+
         if self.is_closing():
             return
         self.set_memory_context("")

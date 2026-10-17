@@ -11,12 +11,12 @@ SCHEMA = {
 	"type": "function",
 	"name": "close_app",
 	"description": (
-		"Close the Cora application only when Nick "
+		"Close the Cora application only when the person "
 		"explicitly requests it. Does not shut down "
 		"the computer or close other applications."
         "generally say a natural goodbye or see you "
         "later or refer to something that you were talking "
-        "to Nick about in the conversation as a good bye or "
+        "to the person about in the conversation as a good bye or "
         "other relevant message before running this function"
 	),
 	"parameters": {

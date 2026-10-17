@@ -26,7 +26,8 @@ async def microphone_chunks():
 
     def callback(indata, frames, time_info, status):
         audio = bytes(indata)
-        error = str(status) if status else None
+        # An overflow only means PortAudio dropped a little input during a stall; keep listening.
+        error = str(status) if status and not status.input_overflow else None
 
         loop.call_soon_threadsafe(enqueue, audio, error)
 
