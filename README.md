@@ -573,6 +573,9 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Cora's own developing identity: a daily reflection forms and gradually revises
   first-person traits from her experiences within fixed rules; the traits she holds
   reach her at each connect, and she can recall why she sees herself that way.
+- A relationship with you: each finished conversation is appraised, and her
+  trust, warmth and familiarity shape her tone, greeting and how often she shares
+  findings, with a non-destructive reset tool.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -825,7 +828,7 @@ After the interests steps are working:
   at the next connect. Asked why she sees herself a certain way, she can call
   `recall_self` for that trait's latest changes and her reasons.
 
-### Relationship — in progress
+### Relationship — complete
 
 1. [x] **Appraisals:** judge each finished conversation once, from its original
   messages: how the person treated her (warm, neutral, curt or hostile), whether
@@ -920,6 +923,29 @@ After the interests steps are working:
   and polite without sulking or hinting at why. Middling values add nothing. The
   greeting loads the values fresh; if that fails, Activity says so and she
   greets without them. The welcome back after Standby is unchanged.
+7. [x] **Reset and export:** `RelationshipStore.reset` in
+  [subconscious/relationship/relationship_store.py](subconscious/relationship/relationship_store.py)
+  restores the current person's trust and warmth to the baseline, or to the
+  values saved by an earlier relationship event, and needs a reason (up to 1000
+  characters). Familiarity is shared history, so it stays. A reset only appends a
+  `reset` event: conversations, memories, appraisals and earlier events are all
+  kept, so she may still remember a past conflict, forgiven rather than
+  forgotten. Appraisals of conversations that started before the latest reset are
+  never applied, so an old argument cannot rebuild the state just cleared. Drift
+  continues from the reset. Her self-view is separate; retire a trait with the
+  identity tool if needed.
+
+  ```powershell
+  python -m subconscious.relationship.relationship_store          # values now and their wording
+  python -m subconscious.relationship.relationship_store history  # every event; each is a snapshot
+  python -m subconscious.relationship.relationship_store history --json > relationship.json
+  python -m subconscious.relationship.relationship_store reset --reason "Test went wrong" --dry-run
+  python -m subconscious.relationship.relationship_store reset --reason "Back to before" --to EVENT_ID
+  ```
+
+  `reset` shows the values now and after, then saves only when you type
+  `reset`; `--dry-run` never saves. A running Cora keeps her current feeling
+  until she next connects (Ctrl+R, or waking from Standby).
 
 ### Quiet use and standby — largely complete
 
