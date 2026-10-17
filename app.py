@@ -639,6 +639,9 @@ class CoraApp(App):
                 self.handle_mic_status(False)
                 self.set_connection_state("standby")
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
+                # Standby ends the conversation, so its memories and summary form now.
+                if await self.conversation_persistence.end_conversation() and not self.closing:
+                    self.process_finished_conversations()
                 return
             self.standby = False
             self.activity.write("Restarting Live with recent chat context", "Reconnecting")
@@ -672,6 +675,11 @@ class CoraApp(App):
     @work(group="database-startup")
     async def load_session_context(self) -> None:
         await self.conversation_persistence.load_session_context()
+
+    def process_finished_conversations(self) -> None:
+        # Single flight: a pass already running leaves this one for the next standby or launch.
+        if self.summary_worker is None or self.summary_worker.is_finished:
+            self.summary_worker = self.summarize_previous_conversations()
 
     @work(thread=True, group="memory-summary", exit_on_error=False)
     def summarize_previous_conversations(self) -> None:

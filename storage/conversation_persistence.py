@@ -188,6 +188,18 @@ class ConversationPersistence:
         for worker in self.workers:
             await worker.wait()
 
+    async def end_conversation(self) -> bool:
+        """Close this conversation at standby so it can be processed; return whether it closed."""
+        try:
+            await self.call_database(self.storage.start_new_conversation)
+        except Exception as error:
+            self.write_activity(
+                f"Conversation close failed ({type(error).__name__}); it continues after standby.",
+                "Conversation close failed",
+            )
+            return False
+        return True
+
     async def finish(self, flush_transcript) -> None:
         try:
             flush_transcript()

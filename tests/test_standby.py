@@ -381,7 +381,30 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("Standby failed", "\n".join(app.activity.entries))
                     self.assertNotIn("private close details", "\n".join(app.activity.entries))
                     app.persistence.finish_conversation.assert_not_called()
+                    app.persistence.start_new_conversation.assert_not_called()
                     app.persistence.close.assert_not_called()
+
+    async def test_standby_ends_the_conversation_and_processes_it(self):
+        for case in ("processed", "pass running", "close failed"):
+            with self.subTest(case=case):
+                async with restarting_app() as (app, pilot, connections, speakers, started):
+                    if case == "pass running":
+                        app.summary_worker = MagicMock(is_finished=False)
+                    if case == "close failed":
+                        app.persistence.start_new_conversation.side_effect = RuntimeError("private details")
+                    with patch.object(app, "summarize_previous_conversations") as summarize:
+                        await pilot.click("#chat-status")
+                        await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+                    self.assertTrue(app.standby)
+                    app.persistence.start_new_conversation.assert_called_once_with()
+                    entries = "\n".join(app.activity.entries)
+                    if case == "processed":
+                        summarize.assert_called_once_with()
+                    else:
+                        summarize.assert_not_called()
+                    if case == "close failed":
+                        self.assertIn("Conversation close failed (RuntimeError)", entries)
+                        self.assertNotIn("private details", entries)
 
     async def test_quit_during_standby_close_does_not_claim_standby_or_restart(self):
         async with running_app() as (app, pilot):

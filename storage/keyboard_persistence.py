@@ -76,6 +76,11 @@ class KeyboardPersistence:
         if self.store is not None:
             self.store.close_conversation(self.conversation_id)
 
+    def start_new_conversation(self) -> None:
+        # Standby ends this conversation; anything said after waking starts the next one.
+        self.finish_conversation()
+        self.conversation_id = uuid4()
+
     def close(self) -> None:
         # Do not dispose an injected store's caller-owned engine.
         if self.engine is not None:

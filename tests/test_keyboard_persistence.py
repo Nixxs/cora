@@ -62,6 +62,20 @@ class KeyboardPersistenceTests(unittest.TestCase):
         store.create_conversation.assert_not_called()
         store.engine.dispose.assert_not_called()
 
+    def test_new_conversation_closes_the_current_one_first(self):
+        store = MagicMock()
+        persistence = KeyboardPersistence(store)
+        first = persistence.conversation_id
+        persistence.start_new_conversation()
+        store.close_conversation.assert_called_once_with(first)
+        self.assertNotEqual(persistence.conversation_id, first)
+        # A failed close keeps the same conversation going.
+        store.close_conversation.side_effect = RuntimeError
+        second = persistence.conversation_id
+        with self.assertRaises(RuntimeError):
+            persistence.start_new_conversation()
+        self.assertEqual(persistence.conversation_id, second)
+
     def test_startup_check_opens_storage_without_creating_current_conversation(self):
         engine = MagicMock()
         store = MagicMock()

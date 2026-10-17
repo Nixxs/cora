@@ -337,9 +337,13 @@ rate limits.
    events, and Activity entries are not saved as chat messages.
 2. **When you quit:** pending chat saves finish and the conversation is marked
    closed. No new memory-processing requests start during shutdown.
-3. **On the next startup:** a background pass extracts facts, preferences,
-   decisions, and tasks from older finished conversations, then saves separate
-   summaries. Extraction uses original messages, not summaries.
+   **Standby also ends a conversation:** it is closed when Live closes, and
+   whatever is said after waking starts a new one.
+3. **In the background:** a pass extracts facts, preferences, decisions, and
+   tasks from finished conversations, then saves separate summaries. It runs at
+   startup for older conversations and again each time Cora enters standby, so a
+   conversation's memories can be ready by the time she wakes. Extraction uses
+   original messages, not summaries.
 4. **Maintenance:** pending memories receive embeddings for semantic search.
    Conservative duplicate checks mark equivalent entries without deleting their
    text, evidence, or history. Marked duplicates are excluded from recall.
