@@ -569,7 +569,8 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
         # random_number is a developer example tool; ignore it here.
         self.assertEqual([schema["name"] for schema in registry.schemas()
                           if schema["name"] != "random_number"],
-                         ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name"])
+                         ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
+                          "recall_self"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
 
@@ -822,7 +823,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
                 # random_number is a developer example tool; ignore it here.
                 self.assertEqual([tool["name"] for tool in tools[1:] if tool["name"] != "random_number"],
                                  ["close_app", "search_memory", "recall_interest", "enter_standby",
-                                  "set_person_name"])
+                                  "set_person_name", "recall_self"])
                 self.assertEqual(tools[2], SCHEMA)
                 self.search.assert_called_once_with(self.store_type.return_value, "PRIVATE question", limit=8)
                 self.engine.dispose.assert_called_once_with()

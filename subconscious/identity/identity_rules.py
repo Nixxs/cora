@@ -83,22 +83,27 @@ def check_reflection(
 ) -> list[str | None]:
     """Return, for each change in order, None if allowed or why it is not.
 
-    Each reflection may form, revise and retire at most one trait each, and change
-    at most one value. Rejected changes do not count toward those limits.
+    Each reflection may form, revise and retire at most one trait each, change each
+    trait at most once, and change at most one value. Rejected changes do not count
+    toward those limits.
     """
     if now.tzinfo is None or (last_value_change_at is not None and last_value_change_at.tzinfo is None):
         raise ValueError("Timestamps must be timezone-aware")
     used: set[str] = set()
+    changed: set[UUID] = set()
     value_changed = last_value_change_at is not None and now - last_value_change_at < VALUE_CHANGE_GAP
     problems: list[str | None] = []
     for change in changes:
         problem = check_change(change, traits)
         if problem is None and change.action in used:
             problem = f"Only one {change.action} per reflection"
+        if problem is None and change.action != "form" and change.trait_id in changed:
+            problem = "Only one change per trait per reflection"
         if problem is None and touches_value(change, traits) and value_changed:
             problem = "Values change at most once a week"
         if problem is None:
             used.add(change.action)
+            changed.add(change.trait_id)
             value_changed = value_changed or touches_value(change, traits)
         problems.append(problem)
     return problems

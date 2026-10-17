@@ -143,6 +143,10 @@ class ReflectionTests(unittest.TestCase):
         problems = check_reflection(changes, self.traits, last_value_change_at=None, now=NOW)
         self.assertEqual([problem is None for problem in problems], [False, True, False, True, False, True, False])
         self.assertIn("Only one form", problems[2])
+        both = [revise(self.held[0]), Change("retire", "Faded", trait_id=self.held[0].id)]
+        problems = check_reflection(both, self.traits, last_value_change_at=None, now=NOW)
+        self.assertIsNone(problems[0])
+        self.assertIn("Only one change per trait", problems[1])
 
     def test_values_change_at_most_once_a_week(self):
         changes = [self.new_value(), revise(self.value, cited_trait_ids=tuple(t.id for t in self.held))]

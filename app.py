@@ -27,6 +27,7 @@ from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
 from subconscious.event_bus import EventBus, FindingEvent, ObservationEvent
+from subconscious.identity.reflect_identity import run_identity_cycle
 from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.explore_interest import run_exploration_cycle
@@ -46,6 +47,8 @@ load_dotenv()
 # Cheap when not due: the 24-hour gate is one database read. Also lets memories extracted
 # at startup clear the store's 5-minute commit margin before the first check.
 INTEREST_CHECK_SECONDS = 10 * 60
+# Same cheap check for identity: the store's 24-hour gate decides when she really reflects.
+IDENTITY_CHECK_SECONDS = 10 * 60
 # The store's limits (6h gap, 3 a day) decide how often she really explores.
 EXPLORE_CHECK_SECONDS = 10 * 60
 # Explore only in standby or after this long without conversation.
@@ -132,6 +135,7 @@ class CoraApp(App):
             is_closing=lambda: self.closing,
             set_memory_context=lambda context: setattr(self.live, "memory_context", context),
             set_interest_context=lambda context: setattr(self.live, "interest_context", context),
+            set_identity_context=lambda context: setattr(self.live, "identity_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
@@ -144,6 +148,8 @@ class CoraApp(App):
         self.summary_worker = None
         self.interest_worker = None
         self.interest_outcome = None
+        self.identity_worker = None
+        self.identity_outcome = None
         self.exploration_worker = None
         self.exploration_outcome = None
         self.closing = False
@@ -254,6 +260,7 @@ class CoraApp(App):
         self.update_wake_control()
         self.observation_timer = self.set_interval(0.5, self.check_observations)
         self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)
+        self.identity_timer = self.set_interval(IDENTITY_CHECK_SECONDS, self.check_identity)
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
         self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
         if self.inactivity.timeout_seconds > 0:
@@ -417,6 +424,7 @@ class CoraApp(App):
         self.attention.stop()
         self.observation_timer.stop()
         self.interest_timer.stop()
+        self.identity_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
         self.cancel_standby_alert()
@@ -690,6 +698,19 @@ class CoraApp(App):
             self.interest_outcome = outcome
             self.call_from_thread(self.activity.write, outcome, "Interests")
 
+    def check_identity(self) -> None:
+        if self.closing or (self.identity_worker is not None and not self.identity_worker.is_finished):
+            return
+        self.identity_worker = self.reflect_identity()
+
+    @work(thread=True, group="identity", exit_on_error=False)
+    def reflect_identity(self) -> None:
+        worker = get_current_worker()
+        outcome = run_identity_cycle(should_stop=lambda: self.closing or worker.is_cancelled)
+        if outcome is not None and outcome != self.identity_outcome:
+            self.identity_outcome = outcome
+            self.call_from_thread(self.activity.write, outcome, "Identity")
+
     def can_explore(self) -> bool:
         if self.closing or self.reconnecting:
             return False
@@ -916,6 +937,7 @@ class CoraApp(App):
         self.attention.stop()
         self.observation_timer.stop()
         self.interest_timer.stop()
+        self.identity_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
         self.cancel_standby_alert()
@@ -944,6 +966,8 @@ class CoraApp(App):
                 self.summary_worker.cancel()
             if self.interest_worker is not None and not self.interest_worker.is_finished:
                 self.interest_worker.cancel()
+            if self.identity_worker is not None and not self.identity_worker.is_finished:
+                self.identity_worker.cancel()
             if self.exploration_worker is not None and not self.exploration_worker.is_finished:
                 self.exploration_worker.cancel()
             if self.attention.worker is not None and not self.attention.worker.is_finished:

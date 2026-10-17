@@ -274,7 +274,8 @@ Cora uses **two models working together in one Live session**:
 For example, if you ask about something happening today, Live delegates the
 question, the backend searches the web, and Live uses the result to answer aloud.
 For a question about an earlier conversation, the backend can call `search_memory`.
-Asked how she came to one of her interests or findings, it can call `recall_interest`.
+Asked how she came to one of her interests or findings, it can call `recall_interest`,
+and asked why she sees herself a certain way, `recall_self`.
 An explicit request to quit can trigger `close_app` instead, and a request to
 rest (or Cora deciding to) can trigger `enter_standby`. When the person tells her
 their name, `set_person_name` saves it for the next connect.
@@ -314,7 +315,9 @@ small, size-capped results are fed back into Cora-prime:
   refuses an oversized block rather than silently growing the context.
 - **On demand**, the backend can call `search_memory` for a bounded number of
   matches instead of preloading everything, and `recall_interest` for one
-  interest's origin and its three latest findings (read-only, size-capped).
+  interest's origin and its three latest findings (read-only, size-capped), and
+  `recall_self` for one held trait's five latest changes and the reasons behind
+  them (read-only; traits still forming are not recalled).
 - **Observations** delivered by the attention manager enter the Live conversation
   one at a time.
 - **Findings** Cora may raise herself: at most one finding (up to 2,000 characters)
@@ -463,7 +466,7 @@ python -m subconscious.interests.explore_interest
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `random_number`). |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -558,6 +561,9 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
 - Cora's own interests: daily evolution from memories, idle web exploration with
   saved findings, and occasional findings she raises herself during a lull.
+- Cora's own developing identity: a daily reflection forms and gradually revises
+  first-person traits from her experiences within fixed rules; the traits she holds
+  reach her at each connect, and she can recall why she sees herself that way.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
@@ -586,7 +592,10 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   capable model, while delegation needs fast responses. Defaults should stay
   unchanged until a model is chosen. Changing the embedding model also needs a
   migration and re-embedding stored memories.
-- Add a separate self worker to develop Cora's persistent identity, now that interests work.
+- Relationship with the person: let a slowly changing sense of familiarity and
+  trust, built from how conversations went, shape her tone and initiative (never
+  her honesty, tools or permissions), with a snapshot and reset that keep all
+  other history.
 - Add real background producers, starting with a Signal message monitor; camera
   awareness and screen monitoring can follow independently.
 - Develop attention decisions beyond the current FIFO/quiet-period policy: choose
@@ -734,9 +743,9 @@ After the interests steps are working:
   character: her own views, a participant rather than an interviewer, and honesty
   and reliability that mood never changes. It lives in code so nothing at runtime
   can edit it. Re-run the voice baseline after some conversations to compare.
-3. [ ] **Identity state:** persist evolving perspectives on top of the fixed
+3. [x] **Identity state:** persist evolving perspectives on top of the fixed
   foundation, and the evidence and reasons behind meaningful changes.
-  In progress: findings now keep Cora's own short reaction, and migration 0012
+  Findings keep Cora's own short reaction, and migration 0012
   adds the tables (apply with `python migrate.py`). `identity_traits` holds her
   values, preferences (like/dislike a subject), perspectives and tendencies with a
   confidence; a trait is held while active at 0.5 or more. `identity_events` is
@@ -744,7 +753,7 @@ After the interests steps are working:
   the reason. Each event links the traits it relied on (`identity_event_traits`)
   and the experience behind it (`identity_event_evidence`: an interest change, a
   finding or a conversation summary); none of these can be deleted from under it.
-  `identity_worker_state` records when she last reflected. Nothing writes them yet.
+  `identity_worker_state` records when she last reflected.
   The rules for changing them are plain code in
   [subconscious/identity/identity_rules.py](subconscious/identity/identity_rules.py):
   each reflection may form, revise and retire at most one trait each. New traits
@@ -754,12 +763,57 @@ After the interests steps are working:
   are not values; there are at most 5 learned values, and values change at most
   once a week. Every new or revised trait needs evidence, and values, preferences
   and perspectives need some of her own experience (an interest change or finding),
-  not only conversations. A repeat or contrary trait must revise the existing one.
-4. [ ] **Self reflection worker:** read new experiences, interests, and previous
+  not only conversations. A repeat or contrary trait must revise the existing one,
+  and a reflection changes each trait at most once.
+  [subconscious/identity/identity_store.py](subconscious/identity/identity_store.py)
+  saves a reflection in one transaction, re-checking the rules against the traits
+  as they are at that moment. You can inspect traits or retire one by hand (its
+  history is kept):
+
+  ```powershell
+  python -m subconscious.identity.identity_store            # active traits
+  python -m subconscious.identity.identity_store list --all # include retired
+  python -m subconscious.identity.identity_store history TRAIT_ID
+  python -m subconscious.identity.identity_store retire TRAIT_ID --reason "Not me"
+  ```
+
+  [subconscious/identity/identity_evidence.py](subconscious/identity/identity_evidence.py)
+  reads what she has experienced since she last reflected, oldest first: interest
+  changes, findings with her reaction, and conversation summaries (never raw
+  memories). It reads up to five minutes before now so slow saves are not skipped,
+  and at most 30 items at a time; the rest wait for the next reflection.
+  [subconscious/identity/identity_proposals.py](subconscious/identity/identity_proposals.py)
+  checks the model's reply before the rules see it: exact fields, at most three
+  changes, and only ids of traits and experiences it was shown. A malformed reply
+  is rejected whole, so the same experiences are read again next time.
+  [subconscious/identity/propose_identity.py](subconscious/identity/propose_identity.py)
+  makes that model call: it sends her active traits (marked held or forming) and
+  the experiences, with a strict JSON schema and `store=False`. The instructions
+  keep the foundation out of reach and treat traits and experiences as untrusted
+  data. Statements are written in her own voice ("I ..."), as she sees herself.
+4. [x] **Self reflection worker:** read new experiences, interests, and previous
   identity state; make bounded, gradual updates while keeping the person's preferences
   distinct from Cora's.
-5. [ ] **Session identity loading:** supply the current identity to Live and its
+  [subconscious/identity/reflect_identity.py](subconscious/identity/reflect_identity.py)
+  runs one reflection at most once a day, once at least three new experiences are
+  waiting. It saves the changes the rules allow and records how far it read, so
+  the next reflection starts there. The app checks every 10 minutes (cheap when
+  not due) and writes each new outcome, including any trait text, to Activity
+  under "Identity". You can also run it by hand:
+
+  ```powershell
+  python -m subconscious.identity.reflect_identity --dry-run  # show the proposal and the rules' verdicts, save nothing
+  python -m subconscious.identity.reflect_identity            # reflect and save
+  ```
+5. [x] **Session identity loading:** supply the current identity to Live and its
   delegation backend at session startup; defer active-session updates.
+  Every connect (launch and waking from standby) loads her held
+  traits' statements, most confident first, and adds them to both prompts as
+  "What you've come to know about yourself, in your own words". They sit on top
+  of the foundation and never replace it. Forming traits are not sent, and a
+  load failure only costs this section. Changes made by a reflection take effect
+  at the next connect. Asked why she sees herself a certain way, she can call
+  `recall_self` for that trait's latest changes and her reasons.
 
 ### Quiet use and standby — largely complete
 

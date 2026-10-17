@@ -35,7 +35,8 @@ class LastTalkedAdapterTests(unittest.TestCase):
     def test_summaries_done_is_set_even_if_the_pass_raises(self):
         persistence = ConversationPersistence(
             MagicMock(), schedule_save=None, is_closing=lambda: False, set_memory_context=None,
-            set_interest_context=None, set_person_name=None, write_activity=None, notify=None,
+            set_interest_context=None, set_identity_context=None, set_person_name=None, write_activity=None,
+            notify=None,
         )
         with patch("storage.conversation_persistence.run_background_memory_pass", side_effect=RuntimeError):
             with self.assertRaises(RuntimeError):

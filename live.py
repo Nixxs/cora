@@ -26,6 +26,7 @@ class CoraLive:
         self.microphone_task = None
         self.memory_context = ""
         self.interest_context = ""
+        self.identity_context = ""
         self.person_name = None
         self.conversation_history = []
         self.pending_text_requests = set()
@@ -56,6 +57,7 @@ class CoraLive:
                         session=build_session_config(
                             self.tool_schemas(), self.memory_context, self.conversation_history,
                             interest_context=self.interest_context, person_name=self.person_name,
+                            identity_context=self.identity_context,
                         )
                     )
 

@@ -12,12 +12,14 @@ SUMMARY_WAIT_SECONDS = 30
 
 class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
-                 set_memory_context, set_interest_context, set_person_name, write_activity, notify):
+                 set_memory_context, set_interest_context, set_identity_context, set_person_name,
+                 write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
         self.is_closing = is_closing
         self.set_memory_context = set_memory_context
         self.set_interest_context = set_interest_context
+        self.set_identity_context = set_identity_context
         self.set_person_name = set_person_name
         self.write_activity = write_activity
         self.notify = notify
@@ -132,6 +134,24 @@ class ConversationPersistence:
                 self.set_interest_context(context)
                 self.write_activity(
                     f"Startup interest context loaded ({len(context)} characters).", "Interest context loaded",
+                )
+
+        # Identity also loads on its own, so a failure here only costs her self-view.
+        if self.is_closing():
+            return
+        self.set_identity_context("")
+        try:
+            context = await self.call_database(self.storage.load_startup_identity_context)
+        except Exception as error:
+            self.write_activity(
+                f"Startup identity load failed ({type(error).__name__}); connecting without it.",
+                "Identity context unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_identity_context(context)
+                self.write_activity(
+                    f"Startup identity context loaded ({len(context)} characters).", "Identity context loaded",
                 )
 
     def summarize_previous_conversations(self, should_stop, dispatch_activity) -> None:

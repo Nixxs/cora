@@ -85,6 +85,7 @@ async def running_app(persistence=None):
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
             patch("app.run_interest_cycle", return_value=None), \
+            patch("app.run_identity_cycle", return_value=None), \
             patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
             patch("memory.background.deduplicate_memory"):
@@ -95,6 +96,7 @@ async def running_app(persistence=None):
                 persistence.conversation_id = uuid4()
                 persistence.load_startup_memory_context.return_value = ""
                 persistence.load_startup_interest_context.return_value = ""
+                persistence.load_startup_identity_context.return_value = ""
                 persistence.load_person_name.return_value = None
                 persistence.load_last_talked_at.return_value = None
             app.persistence = persistence

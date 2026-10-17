@@ -3,6 +3,7 @@
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
+from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
@@ -23,6 +24,8 @@ def create_tool_registry(
     registry.register(STANDBY_SCHEMA, validate_standby_arguments, standby.handle)
     name = SetPersonNameTool(get_connection, is_closing, write_debug)
     registry.register(NAME_SCHEMA, validate_name_arguments, name.handle)
+    recall_self = RecallSelfTool(get_connection, is_closing, write_debug)
+    registry.register(SELF_SCHEMA, validate_self_arguments, recall_self.handle)
     random_number = RandomNumberTool(get_connection, is_closing, write_debug)
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     return registry

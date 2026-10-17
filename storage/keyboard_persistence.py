@@ -9,6 +9,7 @@ from .conversation_store import ConversationStore
 from .database import build_engine
 from .people_store import PeopleStore
 from memory.store import MemoryStore
+from subconscious.identity.identity_store import IdentityStore
 from subconscious.interests.interest_store import InterestStore
 
 
@@ -34,6 +35,9 @@ class KeyboardPersistence:
 
     def load_startup_interest_context(self) -> str:
         return InterestStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
+
+    def load_startup_identity_context(self) -> str:
+        return IdentityStore(self._get_store().engine).get_startup_context()
 
     def load_person_name(self) -> str | None:
         person = PeopleStore(self._get_store().engine).current_person()

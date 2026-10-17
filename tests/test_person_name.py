@@ -9,7 +9,7 @@ from app import CoraApp
 from live import CoraLive
 from session_config import BACKEND_INSTRUCTIONS, LIVE_INSTRUCTIONS, MEMORY_RECALL_STYLE, build_session_config
 from storage.keyboard_persistence import KeyboardPersistence
-from tools import close_app, enter_standby, recall_interest, search_memory
+from tools import close_app, enter_standby, recall_interest, recall_self, search_memory
 import test_keyboard_persistence as keyboard_tests
 from test_startup_memories import PRIOR_CONTEXT, fake_live_transport
 
@@ -19,8 +19,10 @@ CONNECT_TO_CORA = CoraApp.connect_to_cora
 
 class PersonPromptTests(unittest.TestCase):
     def test_static_prompts_and_tools_do_not_hard_code_a_name(self):
-        texts = [LIVE_INSTRUCTIONS, BACKEND_INSTRUCTIONS, MEMORY_RECALL_STYLE, recall_interest.RESULT_NOTE]
-        texts += [module.SCHEMA["description"] for module in (close_app, enter_standby, recall_interest, search_memory)]
+        texts = [LIVE_INSTRUCTIONS, BACKEND_INSTRUCTIONS, MEMORY_RECALL_STYLE, recall_interest.RESULT_NOTE,
+                 recall_self.RESULT_NOTE]
+        texts += [module.SCHEMA["description"]
+                  for module in (close_app, enter_standby, recall_interest, recall_self, search_memory)]
         for text in texts:
             self.assertNotIn("Nick", text)
         for instructions in (LIVE_INSTRUCTIONS, BACKEND_INSTRUCTIONS):
