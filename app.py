@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from os import getenv
 import sys
 from pathlib import Path
@@ -30,6 +31,7 @@ from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
+from greeting import greeting_brief
 from live import CoraLive
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
@@ -149,6 +151,9 @@ class CoraApp(App):
         self.standby = False
         self.reconnect_worker = None
         self.startup_complete = False
+        # The next Live session greets first: "launch" once per launch, "welcome_back" after a
+        # Standby click. Typing or speaking first cancels it; Ctrl+R and wake never set one.
+        self.pending_greeting = "launch"
         self.backend_work = BackendWorkTracker()
         self.last_live_activity = 0.0
         self.idle_standby_timer = None
@@ -257,6 +262,7 @@ class CoraApp(App):
     def record_idle_activity(self, *, user_activity: bool = False) -> None:
         self.inactivity.record_activity()
         if user_activity:
+            self.pending_greeting = None
             self.wake.response_deadline = None
             self.cancel_standby_alert("User activity; staying active.")
 
@@ -334,6 +340,23 @@ class CoraApp(App):
                 self.cancel_standby_alert(
                     f"Heads-up send failed ({type(error).__name__}); staying active.", cancel_send=False,
                 )
+
+    @work(group="greeting")
+    async def send_greeting(self, kind: str) -> None:
+        if kind == "launch":
+            brief = greeting_brief(
+                self.live.person_name, self.conversation_persistence.last_talked_at,
+                datetime.now().astimezone(),
+            )
+            send, sent = self.live.send_greeting(brief), "Opening greeting sent"
+        else:
+            send, sent = self.live.send_welcome_back(), "Welcome back sent"
+        try:
+            await asyncio.wait_for(send, timeout=5)
+        except Exception as error:
+            self.activity.write(f"Greeting send failed ({type(error).__name__})", "Greeting skipped")
+        else:
+            self.activity.write(sent, "Greeting")
 
     def cancel_standby_alert(self, reason: str = "", *, cancel_send: bool = True) -> None:
         self.inactivity.cancel_alert(reason, cancel_send=cancel_send)
@@ -692,6 +715,12 @@ class CoraApp(App):
             self.inactivity.was_busy = False
             self.set_connection_state("active")
             self.activity.write("Live session started", "Connected")
+            kind, self.pending_greeting = self.pending_greeting, None
+            # An unknown last talk must not become a stranger introduction.
+            if kind == "welcome_back" or (
+                kind == "launch" and self.conversation_persistence.last_talked_loaded
+            ):
+                self.send_greeting(kind)
 
         elif event.type == "session.commentary.appended":
             self.inactivity.acknowledge(event.client_event_id)
@@ -746,6 +775,8 @@ class CoraApp(App):
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
+                if self.reconnecting:
+                    self.pending_greeting = "welcome_back"
             else:
                 self.action_standby()
         elif event.button.id == "wake-status" and not self.closing:

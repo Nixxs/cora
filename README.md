@@ -454,6 +454,7 @@ python -m subconscious.interests.explore_interest
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
+| [greeting.py](greeting.py) | Facts for Cora's opening greeting (time of day, time since you last talked, name). |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
@@ -561,6 +562,13 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 
 ### Next priorities
 
+- Opening greeting: when Cora launches she greets you first, introducing herself
+  to a stranger. [greeting.py](greeting.py) builds the brief (time of day, how
+  long since you last talked, and your name if known), launch loads the time of
+  the newest message from any earlier run, and the first Live session of a launch
+  sends it as a note so she speaks first. Clicking to resume from Standby gets a
+  short welcome back instead. Typing or speaking before she connects cancels
+  either, and Ctrl+R or waking her by voice never greets.
 - Configure the model used by each background process separately. Text processes
   currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
   capable model, while delegation needs fast responses. Defaults should stay

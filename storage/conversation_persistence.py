@@ -19,6 +19,10 @@ class ConversationPersistence:
         self.lock = asyncio.Lock()
         self.workers = []
         self.recording_closed = False
+        # Loaded once at launch for the opening greeting. None with loaded=True means they
+        # have never talked; loaded=False means unknown, so a stranger intro would be wrong.
+        self.last_talked_at = None
+        self.last_talked_loaded = False
 
     async def call_database(self, operation, *args):
         # Serialise off-thread calls, including lazy engine creation and shutdown.
@@ -58,6 +62,16 @@ class ConversationPersistence:
                     f"Tagged {count} unfinished conversation(s) as interrupted.",
                     "Unfinished conversations tagged",
                 )
+        if not self.is_closing():
+            try:
+                self.last_talked_at = await self.call_database(self.storage.load_last_talked_at)
+            except Exception as error:
+                self.write_activity(
+                    f"Last talk time load failed ({type(error).__name__}); skipping the greeting.",
+                    "Last talk time unavailable",
+                )
+            else:
+                self.last_talked_loaded = True
         await self.load_session_context()
 
     async def load_session_context(self) -> None:

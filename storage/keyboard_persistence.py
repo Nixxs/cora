@@ -39,6 +39,9 @@ class KeyboardPersistence:
         person = PeopleStore(self._get_store().engine).current_person()
         return person.display_name if person is not None else None
 
+    def load_last_talked_at(self) -> datetime | None:
+        return self._get_store().last_message_time(self.conversation_id)
+
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()
         store.create_conversation(self.conversation_id)

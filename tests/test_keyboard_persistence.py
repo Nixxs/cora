@@ -96,6 +96,7 @@ async def running_app(persistence=None):
                 persistence.load_startup_memory_context.return_value = ""
                 persistence.load_startup_interest_context.return_value = ""
                 persistence.load_person_name.return_value = None
+                persistence.load_last_talked_at.return_value = None
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

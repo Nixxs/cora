@@ -1,5 +1,6 @@
 """Small synchronous persistence service, independent of Cora and its UI."""
 
+from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import Engine, func, select, update
@@ -119,6 +120,15 @@ class ConversationStore:
             if message is None:
                 raise LookupError("Message does not exist in this conversation")
         return message
+
+    def last_message_time(self, current_conversation_id: UUID) -> datetime | None:
+        """Return when the newest message of any earlier run was saved, or None."""
+        with Session(self.engine) as session:
+            return session.scalar(
+                select(func.max(MessageRecord.created_at)).where(
+                    MessageRecord.conversation_id != current_conversation_id
+                )
+            )
 
     def get_messages(self, conversation_id: UUID) -> list[MessageRecord]:
         """Return history in conversation order (an empty list if none exists)."""
