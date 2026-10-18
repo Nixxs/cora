@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 from os import getenv
 import sys
 from pathlib import Path
@@ -26,10 +27,12 @@ from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
 from subconscious.event_bus import EventBus, FindingEvent, ObservationEvent
+from subconscious.identity.reflect_identity import run_identity_cycle
 from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
+from greeting import choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook
 from live import CoraLive
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
@@ -44,6 +47,8 @@ load_dotenv()
 # Cheap when not due: the 24-hour gate is one database read. Also lets memories extracted
 # at startup clear the store's 5-minute commit margin before the first check.
 INTEREST_CHECK_SECONDS = 10 * 60
+# Same cheap check for identity: the store's 24-hour gate decides when she really reflects.
+IDENTITY_CHECK_SECONDS = 10 * 60
 # The store's limits (6h gap, 3 a day) decide how often she really explores.
 EXPLORE_CHECK_SECONDS = 10 * 60
 # Explore only in standby or after this long without conversation.
@@ -52,7 +57,7 @@ EXPLORE_IDLE_SECONDS = 10 * 60
 # The store's limits (4h gap, 2 a day, fresh findings) decide how often she really does.
 FINDING_CHECK_SECONDS = 2 * 60
 FINDING_IDLE_SECONDS = 90
-# Cora's own standby request waits for her sign-off; give up rather than surprise Nick later.
+# Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
 REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
 
 
@@ -130,6 +135,9 @@ class CoraApp(App):
             is_closing=lambda: self.closing,
             set_memory_context=lambda context: setattr(self.live, "memory_context", context),
             set_interest_context=lambda context: setattr(self.live, "interest_context", context),
+            set_identity_context=lambda context: setattr(self.live, "identity_context", context),
+            set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
+            set_person_name=lambda name: setattr(self.live, "person_name", name),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )
@@ -141,6 +149,8 @@ class CoraApp(App):
         self.summary_worker = None
         self.interest_worker = None
         self.interest_outcome = None
+        self.identity_worker = None
+        self.identity_outcome = None
         self.exploration_worker = None
         self.exploration_outcome = None
         self.closing = False
@@ -148,6 +158,9 @@ class CoraApp(App):
         self.standby = False
         self.reconnect_worker = None
         self.startup_complete = False
+        # The next Live session greets first: "launch" once per launch, "welcome_back" after a
+        # Standby click. Typing or speaking first cancels it; Ctrl+R and wake never set one.
+        self.pending_greeting = "launch"
         self.backend_work = BackendWorkTracker()
         self.last_live_activity = 0.0
         self.idle_standby_timer = None
@@ -248,6 +261,7 @@ class CoraApp(App):
         self.update_wake_control()
         self.observation_timer = self.set_interval(0.5, self.check_observations)
         self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)
+        self.identity_timer = self.set_interval(IDENTITY_CHECK_SECONDS, self.check_identity)
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
         self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
         if self.inactivity.timeout_seconds > 0:
@@ -256,6 +270,7 @@ class CoraApp(App):
     def record_idle_activity(self, *, user_activity: bool = False) -> None:
         self.inactivity.record_activity()
         if user_activity:
+            self.pending_greeting = None
             self.wake.response_deadline = None
             self.cancel_standby_alert("User activity; staying active.")
 
@@ -334,6 +349,72 @@ class CoraApp(App):
                     f"Heads-up send failed ({type(error).__name__}); staying active.", cancel_send=False,
                 )
 
+    async def choose_launch_hook(self, last_talked_at, relationship=None):
+        """Return (hook text, claimed finding to release if the greeting is not sent)."""
+        options = []
+        if last_talked_at:
+            options = ["finding", "last_thread", *(["memory"] if knows_them_well(relationship) else [])]
+        kind = choose_hook(options)
+        if kind == "memory":
+            plan = await self.conversation_persistence.load_recent_plan()
+            if plan:
+                return memory_hook(plan), None
+            kind = "last_thread"  # nothing recent to ask about
+        if kind == "finding":
+            # Claiming counts as a mention, so the usual gap and daily limit apply.
+            try:
+                mention = await asyncio.to_thread(claim_mention_now)
+            except Exception as error:
+                self.activity.write(
+                    f"Greeting finding check failed ({type(error).__name__})", "Greeting finding unavailable",
+                )
+                mention = None
+            if mention is not None:
+                return finding_hook(mention.interest_title, mention.finding), mention
+            kind = "last_thread"  # nothing fresh to share
+        if kind == "last_thread":
+            summary = await self.conversation_persistence.load_last_summary()
+            if summary:
+                return last_thread_hook(summary), None
+        return None, None
+
+    async def release_greeting_finding(self, mention) -> None:
+        if mention is None:
+            return
+        try:
+            await asyncio.to_thread(release_mention_now, mention)
+        except Exception as error:
+            self.activity.write(
+                f"Greeting finding release failed ({type(error).__name__})", "Greeting finding failed",
+            )
+
+    @work(group="greeting", exclusive=True)
+    async def send_greeting(self, kind: str) -> None:
+        mention = None
+        if kind == "launch":
+            last_talked_at = self.conversation_persistence.last_talked_at
+            relationship = await self.conversation_persistence.load_relationship_values()
+            hook, mention = await self.choose_launch_hook(last_talked_at, relationship)
+            # The launch greeting stays pending while waiting, so typing or speaking still cancels it.
+            if self.pending_greeting != "launch":
+                self.activity.write("Opening greeting skipped: the person spoke first", "Greeting skipped")
+                await self.release_greeting_finding(mention)
+                return
+            self.pending_greeting = None
+            brief = greeting_brief(
+                self.live.person_name, last_talked_at, datetime.now().astimezone(), hook, relationship,
+            )
+            send, sent = self.live.send_greeting(brief), "Opening greeting sent"
+        else:
+            send, sent = self.live.send_welcome_back(), "Welcome back sent"
+        try:
+            await asyncio.wait_for(send, timeout=5)
+        except Exception as error:
+            self.activity.write(f"Greeting send failed ({type(error).__name__})", "Greeting skipped")
+            await self.release_greeting_finding(mention)
+        else:
+            self.activity.write(sent, "Greeting")
+
     def cancel_standby_alert(self, reason: str = "", *, cancel_send: bool = True) -> None:
         self.inactivity.cancel_alert(reason, cancel_send=cancel_send)
 
@@ -353,6 +434,7 @@ class CoraApp(App):
         self.attention.stop()
         self.observation_timer.stop()
         self.interest_timer.stop()
+        self.identity_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
         self.cancel_standby_alert()
@@ -427,7 +509,7 @@ class CoraApp(App):
 
     def action_test_observation(self) -> None:
         self.queue_observation(
-            "Simulated camera observation: nick just got a signal message. "
+            "Simulated camera observation: the person just got a signal message. "
             "Their identity is unknown.", source="test",
         )
 
@@ -567,6 +649,9 @@ class CoraApp(App):
                 self.handle_mic_status(False)
                 self.set_connection_state("standby")
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
+                # Standby ends the conversation, so its memories and summary form now.
+                if await self.conversation_persistence.end_conversation() and not self.closing:
+                    self.process_finished_conversations()
                 return
             self.standby = False
             self.activity.write("Restarting Live with recent chat context", "Reconnecting")
@@ -601,6 +686,11 @@ class CoraApp(App):
     async def load_session_context(self) -> None:
         await self.conversation_persistence.load_session_context()
 
+    def process_finished_conversations(self) -> None:
+        # Single flight: a pass already running leaves this one for the next standby or launch.
+        if self.summary_worker is None or self.summary_worker.is_finished:
+            self.summary_worker = self.summarize_previous_conversations()
+
     @work(thread=True, group="memory-summary", exit_on_error=False)
     def summarize_previous_conversations(self) -> None:
         worker = get_current_worker()
@@ -625,6 +715,19 @@ class CoraApp(App):
         if outcome is not None and outcome != self.interest_outcome:
             self.interest_outcome = outcome
             self.call_from_thread(self.activity.write, outcome, "Interests")
+
+    def check_identity(self) -> None:
+        if self.closing or (self.identity_worker is not None and not self.identity_worker.is_finished):
+            return
+        self.identity_worker = self.reflect_identity()
+
+    @work(thread=True, group="identity", exit_on_error=False)
+    def reflect_identity(self) -> None:
+        worker = get_current_worker()
+        outcome = run_identity_cycle(should_stop=lambda: self.closing or worker.is_cancelled)
+        if outcome is not None and outcome != self.identity_outcome:
+            self.identity_outcome = outcome
+            self.call_from_thread(self.activity.write, outcome, "Identity")
 
     def can_explore(self) -> bool:
         if self.closing or self.reconnecting:
@@ -691,6 +794,14 @@ class CoraApp(App):
             self.inactivity.was_busy = False
             self.set_connection_state("active")
             self.activity.write("Live session started", "Connected")
+            kind = self.pending_greeting
+            # An unknown last talk must not become a stranger introduction.
+            if kind == "launch" and self.conversation_persistence.last_talked_loaded:
+                self.send_greeting(kind)  # clears pending_greeting once it is sent
+            else:
+                self.pending_greeting = None
+                if kind == "welcome_back":
+                    self.send_greeting(kind)
 
         elif event.type == "session.commentary.appended":
             self.inactivity.acknowledge(event.client_event_id)
@@ -745,6 +856,8 @@ class CoraApp(App):
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
+                if self.reconnecting:
+                    self.pending_greeting = "welcome_back"
             else:
                 self.action_standby()
         elif event.button.id == "wake-status" and not self.closing:
@@ -842,6 +955,7 @@ class CoraApp(App):
         self.attention.stop()
         self.observation_timer.stop()
         self.interest_timer.stop()
+        self.identity_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
         self.cancel_standby_alert()
@@ -870,6 +984,8 @@ class CoraApp(App):
                 self.summary_worker.cancel()
             if self.interest_worker is not None and not self.interest_worker.is_finished:
                 self.interest_worker.cancel()
+            if self.identity_worker is not None and not self.identity_worker.is_finished:
+                self.identity_worker.cancel()
             if self.exploration_worker is not None and not self.exploration_worker.is_finished:
                 self.exploration_worker.cancel()
             if self.attention.worker is not None and not self.attention.worker.is_finished:

@@ -62,6 +62,20 @@ class KeyboardPersistenceTests(unittest.TestCase):
         store.create_conversation.assert_not_called()
         store.engine.dispose.assert_not_called()
 
+    def test_new_conversation_closes_the_current_one_first(self):
+        store = MagicMock()
+        persistence = KeyboardPersistence(store)
+        first = persistence.conversation_id
+        persistence.start_new_conversation()
+        store.close_conversation.assert_called_once_with(first)
+        self.assertNotEqual(persistence.conversation_id, first)
+        # A failed close keeps the same conversation going.
+        store.close_conversation.side_effect = RuntimeError
+        second = persistence.conversation_id
+        with self.assertRaises(RuntimeError):
+            persistence.start_new_conversation()
+        self.assertEqual(persistence.conversation_id, second)
+
     def test_startup_check_opens_storage_without_creating_current_conversation(self):
         engine = MagicMock()
         store = MagicMock()
@@ -85,9 +99,12 @@ async def running_app(persistence=None):
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
             patch("app.run_interest_cycle", return_value=None), \
+            patch("app.run_identity_cycle", return_value=None), \
             patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
-            patch("memory.background.deduplicate_memory"):
+            patch("memory.background.deduplicate_memory"), \
+            patch("memory.background.appraise_waiting_conversations"), \
+            patch("memory.background.update_relationships"):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:
@@ -95,6 +112,12 @@ async def running_app(persistence=None):
                 persistence.conversation_id = uuid4()
                 persistence.load_startup_memory_context.return_value = ""
                 persistence.load_startup_interest_context.return_value = ""
+                persistence.load_startup_identity_context.return_value = ""
+                persistence.load_relationship_context.return_value = ""
+                persistence.load_relationship_values.return_value = None
+                persistence.load_recent_plan.return_value = None
+                persistence.load_person_name.return_value = None
+                persistence.load_last_talked_at.return_value = None
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

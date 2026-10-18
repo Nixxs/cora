@@ -6,7 +6,9 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid,
+)
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -121,6 +123,24 @@ class MemoryRecord(Base):
         ForeignKey("public.memories.id", name="memories_duplicate_of_fkey", ondelete="RESTRICT"),
     )
     dedup_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PersonRecord(Base):
+    """Someone Cora talks with; display_name is NULL until she is told it."""
+
+    __tablename__ = "people"
+    __table_args__ = (
+        CheckConstraint(
+            "display_name IS NULL OR (display_name = btrim(display_name) "
+            "AND display_name <> '' AND char_length(display_name) <= 100)",
+            name="people_display_name_check",
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    display_name: Mapped[str | None] = mapped_column(Text)
+    first_met_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
 class InterestRecord(Base):
@@ -246,6 +266,10 @@ class InterestExplorationRecord(Base):
             name="interest_explorations_sources_check",
         ),
         CheckConstraint("mentioned_at IS NULL OR status = 'found'", name="interest_explorations_mentioned_check"),
+        CheckConstraint(
+            "reaction IS NULL OR (status = 'found' AND btrim(reaction) <> '' AND char_length(reaction) <= 500)",
+            name="interest_explorations_reaction_check",
+        ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
         {"schema": "public"},
@@ -262,3 +286,252 @@ class InterestExplorationRecord(Base):
     next_questions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     sources: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     mentioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reaction: Mapped[str | None] = mapped_column(Text)
+
+
+class IdentityTraitRecord(Base):
+    """A trait Cora formed from experience; held while active with confidence >= 0.5."""
+
+    __tablename__ = "identity_traits"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('value', 'preference', 'perspective', 'tendency')", name="identity_traits_kind_check",
+        ),
+        CheckConstraint(
+            "btrim(statement) <> '' AND char_length(statement) <= 300", name="identity_traits_statement_check",
+        ),
+        CheckConstraint(
+            "(kind = 'preference') = (polarity IS NOT NULL) "
+            "AND (kind = 'preference') = (subject IS NOT NULL) "
+            "AND (polarity IS NULL OR polarity IN ('like', 'dislike')) "
+            "AND (subject IS NULL OR (btrim(subject) <> '' AND char_length(subject) <= 200))",
+            name="identity_traits_preference_check",
+        ),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="identity_traits_confidence_check"),
+        CheckConstraint("status IN ('active', 'retired')", name="identity_traits_status_check"),
+        CheckConstraint(
+            "(status = 'retired') = (retired_at IS NOT NULL) "
+            "AND (retired_at IS NULL OR retired_at >= created_at)",
+            name="identity_traits_retired_check",
+        ),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    kind: Mapped[str] = mapped_column(Text)
+    statement: Mapped[str] = mapped_column(Text)
+    polarity: Mapped[str | None] = mapped_column(Text)
+    subject: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Double)
+    status: Mapped[str] = mapped_column(Text, server_default="active")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class IdentityEventRecord(Base):
+    """Append-only history of a trait; statement is its wording after the event."""
+
+    __tablename__ = "identity_events"
+    __table_args__ = (
+        CheckConstraint("kind IN ('form', 'revise', 'retire')", name="identity_events_kind_check"),
+        CheckConstraint(
+            "btrim(statement) <> '' AND char_length(statement) <= 300", name="identity_events_statement_check",
+        ),
+        CheckConstraint(
+            "confidence_after >= 0 AND confidence_after <= 1", name="identity_events_confidence_check",
+        ),
+        CheckConstraint(
+            "(kind = 'form') = (confidence_before IS NULL) "
+            "AND (confidence_before IS NULL OR (confidence_before >= 0 AND confidence_before <= 1))",
+            name="identity_events_before_check",
+        ),
+        CheckConstraint("btrim(reason) <> '' AND char_length(reason) <= 1000", name="identity_events_reason_check"),
+        Index("identity_events_trait_id_created_at_idx", "trait_id", "created_at"),
+        Index("identity_events_created_at_idx", "created_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    trait_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.identity_traits.id", name="identity_events_trait_id_fkey", ondelete="RESTRICT"),
+    )
+    kind: Mapped[str] = mapped_column(Text)
+    statement: Mapped[str] = mapped_column(Text)
+    confidence_before: Mapped[float | None] = mapped_column(Double)
+    confidence_after: Mapped[float] = mapped_column(Double)
+    reason: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class IdentityEventTraitRecord(Base):
+    """Links an identity event to other traits it relied on."""
+
+    __tablename__ = "identity_event_traits"
+    __table_args__ = {"schema": "public"}
+
+    event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.identity_events.id", name="identity_event_traits_event_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    trait_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.identity_traits.id", name="identity_event_traits_trait_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+
+
+class IdentityEventEvidenceRecord(Base):
+    """One piece of experience an identity event relied on: exactly one source per row."""
+
+    __tablename__ = "identity_event_evidence"
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(interest_event_id, exploration_id, conversation_id) = 1",
+            name="identity_event_evidence_source_check",
+        ),
+        Index("identity_event_evidence_event_id_idx", "event_id"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    event_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.identity_events.id", name="identity_event_evidence_event_id_fkey", ondelete="RESTRICT"),
+    )
+    interest_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.interest_events.id", name="identity_event_evidence_interest_event_id_fkey", ondelete="RESTRICT",
+        ),
+    )
+    exploration_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.interest_explorations.id", name="identity_event_evidence_exploration_id_fkey",
+            ondelete="RESTRICT",
+        ),
+    )
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.conversation_summaries.conversation_id", name="identity_event_evidence_conversation_id_fkey",
+            ondelete="RESTRICT",
+        ),
+    )
+
+
+class IdentityWorkerStateRecord(Base):
+    """At most one row: when Cora last reflected on who she is."""
+
+    __tablename__ = "identity_worker_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="identity_worker_state_singleton_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1, server_default="1")
+    last_reflected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class InteractionAppraisalRecord(Base):
+    """How one finished conversation went with the person; 'development' marks working on Cora herself."""
+
+    __tablename__ = "interaction_appraisals"
+    __table_args__ = (
+        CheckConstraint("setting IN ('everyday', 'development')", name="interaction_appraisals_setting_check"),
+        CheckConstraint("tone IN ('warm', 'neutral', 'curt', 'hostile')", name="interaction_appraisals_tone_check"),
+        CheckConstraint(
+            "friction IN ('none', 'at_situation', 'at_cora')", name="interaction_appraisals_friction_check",
+        ),
+        CheckConstraint(
+            "repair IN ('none', 'person', 'cora', 'both') "
+            "AND (repair NOT IN ('person', 'both') OR friction = 'at_cora') "
+            "AND (repair NOT IN ('cora', 'both') OR cora_mistake)",
+            name="interaction_appraisals_repair_check",
+        ),
+        CheckConstraint(
+            "btrim(reason) <> '' AND char_length(reason) <= 1000", name="interaction_appraisals_reason_check",
+        ),
+        Index("interaction_appraisals_person_id_appraised_at_idx", "person_id", "appraised_at"),
+        {"schema": "public"},
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.conversations.id", name="interaction_appraisals_conversation_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="interaction_appraisals_person_id_fkey", ondelete="RESTRICT"),
+    )
+    setting: Mapped[str] = mapped_column(Text)
+    tone: Mapped[str] = mapped_column(Text)
+    friction: Mapped[str] = mapped_column(Text)
+    cora_mistake: Mapped[bool] = mapped_column(Boolean)
+    repair: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    appraised_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"),
+    )
+
+
+class RelationshipRecord(Base):
+    """How Cora currently feels about one person; each value runs from 0 to 1."""
+
+    __tablename__ = "relationships"
+    __table_args__ = (
+        CheckConstraint(
+            "trust >= 0 AND trust <= 1 AND warmth >= 0 AND warmth <= 1 "
+            "AND familiarity >= 0 AND familiarity <= 1",
+            name="relationships_values_check",
+        ),
+        {"schema": "public"},
+    )
+
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="relationships_person_id_fkey", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    trust: Mapped[float] = mapped_column(Double)
+    warmth: Mapped[float] = mapped_column(Double)
+    familiarity: Mapped[float] = mapped_column(Double)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class RelationshipEventRecord(Base):
+    """Append-only relationship history; values are the state after the event, so each is a snapshot."""
+
+    __tablename__ = "relationship_events"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", name="relationship_events_conversation_id_key"),
+        CheckConstraint(
+            "kind IN ('appraisal', 'reset') "
+            "AND (kind = 'appraisal') = (conversation_id IS NOT NULL) "
+            "AND (kind = 'reset') = (reason IS NOT NULL)",
+            name="relationship_events_kind_check",
+        ),
+        CheckConstraint(
+            "trust >= 0 AND trust <= 1 AND warmth >= 0 AND warmth <= 1 "
+            "AND familiarity >= 0 AND familiarity <= 1",
+            name="relationship_events_values_check",
+        ),
+        CheckConstraint(
+            "reason IS NULL OR (btrim(reason) <> '' AND char_length(reason) <= 1000)",
+            name="relationship_events_reason_check",
+        ),
+        Index("relationship_events_person_id_created_at_idx", "person_id", "created_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.relationships.person_id", name="relationship_events_person_id_fkey", ondelete="RESTRICT"),
+    )
+    kind: Mapped[str] = mapped_column(Text)
+    # The appraisal this event applied; each appraisal is applied at most once.
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.interaction_appraisals.conversation_id", name="relationship_events_conversation_id_fkey",
+            ondelete="RESTRICT",
+        ),
+    )
+    trust: Mapped[float] = mapped_column(Double)
+    warmth: Mapped[float] = mapped_column(Double)
+    familiarity: Mapped[float] = mapped_column(Double)
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

@@ -7,8 +7,12 @@ from sqlalchemy import Engine
 
 from .conversation_store import ConversationStore
 from .database import build_engine
+from .people_store import PeopleStore
 from memory.store import MemoryStore
+from subconscious.identity.identity_store import IdentityStore
 from subconscious.interests.interest_store import InterestStore
+from subconscious.relationship.relationship_rules import RelationshipValues
+from subconscious.relationship.relationship_store import RelationshipStore
 
 
 class KeyboardPersistence:
@@ -33,6 +37,28 @@ class KeyboardPersistence:
 
     def load_startup_interest_context(self) -> str:
         return InterestStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
+
+    def load_startup_identity_context(self) -> str:
+        return IdentityStore(self._get_store().engine).get_startup_context()
+
+    def load_relationship_context(self) -> str:
+        return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
+
+    def load_relationship_values(self) -> RelationshipValues | None:
+        return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))
+
+    def load_person_name(self) -> str | None:
+        person = PeopleStore(self._get_store().engine).current_person()
+        return person.display_name if person is not None else None
+
+    def load_last_talked_at(self) -> datetime | None:
+        return self._get_store().last_message_time(self.conversation_id)
+
+    def load_last_summary(self) -> str | None:
+        return self._get_store().last_conversation_summary(self.conversation_id)
+
+    def load_recent_plan(self) -> str | None:
+        return MemoryStore(self._get_store().engine).recent_plan(now=datetime.now(timezone.utc))
 
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()
@@ -60,6 +86,11 @@ class KeyboardPersistence:
         # Do not create an empty conversation just to close it.
         if self.store is not None:
             self.store.close_conversation(self.conversation_id)
+
+    def start_new_conversation(self) -> None:
+        # Standby ends this conversation; anything said after waking starts the next one.
+        self.finish_conversation()
+        self.conversation_id = uuid4()
 
     def close(self) -> None:
         # Do not dispose an injected store's caller-owned engine.

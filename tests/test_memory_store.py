@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timedelta, timezone
 import os
 import unittest
 from unittest.mock import MagicMock, patch
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from migrate import apply_migrations
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
-from memory.store import MEMORY_KINDS, MemoryCandidate, MemoryStore
+from memory.store import MEMORY_KINDS, RECENT_PLAN_WINDOW, MemoryCandidate, MemoryStore
 from storage.models import MemoryRecord
 import test_conversation_summaries as summary_tests
 
@@ -169,6 +170,26 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
                           for row in self.memories.get_memories(self.conversation_id)], expected)
         self.assertEqual(self.memories.get_memories(other_id)[0].source_message_id, other.id)
         self.assertEqual(self.memories.get_memories(uuid4()), [])
+
+    def test_recent_plan_is_a_task_or_decision_from_the_past_week_never_a_duplicate(self):
+        source = self.save_source(content="I will fix the fence. We chose Postgres. I live in Perth.")
+        self.store.close_conversation(self.conversation_id)
+        self.assertIsNone(self.memories.recent_plan(datetime.now(timezone.utc)))
+        self.memories.save_memories(self.conversation_id, [
+            self.candidate(source, kind="task", text="Fix the fence", evidence="I will fix the fence"),
+            self.candidate(source, kind="task", text="Repair the fence", evidence="fix the fence"),
+            self.candidate(source, kind="decision", text="Chose Postgres", evidence="We chose Postgres"),
+            self.candidate(source),  # a fact
+        ])
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.memories SET dedup_checked_at = now(), duplicate_of = "
+                "(SELECT id FROM public.memories WHERE text = 'Fix the fence') WHERE text = 'Repair the fence'"
+            ))
+        now = datetime.now(timezone.utc)
+        picked = {self.memories.recent_plan(now) for _ in range(30)}
+        self.assertEqual(picked, {"Fix the fence", "Chose Postgres"})
+        self.assertIsNone(self.memories.recent_plan(now + RECENT_PLAN_WINDOW + timedelta(minutes=1)))
 
     def test_reopened_readback_and_migration_rerun_preserve_sources_and_optional_summary(self):
         source = self.save_source()
