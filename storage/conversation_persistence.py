@@ -215,6 +215,17 @@ class ConversationPersistence:
             )
             return None
 
+    async def load_recent_plan(self) -> str | None:
+        """A plan the person mentioned this week, for the greeting; None if none or not loaded."""
+        try:
+            return await self.call_database(self.storage.load_recent_plan)
+        except Exception as error:
+            self.write_activity(
+                f"Recent plan load failed ({type(error).__name__}); greeting without it.",
+                "Greeting memory unavailable",
+            )
+            return None
+
     async def wait_for_saves(self) -> None:
         for worker in self.workers:
             await worker.wait()

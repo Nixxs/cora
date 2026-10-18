@@ -57,6 +57,9 @@ class KeyboardPersistence:
     def load_last_summary(self) -> str | None:
         return self._get_store().last_conversation_summary(self.conversation_id)
 
+    def load_recent_plan(self) -> str | None:
+        return MemoryStore(self._get_store().engine).recent_plan(now=datetime.now(timezone.utc))
+
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()
         store.create_conversation(self.conversation_id)

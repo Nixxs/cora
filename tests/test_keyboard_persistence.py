@@ -115,6 +115,7 @@ async def running_app(persistence=None):
                 persistence.load_startup_identity_context.return_value = ""
                 persistence.load_relationship_context.return_value = ""
                 persistence.load_relationship_values.return_value = None
+                persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None
                 persistence.load_last_talked_at.return_value = None
             app.persistence = persistence

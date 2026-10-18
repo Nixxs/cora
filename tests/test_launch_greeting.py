@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from greeting import finding_hook, last_thread_hook
+from greeting import finding_hook, last_thread_hook, memory_hook
 from live import CoraLive
 from subconscious.interests.exploration_store import Mention
 from subconscious.relationship.relationship_rules import RelationshipValues
@@ -233,6 +233,46 @@ class FindingHookTests(GreetingAppCase):
 
 
 CHAT_STATUS = SimpleNamespace(button=SimpleNamespace(id="chat-status"))
+
+
+class MemoryHookTests(GreetingAppCase):
+    def prepare_memory(self, app, familiarity=0.5):
+        self.prepare(app, hook_kind="memory")
+        app.persistence.load_relationship_values.return_value = RelationshipValues(
+            trust=0.5, warmth=0.5, familiarity=familiarity,
+        )
+        app.persistence.load_recent_plan.return_value = "Fix the fence"
+        app.persistence.load_last_summary.return_value = "We planned a garden."
+        app.conversation_persistence.summaries_done.set()
+
+    async def test_known_well_may_open_with_a_recent_plan(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.prepare_memory(app)
+            await self.start_session(app, pilot)
+            self.choose_hook.assert_called_once_with(["finding", "last_thread", "memory"])
+            brief = app.live.send_greeting.await_args.args[0]
+            self.assertTrue(brief.endswith(memory_hook("Fix the fence")))
+            app.persistence.load_last_summary.assert_not_called()
+
+    async def test_less_familiar_people_never_get_the_memory_option(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.prepare_memory(app, familiarity=0.49)
+            await self.start_session(app, pilot)
+            self.choose_hook.assert_called_once_with(["finding", "last_thread"])
+            app.persistence.load_recent_plan.assert_not_called()
+
+    async def test_no_plan_or_a_failed_load_falls_back_to_the_last_thread(self):
+        for load in ({"return_value": None}, {"side_effect": RuntimeError("private SQL")}):
+            with self.subTest(load=load):
+                async with keyboard_tests.running_app() as (app, pilot):
+                    self.prepare_memory(app)
+                    app.persistence.load_recent_plan.configure_mock(**load)
+                    await self.start_session(app, pilot)
+                    brief = app.live.send_greeting.await_args.args[0]
+                    self.assertTrue(brief.endswith(last_thread_hook("We planned a garden.")))
+                    self.assertNotIn("private SQL", "\n".join(app.activity.entries))
+        self.assertIn("Recent plan load failed (RuntimeError); greeting without it.",
+                      "\n".join(app.activity.entries))
 
 
 class WelcomeBackTests(GreetingAppCase):

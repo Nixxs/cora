@@ -13,6 +13,8 @@ NEW_FAMILIARITY = 0.15
 KNOWN_FAMILIARITY = 0.4
 COOL_WARMTH = 0.45
 WARM_WARMTH = 0.55
+# Personal memories wait until she knows the person well; others may be listening.
+MEMORY_HOOK_FAMILIARITY = 0.5
 
 
 def last_thread_hook(summary: str) -> str:
@@ -28,6 +30,18 @@ def finding_hook(interest_title: str, finding: str) -> str:
         f"found: {json.dumps(finding, ensure_ascii=False)}. You may mention it as your own discovery "
         "if it feels natural; it may be outdated or wrong."
     )
+
+
+def memory_hook(plan: str) -> str:
+    return (
+        f"You remember from this past week: {json.dumps(plan, ensure_ascii=False)}. You may ask how it "
+        "went if it feels natural; it may be outdated or already done. Others may be listening, so "
+        "skip it if it is sensitive, such as health, money or someone else's private matters."
+    )
+
+
+def knows_them_well(relationship: RelationshipValues | None) -> bool:
+    return relationship is not None and relationship.familiarity >= MEMORY_HOOK_FAMILIARITY
 
 
 def choose_hook(options: list, rng=random):

@@ -32,7 +32,7 @@ from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
-from greeting import choose_hook, finding_hook, greeting_brief, last_thread_hook
+from greeting import choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook
 from live import CoraLive
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
@@ -349,9 +349,17 @@ class CoraApp(App):
                     f"Heads-up send failed ({type(error).__name__}); staying active.", cancel_send=False,
                 )
 
-    async def choose_launch_hook(self, last_talked_at):
+    async def choose_launch_hook(self, last_talked_at, relationship=None):
         """Return (hook text, claimed finding to release if the greeting is not sent)."""
-        kind = choose_hook(["finding", "last_thread"] if last_talked_at else [])
+        options = []
+        if last_talked_at:
+            options = ["finding", "last_thread", *(["memory"] if knows_them_well(relationship) else [])]
+        kind = choose_hook(options)
+        if kind == "memory":
+            plan = await self.conversation_persistence.load_recent_plan()
+            if plan:
+                return memory_hook(plan), None
+            kind = "last_thread"  # nothing recent to ask about
         if kind == "finding":
             # Claiming counts as a mention, so the usual gap and daily limit apply.
             try:
@@ -385,8 +393,8 @@ class CoraApp(App):
         mention = None
         if kind == "launch":
             last_talked_at = self.conversation_persistence.last_talked_at
-            hook, mention = await self.choose_launch_hook(last_talked_at)
             relationship = await self.conversation_persistence.load_relationship_values()
+            hook, mention = await self.choose_launch_hook(last_talked_at, relationship)
             # The launch greeting stays pending while waiting, so typing or speaking still cancels it.
             if self.pending_greeting != "launch":
                 self.activity.write("Opening greeting skipped: the person spoke first", "Greeting skipped")

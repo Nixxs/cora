@@ -153,9 +153,12 @@ speaks, persist events, or replay them. The attention manager owns the waiting q
 These components live in the [subconscious/](subconscious/) package:
 [subconscious/event_bus.py](subconscious/event_bus.py) routes events and
 [subconscious/attention.py](subconscious/attention.py) coordinates conversational attention.
-Future interests, self, and awareness workers can be added as separate components
-in this package. Give each worker the dependencies it needs and connect it through
-events, rather than having it call Live or other workers directly. The app wires
+The interests, identity, and relationship workers live in the same package. Only
+interests use the bus (a `FindingEvent`); identity and relationship workers just
+save state to the database, which Cora loads at her next connect. Future awareness
+workers can be added as separate components here. Give each worker the dependencies
+it needs and connect it through events or stored state, rather than having it call
+Live or other workers directly. The app wires
 components together and manages their lifecycles; automatic plugin discovery and
 cross-process execution are not implemented yet.
 
@@ -301,8 +304,10 @@ finish and incur its separate charges while the local app remains open.
 
 **Cora-prime** is the Live voice model plus its delegation backend: the part of
 Cora you actually talk to. Everything else (memory extraction, summaries,
-embeddings, duplicate checks, interest evolution, and interest exploration) runs
-as **separate background processes that make their own API calls**.
+embeddings, duplicate checks, conversation appraisals, interest evolution,
+interest exploration, and identity reflection) runs as **separate background
+processes that make their own API calls**. Relationship updates are plain code
+with no API call.
 
 Each background call is a fresh, standalone request (`store=False`) containing
 only the input that job needs. Its instructions, reading, web searches, and
@@ -310,9 +315,14 @@ reasoning stay inside that call and never enter Cora-prime's conversation. Only
 small, size-capped results are fed back into Cora-prime:
 
 - **At each connect** (launch, wake, or reconnect), Live and the delegation
-  backend receive a memory snapshot (at most 3,000 characters) and Cora's current
-  interests with their latest findings (at most 3,000 characters). Session setup
-  refuses an oversized block rather than silently growing the context.
+  backend receive the person's name, Cora's held identity traits (at most 4,000
+  characters), how she feels about the person (at most 1,000 characters), a memory
+  snapshot (at most 3,000 characters), and her current interests with their
+  latest findings (at most 3,000 characters). Session setup refuses an oversized
+  block rather than silently growing the context.
+- **At launch**, the opening greeting brief (see
+  [How the opening greeting works](#how-the-opening-greeting-works)) carries at
+  most one short hook.
 - **On demand**, the backend can call `search_memory` for a bounded number of
   matches instead of preloading everything, and `recall_interest` for one
   interest's origin and its three latest findings (read-only, size-capped), and
@@ -330,6 +340,28 @@ reaches Cora-prime. New features should follow the same rules: give every feed
 into Cora-prime a hard size limit, and prefer on-demand tools over startup loading.
 Separate calls still cost API tokens, so each background process has its own
 rate limits.
+
+### What runs when
+
+- **At launch:** the startup check marks conversations left open as interrupted
+  and notes when you last talked, the background memory pass starts, and the
+  first Live session sends the opening greeting.
+- **At each connect** (launch, waking from Standby, or Ctrl+R): both prompts are
+  built in this order: the fixed foundation, the person's name, her held identity
+  traits, how she feels about the person, the memory snapshot, then her interests.
+  Each block loads separately; a failure only leaves that block out.
+- **Background memory pass** (at launch and each time she enters Standby): for
+  each finished conversation not yet summarised, extract memories and then save
+  its summary; embed new memories; check them for duplicates; appraise finished
+  conversations; then apply new appraisals to the relationship.
+- **App timers** (while the app runs, cheap when nothing is due): interest
+  evolution every 10 minutes (a cycle at most once a day), exploration every 10
+  minutes (only in Standby or after 10 minutes without conversation), identity
+  reflection every 10 minutes (at most once a day), and a lull check for findings
+  every two minutes (only while Live is active).
+- **On demand:** the backend calls `search_memory`, `recall_interest`,
+  `recall_self`, `set_person_name`, `enter_standby`, or `close_app` when a
+  conversation needs them.
 
 ## How memory works
 
@@ -375,8 +407,8 @@ automatically re-extracted.
 - Recall and duplicate decisions can be wrong. Similarity is not confidence;
   conflicting statements are kept rather than automatically superseded. Ages,
   plans, and tasks are dated historical information, not necessarily current facts.
-- Processing is one bounded pass per startup, not a continuous loop. A failure
-  stops the pass; unfinished work can be attempted on a later startup. An in-flight
+- Processing is one bounded pass at startup and each standby, not a continuous
+  loop. A failure stops the pass; unfinished work can be attempted on a later pass. An in-flight
   request may finish and save after closing, and process exit may wait for it.
 - Search uses an exact database scan, with no relevance threshold or search index
   yet. Results are bounded, but scan cost is not.
@@ -459,6 +491,38 @@ python -m subconscious.interests.evolve_interests
 python -m subconscious.interests.explore_interest
 ```
 
+## How the opening greeting works
+
+When Cora launches she speaks first. [greeting.py](greeting.py) builds a short
+brief of facts, and the first Live session of a launch sends it as a note:
+
+1. **Facts:** the time of day, how long since you last talked (from the newest
+   message of any earlier run), and your name if known. A first meeting asks her
+   to introduce herself instead. If the last-talked time cannot be loaded she
+   skips the greeting rather than treating you as a stranger.
+2. **How she feels:** at most two short lines from the current relationship
+   (see Relationship step 6). If they fail to load, Activity says so and she
+   greets without them.
+3. **At most one hook**, with about a 1 in 3 chance of none so it never feels
+   scripted. A first meeting has no hook.
+   - **Last thread:** her own summary of your last conversation. The greeting
+     waits (up to 30 seconds) for that launch's background summaries, and skips
+     the hook if they are slow, the last conversation has no summary, or loading
+     fails.
+   - **A finding:** one of her own recent findings, claimed like any other
+     mention (so the usual gap and daily limit apply) and released if the
+     greeting is not sent. With nothing fresh to share she falls back to the
+     last thread.
+   - **A recent plan:** only once her familiarity with you reaches 0.5. One task
+     or decision you mentioned in the past 7 days (from your own messages, never
+     a duplicate), hedged as possibly outdated and to skip if sensitive, since
+     others may be listening. With nothing recent, or if loading fails, she falls
+     back to the last thread.
+
+Typing or speaking before she connects, or while she waits for summaries, cancels
+the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
+Standby gets a short welcome back instead, with no hook or relationship line.
+
 ## Project layout
 
 | Location | Responsibility |
@@ -468,13 +532,13 @@ python -m subconscious.interests.explore_interest
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
-| [greeting.py](greeting.py) | Facts for Cora's opening greeting (time of day, time since you last talked, name, how she feels about you). |
+| [greeting.py](greeting.py) | Opening greeting brief: time of day, time since you last talked, name, how she feels about you, and the optional hook. |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and future background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals and relationship updates. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -576,53 +640,34 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - A relationship with you: each finished conversation is appraised, and her
   trust, warmth and familiarity shape her tone, greeting and how often she shares
   findings, with a non-destructive reset tool.
+- An opening greeting at launch, with an optional hook from your last
+  conversation, one of her findings, or a recent plan once she knows you well.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
 
 ### Next priorities
 
-- Opening greeting: when Cora launches she greets you first, introducing herself
-  to a stranger. [greeting.py](greeting.py) builds the brief (time of day, how
-  long since you last talked, and your name if known), launch loads the time of
-  the newest message from any earlier run, and the first Live session of a launch
-  sends it as a note so she speaks first. Clicking to resume from Standby gets a
-  short welcome back instead. Typing or speaking before she connects cancels
-  either, and Ctrl+R or waking her by voice never greets. The launch brief can
-  carry at most one optional hook, with about a 1 in 3 chance of none so it never
-  feels scripted. The last-thread hook is her own summary of your last
-  conversation: the greeting waits (up to 30 seconds) for that launch's
-  background summaries, and skips the hook if they are slow, the last
-  conversation has no summary, or loading fails. Typing or speaking while she
-  waits still cancels the greeting. The other hook is one of her own recent
-  findings, claimed like any other mention (so the usual gap and daily limit
-  apply) and released if the greeting is not sent; with nothing fresh to share
-  she falls back to the last thread. A first meeting has no hook. Personal-memory
-  hooks wait for familiarity in the relationship work. The launch brief also
-  carries a line from the current relationship (see Relationship step 6).
 - Configure the model used by each background process separately. Text processes
   currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
   capable model, while delegation needs fast responses. Defaults should stay
   unchanged until a model is chosen. Changing the embedding model also needs a
   migration and re-embedding stored memories.
-- Relationship with the person: let a slowly changing sense of familiarity and
-  trust, built from how conversations went, shape her tone and initiative (never
-  her honesty, tools or permissions), with a snapshot and reset that keep all
-  other history.
-- Add real background producers, starting with a Signal message monitor; camera
-  awareness and screen monitoring can follow independently.
-- Develop attention decisions beyond the current FIFO/quiet-period policy: choose
-  findings by relevance to the conversation, and add quiet hours and an off switch.
-- Improve mixed voice/text synchronisation, interruption handling, and audio checks.
-- Improve memory relevance and handle corrections while preserving history.
+- Add real background producers (an awareness subsystem), starting with a Signal
+  message monitor; camera awareness and screen monitoring can follow independently.
+  Add quiet hours and an off switch for her initiative before proactive sources
+  grow beyond findings.
 - Add memory fading/forgetting, so time-bound details (for example an event date)
   lose prominence once they have passed, rather than staying in recall forever.
   Duplicate markers reference their canonical memory, so removing one needs its
   duplicates handled first.
-- Add user-facing memory controls and structured project memory.
-- Plan larger-context budgets, indexing, and conversation recovery.
+- Handle memory corrections: when a newer statement contradicts an older one
+  (for example a new home city), prefer the newer one in recall while keeping the
+  history. Today both are kept with equal weight.
+- Add an emotions subsystem (such as excitement), separate from the slower-moving
+  relationship.
 
-### Subconsciousness, interests, and self — next development steps
+### Subconsciousness, interests, self, and relationship
 
 Cora's subconsciousness will include background processes that keep working
 without requiring Nick to prompt every action. They can notice events, develop
@@ -697,10 +742,11 @@ sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending wor
 and provide separate camera privacy controls. Cross-process transport can be added
 when needed; it is not required for these first in-process workers.
 
-#### Self — after interests
+#### Self — complete
 
-Once interests work, add a separate background worker that maintains Cora's
-evolving identity. It reads conversation memories, persistent interests, and its
+After interests, a separate background worker was added to maintain Cora's
+evolving identity. It reads conversation summaries, interest changes, findings
+with her reactions, and its
 previous identity state, then reflects on those experiences to update a stored
 description of Cora's preferences, perspectives, values, and conversational
 tendencies. The goal is a developing identity of her own, not a copy of Nick's.
@@ -709,7 +755,7 @@ For example, repeated exploration of older mechanical designs might lead Cora
 to develop an appreciation for repairability and understandability. That perspective
 can become part of her identity and influence later conversations.
 
-The self worker should:
+The self worker is designed to:
 
 - Maintain persistent identity state in the database, separate from memories
   about Nick and from ongoing interest records.
@@ -718,19 +764,21 @@ The self worker should:
 - Distinguish Nick's preferences from Cora's developing preferences; learning
   about his perspective does not automatically make it hers.
 - Preserve a stable foundation while allowing learned perspectives to evolve.
-- Record why meaningful identity changes occurred, linking them to the memories,
-  interests, or findings that informed them.
+- Record why meaningful identity changes occurred, linking them to the
+  conversation summaries, interest changes, or findings that informed them.
 
-Live and the delegation backend should load the current identity from the database
+Live and the delegation backend load the current identity from the database
 when a session starts. Initially, identity changes take effect in the next session;
 updating an active session can come later. The self worker updates stored state,
 not the conversation directly. Live expresses that perspective in conversation.
 
-The relationship is **memory → interests → self → conversational expression**:
+The flow is **memory → interests → self → conversational expression**:
 memory records experiences; interests determine what Cora continues exploring;
 self develops how those experiences and interests shape her perspective; Live
-expresses it. Both workers are additions to the existing architecture and use the
-database for persistent state. Build interests first, then self.
+expresses it. Each worker is an addition to the existing architecture and uses the
+database for persistent state. Interests were built first, then self, then the
+relationship, which is a separate input: how conversations with the person went,
+not what she thinks of herself.
 
 After the interests steps are working:
 
@@ -922,7 +970,9 @@ After the interests steps are working:
   warmth of 0.55 or more lets her be glad to see you, below 0.45 keeps it brief
   and polite without sulking or hinting at why. Middling values add nothing. The
   greeting loads the values fresh; if that fails, Activity says so and she
-  greets without them. The welcome back after Standby is unchanged.
+  greets without them. The welcome back after Standby is unchanged. Familiarity
+  of 0.5 or more also unlocks the recent-plan hook (see
+  [How the opening greeting works](#how-the-opening-greeting-works)).
 7. [x] **Reset and export:** `RelationshipStore.reset` in
   [subconscious/relationship/relationship_store.py](subconscious/relationship/relationship_store.py)
   restores the current person's trust and warmth to the baseline, or to the
@@ -1031,17 +1081,16 @@ Camera presence detection is separate from sending images to a model for vision.
 
 ### Long-term direction
 
-- Persist Cora's identity, interests, reflections, and state **separately from
-  memories about the user**.
 - Share identity and memory across terminal, voice, keyboard, and Signal.
 - Add camera support, permission-bounded local/GIS tools, and external integrations.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.
 
-Local wake-word listening, the event/attention foundations, and the interests
-worker (with lull-based findings) are implemented. The self worker, real
-Signal/camera/screen monitors, and relevance- or awareness-driven initiative
-are not built yet. Speaker mute has been checked in a live
+Local wake-word listening, the event/attention foundations, the interests worker
+(with lull-based findings), the self worker, the relationship, and the opening
+greeting are implemented, each keeping its state separate from memories about the
+user. Real Signal/camera/screen monitors and relevance- or awareness-driven
+initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.
 The examples are standalone experiments, not integrated Cora features.
