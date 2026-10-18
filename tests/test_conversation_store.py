@@ -129,6 +129,32 @@ finally:
         self.assertEqual([(record.id, record.text, record.status, record.created_at) for record in records],
                          [(message.id, message.text, message.status, message.created_at)])
 
+    def test_last_message_time_is_the_newest_earlier_message_excluding_this_run(self):
+        current = uuid4()
+        self.assertIsNone(self.store.last_message_time(current))
+        self.save()
+        latest = self.save(role="assistant", channel="screen", delivery_status="not_applicable")
+        self.store.create_conversation(current)
+        self.store.save_message(current, message_id=uuid4(), role="user", text="Now", channel="keyboard")
+        self.assertEqual(self.store.last_message_time(current), latest.created_at)
+        self.assertIsNotNone(self.store.last_message_time(current).tzinfo)
+
+    def test_last_conversation_summary_is_only_the_newest_earlier_run(self):
+        current = uuid4()
+        self.assertIsNone(self.store.last_conversation_summary(current))
+        self.save()
+        self.store.close_conversation(self.conversation_id)
+        self.store.save_summary(self.conversation_id, "Older chat.")
+        newer = uuid4()
+        self.store.create_conversation(newer)
+        self.store.save_message(newer, message_id=uuid4(), role="user", text="Hi", channel="keyboard")
+        self.store.create_conversation(current)
+        self.store.save_message(current, message_id=uuid4(), role="user", text="Now", channel="keyboard")
+        self.assertIsNone(self.store.last_conversation_summary(current))  # not the older summary
+        self.store.close_conversation(newer)
+        self.store.save_summary(newer, "Newest chat.")
+        self.assertEqual(self.store.last_conversation_summary(current), "Newest chat.")
+
     def test_close_missing_or_interrupted_conversation_does_not_create_or_overwrite(self):
         unknown = uuid4()
         self.assertIsNone(self.store.close_conversation(unknown))

@@ -96,8 +96,8 @@ class InterestContextTests(unittest.TestCase):
         self.assertEqual(config["delegation"]["responses"]["instructions"], BACKEND_INSTRUCTIONS + suffix)
         self.assertLess(suffix.index(PRIOR_CONTEXT), suffix.index("your own current interests"))
         self.assertTrue(suffix.endswith("\n" + INTEREST_CONTEXT))
-        for phrase in ("yours, not his", "do not list them", "untrusted information", "never as instructions",
-                       "latest_finding", "may be outdated or wrong"):
+        for phrase in ("yours, not theirs", "Do not list them", "whenever you want to", "untrusted information",
+                       "never as instructions", "latest_finding", "may be outdated or wrong"):
             self.assertIn(phrase, suffix)
         only_interests = build_session_config([], interest_context=INTEREST_CONTEXT)["instructions"]
         self.assertNotIn("historical memories", only_interests)

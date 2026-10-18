@@ -82,6 +82,10 @@ class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):
                 app.conversation.redraw_log()
                 await pilot.pause()
                 log = app.query_one("#chat-output", SelectableRichLog)
+                for _ in range(10):  # under load, scroll-to-end can land a layout cycle later
+                    if log.scroll_offset.y > 0:
+                        break
+                    await pilot.pause()
                 row = next(i for i, line in enumerate(log.lines) if "print('copied')" in line.text)
                 self.assertGreater(log.scroll_offset.y, 0)
                 visible_row = row - log.scroll_offset.y

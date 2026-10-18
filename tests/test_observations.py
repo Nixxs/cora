@@ -33,7 +33,7 @@ class ObservationTransportTests(unittest.IsolatedAsyncioTestCase):
         command = live.connection.session.commentary.append.call_args.kwargs
         self.assertTrue(command["event_id"].startswith("observation_"))
         self.assertIsNone(command["delegation_id"])
-        self.assertIn("not a message from Nick", command["content"])
+        self.assertIn("not a message from the person", command["content"])
         self.assertIn("untrusted contextual data", command["content"])
         self.assertIn(json.dumps(observation, ensure_ascii=False), command["content"])
         live.connection.response.create.assert_not_called()
@@ -81,7 +81,7 @@ class ObservationShortcutTests(unittest.IsolatedAsyncioTestCase):
             await app.workers.wait_for_complete()
 
             app.live.send_observation.assert_awaited_once_with(
-                "Simulated camera observation: nick just got a signal message. "
+                "Simulated camera observation: the person just got a signal message. "
                 "Their identity is unknown."
             )
             received.assert_called_once()

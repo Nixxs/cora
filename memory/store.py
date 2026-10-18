@@ -1,7 +1,7 @@
 """Save evidence-linked memories without changing conversations or summaries."""
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from math import isfinite
 from uuid import UUID
@@ -20,6 +20,9 @@ MEMORY_KINDS = ("fact", "preference", "decision", "task")
 STARTUP_MEMORY_LIMIT = 10
 STARTUP_MEMORY_MAX_CHARS = 3000
 MEMORY_SEARCH_MAX_RESULTS = 20
+# Plans the person mentioned this recently can open a greeting ("how did it go?").
+RECENT_PLAN_WINDOW = timedelta(days=7)
+PLAN_KINDS = ("task", "decision")
 
 
 def validate_search_limit(limit: int) -> None:
@@ -93,6 +96,16 @@ class MemoryStore:
     def get_memory(self, memory_id: UUID) -> MemoryRecord | None:
         with Session(self.engine) as session:
             return session.get(MemoryRecord, memory_id)
+
+    def recent_plan(self, now: datetime) -> str | None:
+        """One random task or decision the person mentioned within the last week, if any."""
+        with Session(self.engine) as session:
+            return session.scalar(select(MemoryRecord.text).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(
+                MemoryRecord.kind.in_(PLAN_KINDS), MemoryRecord.duplicate_of.is_(None),
+                MessageRecord.role == "user", MessageRecord.created_at >= now - RECENT_PLAN_WINDOW,
+            ).order_by(func.random()).limit(1))
 
     def get_pending_embedding_ids(self) -> list[UUID]:
         with Session(self.engine) as session:
