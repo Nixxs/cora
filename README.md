@@ -370,12 +370,14 @@ rate limits.
    events, and Activity entries are not saved as chat messages.
 2. **When you quit:** pending chat saves finish and the conversation is marked
    closed. No new memory-processing requests start during shutdown.
-   **Standby also ends a conversation:** it is closed when Live closes, and
-   whatever is said after waking starts a new one.
+   **A long standby also ends a conversation:** a standby shorter than three
+   hours continues the same conversation, so waking keeps its context. After
+   three hours in standby the conversation is closed, and whatever is said after
+   waking starts a new one.
 3. **In the background:** a pass extracts facts, preferences, decisions, and
    tasks from finished conversations, then saves separate summaries. It runs at
-   startup for older conversations and again each time Cora enters standby, so a
-   conversation's memories can be ready by the time she wakes. Extraction uses
+   startup for older conversations and again when a long standby ends a
+   conversation. Extraction uses
    original messages, not summaries. Once memory work is done, the same pass
    appraises how each finished conversation went and updates her relationship
    with the person from those appraisals (see Relationship).
