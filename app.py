@@ -140,6 +140,7 @@ class CoraApp(App):
             set_identity_context=lambda context: setattr(self.live, "identity_context", context),
             set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
+            set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )

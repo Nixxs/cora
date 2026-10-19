@@ -12,6 +12,9 @@ from subconscious.interests.interest_store import INTEREST_CONTEXT_MAX_CHARS
 
 LIVE_MODEL = "gpt-live-1"
 BACKEND_MODEL = "gpt-6.1-sol"
+# Each area's model can be changed in the app; until then every area uses BACKEND_MODEL.
+MODEL_AREAS = ("delegation", "memory", "subconscious", "utility")
+MODEL_CHOICES = ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra")
 VOICE = "marin"
 AUDIO_SAMPLE_RATE = 24000
 
@@ -152,7 +155,7 @@ BACKEND_INSTRUCTIONS = (
 def build_session_config(
     tool_schemas: list[dict], memory_context: str = "", conversation_history: list[dict] | None = None,
     *, interest_context: str = "", person_name: str | None = None, identity_context: str = "",
-    relationship_context: str = "",
+    relationship_context: str = "", delegation_model: str = BACKEND_MODEL,
 ) -> dict:
     """Build a fresh session payload using schemas from the tool registry."""
     if len(memory_context) > STARTUP_MEMORY_MAX_CHARS:
@@ -223,7 +226,7 @@ def build_session_config(
         "delegation": {
             "type": "responses",
             "responses": {
-                "model": BACKEND_MODEL,
+                "model": delegation_model,
                 "tools": [{"type": "web_search"}, *deepcopy(tool_schemas)],
                 "tool_choice": "auto",
                 "parallel_tool_calls": False,

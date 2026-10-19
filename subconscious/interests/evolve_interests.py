@@ -13,6 +13,7 @@ from openai import OpenAI
 
 from session_config import BACKEND_MODEL
 from storage.database import build_engine
+from storage.model_settings_store import ModelSettingsStore
 from subconscious.interests.interest_proposals import Proposal
 from subconscious.interests.interest_store import Interest, InterestStore, validate_now
 from subconscious.interests.propose_interests import propose_interests
@@ -56,8 +57,9 @@ def run_interest_cycle(*, should_stop: Callable[[], bool]) -> str | None:
         if should_stop():
             return None
         engine = build_engine()
+        model = ModelSettingsStore(engine).model_for("subconscious")
         with OpenAI(max_retries=0) as client:
-            outcome = evolve_interests(InterestStore(engine), client, now=datetime.now(timezone.utc))
+            outcome = evolve_interests(InterestStore(engine), client, model=model, now=datetime.now(timezone.utc))
     except Exception as error:
         outcome = f"Interest cycle stopped ({type(error).__name__})."
     finally:

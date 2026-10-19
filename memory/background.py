@@ -5,6 +5,7 @@ from uuid import UUID
 
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
+from storage.model_settings_store import ModelSettingsStore
 from subconscious.relationship.appraise_conversation import appraise_waiting_conversations
 from subconscious.relationship.relationship_store import update_relationships
 
@@ -27,11 +28,13 @@ def run_background_memory_pass(
         if should_stop():
             return
         engine = build_engine()
+        # Read once per pass, so a change in settings applies from the next pass.
+        models = ModelSettingsStore(engine).models()
         store = ConversationStore(engine)
         for conversation_id in store.get_unsummarized_conversation_ids(current_conversation_id):
             if should_stop():
                 break
-            memories = extract_memories(store, conversation_id)
+            memories = extract_memories(store, conversation_id, model=models["memory"])
             if should_stop():
                 break
             write_activity(
@@ -39,7 +42,7 @@ def run_background_memory_pass(
                 "Memory extraction complete",
             )
             # Save the summary last: even zero-memory chats then leave this queue.
-            summarize_conversation(store, conversation_id)
+            summarize_conversation(store, conversation_id, model=models["memory"])
             if not should_stop():
                 write_activity(
                     f"Summary saved: conversation_id={conversation_id}", "Memory summary saved",
@@ -60,7 +63,7 @@ def run_background_memory_pass(
         for memory_id in memory_store.get_pending_deduplication_ids():
             if should_stop():
                 return
-            duplicate = deduplicate_memory(memory_store, memory_id)
+            duplicate = deduplicate_memory(memory_store, memory_id, model=models["utility"])
             if not should_stop():
                 write_activity(
                     f"Memory checked: memory_id={memory_id}, duplicate={duplicate}",
@@ -68,7 +71,9 @@ def run_background_memory_pass(
                 )
         # Last, so a first-run backfill never delays memories; it reports its own failures.
         if not should_stop():
-            appraise_waiting_conversations(engine, should_stop=should_stop, write_activity=write_activity)
+            appraise_waiting_conversations(
+                engine, model=models["subconscious"], should_stop=should_stop, write_activity=write_activity,
+            )
         # Applies whatever appraisals are saved, even if appraising stopped early.
         if not should_stop():
             update_relationships(engine, write_activity=write_activity)

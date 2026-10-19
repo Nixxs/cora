@@ -94,6 +94,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0012_create_identity.sql",
             "0013_create_interaction_appraisals.sql",
             "0014_create_relationships.sql",
+            "0015_create_model_settings.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

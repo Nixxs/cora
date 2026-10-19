@@ -535,3 +535,20 @@ class RelationshipEventRecord(Base):
     familiarity: Mapped[float] = mapped_column(Double)
     reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ModelSettingRecord(Base):
+    """The model chosen for one area of Cora; areas without a row use the default."""
+
+    __tablename__ = "model_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "area IN ('delegation', 'memory', 'subconscious', 'utility')", name="model_settings_area_check",
+        ),
+        CheckConstraint("btrim(model) <> ''", name="model_settings_model_check"),
+        {"schema": "public"},
+    )
+
+    area: Mapped[str] = mapped_column(Text, primary_key=True)
+    model: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

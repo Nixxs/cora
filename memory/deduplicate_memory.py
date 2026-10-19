@@ -30,7 +30,9 @@ DEDUP_SCHEMA = {
 }
 
 
-def deduplicate_memory(store: MemoryStore, memory_id: UUID, *, client: OpenAI | None = None) -> bool:
+def deduplicate_memory(
+    store: MemoryStore, memory_id: UUID, *, model: str = BACKEND_MODEL, client: OpenAI | None = None,
+) -> bool:
     memory = store.get_memory(memory_id)
     if memory is None:
         raise LookupError("Memory does not exist")
@@ -50,7 +52,7 @@ def deduplicate_memory(store: MemoryStore, memory_id: UUID, *, client: OpenAI | 
 
     def classify(api):
         response = api.responses.create(
-            model=BACKEND_MODEL, instructions=DEDUP_INSTRUCTIONS, input=transcript,
+            model=model, instructions=DEDUP_INSTRUCTIONS, input=transcript,
             max_output_tokens=512, store=False, truncation="disabled",
             text={"format": {"type": "json_schema", "name": "memory_duplicate",
                              "strict": True, "schema": DEDUP_SCHEMA}},

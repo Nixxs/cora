@@ -11,6 +11,7 @@ from psycopg import sql
 from textual.widgets import Collapsible
 
 from app import CoraApp
+from session_config import BACKEND_MODEL
 from ui.composer import ChatComposer
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
@@ -117,6 +118,7 @@ async def running_app(persistence=None):
                 persistence.load_relationship_values.return_value = None
                 persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None
+                persistence.load_delegation_model.return_value = BACKEND_MODEL
                 persistence.load_last_talked_at.return_value = None
             app.persistence = persistence
             app.live.send_text = AsyncMock()

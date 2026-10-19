@@ -136,6 +136,10 @@ class DeduplicateMemoryTests(unittest.TestCase):
         self.assertIn("café", request["input"])
         self.assertEqual(vars(self.memory), original)
 
+    def test_request_uses_the_chosen_model(self):
+        dedup.deduplicate_memory(self.store, self.memory.id, model="utility-model", client=self.client)
+        self.assertEqual(self.client.responses.create.call_args.kwargs["model"], "utility-model")
+
     def test_fixture_null_or_supplied_id_is_only_a_marker_and_injected_client_is_unowned(self):
         for value in (None, str(self.candidate.memory_id)):
             with self.subTest(value=value):
@@ -367,15 +371,16 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             prior_rows = {table: connection.execute(text(f"SELECT * FROM public.{table}")).all()
                           for table in tables}
         before = {row.id: snapshot(row) for row in self.memories.get_memories(self.conversation_id)}
-        # Roll back migrations 0006 and the later 0007-0014 (history must stay a prefix of the
+        # Roll back migrations 0006 and the later 0007-0015 (history must stay a prefix of the
         # files) in this uniquely named fixture, then apply the actual live migrations
         # to populated pre-0006 rows (no synthetic SQL).
         later = ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql",
                  "0008_create_interest_explorations.sql", "0009_add_finding_mentions.sql",
                  "0010_create_people.sql", "0011_add_exploration_reactions.sql", "0012_create_identity.sql",
-                 "0013_create_interaction_appraisals.sql", "0014_create_relationships.sql"]
+                 "0013_create_interaction_appraisals.sql", "0014_create_relationships.sql",
+                 "0015_create_model_settings.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
-            connection.execute("DROP TABLE public.relationship_events, public.relationships, "
+            connection.execute("DROP TABLE public.model_settings, public.relationship_events, public.relationships, "
                                "public.interaction_appraisals, "
                                "public.identity_event_evidence, public.identity_event_traits, "
                                "public.identity_events, public.identity_traits, public.identity_worker_state, "
