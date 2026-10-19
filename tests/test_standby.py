@@ -384,7 +384,20 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     app.persistence.start_new_conversation.assert_not_called()
                     app.persistence.close.assert_not_called()
 
-    async def test_standby_ends_the_conversation_and_processes_it(self):
+    async def test_short_standby_keeps_the_conversation_and_waking_cancels_its_end(self):
+        async with restarting_app() as (app, pilot, connections, speakers, started):
+            await pilot.click("#chat-status")
+            await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+            self.assertTrue(app.standby)
+            self.assertIsNotNone(app.conversation_end_timer)
+            app.persistence.start_new_conversation.assert_not_called()
+            await pilot.press("ctrl+r")
+            await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+            await asyncio.wait_for(started.get(), 5)
+            self.assertIsNone(app.conversation_end_timer)
+            app.persistence.start_new_conversation.assert_not_called()
+
+    async def test_long_standby_ends_the_conversation_and_processes_it(self):
         for case in ("processed", "pass running", "close failed"):
             with self.subTest(case=case):
                 async with restarting_app() as (app, pilot, connections, speakers, started):
@@ -395,6 +408,9 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                     with patch.object(app, "summarize_previous_conversations") as summarize:
                         await pilot.click("#chat-status")
                         await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+                        app.persistence.start_new_conversation.assert_not_called()
+                        # Stands in for the long-standby timer firing.
+                        await asyncio.wait_for(app.end_standby_conversation().wait(), 3)
                     self.assertTrue(app.standby)
                     app.persistence.start_new_conversation.assert_called_once_with()
                     entries = "\n".join(app.activity.entries)

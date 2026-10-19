@@ -11,7 +11,7 @@ from subconscious.interests.interest_store import INTEREST_CONTEXT_MAX_CHARS
 
 
 LIVE_MODEL = "gpt-live-1"
-BACKEND_MODEL = "gpt-6-luna"
+BACKEND_MODEL = "gpt-6.1-sol"
 VOICE = "marin"
 AUDIO_SAMPLE_RATE = 24000
 

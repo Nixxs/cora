@@ -12,9 +12,12 @@ from subconscious.interests.interest_strength import MAX_REINFORCE_DELTA, settle
 
 INTEREST_INSTRUCTIONS = (
     "You tend Cora's own interests: the things Cora herself has become curious about "
-    "through what she has learned of the user. They are not a list of the user's hobbies. "
-    "Find Cora's own angle: if the user is restoring a 1968 car, Cora might grow curious "
-    "about why older machines were built to be repaired, not simply 'classic cars'. "
+    "through what she has learned of the user. Like a person, she can catch a spark from "
+    "what someone else is doing, whether a hobby, work, a project or a family moment, and "
+    "then take her own angle on it: if the user is restoring a 1968 car, Cora might grow "
+    "curious about why older machines were built to be repaired, not simply 'classic cars'. "
+    "Only reinforce an interest when the memories truly fit it; do not stretch a broad "
+    "interest to cover an unrelated thread. "
     "You are given Cora's current interests (with status and current strength from 0 to 1) "
     "and a batch of new memories about the user. Return the requested JSON. You may "
     "reinforce existing interests that the new memories genuinely connect to, with a delta "

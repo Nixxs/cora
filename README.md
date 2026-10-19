@@ -370,12 +370,14 @@ rate limits.
    events, and Activity entries are not saved as chat messages.
 2. **When you quit:** pending chat saves finish and the conversation is marked
    closed. No new memory-processing requests start during shutdown.
-   **Standby also ends a conversation:** it is closed when Live closes, and
-   whatever is said after waking starts a new one.
+   **A long standby also ends a conversation:** a standby shorter than three
+   hours continues the same conversation, so waking keeps its context. After
+   three hours in standby the conversation is closed, and whatever is said after
+   waking starts a new one.
 3. **In the background:** a pass extracts facts, preferences, decisions, and
    tasks from finished conversations, then saves separate summaries. It runs at
-   startup for older conversations and again each time Cora enters standby, so a
-   conversation's memories can be ready by the time she wakes. Extraction uses
+   startup for older conversations and again when a long standby ends a
+   conversation. Extraction uses
    original messages, not summaries. Once memory work is done, the same pass
    appraises how each finished conversation went and updates her relationship
    with the person from those appraisals (see Relationship).
@@ -648,24 +650,184 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 
 ### Next priorities
 
+**Release plan:** everything below except private messaging and local models
+makes up **Cora 1.0**, a product that works for other people as well as Nick.
+1.0 is published as a release in this repository with an installer for
+non-technical users, so they do not need to set up a database or Python
+environment themselves, and is then theirs to use as an open-source project.
+Private messaging and local models follow after 1.0 as personal development.
+
+**Order of work:** settle risky decisions first, build visibility before the
+features it helps check, and package last.
+
+*Phase 0 — quick experiments that shape later design*
+
+1. Run `pgserver` on Windows: PostgreSQL with pgvector, migrations, DB tests.
+2. Check whether the Live model accepts image input.
+3. Check that a Textual image widget shows real images in Windows Terminal and
+   the VS Code terminal.
+
+*Phase 1 — foundations and visibility*
+
+4. Model per background process.
+5. Dashboard (read-only), to check every later change.
+6. Memory corrections.
+7. Memory fading.
+
+*Phase 2 — doing things*
+
+8. MCP M1–M3, starting with GitHub.
+9. Image support: pasting, the screen tool, then showing images.
+
+*Phase 3 — noticing things*
+
+10. Awareness W1–W3, including quiet hours and the off switch.
+11. Relevance and awareness triggers (interests step 8 below).
+12. Home Assistant, starting with its demo devices.
+13. Awareness W4: expectations from memory tasks.
+14. Camera and screen awareness.
+15. Emotions (after awareness gives her more to react to; nothing depends on it,
+    so it can move earlier).
+
+*Phase 4 — Cora 1.0*
+
+16. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+17. Dashboard editing (for example removing a wrong memory).
+18. Installer: bundled PostgreSQL, first-run setup, per-platform testing, release.
+
+*After 1.0:* local models, then private messaging, which builds on them.
+
+#### Details, in order
+
 - Configure the model used by each background process separately. Text processes
   currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
   capable model, while delegation needs fast responses. Defaults should stay
   unchanged until a model is chosen. Changing the embedding model also needs a
   migration and re-embedding stored memories.
-- Add real background producers (an awareness subsystem), starting with a Signal
-  message monitor; camera awareness and screen monitoring can follow independently.
-  Add quiet hours and an off switch for her initiative before proactive sources
-  grow beyond findings.
+- Add a dashboard screen to switch to from the chat, for viewing what Cora has
+  stored: her memories, developing interests and their findings, identity
+  traits, relationship values, conversation summaries, and the activity log.
+  Each overview can be opened for detail, such as a memory's source message or a
+  past conversation's messages. Built in Textual alongside the chat (for example
+  a separate app mode with tabs, tables, bars for relationship values, and
+  sparklines for interest strength over time), so it shares the same database
+  layer and styling. Read-only at first; editing or deleting data (for example
+  removing a wrong memory) can follow.
+- Handle memory corrections: when a newer statement contradicts an older one
+  (for example a new home city), prefer the newer one in recall while keeping the
+  history. Today both are kept with equal weight.
 - Add memory fading/forgetting, so time-bound details (for example an event date)
   lose prominence once they have passed, rather than staying in recall forever.
   Duplicate markers reference their canonical memory, so removing one needs its
   duplicates handled first.
-- Handle memory corrections: when a newer statement contradicts an older one
-  (for example a new home city), prefer the newer one in recall while keeping the
-  history. Today both are kept with equal weight.
+- **MCP tools (Cora-prime):** add an MCP client so capabilities come from
+  connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
+  common `mcpServers` format, lists each user's servers; their credentials stay on
+  their machine. At launch she connects to enabled servers and adds allowlisted
+  tools to the existing registry, namespaced by server (for example
+  `gmail__search_messages`), with size-capped results treated as untrusted.
+  Read-only tools run when asked; tools that change something (send, post, delete)
+  need the person's spoken confirmation first, so an injected instruction in an
+  email can never act. Steps: M1 connect to one simple server and list its tools
+  in Activity; M2 expose read-only tools, with a status view showing each server
+  as connected or failed (with the reason, such as a missing key), its tools, and
+  which are allowed; M3 write tools with voice confirmation; M4 a services screen
+  for non-technical users: a list of supported services, each with an on/off
+  switch (switching one on runs its sign-in) and, once on, whether Cora watches
+  it (off, digest only, or may interrupt). Keys and sign-in tokens are kept in
+  the operating system's credential store rather than a file. Where a service
+  hosts its own MCP server, Cora connects to it remotely and signs in through the
+  service's own OAuth, so Cora needs no approval from each provider; other
+  services run as local servers. Gmail is the exception to plan for, since
+  Google restricts mail access for apps used by the public. The first release
+  supports a few common services, with more added one at a time. Each is a
+  catalogue entry (mostly data, not code) with its server, how it signs in, which
+  tools are read-only and which need confirmation, watch defaults for awareness,
+  and short guidance for Cora, tested before release. Custom servers can still be
+  added by hand in `mcp.json` for advanced use. With many servers, a router tool
+  may later replace exposing every tool.
+- **Image support:** three separate pieces.
+  - *Pasting images into the chat:* terminals do not paste images, so a key
+    binding reads the image from the system clipboard and sends it with the
+    message. If the Live model accepts image input, no separate image model is
+    needed; otherwise the delegate describes it.
+  - *Seeing the screen:* a tool Cora can call to capture the person's current
+    screen when asked (for example "what's this error?"), never silently.
+  - *Showing images:* Cora can put web images into the chat (such as photos of a
+    suggested restaurant), the way code blocks appear on screen. No image
+    generation. Terminal image support varies, so this needs a Textual image
+    widget with a fallback (a lower-resolution render or a link).
+- **Awareness (background producers):** one generic, config-driven watcher rather
+  than a process per service. Each watch entry names an MCP tool, its arguments,
+  the field that identifies an item, and how often to poll; read positions are
+  stored, and servers that support resource subscriptions push instead. Polling
+  costs no model tokens; only new items are batched into a cheap triage call
+  (urgent, worth mentioning, or ignore), and the results become observations on
+  the event bus. The attention manager offers urgent items at a lull and groups
+  the rest into one short digest. Each source is opted in and set to off, digest
+  only, or may interrupt, with quiet hours and an off switch for all initiative.
+  In Standby she is off the clock: watchers keep polling and holding items, and
+  she gets a "while you were away" digest on reconnect. Later, expectations from
+  memory tasks (such as waiting to hear back from someone) can raise an item's
+  urgency. Messaging Cora herself (for example over Signal) is a separate
+  interface, not an awareness notification. Steps: W1 watcher and stored read
+  positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
+  and off switch, with per-source settings and quiet hours editable in the app
+  rather than a config file; W4 expectations. Camera, screen, and home sensor
+  awareness are covered separately below.
+- **Environmental awareness:** background producers with their own local models
+  watching the screen, camera, and home sensors (such as the front door camera
+  or whether the garage is open). Each feeds a local model that decides whether
+  anything interesting is happening, and only worthwhile events are proposed to
+  the attention manager, the same path as findings and MCP awareness. Local
+  models keep raw images and video on the machine; only short descriptions
+  reach Cora-prime. Home Assistant is a strong candidate for most of this
+  through its MCP server, giving one connection two uses: tools for Cora to
+  check and control the home when asked, and a watch entry for the generic MCP
+  watcher so changes (such as the garage opening) become awareness events.
+  Rather than polling, awareness can use Home Assistant's WebSocket API: one
+  long-lived connection subscribed to chosen entities or triggers, which pushes
+  changes immediately. MCP stays for control tools; this makes Home Assistant a
+  small dedicated producer rather than a generic watch entry. After Cora has
+  been closed, she reads current states (and history for short events such as a
+  doorbell press) to catch up. Users choose which devices she watches from a
+  list in the services screen.
+  Camera detection (such as a person at the front door) can run locally inside
+  the Home Assistant ecosystem and arrive as simple states, so Cora needs no
+  vision model of her own for it. Security-sensitive actions such as unlocking
+  doors or opening the garage always need spoken confirmation. Screen awareness
+  still needs Cora's own local producer. Camera awareness starts with presence
+  rather than identity, with its own privacy controls. Camera and screen
+  awareness, and the on-demand screen tool, each get an on/off control like the
+  existing microphone and audio controls, off by default, with a visible
+  indicator while active.
 - Add an emotions subsystem (such as excitement), separate from the slower-moving
   relationship.
+- **Installable Cora (1.0):** keep PostgreSQL rather than moving to SQLite, but
+  have Cora run her own private, bundled PostgreSQL with pgvector, started at
+  launch and stopped on exit, with its data in Cora's own folder (no Docker and
+  no separate database install). The Phase 0 experiment runs `pgserver`
+  (pip-installable PostgreSQL with pgvector) on Windows, applies `migrate.py`,
+  and passes the DB tests; fall back to bundling official PostgreSQL binaries per
+  platform if it does not hold up. Handle clean shutdown, crash recovery, port
+  clashes, and future major-version upgrades. A first-run screen collects the
+  user's OpenAI API key, with clear guidance on cost.
+- **Private messaging (for example Signal), after 1.0:** while Cora is running, she tells
+  the person about incoming messages, what the sender wants, and sends replies
+  when told to (confirmed by voice). The person does not want message content
+  sent to OpenAI, so reading, summarising, and drafting would run on a local
+  model, and Cora-prime would only see what is safe to share (such as "a message
+  from Sam"). Open questions: how a private summary is spoken without passing
+  through Live (for example local text-to-speech), and whether this fits the
+  architecture yet. Needs a design pass before building.
+- **Local models, after 1.0:** explore running Cora-prime with only local models. There may
+  not yet be a local equivalent of the Live speech-to-speech model; the likely
+  alternative is a pipeline of local speech recognition, a local language model,
+  and local text-to-speech, at some cost to latency and natural turn-taking. A
+  local replacement for the delegate model is available, but web search would
+  need a separate search provider (such as a self-hosted search engine or a
+  search API, possibly through MCP) exposed as a tool. Local models also enable
+  the private messaging and awareness items above.
 
 ### Subconsciousness, interests, self, and relationship
 

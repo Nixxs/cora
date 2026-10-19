@@ -59,6 +59,8 @@ FINDING_CHECK_SECONDS = 2 * 60
 FINDING_IDLE_SECONDS = 90
 # Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
 REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
+# A shorter standby continues the same conversation; a longer one ends it so memories form.
+CONVERSATION_END_STANDBY_SECONDS = 3 * 60 * 60
 
 
 class CoraApp(App):
@@ -166,6 +168,7 @@ class CoraApp(App):
         self.idle_standby_timer = None
         self.requested_standby_timer = None
         self.requested_standby_deadline = 0.0
+        self.conversation_end_timer = None
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -444,6 +447,7 @@ class CoraApp(App):
         if self.idle_standby_timer is not None:
             self.idle_standby_timer.stop()
         self.stop_requested_standby()
+        self.stop_conversation_end_timer()
 
     # Textual owns worker scheduling and cancellation; coordinators own the work.
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
@@ -642,6 +646,7 @@ class CoraApp(App):
                 return
             self.live.conversation_history = self.conversation.get_reconnect_history()
             self.last_live_activity = 0.0
+            self.stop_conversation_end_timer()
             if not restart:
                 if self.live.connection is not None or not self.live.session_close_confirmed:
                     raise RuntimeError("Live close was not confirmed")
@@ -649,9 +654,9 @@ class CoraApp(App):
                 self.handle_mic_status(False)
                 self.set_connection_state("standby")
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
-                # Standby ends the conversation, so its memories and summary form now.
-                if await self.conversation_persistence.end_conversation() and not self.closing:
-                    self.process_finished_conversations()
+                self.conversation_end_timer = self.set_timer(
+                    CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
+                )
                 return
             self.standby = False
             self.activity.write("Restarting Live with recent chat context", "Reconnecting")
@@ -677,6 +682,20 @@ class CoraApp(App):
             self.query_one("#speaker-status", Button).disabled = self.closing
             if not self.closing:
                 self.query_one("#chat-input", ChatComposer).focus()
+
+    def stop_conversation_end_timer(self) -> None:
+        if self.conversation_end_timer is not None:
+            self.conversation_end_timer.stop()
+            self.conversation_end_timer = None
+
+    @work(group="conversation-end")
+    async def end_standby_conversation(self) -> None:
+        """A long standby ends the conversation, so its memories and summary form now."""
+        self.conversation_end_timer = None
+        if not self.standby or self.closing or self.reconnecting:
+            return
+        if await self.conversation_persistence.end_conversation() and not self.closing:
+            self.process_finished_conversations()
 
     @work(group="database-startup")
     async def check_interrupted_conversations(self) -> None:
