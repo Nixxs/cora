@@ -90,6 +90,8 @@ class RunIdentityCycleTests(unittest.TestCase):
         self.engine = MagicMock()
         self.build_engine = self.enterContext(patch.object(reflect, "build_engine", return_value=self.engine))
         self.OpenAI = self.enterContext(patch.object(reflect, "OpenAI"))
+        self.settings = self.enterContext(patch.object(reflect, "ModelSettingsStore"))
+        self.settings.return_value.model_for.return_value = "subconscious-model"
         self.reflect = self.enterContext(patch.object(
             reflect, "reflect_identity", return_value="Reflected on 3 experiences: no changes."))
 
@@ -100,6 +102,9 @@ class RunIdentityCycleTests(unittest.TestCase):
         store, client = self.reflect.call_args.args
         self.assertIs(store.engine, self.engine)
         self.assertIs(client, self.OpenAI.return_value.__enter__.return_value)
+        self.settings.assert_called_once_with(self.engine)
+        self.settings.return_value.model_for.assert_called_once_with("subconscious")
+        self.assertEqual(self.reflect.call_args.kwargs["model"], "subconscious-model")
         self.assertIsNotNone(self.reflect.call_args.kwargs["now"].tzinfo)
         self.engine.dispose.assert_called_once_with()
 

@@ -11,6 +11,7 @@ Screen > .screen--selection {
     height: 1fr;
     background: #141820;
     border: round #7799cc;
+    border-top: none;
     padding: 0 1;
 }
 
@@ -169,27 +170,80 @@ Screen > .screen--selection {
     background-tint: transparent;
 }
 
-#window-controls {
+#title-bar {
     height: 1;
-    align: right top;
-    padding: 0;
+    background: #141820;
 }
 
-#close-button {
-    width: 3;
-    min-width: 3;
+#title-bar .title-line {
+    width: auto;
+    color: #7799cc;
+}
+
+#title-fill {
+    width: 1fr;
+    height: 1;
+    color: #7799cc;
+}
+
+#settings-button, #close-button {
+    width: auto;
+    min-width: 0;
     height: 1;
     min-height: 1;
     margin: 0;
     padding: 0;
+    line-pad: 1;
     border: none;
-    background: #141820;
-    color: #8f98a8;
-    # offset: 1 0;
+    background: transparent;
+    text-style: none;
+    color: #7799cc;
+}
+
+#settings-button:hover,
+#settings-button:focus {
+    background: #202838;
+    color: #e0e6ef;
+    text-style: none;
 }
 
 #close-button:hover,
 #close-button:focus {
     background: #202838;
     color: #f0a38a;
+    text-style: none;
+}
+
+ModelSettingsScreen {
+    align: center middle;
+    background: #141820 70%;
+}
+
+#model-settings {
+    width: 48;
+    height: auto;
+    padding: 0 2 1 2;
+    background: #141820;
+    border: round #7799cc;
+}
+
+#model-settings-title {
+    width: 1fr;
+    margin: 1 0 0 0;
+    color: #e0e6ef;
+    text-style: bold;
+}
+
+.model-settings-label {
+    margin: 1 0 0 0;
+    color: #8f98a8;
+}
+
+#model-settings Select {
+    width: 1fr;
+}
+
+#model-settings-close {
+    margin: 1 0 0 0;
+    width: 1fr;
 }

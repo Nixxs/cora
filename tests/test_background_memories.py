@@ -49,7 +49,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                 order.attach_mock(summary.extraction, "extract")
                 order.attach_mock(summary, "summary")
 
-                def extract(store_arg, conversation_id):
+                def extract(store_arg, conversation_id, *, model):
                     extraction_threads.append(get_ident())
                     return [private] if conversation_id == oldest else []
 
@@ -61,9 +61,11 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                     await asyncio.wait_for(disposed.wait(), 5)
                     extraction_api.assert_not_called()
                     summary_api.assert_not_called()
+                memory = "memory-model"
                 self.assertEqual(order.mock_calls, [
-                    call.startup(), call.extract(store, oldest), call.summary(store, oldest),
-                    call.extract(store, newer), call.summary(store, newer),
+                    call.startup(), call.extract(store, oldest, model=memory),
+                    call.summary(store, oldest, model=memory),
+                    call.extract(store, newer, model=memory), call.summary(store, newer, model=memory),
                 ])
                 store.get_unsummarized_conversation_ids.assert_called_once_with(
                     app.persistence.conversation_id,
@@ -98,7 +100,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                 app.summary_worker = SUMMARY_WORKER(app)
                 await asyncio.wait_for(app.summary_worker.wait(), 5)
                 await asyncio.wait_for(disposed.wait(), 5)
-                summary.extraction.assert_called_once_with(store, first)
+                summary.extraction.assert_called_once_with(store, first, model="memory-model")
                 summary.assert_not_called()
                 self.assertEqual(threads, [])
                 engine.dispose.assert_called_once_with()
@@ -122,7 +124,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
             async with background_tests.mocked_pass(app, [first, later]) as context:
                 engine, store, summary, started, disposed, threads, build, construct = context
 
-                def extract(store_arg, conversation_id):
+                def extract(store_arg, conversation_id, *, model):
                     loop.call_soon_threadsafe(extraction_started.set)
                     if not release.wait(timeout=5):
                         raise TimeoutError("Test did not release extraction")
@@ -153,7 +155,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                     if app.summary_worker is not None:
                         await asyncio.wait_for(disposed.wait(), 5)
                 self.assertEqual(saved, [(first, private)])
-                summary.extraction.assert_called_once_with(store, first)
+                summary.extraction.assert_called_once_with(store, first, model="memory-model")
                 summary.assert_not_called()
                 engine.dispose.assert_called_once_with()
                 entries = "\n".join(app.activity.entries)
@@ -316,6 +318,7 @@ def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=())
     memory_store.get_pending_embedding_ids.return_value = list(embedding_ids)
     memory_store.get_pending_deduplication_ids.return_value = list(dedup_ids)
     with patch("memory.background.build_engine", return_value=engine) as build, \
+            patch("memory.background.ModelSettingsStore") as settings, \
             patch("memory.background.ConversationStore", return_value=conversations_store) as conversation_factory, \
             patch("memory.background.MemoryStore", return_value=memory_store) as memory_factory, \
             patch("memory.background.extract_memories", return_value=[]) as extract, \
@@ -326,6 +329,7 @@ def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=())
                  patch("memory.deduplicate_memory.OpenAI") as dedup_api, \
                  patch("memory.extract_memories.OpenAI") as extraction_api, \
                  patch("memory.summarize.OpenAI") as summary_api:
+        settings.return_value.models.return_value = background_tests.MODELS
         yield (engine, conversations_store, memory_store, extract, summary, embed, dedup,
                disposed, build, conversation_factory, memory_factory)
         for factory in (embedding_api, dedup_api, extraction_api, summary_api):
@@ -355,16 +359,18 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                             order.attach_mock(mock, name)
                         threads = []
                         embed.side_effect = lambda *_: threads.append(get_ident())
-                        dedup.side_effect = lambda *_: threads.append(get_ident()) or False
+                        dedup.side_effect = lambda *_, **__: threads.append(get_ident()) or False
                         app.summary_worker = SUMMARY_WORKER(app)
                         await asyncio.wait_for(app.summary_worker.wait(), 5)
                         await asyncio.wait_for(disposed.wait(), 5)
                         expected = [call.queue(app.persistence.conversation_id)]
                         if with_conversation:
-                            expected += [call.extract(store, previous), call.summary(store, previous)]
+                            expected += [call.extract(store, previous, model="memory-model"),
+                                         call.summary(store, previous, model="memory-model")]
                         expected += [call.pending_embeddings(), call.embed(memories, first),
                                      call.embed(memories, second), call.pending_dedup(),
-                                     call.dedup(memories, first), call.dedup(memories, second)]
+                                     call.dedup(memories, first, model="utility-model"),
+                                     call.dedup(memories, second, model="utility-model")]
                         self.assertEqual(order.mock_calls, expected)
                         self.assertEqual(len(threads), 4)
                         self.assertTrue(all(thread != get_ident() for thread in threads))

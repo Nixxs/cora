@@ -204,7 +204,10 @@ class ExploreNextDatabaseTests(unittest.TestCase):
 class RunExplorationCycleTests(unittest.TestCase):
     def setUp(self):
         self.engine = MagicMock()
+        settings = MagicMock()
+        settings.model_for.return_value = "subconscious-model"
         for name, value in (("build_engine", self.engine), ("OpenAI", MagicMock()),
+                            ("ModelSettingsStore", settings),
                             ("explore_next", "Not exploring: too soon.")):
             patcher = patch(f"subconscious.interests.explore_interest.{name}", return_value=value)
             setattr(self, name, patcher.start())
@@ -216,6 +219,9 @@ class RunExplorationCycleTests(unittest.TestCase):
         store, client = self.explore_next.call_args.args
         self.assertIs(store.engine, self.engine)
         self.assertIs(client, self.OpenAI.return_value.__enter__.return_value)
+        self.ModelSettingsStore.assert_called_once_with(self.engine)
+        self.ModelSettingsStore.return_value.model_for.assert_called_once_with("subconscious")
+        self.assertEqual(self.explore_next.call_args.kwargs["model"], "subconscious-model")
         self.engine.dispose.assert_called_once_with()
 
     def test_failures_report_only_the_error_type_and_dispose(self):

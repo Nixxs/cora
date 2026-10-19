@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from memory.summarize import build_transcript
+from session_config import BACKEND_MODEL
 from subconscious.relationship import appraise_conversation as module
 from subconscious.relationship.appraisal import APPRAISAL_FIELDS, Appraisal
 from subconscious.relationship.appraise_conversation import (
@@ -139,7 +140,7 @@ class AppraisalCommandTests(unittest.TestCase):
 class BackgroundAppraisalTests(unittest.TestCase):
     setUp = AppraisalCommandTests.setUp
 
-    def run_pass(self, should_stop=lambda: False):
+    def run_pass(self, should_stop=lambda: False, **options):
         write_activity = MagicMock()
         people = MagicMock()
         people.current_person.return_value = SimpleNamespace(display_name="Nick")
@@ -147,8 +148,16 @@ class BackgroundAppraisalTests(unittest.TestCase):
                 patch.object(module, "PeopleStore", return_value=people), \
                 patch.object(module, "AppraisalStore", return_value=self.appraisals), \
                 patch.object(module, "appraise_saved_conversation", self.appraise):
-            module.appraise_waiting_conversations(MagicMock(), should_stop=should_stop, write_activity=write_activity)
+            module.appraise_waiting_conversations(
+                MagicMock(), should_stop=should_stop, write_activity=write_activity, **options,
+            )
         return write_activity, api
+
+    def test_uses_the_given_model_or_the_default(self):
+        self.run_pass()
+        self.assertEqual(self.appraise.call_args.args[3], BACKEND_MODEL)
+        self.run_pass(model="subconscious-model")
+        self.assertEqual(self.appraise.call_args.args[3], "subconscious-model")
 
     def test_saves_every_waiting_conversation_with_the_name_and_logs_each(self):
         write_activity, api = self.run_pass()

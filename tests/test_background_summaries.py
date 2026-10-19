@@ -12,6 +12,7 @@ from sqlalchemy import text
 from textual.widgets import Collapsible
 
 from app import CoraApp
+from session_config import BACKEND_MODEL
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
@@ -24,6 +25,9 @@ import test_summarize as summarize_tests
 # running_app patches both decorated methods; keep the originals before entry.
 SUMMARY_WORKER = CoraApp.summarize_previous_conversations
 CONNECT_WORKER = CoraApp.connect_to_cora
+# Distinct names per area show which saved choice each background step uses.
+MODELS = {"delegation": "delegation-model", "memory": "memory-model",
+          "subconscious": "subconscious-model", "utility": "utility-model"}
 
 
 @asynccontextmanager
@@ -36,7 +40,7 @@ async def mocked_pass(app, ids, *, blocked=False):
     store.get_unsummarized_conversation_ids.return_value = ids
     threads = []
 
-    def summarize(store_arg, conversation_id):
+    def summarize(store_arg, conversation_id, *, model):
         threads.append(get_ident())
         loop.call_soon_threadsafe(started.set)
         if blocked and not release.wait(timeout=5):
@@ -44,9 +48,11 @@ async def mocked_pass(app, ids, *, blocked=False):
 
     engine.dispose.side_effect = lambda: loop.call_soon_threadsafe(disposed.set)
     with patch("memory.background.build_engine", return_value=engine) as build, \
+            patch("memory.background.ModelSettingsStore") as settings, \
             patch("memory.background.ConversationStore", return_value=store) as construct, \
             patch("memory.background.summarize_conversation", side_effect=summarize) as summary, \
             patch("memory.background.extract_memories", return_value=[]) as extraction:
+        settings.return_value.models.return_value = MODELS
         summary.extraction = extraction
         try:
             yield engine, store, summary, started, disposed, threads, build, construct
@@ -74,8 +80,10 @@ class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
                         store.get_unsummarized_conversation_ids.assert_called_once_with(
                             app.persistence.conversation_id,
                         )
-                        self.assertEqual(summary.call_args_list, [call(store, id_) for id_ in ids])
-                        self.assertEqual(summary.extraction.call_args_list, [call(store, id_) for id_ in ids])
+                        self.assertEqual(summary.call_args_list,
+                                         [call(store, id_, model="memory-model") for id_ in ids])
+                        self.assertEqual(summary.extraction.call_args_list,
+                                         [call(store, id_, model="memory-model") for id_ in ids])
                         self.assertEqual(len(threads), len(ids))
                         self.assertTrue(all(thread != main_thread for thread in threads))
                         engine.dispose.assert_called_once_with()
@@ -92,7 +100,7 @@ class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
                 app.summary_worker = SUMMARY_WORKER(app)
                 await asyncio.wait_for(app.summary_worker.wait(), 5)
                 await asyncio.wait_for(disposed.wait(), 5)
-                summary.assert_called_once_with(store, first)
+                summary.assert_called_once_with(store, first, model="memory-model")
                 engine.dispose.assert_called_once_with()
                 entries = "\n".join(app.activity.entries)
                 self.assertIn("Background memory pass stopped (RuntimeError).", entries)
@@ -156,10 +164,10 @@ class BackgroundSummaryTests(unittest.IsolatedAsyncioTestCase):
                 app.persistence.close.assert_called_once_with()
                 self.assertFalse(disposed.is_set())
                 engine.dispose.assert_not_called()
-                summary.assert_called_once_with(store, first)
+                summary.assert_called_once_with(store, first, model="memory-model")
             # The helper releases and joins via disposal, not cancelled Worker.wait().
             engine.dispose.assert_called_once_with()
-            summary.assert_called_once_with(store, first)
+            summary.assert_called_once_with(store, first, model="memory-model")
             entries = "\n".join(app.activity.entries)
             self.assertNotIn("Summary saved", entries)
             self.assertNotIn("Memory processing failed", entries)
@@ -265,7 +273,9 @@ class BackgroundSummaryDatabaseTests(unittest.IsolatedAsyncioTestCase):
                         client.responses.create.assert_called_once()
                         factory.assert_called_once_with(max_retries=0)
                         factory.return_value.__exit__.assert_called_once_with(None, None, None)
-                        extraction.assert_called_once_with(unittest.mock.ANY, previous)
+                        # No saved choice in the fixture database, so the default model is used.
+                        self.assertEqual(client.responses.create.call_args.kwargs["model"], BACKEND_MODEL)
+                        extraction.assert_called_once_with(unittest.mock.ANY, previous, model=BACKEND_MODEL)
                         again = self.store.get_summary(previous)
                         self.assertEqual((again.text, again.created_at), (first.text, first.created_at))
                     finally:

@@ -36,7 +36,7 @@ class LastTalkedAdapterTests(unittest.TestCase):
         persistence = ConversationPersistence(
             MagicMock(), schedule_save=None, is_closing=lambda: False, set_memory_context=None,
             set_interest_context=None, set_identity_context=None, set_relationship_context=None,
-            set_person_name=None, write_activity=None,
+            set_person_name=None, set_delegation_model=None, write_activity=None,
             notify=None,
         )
         with patch("storage.conversation_persistence.run_background_memory_pass", side_effect=RuntimeError):
