@@ -651,49 +651,51 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 ### Next priorities
 
 **Release plan:** everything below except private messaging and local models
-makes up **Cora 1.0**, a product that works for other people as well as Nick.
-1.0 is published as a release in this repository with an installer for
-non-technical users, so they do not need to set up a database or Python
-environment themselves, and is then theirs to use as an open-source project.
-Private messaging and local models follow after 1.0 as personal development.
+makes up **Cora 1.0**, published as a release in this repository as an
+open-source project. Packaging is paused: Cora stays run from source (PostgreSQL
+in Docker, the app natively), with no installer for non-technical users planned
+for now. Private messaging and local models follow after 1.0 as personal
+development.
 
 **Order of work:** settle risky decisions first, build visibility before the
 features it helps check, and package last.
 
 *Phase 0 — quick experiments that shape later design*
 
-1. Run `pgserver` on Windows: PostgreSQL with pgvector, migrations, DB tests.
-2. Check whether the Live model accepts image input.
-3. Check that a Textual image widget shows real images in Windows Terminal and
-   the VS Code terminal.
+1. ~~Check whether the Live model accepts image input.~~ Done: the voice model
+   does not, but its Responses backend does (see Image support below).
+2. ~~Check that a Textual image widget shows real images in Windows Terminal,
+   the VS Code terminal, and Kitty on Linux.~~ Done: `textual-image` works in
+   Windows Terminal (checked in `examples/image_widget_check/`). Cora now needs
+   Python 3.12 or later for it. The VS Code terminal and Kitty are untested.
 
 *Phase 1 — foundations and visibility*
 
-4. Model per background process.
-5. Dashboard (read-only), to check every later change.
-6. Memory corrections.
-7. Memory fading.
+3. Model per background process.
+4. Dashboard (read-only), to check every later change.
+5. Memory corrections.
+6. Memory fading.
 
 *Phase 2 — doing things*
 
-8. MCP M1–M3, starting with GitHub.
-9. Image support: pasting, the screen tool, then showing images.
+7. MCP M1–M3, starting with GitHub.
+8. Image support: pasting, the screen tool, then showing images.
 
 *Phase 3 — noticing things*
 
-10. Awareness W1–W3, including quiet hours and the off switch.
-11. Relevance and awareness triggers (interests step 8 below).
-12. Home Assistant, starting with its demo devices.
-13. Awareness W4: expectations from memory tasks.
-14. Camera and screen awareness.
-15. Emotions (after awareness gives her more to react to; nothing depends on it,
+9. Awareness W1–W3, including quiet hours and the off switch.
+10. Relevance and awareness triggers (interests step 8 below).
+11. Home Assistant, starting with its demo devices.
+12. Awareness W4: expectations from memory tasks.
+13. Camera and screen awareness.
+14. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-16. MCP M4 services screen and in-app settings, reusing the dashboard's look.
-17. Dashboard editing (for example removing a wrong memory).
-18. Installer: bundled PostgreSQL, first-run setup, per-platform testing, release.
+15. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+16. Dashboard editing (for example removing a wrong memory).
+17. Release.
 
 *After 1.0:* local models, then private messaging, which builds on them.
 
@@ -749,8 +751,11 @@ features it helps check, and package last.
 - **Image support:** three separate pieces.
   - *Pasting images into the chat:* terminals do not paste images, so a key
     binding reads the image from the system clipboard and sends it with the
-    message. If the Live model accepts image input, no separate image model is
-    needed; otherwise the delegate describes it.
+    message. The Live voice model takes no image input, but its Responses
+    backend does: an `input_image` part added to the typed message is read
+    correctly (checked with a code screenshot in
+    [examples/image_input_check/](examples/image_input_check/)), so no separate
+    image model is needed.
   - *Seeing the screen:* a tool Cora can call to capture the person's current
     screen when asked (for example "what's this error?"), never silently.
   - *Showing images:* Cora can put web images into the chat (such as photos of a
@@ -803,15 +808,13 @@ features it helps check, and package last.
   indicator while active.
 - Add an emotions subsystem (such as excitement), separate from the slower-moving
   relationship.
-- **Installable Cora (1.0):** keep PostgreSQL rather than moving to SQLite, but
-  have Cora run her own private, bundled PostgreSQL with pgvector, started at
-  launch and stopped on exit, with its data in Cora's own folder (no Docker and
-  no separate database install). The Phase 0 experiment runs `pgserver`
-  (pip-installable PostgreSQL with pgvector) on Windows, applies `migrate.py`,
-  and passes the DB tests; fall back to bundling official PostgreSQL binaries per
-  platform if it does not hold up. Handle clean shutdown, crash recovery, port
-  clashes, and future major-version upgrades. A first-run screen collects the
-  user's OpenAI API key, with clear guidance on cost.
+- **Installable Cora (paused):** an installer for non-technical users is not
+  planned for now. Notes for if it returns: keep PostgreSQL rather than moving
+  to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was
+  ruled out (unmaintained since 2024, PostgreSQL 16, Python 3.12 at most);
+  portable binaries would need pgvector built per platform. Running the whole
+  app in a container was also ruled out, since Docker Desktop cannot reach the
+  host's microphone, speaker or clipboard.
 - **Private messaging (for example Signal), after 1.0:** while Cora is running, she tells
   the person about incoming messages, what the sender wants, and sends replies
   when told to (confirmed by voice). The person does not want message content

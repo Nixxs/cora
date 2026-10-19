@@ -1,6 +1,7 @@
 textual
 textual-dev
 textual[syntax]
+textual-image[textual]>=0.14,<1
 dotenv
 openai[realtime]>=3.28.0
 sounddevice>=0.5.4
