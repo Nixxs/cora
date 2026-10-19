@@ -131,7 +131,9 @@ not change an existing database's password or user. Back up important data.
   in memory only and is lost on app exit. Failed sends are reported, not retried,
   because they may have partially reached Live. Speaker mute still suppresses playback.
 - **Check Activity:** expand the panel for connection, tool, memory, and error events.
-- **Quit:** use the close button, Ctrl+X, or ask Cora to close. The close tool waits
+- **Choose models:** click Settings on the top border to pick the model for each
+  area. See [Choosing models](#choosing-models).
+- **Quit:** use × on the top border, Ctrl+X, or ask Cora to close. The close tool waits
   three seconds when connected; this does not guarantee speech has finished.
 
 Typed input is saved before sending. If saving or sending fails, the draft stays
@@ -270,7 +272,8 @@ Cora uses **two models working together in one Live session**:
 
 - **Live (`gpt-live-1`) is the voice you talk to.** It listens, handles the
   conversation, and speaks back. It can answer directly when no delegation is needed.
-- **The Responses backend (`gpt-6-luna`) is the delegated worker.** When a spoken
+- **The Responses backend is the delegated worker.** Its model is chosen in
+  Settings (see [Choosing models](#choosing-models)). When a spoken
   request needs current information, memory lookup, tools, or a detailed written
   answer, Live passes it to this model using OpenAI's built-in delegation.
 
@@ -362,6 +365,26 @@ rate limits.
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
   `recall_self`, `set_person_name`, `enter_standby`, or `close_app` when a
   conversation needs them.
+
+### Choosing models
+
+Click **Settings** on the top border to choose a model for each of four areas.
+Each change saves straight away (to the `model_settings` table, added by
+migration 0015, so run `python migrate.py` once after updating):
+
+| Area | Covers | Takes effect |
+| --- | --- | --- |
+| Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
+| Memory | Memory extraction and conversation summaries | The next background memory pass |
+| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
+| Duplicate check and small jobs | Memory duplicate checks, and future small jobs | The next background memory pass |
+
+Every area starts on `BACKEND_MODEL`. The choices are the fixed list
+`MODEL_CHOICES` in [session_config.py](session_config.py); a saved model that
+is no longer in that list falls back to the default. If the settings cannot be
+read at connect, Cora connects with the default and notes it in Activity.
+Embeddings and the manual voice measurement are not covered: changing the
+embedding model would also need a migration and re-embedding stored memories.
 
 ## How memory works
 
@@ -536,9 +559,9 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
 | [greeting.py](greeting.py) | Opening greeting brief: time of day, time since you last talked, name, how she feels about you, and the optional hook. |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
-| [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
+| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, and the model settings screen. |
 | [devices/](devices/) | Microphone capture and speaker playback. |
-| [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, and model settings. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
@@ -647,6 +670,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
 - Non-destructive duplicate markers and manual memory inspection.
+- A model choice per area (delegation, memory, relationship/interests/identity,
+  and small jobs) from Settings on the top border.
 
 ### Next priorities
 
@@ -671,7 +696,8 @@ features it helps check, and package last.
 
 *Phase 1 — foundations and visibility*
 
-3. Model per background process.
+3. ~~Model per background process.~~ Done: a model per area, chosen in Settings
+   (see [Choosing models](#choosing-models)).
 4. Dashboard (read-only), to check every later change.
 5. Memory corrections.
 6. Memory fading.
@@ -694,6 +720,7 @@ features it helps check, and package last.
 *Phase 4 — Cora 1.0*
 
 15. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+    (Model settings already exist; other settings still use `.env`.)
 16. Dashboard editing (for example removing a wrong memory).
 17. Release.
 
@@ -701,11 +728,6 @@ features it helps check, and package last.
 
 #### Details, in order
 
-- Configure the model used by each background process separately. Text processes
-  currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
-  capable model, while delegation needs fast responses. Defaults should stay
-  unchanged until a model is chosen. Changing the embedding model also needs a
-  migration and re-embedding stored memories.
 - Add a dashboard screen to switch to from the chat, for viewing what Cora has
   stored: her memories, developing interests and their findings, identity
   traits, relationship values, conversation summaries, and the activity log.

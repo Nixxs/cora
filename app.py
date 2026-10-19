@@ -19,9 +19,10 @@ from textual import events, work
 
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
-from ui.chat_widgets import SelectableRichLog
+from ui.chat_widgets import BorderLine, SelectableRichLog
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
+from ui.model_settings import ModelSettingsScreen
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
@@ -100,9 +101,15 @@ class CoraApp(App):
         self.submission.worker = value
 
     def compose(self) -> ComposeResult:
+        # The panel's top border is drawn here so its buttons can sit on the line.
+        with HorizontalGroup(id="title-bar"):
+            yield Static("╭─ CORA ", classes="title-line")
+            yield BorderLine(id="title-fill")
+            yield Button("settings", id="settings-button", tooltip="Model settings")
+            yield Static("─", classes="title-line")
+            yield Button("close", id="close-button", tooltip="Quit Cora")
+            yield Static("─╮", classes="title-line")
         with Vertical(id="chat-panel"):
-            with HorizontalGroup(id="window-controls"):
-                yield Button("×", id="close-button")
             yield SelectableRichLog(id="chat-output", wrap=True, min_width=1)
             with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
                 yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
@@ -126,7 +133,6 @@ class CoraApp(App):
                 )
 
     def on_mount(self) -> None:
-        self.query_one("#chat-panel").border_title = "CORA"
         self.query_one("#chat-input", ChatComposer).focus()
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
@@ -706,6 +712,31 @@ class CoraApp(App):
     async def load_session_context(self) -> None:
         await self.conversation_persistence.load_session_context()
 
+    @work(group="model-settings", exclusive=True)
+    async def open_model_settings(self) -> None:
+        try:
+            models = await self.conversation_persistence.call_database(self.persistence.load_models)
+        except Exception as error:
+            self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
+            self.notify("Could not load model settings. Check Activity.", severity="error")
+            return
+        if not self.closing:
+            self.push_screen(ModelSettingsScreen(models, self.save_model_setting))
+
+    @work(group="model-settings-save")
+    async def save_model_setting(self, area: str, model: str) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_model, area, model)
+        except Exception as error:
+            self.activity.write(f"Model setting save failed ({type(error).__name__}).", "Model settings error")
+            self.notify("Could not save the model setting. Check Activity.", severity="error")
+            return
+        self.activity.write(f"The {area} model is now {model}.", "Model settings saved")
+        # Live's session config holds the delegation model; restart Live so it applies now.
+        # In standby or while disconnected, the next connect loads it anyway.
+        if area == "delegation" and self.live.ready and not self.standby:
+            self.action_reconnect()
+
     def process_finished_conversations(self) -> None:
         # Single flight: a pass already running leaves this one for the next standby or launch.
         if self.summary_worker is None or self.summary_worker.is_finished:
@@ -873,6 +904,8 @@ class CoraApp(App):
         if event.button.id == "close-button":
             event.button.disabled = True
             await self.action_disconnect_and_quit()
+        elif event.button.id == "settings-button" and not self.closing:
+            self.open_model_settings()
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
@@ -988,6 +1021,7 @@ class CoraApp(App):
         self.stop_requested_standby()
         self.update_speaking_animation()
         self.query_one("#close-button", Button).disabled = True
+        self.query_one("#settings-button", Button).disabled = True
         self.query_one("#mic-status", Button).disabled = True
         self.query_one("#speaker-status", Button).disabled = True
         self.query_one("#wake-status", Button).disabled = True

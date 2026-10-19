@@ -6,7 +6,15 @@ from rich.syntax import Syntax
 from rich.text import Text
 from textual.selection import Selection
 from textual.strip import Strip
+from textual.widget import Widget
 from textual.widgets import RichLog
+
+
+class BorderLine(Widget):
+    """A horizontal border run that fills whatever width it is given."""
+
+    def render(self) -> str:
+        return "─" * self.size.width
 
 
 class BlueCodeBlock(CodeBlock):

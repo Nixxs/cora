@@ -55,6 +55,12 @@ class KeyboardPersistence:
     def load_delegation_model(self) -> str:
         return ModelSettingsStore(self._get_store().engine).model_for("delegation")
 
+    def load_models(self) -> dict:
+        return ModelSettingsStore(self._get_store().engine).models()
+
+    def save_model(self, area: str, model: str) -> None:
+        ModelSettingsStore(self._get_store().engine).set_model(area, model)
+
     def load_last_talked_at(self) -> datetime | None:
         return self._get_store().last_message_time(self.conversation_id)
 
