@@ -7,8 +7,8 @@ from math import isfinite
 from uuid import UUID
 
 from pgvector import Vector
-from sqlalchemy import Engine, and_, case, func, or_, select
-from sqlalchemy.orm import Session
+from sqlalchemy import Engine, and_, case, exists, func, or_, select
+from sqlalchemy.orm import Session, aliased
 
 from storage.models import (
     MEMORY_EMBEDDING_DIMENSIONS, MEMORY_EMBEDDING_MODEL,
@@ -33,6 +33,15 @@ PENDING_DEDUPLICATION = (
     MemoryRecord.dedup_checked_at.is_(None), MessageRecord.role == "user",
     MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
 )
+# Corrections come after the duplicate check; duplicates never correct anything.
+PENDING_CORRECTION = (
+    MemoryRecord.embedding.is_not(None), MemoryRecord.duplicate_of.is_(None),
+    MemoryRecord.dedup_checked_at.is_not(None), MemoryRecord.correction_checked_at.is_(None),
+    MessageRecord.role == "user", MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
+)
+# Recall prefers the newer memory; a corrected one stays stored as history.
+_newer = aliased(MemoryRecord)
+NOT_CORRECTED = ~exists().where(_newer.corrects == MemoryRecord.id)
 
 
 def validate_search_limit(limit: int) -> None:
@@ -99,7 +108,7 @@ class MemoryStore:
                 MemoryRecord.embedding.is_not(None),
                 MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
                 MemoryRecord.duplicate_of.is_(None),
-                MessageRecord.role == "user",
+                MessageRecord.role == "user", NOT_CORRECTED,
             ).order_by(distance, MemoryRecord.id).limit(limit)).all()
             return [MemoryMatch(*row) for row in rows]
 
@@ -143,6 +152,7 @@ class MemoryStore:
             ).where(
                 MemoryRecord.kind.in_(PLAN_KINDS), MemoryRecord.duplicate_of.is_(None),
                 MessageRecord.role == "user", MessageRecord.created_at >= now - RECENT_PLAN_WINDOW,
+                NOT_CORRECTED,
             ).order_by(func.random()).limit(1))
 
     def get_pending_embedding_ids(self) -> list[UUID]:
@@ -156,6 +166,12 @@ class MemoryStore:
             return list(session.scalars(select(MemoryRecord.id).join(
                 MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
             ).where(*PENDING_DEDUPLICATION).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
+
+    def get_pending_correction_ids(self) -> list[UUID]:
+        with Session(self.engine) as session:
+            return list(session.scalars(select(MemoryRecord.id).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(*PENDING_CORRECTION).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
 
     def pending_counts(self) -> dict[str, int]:
         """How many memories wait for an embedding, and how many for a duplicate check."""
@@ -174,6 +190,13 @@ class MemoryStore:
             )).scalar_one()
 
     def get_duplicate_candidates(self, memory: MemoryRecord) -> list[DuplicateCandidate]:
+        return self._nearest_earlier_memories(memory)
+
+    def get_correction_candidates(self, memory: MemoryRecord) -> list[DuplicateCandidate]:
+        """Like duplicate candidates, but skipping memories a newer one already corrects."""
+        return self._nearest_earlier_memories(memory, NOT_CORRECTED)
+
+    def _nearest_earlier_memories(self, memory: MemoryRecord, *conditions) -> list[DuplicateCandidate]:
         vector = validate_memory_embedding(memory.embedding)
         with Session(self.engine) as session:
             rows = session.execute(select(
@@ -185,6 +208,7 @@ class MemoryStore:
                 or_(MemoryRecord.created_at < memory.created_at, and_(
                     MemoryRecord.created_at == memory.created_at, MemoryRecord.id < memory.id,
                 )),
+                *conditions,
             ).order_by(MemoryRecord.embedding.cosine_distance(vector), MemoryRecord.id).limit(5)).all()
             return [DuplicateCandidate(*row) for row in rows]
 
@@ -214,6 +238,33 @@ class MemoryStore:
             memory.dedup_checked_at = func.current_timestamp()
             return duplicate_id is not None
 
+    def save_correction(
+        self, memory_id: UUID, source_text: str, corrected_id: UUID | None,
+        target_text: str | None = None,
+    ) -> bool:
+        ids = [memory_id] if corrected_id is None else [memory_id, corrected_id]
+        with Session(self.engine) as session, session.begin():
+            rows = {row.id: row for row in session.scalars(select(MemoryRecord).where(
+                MemoryRecord.id.in_(ids),
+            ).order_by(MemoryRecord.id).with_for_update())}
+            memory = rows.get(memory_id)
+            if memory is None:
+                raise LookupError("Memory does not exist")
+            if memory.text != source_text:
+                raise ValueError("Memory changed during correction check")
+            if memory.correction_checked_at is not None:
+                return memory.corrects is not None
+            if corrected_id is not None:
+                target = rows.get(corrected_id)
+                if (target is None or target.id == memory.id or target.duplicate_of is not None
+                        or target.text != target_text or target.kind != memory.kind
+                        or (target.created_at, target.id) >= (memory.created_at, memory.id)
+                        or session.scalar(select(exists().where(MemoryRecord.corrects == corrected_id)))):
+                    raise ValueError("Corrected memory is not an earlier unchanged current memory")
+                memory.corrects = corrected_id
+            memory.correction_checked_at = func.current_timestamp()
+            return corrected_id is not None
+
     def save_embedding(self, memory_id: UUID, source_text: str, values: list[float]) -> MemoryRecord:
         vector = validate_memory_embedding(values)
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
@@ -242,7 +293,9 @@ class MemoryStore:
             rows = session.execute(
                 select(MemoryRecord.kind, MemoryRecord.text, MessageRecord.created_at).join(
                     MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
-                ).where(MessageRecord.role == "user", MemoryRecord.duplicate_of.is_(None)).order_by(
+                ).where(
+                    MessageRecord.role == "user", MemoryRecord.duplicate_of.is_(None), NOT_CORRECTED,
+                ).order_by(
                     case((MemoryRecord.kind.in_(("fact", "preference")), 0), else_=1),
                     MessageRecord.created_at.desc(), MemoryRecord.id.desc(),
                 ).limit(STARTUP_MEMORY_LIMIT)

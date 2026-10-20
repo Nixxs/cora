@@ -9,6 +9,7 @@ from storage.model_settings_store import ModelSettingsStore
 from subconscious.relationship.appraise_conversation import appraise_waiting_conversations
 from subconscious.relationship.relationship_store import update_relationships
 
+from .correct_memory import correct_memory
 from .deduplicate_memory import deduplicate_memory
 from .embed_memory import embed_memory
 from .extract_memories import extract_memories
@@ -68,6 +69,15 @@ def run_background_memory_pass(
                 write_activity(
                     f"Memory checked: memory_id={memory_id}, duplicate={duplicate}",
                     "Memory deduplication checked",
+                )
+        for memory_id in memory_store.get_pending_correction_ids():
+            if should_stop():
+                return
+            corrects = correct_memory(memory_store, memory_id, model=models["utility"])
+            if not should_stop():
+                write_activity(
+                    f"Memory correction checked: memory_id={memory_id}, corrects={corrects}",
+                    "Memory correction checked",
                 )
         # Last, so a first-run backfill never delays memories; it reports its own failures.
         if not should_stop():

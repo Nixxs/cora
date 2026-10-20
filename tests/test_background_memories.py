@@ -13,6 +13,7 @@ from uuid import uuid4
 from textual.widgets import Collapsible
 
 from app import CoraApp
+import memory.correct_memory as correction
 import memory.deduplicate_memory as deduplication
 import memory.embed_memory as embedding
 from memory.store import MemoryCandidate, MemoryStore
@@ -29,6 +30,7 @@ SUMMARY_WORKER = CoraApp.summarize_previous_conversations
 STARTUP_WORKER = CoraApp.check_interrupted_conversations
 REAL_EMBED_MEMORY = embedding.embed_memory
 REAL_DEDUPLICATE_MEMORY = deduplication.deduplicate_memory
+REAL_CORRECT_MEMORY = correction.correct_memory
 
 
 class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
@@ -307,7 +309,7 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
 
 @contextmanager
-def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=()):
+def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=(), correction_ids=()):
     loop = asyncio.get_running_loop()
     disposed = asyncio.Event()
     engine = MagicMock()
@@ -317,6 +319,7 @@ def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=())
     memory_store = MagicMock(spec=MemoryStore)
     memory_store.get_pending_embedding_ids.return_value = list(embedding_ids)
     memory_store.get_pending_deduplication_ids.return_value = list(dedup_ids)
+    memory_store.get_pending_correction_ids.return_value = list(correction_ids)
     with patch("memory.background.build_engine", return_value=engine) as build, \
             patch("memory.background.ModelSettingsStore") as settings, \
             patch("memory.background.ConversationStore", return_value=conversations_store) as conversation_factory, \
@@ -325,41 +328,46 @@ def mocked_maintenance(app, *, conversations=(), embedding_ids=(), dedup_ids=())
             patch("memory.background.summarize_conversation") as summary, \
             patch("memory.background.embed_memory") as embed, \
             patch("memory.background.deduplicate_memory", return_value=False) as dedup, \
+            patch("memory.background.correct_memory", return_value=False) as correct, \
                  patch("memory.embed_memory.OpenAI") as embedding_api, \
                  patch("memory.deduplicate_memory.OpenAI") as dedup_api, \
+                 patch("memory.correct_memory.OpenAI") as correction_api, \
                  patch("memory.extract_memories.OpenAI") as extraction_api, \
                  patch("memory.summarize.OpenAI") as summary_api:
         settings.return_value.models.return_value = background_tests.MODELS
         yield (engine, conversations_store, memory_store, extract, summary, embed, dedup,
-               disposed, build, conversation_factory, memory_factory)
-        for factory in (embedding_api, dedup_api, extraction_api, summary_api):
+               disposed, build, conversation_factory, memory_factory, correct)
+        for factory in (embedding_api, dedup_api, correction_api, extraction_api, summary_api):
             factory.assert_not_called()
 
 
 class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
     """Background embedding/dedup maintenance, including already-summarised chats."""
 
-    async def test_queue_first_then_all_embeddings_then_dedup_with_own_engine_even_when_queue_empty(self):
+    async def test_queue_first_then_all_embeddings_then_dedup_then_corrections_with_own_engine(self):
         for with_conversation in (True, False):
             with self.subTest(with_conversation=with_conversation):
                 previous, first, second = uuid4(), uuid4(), uuid4()
                 async with keyboard_tests.running_app() as (app, pilot):
                     async_queue = [previous] if with_conversation else []
-                    with mocked_maintenance(app, conversations=async_queue,
-                                            embedding_ids=[first, second], dedup_ids=[first, second]) as ctx:
+                    with mocked_maintenance(app, conversations=async_queue, embedding_ids=[first, second],
+                                            dedup_ids=[first, second], correction_ids=[first, second]) as ctx:
                         (engine, store, memories, extract, summary, embed, dedup,
-                         disposed, build, conversation_factory, memory_factory) = ctx
+                         disposed, build, conversation_factory, memory_factory, correct) = ctx
                         order = MagicMock()
                         for name, mock in (("queue", store.get_unsummarized_conversation_ids),
                                            ("extract", extract), ("summary", summary),
                                            ("pending_embeddings", memories.get_pending_embedding_ids),
                                            ("embed", embed),
                                            ("pending_dedup", memories.get_pending_deduplication_ids),
-                                           ("dedup", dedup)):
+                                           ("dedup", dedup),
+                                           ("pending_corrections", memories.get_pending_correction_ids),
+                                           ("correct", correct)):
                             order.attach_mock(mock, name)
                         threads = []
                         embed.side_effect = lambda *_: threads.append(get_ident())
                         dedup.side_effect = lambda *_, **__: threads.append(get_ident()) or False
+                        correct.side_effect = lambda *_, **__: threads.append(get_ident()) or False
                         app.summary_worker = SUMMARY_WORKER(app)
                         await asyncio.wait_for(app.summary_worker.wait(), 5)
                         await asyncio.wait_for(disposed.wait(), 5)
@@ -370,9 +378,12 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                         expected += [call.pending_embeddings(), call.embed(memories, first),
                                      call.embed(memories, second), call.pending_dedup(),
                                      call.dedup(memories, first, model="utility-model"),
-                                     call.dedup(memories, second, model="utility-model")]
+                                     call.dedup(memories, second, model="utility-model"),
+                                     call.pending_corrections(),
+                                     call.correct(memories, first, model="utility-model"),
+                                     call.correct(memories, second, model="utility-model")]
                         self.assertEqual(order.mock_calls, expected)
-                        self.assertEqual(len(threads), 4)
+                        self.assertEqual(len(threads), 6)
                         self.assertTrue(all(thread != get_ident() for thread in threads))
                         build.assert_called_once_with()
                         conversation_factory.assert_called_once_with(engine)
@@ -384,21 +395,23 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                         entries = "\n".join(app.activity.entries)
                         self.assertIn(f"Memory embedded: memory_id={first}", entries)
                         self.assertIn(f"Memory checked: memory_id={second}, duplicate=False", entries)
+                        self.assertIn(f"Memory correction checked: memory_id={second}, corrects=False", entries)
                         if not with_conversation:
                             extract.assert_not_called()
                             summary.assert_not_called()
 
     async def test_any_stage_failure_stops_entire_pass_disposes_and_logs_only_exception_class(self):
         secret = "PRIVATE transcript evidence vector credentials"
-        for stage in ("extract", "summary", "embed", "dedup"):
+        for stage in ("extract", "summary", "embed", "dedup", "correct"):
             with self.subTest(stage=stage):
                 first_chat, later_chat, first, later = uuid4(), uuid4(), uuid4(), uuid4()
                 async with keyboard_tests.running_app() as (app, pilot):
-                    with mocked_maintenance(app, conversations=[first_chat, later_chat],
-                                            embedding_ids=[first, later], dedup_ids=[first, later]) as ctx:
+                    with mocked_maintenance(app, conversations=[first_chat, later_chat], embedding_ids=[first, later],
+                                            dedup_ids=[first, later], correction_ids=[first, later]) as ctx:
                         (engine, store, memories, extract, summary, embed, dedup,
-                         disposed, build, conversation_factory, memory_factory) = ctx
-                        operations = {"extract": extract, "summary": summary, "embed": embed, "dedup": dedup}
+                         disposed, build, conversation_factory, memory_factory, correct) = ctx
+                        operations = {"extract": extract, "summary": summary, "embed": embed,
+                                      "dedup": dedup, "correct": correct}
                         operations[stage].side_effect = RuntimeError(secret)
                         app.summary_worker = SUMMARY_WORKER(app)
                         await asyncio.wait_for(app.summary_worker.wait(), 5)
@@ -413,8 +426,12 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                         elif stage == "embed":
                             memories.get_pending_deduplication_ids.assert_not_called()
                             dedup.assert_not_called()
-                        else:
+                        elif stage == "dedup":
                             self.assertEqual(embed.call_count, 2)
+                            memories.get_pending_correction_ids.assert_not_called()
+                            correct.assert_not_called()
+                        else:
+                            self.assertEqual(dedup.call_count, 2)
                         engine.dispose.assert_called_once_with()
                         entries = "\n".join(app.activity.entries)
                         self.assertIn("Background memory pass stopped (RuntimeError).", entries)
@@ -432,7 +449,7 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             with mocked_maintenance(app, embedding_ids=[first, later], dedup_ids=[first, later]) as ctx:
                 (engine, store, memories, extract, summary, embed, dedup,
-                 disposed, build, conversation_factory, memory_factory) = ctx
+                 disposed, build, conversation_factory, memory_factory, correct) = ctx
 
                 def blocked_embedding(memory_store, memory_id):
                     loop.call_soon_threadsafe(started.set)
@@ -463,6 +480,8 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                 embed.assert_called_once_with(memories, first)
                 memories.get_pending_deduplication_ids.assert_not_called()
                 dedup.assert_not_called()
+                memories.get_pending_correction_ids.assert_not_called()
+                correct.assert_not_called()
                 engine.dispose.assert_called_once_with()
                 entries = "\n".join(app.activity.entries)
                 for unwanted in ("Memory embedded", "Memory checked", "Background memory pass stopped"):
@@ -508,10 +527,12 @@ class MemoryMaintenanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                         patch("memory.background.MemoryStore", side_effect=MemoryStore) as memory_factory, \
                         patch("memory.background.embed_memory", wraps=REAL_EMBED_MEMORY) as embed, \
                         patch("memory.background.deduplicate_memory", wraps=REAL_DEDUPLICATE_MEMORY) as dedup, \
+                        patch("memory.background.correct_memory", wraps=REAL_CORRECT_MEMORY) as correct, \
                         patch("memory.background.extract_memories") as extract, \
                         patch("memory.background.summarize_conversation") as summarize, \
                         patch("memory.embed_memory.OpenAI") as embedding_api, \
                         patch("memory.deduplicate_memory.OpenAI") as dedup_api, \
+                        patch("memory.correct_memory.OpenAI") as correction_api, \
                         patch("memory.extract_memories.OpenAI") as extraction_api, \
                         patch("memory.summarize.OpenAI") as summary_api:
                     client = embedding_api.return_value.__enter__.return_value
@@ -527,14 +548,18 @@ class MemoryMaintenanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(saved.embedding_model, embedding.MEMORY_EMBEDDING_MODEL)
                     self.assertIsNone(saved.duplicate_of)
                     self.assertIsNotNone(saved.dedup_checked_at.tzinfo)
+                    self.assertIsNone(saved.corrects)
+                    self.assertIsNotNone(saved.correction_checked_at.tzinfo)
                     self.assertEqual((saved.id, saved.source_message_id, saved.kind, saved.text,
                                       saved.evidence, saved.created_at),
                                      (memory.id, source.id, memory.kind, memory.text,
                                       memory.evidence, memory.created_at))
                     self.assertEqual(embed.call_count, 1)
                     self.assertEqual(dedup.call_count, 1)
+                    self.assertEqual(correct.call_count, 1)
                     self.assertIs(embed.call_args.args[0].engine, engine)
                     self.assertIs(dedup.call_args.args[0], embed.call_args.args[0])
+                    self.assertIs(correct.call_args.args[0], embed.call_args.args[0])
                     client.embeddings.create.assert_called_once_with(
                         model=embedding.MEMORY_EMBEDDING_MODEL, input=memory.text,
                         dimensions=1536, encoding_format="float",
@@ -550,13 +575,16 @@ class MemoryMaintenanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(disposal.call_count, 2)
                     self.assertEqual(embed.call_count, 1)
                     self.assertEqual(dedup.call_count, 1)
+                    self.assertEqual(correct.call_count, 1)
                     embedding_api.assert_called_once_with(max_retries=0)
                     client.embeddings.create.assert_called_once()
-                    for mock in (extract, summarize, dedup_api, extraction_api, summary_api):
+                    for mock in (extract, summarize, dedup_api, correction_api, extraction_api, summary_api):
                         mock.assert_not_called()
                     again = self.memories.get_memory(memory.id)
-                    self.assertEqual((again.embedding, again.embedding_created_at, again.dedup_checked_at),
-                                     (saved.embedding, saved.embedding_created_at, saved.dedup_checked_at))
+                    self.assertEqual((again.embedding, again.embedding_created_at, again.dedup_checked_at,
+                                      again.correction_checked_at),
+                                     (saved.embedding, saved.embedding_created_at, saved.dedup_checked_at,
+                                      saved.correction_checked_at))
                     read_summary = self.store.get_summary(self.conversation_id)
                     self.assertEqual((read_summary.text, read_summary.created_at),
                                      (summary.text, summary.created_at))

@@ -104,7 +104,7 @@ async def running_app(persistence=None):
             patch("app.run_identity_cycle", return_value=None), \
             patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
-            patch("memory.background.deduplicate_memory"), \
+            patch("memory.background.deduplicate_memory"), patch("memory.background.correct_memory"), \
             patch("memory.background.appraise_waiting_conversations"), \
             patch("memory.background.update_relationships"):
         app = CoraApp()

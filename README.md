@@ -396,7 +396,8 @@ rate limits.
   Each block loads separately; a failure only leaves that block out.
 - **Background memory pass** (at launch and each time she enters Standby): for
   each finished conversation not yet summarised, extract memories and then save
-  its summary; embed new memories; check them for duplicates; appraise finished
+  its summary; embed new memories; check them for duplicates, then for
+  corrections of older memories; appraise finished
   conversations; then apply new appraisals to the relationship.
 - **App timers** (while the app runs, cheap when nothing is due): interest
   evolution every 10 minutes (a cycle at most once a day), exploration every 10
@@ -418,7 +419,7 @@ migration 0015, so run `python migrate.py` once after updating):
 | Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
 | Memory | Memory extraction and conversation summaries | The next background memory pass |
 | Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
-| Duplicate check and small jobs | Memory duplicate checks, and future small jobs | The next background memory pass |
+| Duplicate check and small jobs | Memory duplicate and correction checks, and future small jobs | The next background memory pass |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list
 `MODEL_CHOICES` in [session_config.py](session_config.py); a saved model that
@@ -448,6 +449,10 @@ embedding model would also need a migration and re-embedding stored memories.
 4. **Maintenance:** pending memories receive embeddings for semantic search.
    Conservative duplicate checks mark equivalent entries without deleting their
    text, evidence, or history. Marked duplicates are excluded from recall.
+   A correction check then compares each memory with similar older ones of the
+   same kind: if it replaces one (for example a new home city), the newer memory
+   is marked as correcting it. Corrected memories stay stored as history but are
+   left out of the startup snapshot, `search_memory`, and greetings.
 5. **Recall:** Live and the backend receive a startup snapshot of at most 10
    memories / 3,000 characters. The backend can also use `search_memory` to find
    relevant stored memories on demand (eight results by default, maximum 20).
@@ -461,7 +466,7 @@ automatically re-extracted.
 
 - Saved conversations and memories are local, but normal chat and memory processing
   send relevant text or audio to OpenAI. This is not an offline assistant.
-- Extraction, summarisation, embeddings, duplicate classification, and semantic
+- Extraction, summarisation, embeddings, duplicate and correction checks, and semantic
   searches can make separate **billable API requests**. Loading the startup
   snapshot itself makes no extra request.
 - Voice grouping is approximate, and a crash can lose unsaved text. There is no
@@ -470,8 +475,9 @@ automatically re-extracted.
   hidden backend state, or unfinished tasks. The full displayed chat stays in the UI.
   A two-second transcript/audio quiet gap is only a reconnect safety hint, not a
   guaranteed completed speech turn; real voice/network timing still needs testing.
-- Recall and duplicate decisions can be wrong. Similarity is not confidence;
-  conflicting statements are kept rather than automatically superseded. Ages,
+- Recall, duplicate, and correction decisions can be wrong. Similarity is not
+  confidence; the correction check only replaces a memory when it is clearly the
+  same thing changed, so other conflicting statements are still both kept. Ages,
   plans, and tasks are dated historical information, not necessarily current facts.
 - Processing is one bounded pass at startup and each standby, not a continuous
   loop. A failure stops the pass; unfinished work can be attempted on a later pass. An in-flight
@@ -581,9 +587,9 @@ brief of facts, and the first Live session of a launch sends it as a note:
      last thread.
    - **A recent plan:** only once her familiarity with you reaches 0.5. One task
      or decision you mentioned in the past 7 days (from your own messages, never
-     a duplicate), hedged as possibly outdated and to skip if sensitive, since
-     others may be listening. With nothing recent, or if loading fails, she falls
-     back to the last thread.
+     a duplicate or a corrected one), hedged as possibly outdated and to skip if
+     sensitive, since others may be listening. With nothing recent, or if loading
+     fails, she falls back to the last thread.
 
 Typing or speaking before she connects, or while she waits for summaries, cancels
 the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
@@ -743,7 +749,8 @@ features it helps check, and package last.
    (see [Choosing models](#choosing-models)).
 4. ~~Dashboard (read-only), to check every later change.~~ Done: see
    [The dashboard](#the-dashboard).
-5. Memory corrections.
+5. ~~Memory corrections.~~ Done: a newer memory that contradicts an older one
+   replaces it in recall (see [How memory works](#how-memory-works)).
 6. Memory fading.
 
 *Phase 2 — doing things*
@@ -773,13 +780,10 @@ features it helps check, and package last.
 
 #### Details, in order
 
-- Handle memory corrections: when a newer statement contradicts an older one
-  (for example a new home city), prefer the newer one in recall while keeping the
-  history. Today both are kept with equal weight.
 - Add memory fading/forgetting, so time-bound details (for example an event date)
   lose prominence once they have passed, rather than staying in recall forever.
-  Duplicate markers reference their canonical memory, so removing one needs its
-  duplicates handled first.
+  Duplicate and correction markers reference older memories, so removing one
+  needs those markers handled first.
 - **MCP tools (Cora-prime):** add an MCP client so capabilities come from
   connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
   common `mcpServers` format, lists each user's servers; their credentials stay on
