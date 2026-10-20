@@ -11,7 +11,7 @@ from devices.audio_bands import BAND_COUNT
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
-from ui.meters import LABEL_STYLE, TRACK_STYLE, Meters, ToneRibbon
+from ui.meters import LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, Meters, ToneRibbon
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -134,9 +134,11 @@ class DashboardScreen(Screen):
                         yield Static(id="interest-finding")
                 yield Vertical(id="identity-box", classes="dashboard-box")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
-                yield Vertical(id="conversations-box", classes="dashboard-box")
+                with Vertical(id="conversations-box", classes="dashboard-box"):
+                    yield Static("your messages per day", classes="dashboard-label")
+                    yield CalendarHeatmap(id="conversation-days")
                 with Vertical(id="background-box", classes="dashboard-box"):
-                    yield Static("last ran · next", classes="dashboard-label first")
+                    yield Static("last ran · next", classes="dashboard-label")
                     yield Static(id="background-runs")
 
     def on_mount(self) -> None:
@@ -200,6 +202,9 @@ class DashboardScreen(Screen):
             else Text("nothing found yet", style=TRACK_STYLE)
         )
         now = datetime.now(timezone.utc)
+        heatmap = self.query_one("#conversation-days", CalendarHeatmap)
+        heatmap.today_row = now.astimezone().weekday()
+        heatmap.days = self.snapshot.message_days
         width = max(map(len, self.snapshot.last_runs), default=0)
         runs = Text()
         for index, (job, then) in enumerate(self.snapshot.last_runs.items()):

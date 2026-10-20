@@ -389,11 +389,6 @@ Screen > .screen--selection {
     color: #8f98a8;
 }
 
-/* A box's first label sits right under the border. */
-.dashboard-label.first {
-    margin-top: 0;
-}
-
 #background-runs {
     height: auto;
     color: #d0d6e0;
@@ -402,6 +397,10 @@ Screen > .screen--selection {
 /* Only as wide as its list; conversations takes the rest of the row. */
 #background-box {
     width: auto;
+}
+
+#conversation-days {
+    height: 7;
 }
 
 #background-box > Static {

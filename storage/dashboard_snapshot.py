@@ -7,6 +7,7 @@ from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
 from memory.store import MemoryStore
+from storage.conversation_store import ConversationStore
 from storage.models import (
     ConversationSummaryRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
     InterestExplorationRecord, InterestWorkerStateRecord, MemoryRecord, RelationshipEventRecord,
@@ -25,6 +26,9 @@ HISTORY_LIMIT = 200
 # An interest reinforced (or spawned) this recently counts as rising; otherwise it is
 # only decaying, so it counts as falling.
 RISING_WINDOW = timedelta(days=3)
+
+# A year of weeks, more than the widest conversations heatmap will show.
+CALENDAR_DAYS = 7 * 53
 
 # Background job -> the newest time it saved something, in the order the jobs run.
 LAST_RUN_COLUMNS = {
@@ -62,6 +66,8 @@ class DashboardSnapshot:
     last_runs: dict[str, datetime | None]
     # Timed job -> when its cooldown ends, or None if it has never run (due now).
     next_due: dict[str, datetime | None]
+    # Messages the person sent per local day, oldest first, ending today.
+    message_days: tuple[int, ...]
 
 
 def last_runs(engine: Engine) -> dict[str, datetime | None]:
@@ -128,4 +134,5 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         latest_finding=latest_finding,
         last_runs=runs,
         next_due=next_due(engine, runs),
+        message_days=tuple(ConversationStore(engine).daily_message_counts(now, CALENDAR_DAYS)),
     )

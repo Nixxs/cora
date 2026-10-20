@@ -4,17 +4,18 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from time import monotonic
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import numpy as np
 from textual.containers import HorizontalScroll
+from textual.geometry import Size
 from textual.widgets import Button, Static
 
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.dashboard_snapshot import (
-    HISTORY_LIMIT, DashboardSnapshot, live_interests, next_due, read_dashboard_snapshot,
+    HISTORY_LIMIT, CALENDAR_DAYS, DashboardSnapshot, live_interests, next_due, read_dashboard_snapshot,
 )
 from subconscious.interests.evolve_interests import EVOLVE_EVERY
 from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
@@ -23,7 +24,9 @@ from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
 from ui.composer import ChatComposer
 from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
-from ui.meters import TONE_STYLES, Meters, ToneRibbon, meter_bar
+from ui.meters import (
+    HEAT_STYLES, LABEL_STYLE, TONE_STYLES, TRACK_STYLE, CalendarHeatmap, Meters, ToneRibbon, meter_bar,
+)
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 
@@ -62,6 +65,26 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(meter_bar(2.0, 3), "■■■")
         self.assertEqual(meter_bar(-1.0, 3), "")
         self.assertEqual(meter_bar(0.5, 0), "")
+
+    def test_heatmap_puts_today_in_the_last_column_and_brightens_busier_days(self):
+        heatmap = CalendarHeatmap()
+        heatmap.days = (4, 0, 1, 2)  # 3 days ago .. today
+        heatmap.today_row = 2  # Wednesday
+        # Day initials, then four weeks of cell-and-gap.
+        with patch.object(CalendarHeatmap, "size", new_callable=PropertyMock, return_value=Size(10, 7)):
+            text = heatmap.render()
+        self.assertEqual(text.plain.splitlines(), [
+            "M       ■ ",
+            "T       ■ ",
+            "W       ■ ",
+            "T         ",
+            "F         ",
+            "S         ",
+            "S     ■   ",
+        ])
+        cells = [span.style for span in text.spans if span.style != LABEL_STYLE]
+        # Monday had none; Tuesday 1 and Wednesday 2 of the busiest 4; last Sunday was the busiest.
+        self.assertEqual(cells, [TRACK_STYLE, HEAT_STYLES[0], HEAT_STYLES[1], HEAT_STYLES[3]])
 
     def test_ago_uses_the_largest_whole_unit(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
@@ -105,6 +128,7 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.MemoryStore") as memories, \
                 patch("storage.dashboard_snapshot.last_runs", return_value={"summaries": None}), \
                 patch("storage.dashboard_snapshot.next_due", return_value={"identity": None}) as due, \
+                patch("storage.dashboard_snapshot.ConversationStore") as conversations, \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -113,7 +137,10 @@ class DashboardSnapshotTests(unittest.TestCase):
             memories.return_value.kind_counts.return_value = {"fact": 3}
             memories.return_value.daily_counts.return_value = [0, 2]
             memories.return_value.pending_counts.return_value = {"embedding": 1}
+            conversations.return_value.daily_message_counts.return_value = [3, 0]
             snapshot = read_dashboard_snapshot("engine", now)
+        conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
+        self.assertEqual(snapshot.message_days, (3, 0))
         store.assert_called_once_with("engine")
         memories.assert_called_once_with("engine")
         memories.return_value.daily_counts.assert_called_once_with(now, HISTORY_LIMIT)
@@ -291,7 +318,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             first = DashboardSnapshot(
                 relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=(), memory_kinds={},
-                memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
+                memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(),
             )
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
@@ -331,6 +358,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 latest_finding=None,
                 last_runs={},
                 next_due={},
+                message_days=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -375,6 +403,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 latest_finding=None,
                 last_runs={},
                 next_due={},
+                message_days=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -412,6 +441,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 latest_finding=("Tidal energy", "Lagoons [bold]store[/bold] tides"),
                 last_runs={},
                 next_due={},
+                message_days=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -446,6 +476,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                     "identity": None,
                 },
                 next_due={"interests": now + timedelta(hours=21, minutes=55), "identity": None},
+                message_days=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()

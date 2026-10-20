@@ -1,5 +1,7 @@
 """Labelled horizontal meters for dashboard values between 0 and 1."""
 
+import math
+
 from rich.text import Text
 from textual.reactive import reactive
 from textual.widget import Widget
@@ -10,6 +12,9 @@ CELL = "■"
 LABEL_STYLE = "#8f98a8"
 TRACK_STYLE = "#415575"
 TONE_STYLES = {"warm": "#8fcca6", "neutral": "#8f98a8", "curt": "#e6c07b", "hostile": "#f0a38a"}
+# Dim to bright: each step is a quarter of the busiest day.
+HEAT_STYLES = ("#35574a", "#4f8068", "#6fa888", "#8fcca6")
+WEEKDAYS = "MTWTFSS"
 
 
 def meter_bar(value: float, width: int) -> str:
@@ -67,4 +72,32 @@ class ToneRibbon(Widget):
         text = Text()
         for tone in self.tones[-self.size.width:]:
             text.append(CELL, style=TONE_STYLES[tone])
+        return text
+
+
+class CalendarHeatmap(Widget):
+    """A week per column, Monday at the top and today in the right-hand column; brighter is busier."""
+
+    days = reactive(None)  # counts per day, oldest first, ending today; None until loaded
+    today_row = reactive(0)  # today's weekday, Monday = 0
+
+    def render(self) -> Text:
+        if self.days is None:
+            return Text()
+        # Day initials take two columns, then each week takes a cell and a gap.
+        weeks = max((self.size.width - 2) // 2, 0)
+        busiest = max(self.days, default=0)
+        text = Text()
+        for row, initial in enumerate(WEEKDAYS):
+            if row:
+                text.append("\n")
+            text.append(f"{initial} ", style=LABEL_STYLE)
+            for week in range(weeks):
+                days_ago = (weeks - 1 - week) * 7 + self.today_row - row
+                if not 0 <= days_ago < len(self.days):
+                    text.append("  ")  # later this week, or older than the data
+                    continue
+                count = self.days[-1 - days_ago]
+                level = math.ceil(count / busiest * len(HEAT_STYLES)) - 1 if count else None
+                text.append(CELL + " ", style=TRACK_STYLE if level is None else HEAT_STYLES[level])
         return text
