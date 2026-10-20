@@ -19,9 +19,10 @@ from textual import events, work
 
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
-from ui.chat_widgets import BorderLine, SelectableRichLog
+from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
+from ui.dashboard import DashboardScreen
 from ui.model_settings import ModelSettingsScreen
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
@@ -101,14 +102,7 @@ class CoraApp(App):
         self.submission.worker = value
 
     def compose(self) -> ComposeResult:
-        # The panel's top border is drawn here so its buttons can sit on the line.
-        with HorizontalGroup(id="title-bar"):
-            yield Static("╭─ CORA ", classes="title-line")
-            yield BorderLine(id="title-fill")
-            yield Button("settings", id="settings-button", tooltip="Model settings")
-            yield Static("─", classes="title-line")
-            yield Button("close", id="close-button", tooltip="Quit Cora")
-            yield Static("─╮", classes="title-line")
+        yield TitleBar("dashboard")
         with Vertical(id="chat-panel"):
             yield SelectableRichLog(id="chat-output", wrap=True, min_width=1)
             with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
@@ -906,6 +900,11 @@ class CoraApp(App):
             await self.action_disconnect_and_quit()
         elif event.button.id == "settings-button" and not self.closing:
             self.open_model_settings()
+        elif event.button.id == "view-button" and not self.closing:
+            if isinstance(self.screen, DashboardScreen):
+                self.pop_screen()
+            else:
+                self.push_screen(DashboardScreen())
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
@@ -1022,6 +1021,7 @@ class CoraApp(App):
         self.update_speaking_animation()
         self.query_one("#close-button", Button).disabled = True
         self.query_one("#settings-button", Button).disabled = True
+        self.query_one("#view-button", Button).disabled = True
         self.query_one("#mic-status", Button).disabled = True
         self.query_one("#speaker-status", Button).disabled = True
         self.query_one("#wake-status", Button).disabled = True

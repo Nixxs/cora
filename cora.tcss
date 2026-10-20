@@ -7,7 +7,7 @@ Screen > .screen--selection {
     background: #31557a;
 }
 
-#chat-panel {
+#chat-panel, #dashboard-panel {
     height: 1fr;
     background: #141820;
     border: round #7799cc;
@@ -186,7 +186,7 @@ Screen > .screen--selection {
     color: #7799cc;
 }
 
-#settings-button, #close-button {
+#view-button, #settings-button, #close-button {
     width: auto;
     min-width: 0;
     height: 1;
@@ -200,8 +200,8 @@ Screen > .screen--selection {
     color: #7799cc;
 }
 
-#settings-button:hover,
-#settings-button:focus {
+#view-button:hover, #view-button:focus,
+#settings-button:hover, #settings-button:focus {
     background: #202838;
     color: #e0e6ef;
     text-style: none;
@@ -212,6 +212,26 @@ Screen > .screen--selection {
     background: #202838;
     color: #f0a38a;
     text-style: none;
+}
+
+#dashboard-top {
+    height: 10;
+}
+
+.dashboard-row {
+    height: 1fr;
+}
+
+.dashboard-box {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+    border: round #415575;
+    border-title-color: #8f98a8;
+}
+
+#voice-box {
+    width: 2fr;
 }
 
 ModelSettingsScreen {
