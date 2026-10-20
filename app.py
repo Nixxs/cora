@@ -904,7 +904,7 @@ class CoraApp(App):
             if isinstance(self.screen, DashboardScreen):
                 self.pop_screen()
             else:
-                self.push_screen(DashboardScreen(self.voice_levels))
+                self.push_screen(DashboardScreen(self.voice_bands))
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
@@ -960,11 +960,11 @@ class CoraApp(App):
     def update_audio_controls(self) -> None:
         self.audio_status.update_controls()
 
-    def voice_levels(self) -> tuple[float, float]:
-        """Cora's playback and the person's microphone levels, for the dashboard's voice band."""
+    def voice_bands(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        """Cora's playback and the person's microphone loudness bands, for the dashboard."""
         speaker = self.live.speaker
-        playing = speaker.get_playback_level() if speaker is not None and not self.live.speaker_muted else 0.0
-        return playing, self.live.get_microphone_level()
+        playing = speaker.get_playback_bands() if speaker is not None and not self.live.speaker_muted else ()
+        return playing, self.live.get_microphone_bands()
 
     def update_speaking_animation(self) -> None:
         self.audio_status.update_speaking_animation()

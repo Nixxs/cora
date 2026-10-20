@@ -29,17 +29,36 @@ def braille_graph(
     return ["".join(chr(0x2800 + cell) for cell in row) for row in cells]
 
 
+def braille_bars(
+    values, width: int, height: int, maximum: float = 1.0, downward: bool = False,
+) -> list[str]:
+    """Spread the values evenly across the full width as bars, with a gap after each."""
+    columns, count = width * 2, len(values)
+    spread = []
+    for x in range(columns):
+        index = x * count // columns if count else 0
+        last_column = (x + 1) * count // columns != index
+        # Only leave gaps when every bar is at least two dot columns wide.
+        spread.append(0.0 if not count or (last_column and columns >= count * 2) else values[index])
+    return braille_graph(spread, width, height, maximum, downward)
+
+
 class BrailleGraph(Widget):
-    """A btop-style braille graph that fills whatever size it is given."""
+    """A btop-style braille graph that fills whatever size it is given.
+
+    As bars, each value is one bar across the width rather than a moment in a scrolling history.
+    """
 
     values = reactive(())
 
-    def __init__(self, maximum: float = 1.0, downward: bool = False, **kwargs) -> None:
+    def __init__(self, maximum: float = 1.0, downward: bool = False, bars: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self.maximum = maximum
         self.downward = downward
+        self.bars = bars
 
     def render(self) -> str:
-        return "\n".join(braille_graph(
+        draw = braille_bars if self.bars else braille_graph
+        return "\n".join(draw(
             self.values, self.size.width, self.size.height, self.maximum, self.downward,
         ))

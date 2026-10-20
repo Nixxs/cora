@@ -4,7 +4,7 @@ import unittest
 
 from textual.app import App, ComposeResult
 
-from ui.braille import BrailleGraph, braille_graph
+from ui.braille import BrailleGraph, braille_bars, braille_graph
 
 
 BLANK, FULL = "\u2800", "\u28ff"
@@ -37,6 +37,14 @@ class BrailleGraphTests(unittest.TestCase):
     def test_empty_size_draws_nothing(self):
         self.assertEqual(braille_graph([1.0], 0, 3), [])
         self.assertEqual(braille_graph([1.0], 3, 0), [])
+
+    def test_bars_spread_across_the_width_with_gaps(self):
+        # Four dot columns: full bar, gap, half bar, gap.
+        self.assertEqual(braille_bars([1.0, 0.5], 2, 1), ["\u2847\u2844"])
+        self.assertEqual(braille_bars([], 2, 1), [BLANK * 2])
+
+    def test_narrow_bars_drop_the_gaps(self):
+        self.assertEqual(braille_bars([1.0, 1.0, 1.0], 1, 1), [FULL])
 
 
 class BrailleGraphWidgetTests(unittest.IsolatedAsyncioTestCase):
