@@ -214,12 +214,23 @@ Screen > .screen--selection {
     text-style: none;
 }
 
-#dashboard-top {
-    height: 11;
-}
-
 .dashboard-row {
     height: 1fr;
+}
+
+/* Voice and chat grow with the window up to a cap, then the bottom row takes the rest. */
+#dashboard-top {
+    min-height: 11;
+    max-height: 24;
+}
+
+/* Just tall enough for the relationship box's contents. */
+#dashboard-middle {
+    height: 16;
+}
+
+#dashboard-bottom {
+    min-height: 8;
 }
 
 .dashboard-box {
@@ -313,6 +324,8 @@ Screen > .screen--selection {
 /* As wide as the meters' labels, so the graphs line up with the bars. */
 .relationship-history-name {
     width: 12;
+    height: 2;
+    content-align: left bottom;
     color: #8f98a8;
 }
 
