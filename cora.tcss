@@ -265,6 +265,20 @@ Screen > .screen--selection {
     color: #415575;
 }
 
+/* The chat's latest activity summary, sitting on the voice box's bottom border. */
+#dashboard-activity {
+    width: auto;
+    max-width: 60%;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    color: #8f98a8;
+}
+
+#dashboard-activity.activity-error {
+    color: #f0a38a;
+}
+
 #dashboard-speaker, #dashboard-mic {
     width: auto;
     min-width: 0;
@@ -349,6 +363,22 @@ Screen > .screen--selection {
 
 #memory-pending.memory-waiting {
     color: #e6c07b;
+}
+
+#interest-strengths {
+    height: auto;
+    color: #7fb8d8;
+}
+
+/* Fills the rest of the box; scroll to read a long finding. */
+#interest-finding-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#interest-finding {
+    height: auto;
+    color: #8f98a8;
 }
 
 #relationship-tones {

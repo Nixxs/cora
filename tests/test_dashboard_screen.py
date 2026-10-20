@@ -12,7 +12,9 @@ from textual.widgets import Button, Static
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
 from session_config import BACKEND_MODEL, MODEL_AREAS
-from storage.dashboard_snapshot import HISTORY_LIMIT, DashboardSnapshot, read_dashboard_snapshot
+from storage.dashboard_snapshot import (
+    HISTORY_LIMIT, DashboardSnapshot, live_interests, read_dashboard_snapshot,
+)
 from subconscious.relationship.relationship_rules import RelationshipValues
 from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
@@ -63,7 +65,9 @@ class DashboardSnapshotTests(unittest.TestCase):
         values = RelationshipValues(0.5, 0.6, 0.7)
         events = [MagicMock(trust=index / 1000, warmth=0.5, familiarity=0.1) for index in range(250)]
         with patch("storage.dashboard_snapshot.RelationshipStore") as store, \
-                patch("storage.dashboard_snapshot.MemoryStore") as memories:
+                patch("storage.dashboard_snapshot.MemoryStore") as memories, \
+                patch("storage.dashboard_snapshot.live_interests",
+                      return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
             store.return_value.history.return_value = events
             store.return_value.recent_tones.return_value = ["warm", "curt"]
@@ -76,6 +80,8 @@ class DashboardSnapshotTests(unittest.TestCase):
         memories.return_value.daily_counts.assert_called_once_with(now, HISTORY_LIMIT)
         self.assertEqual(snapshot.memory_days, (0, 2))
         self.assertEqual(snapshot.memory_pending, {"embedding": 1})
+        self.assertEqual(snapshot.interests, (("Tides", 0.3, True),))
+        self.assertEqual(snapshot.latest_finding, ("Tides", "Moon"))
         store.return_value.current_values.assert_called_once_with(now=now)
         store.return_value.recent_tones.assert_called_once_with(HISTORY_LIMIT)
         self.assertEqual(snapshot.relationship, values)
@@ -85,6 +91,32 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(len(snapshot.history), HISTORY_LIMIT)
         self.assertEqual(snapshot.history[0], RelationshipValues(0.05, 0.5, 0.1))
         self.assertEqual(snapshot.history[-1], RelationshipValues(0.249, 0.5, 0.1))
+
+    def test_snapshot_reads_live_interests_decayed_to_now_and_their_newest_finding(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        week_ago = datetime(2026, 10, 13, tzinfo=timezone.utc)
+        interests = [
+            # Reinforced a week ago, so only decaying since.
+            MagicMock(id=1, title="Old", strength=0.8, strength_at=week_ago, status="active",
+                      last_reinforced_at=week_ago, created_at=week_ago),
+            # Never reinforced but spawned today.
+            MagicMock(id=2, title="New", strength=0.5, strength_at=now, status="emerging",
+                      last_reinforced_at=None, created_at=now),
+            # Halves to 0.08, below the dormant threshold.
+            MagicMock(id=3, title="Fading", strength=0.16, strength_at=week_ago, status="active",
+                      last_reinforced_at=None, created_at=week_ago),
+        ]
+        with patch("storage.dashboard_snapshot.InterestStore") as store:
+            store.return_value.list_interests.return_value = interests
+            store.return_value.latest_findings.return_value = {
+                1: ("Newer finding", now), 2: ("Older finding", week_ago),
+            }
+            self.assertEqual(live_interests("engine", now), (
+                (("New", 0.5, True), ("Old", 0.4, False)), ("Old", "Newer finding"),
+            ))
+        store.assert_called_once_with("engine")
+        # Only live interests' findings are read.
+        store.return_value.latest_findings.assert_called_once_with([1, 2])
 
 
 class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
@@ -187,11 +219,21 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(app.query_one("#speaker-status", Button).label), "🔇 Muted")
             self.assertEqual(str(app.query_one("#mic-status", Button).label), "🎙 Muted")
 
+    async def test_voice_box_shows_the_latest_activity_summary(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            app.activity.write("details", "Dashboard load failed [x]")
+            await pilot.pause(0.3)
+            summary = app.screen.query_one("#dashboard-activity", Static)
+            self.assertEqual(str(summary.render()), "Activity · Dashboard load failed [x]")
+            self.assertTrue(summary.has_class("activity-error"))
+
     async def test_snapshot_loads_on_open_and_a_failed_refresh_keeps_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
             first = DashboardSnapshot(
                 relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=(), memory_kinds={},
-                memory_days=(), memory_pending={},
+                memory_days=(), memory_pending={}, interests=(), latest_finding=None,
             )
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
@@ -227,6 +269,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 memory_kinds={},
                 memory_days=(),
                 memory_pending={},
+                interests=(),
+                latest_finding=None,
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -235,6 +279,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             )
             lines = str(meters.render()).splitlines()
             self.assertEqual(len(lines), 3)
+            # The widget grows from the one-line placeholder to show every row.
+            self.assertEqual(meters.size.height, 3)
             self.assertTrue(lines[1].startswith("warmth      ■"))
             self.assertTrue(lines[1].endswith(" 75%"))
             self.assertTrue(all(len(line) == meters.size.width for line in lines))
@@ -265,12 +311,15 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 memory_kinds={"fact": 12000, "preference": 4000, "decision": 0, "task": 4000},
                 memory_days=(50,) + (0, 3, 1) * 100,
                 memory_pending={"embedding": 3, "duplicate check": 0},
+                interests=(),
+                latest_finding=None,
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
             self.assertEqual(kinds.rows[0], ("fact", 0.6, "12000"))
             lines = str(kinds.render()).splitlines()
             self.assertEqual(len(lines), 4)
+            self.assertEqual(kinds.size.height, 4)
             self.assertTrue(lines[0].startswith("fact       ■"))
             self.assertTrue(lines[0].endswith(" 12000"))
             self.assertTrue(lines[2].endswith("     0"))
@@ -282,6 +331,39 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             pending = screen.query_one("#memory-pending", Static)
             self.assertEqual(str(pending.render()), "3 embedding")
             self.assertTrue(pending.has_class("memory-waiting"))
+
+    async def test_interests_box_shows_strengths_or_a_placeholder(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            strengths = screen.query_one("#interest-strengths", Meters)
+            finding = screen.query_one("#interest-finding", Static)
+            self.assertEqual(str(strengths.render()), "no interests yet")
+            self.assertEqual(str(finding.render()), "nothing found yet")
+
+            interests = (("Tidal energy", 0.5, True), ("A very long interest title indeed", 0.25, False))
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
+                memory_pending={}, interests=interests,
+                latest_finding=("Tidal energy", "Lagoons [bold]store[/bold] tides"),
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            # Brackets in the finding are shown as written, not read as markup.
+            self.assertEqual(
+                str(finding.render()), "Tidal energy: Lagoons [bold]store[/bold] tides",
+            )
+            self.assertEqual(strengths.rows[0], ("Tidal energy", 0.5, "↑ 50%"))
+            lines = str(strengths.render()).splitlines()
+            half = strengths.size.width // 2
+            # The long title is cut to half the width, leaving room for its bar.
+            self.assertEqual(lines[1][:half], "A very long interest title indeed"[:half - 1] + "…")
+            self.assertTrue(lines[0].startswith("Tidal energy"))
+            self.assertIn("■", lines[1])
+            self.assertTrue(lines[1].endswith(" ↓ 25%"))
+            self.assertTrue(all(len(line) == strengths.size.width for line in lines))
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

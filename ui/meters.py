@@ -23,8 +23,9 @@ class Meters(Widget):
     """One `label ■■■■■■ 62%` line per row, sized to the widget's width."""
 
     # (label, value) pairs, or (label, value, text) to show text instead of the percentage.
-    rows = reactive(())
-    placeholder = reactive("")
+    # A change re-lays out the widget, so an auto height grows to fit the new rows.
+    rows = reactive((), layout=True)
+    placeholder = reactive("", layout=True)
 
     def __init__(self, placeholder: str = "", **kwargs) -> None:
         super().__init__(**kwargs)
@@ -33,7 +34,8 @@ class Meters(Widget):
     def render(self) -> Text:
         if not self.rows:
             return Text(self.placeholder, style=TRACK_STYLE)
-        label_width = max(len(row[0]) for row in self.rows)
+        # Labels take at most half the width; longer ones are cut short so bars keep room.
+        label_width = min(max(len(row[0]) for row in self.rows), self.size.width // 2)
         shown = [row[2] if len(row) > 2 else f"{row[1]:.0%}" for row in self.rows]
         shown_width = max(4, *(len(item) for item in shown))
         # A space either side of the bar, then the right-aligned value.
@@ -43,6 +45,8 @@ class Meters(Widget):
             if index:
                 text.append("\n")
             filled = meter_bar(value, bar_width)
+            if len(label) > label_width:
+                label = label[:label_width - 1] + "…"
             text.append(f"{label:<{label_width}} ", style=LABEL_STYLE)
             text.append(filled)
             text.append(CELL * (bar_width - len(filled)), style=TRACK_STYLE)

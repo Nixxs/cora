@@ -1,6 +1,7 @@
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, HorizontalGroup, Vertical
+from textual.containers import Horizontal, HorizontalGroup, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
@@ -8,7 +9,7 @@ from devices.audio_bands import BAND_COUNT
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
-from ui.meters import Meters, ToneRibbon
+from ui.meters import TRACK_STYLE, Meters, ToneRibbon
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -36,7 +37,7 @@ BOX_TITLES = {
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
-    def __init__(self, voice_bands, conversation, audio_status, load_snapshot) -> None:
+    def __init__(self, voice_bands, conversation, audio_status, load_snapshot, activity) -> None:
         super().__init__()
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
         # or an empty tuple for silence.
@@ -48,6 +49,8 @@ class DashboardScreen(Screen):
         self.load_snapshot = load_snapshot
         # The last good snapshot; a failed refresh keeps showing it.
         self.snapshot = None
+        # The chat's activity panel, whose latest summary the voice box shows.
+        self.activity = activity
 
     def compose(self) -> ComposeResult:
         yield TitleBar("chat")
@@ -61,7 +64,8 @@ class DashboardScreen(Screen):
                         yield BrailleGraph(id="mic-graph", downward=True, bars=True)
                     # The box's bottom border, drawn as widgets so the toggles can sit on the line.
                     with HorizontalGroup(id="voice-controls"):
-                        yield Static("╰", classes="voice-line")
+                        yield Static("╰─", classes="voice-line")
+                        yield Static(id="dashboard-activity")
                         yield BorderLine(id="voice-controls-fill")
                         yield Button("🔊 speaker", id="dashboard-speaker")
                         yield Static("─", classes="voice-line")
@@ -94,7 +98,12 @@ class DashboardScreen(Screen):
                     yield BrailleGraph(id="memory-days")
                     yield Static("waiting", classes="dashboard-label")
                     yield Static(id="memory-pending")
-                yield Vertical(id="interests-box", classes="dashboard-box")
+                with Vertical(id="interests-box", classes="dashboard-box"):
+                    yield Meters(id="interest-strengths", placeholder="loading…")
+                    yield Static("latest finding", classes="dashboard-label")
+                    # Scrolls, so a long finding can be read in full.
+                    with VerticalScroll(id="interest-finding-scroll"):
+                        yield Static(id="interest-finding")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
                 yield Vertical(id="conversations-box", classes="dashboard-box")
                 yield Vertical(id="background-box", classes="dashboard-box")
@@ -147,6 +156,18 @@ class DashboardScreen(Screen):
         pending = self.query_one("#memory-pending", Static)
         pending.update(" · ".join(f"{count} {step}" for step, count in waiting.items()) or "nothing")
         pending.set_class(bool(waiting), "memory-waiting")
+        strengths = self.query_one("#interest-strengths", Meters)
+        strengths.placeholder = "no interests yet"
+        strengths.rows = tuple(
+            (title, strength, f"{'↑' if rising else '↓'} {strength:.0%}")
+            for title, strength, rising in self.snapshot.interests
+        )
+        latest = self.snapshot.latest_finding
+        # Text rather than a string, so brackets in the model's finding are not read as markup.
+        self.query_one("#interest-finding", Static).update(
+            Text.assemble((latest[0], "#7fb8d8"), ": ", latest[1]) if latest
+            else Text("nothing found yet", style=TRACK_STYLE)
+        )
 
     def on_unmount(self) -> None:
         self.conversation.remove_mirror(self.chat_log)
@@ -178,6 +199,12 @@ class DashboardScreen(Screen):
             button.set_class(muted, "audio-muted")
             button.tooltip = chat_button.tooltip
             button.disabled = chat_button.disabled
+        summary = self.query_one("#dashboard-activity", Static)
+        panel = self.activity.panel
+        if str(summary.render()) != panel.title:
+            # Text, so brackets in an error summary are not read as markup.
+            summary.update(Text(panel.title))
+        summary.set_class(panel.has_class("activity-error"), "activity-error")
 
     def sample_voice(self) -> None:
         speaker, mic = self.voice_bands()
