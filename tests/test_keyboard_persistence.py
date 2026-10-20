@@ -121,7 +121,7 @@ async def running_app(persistence=None):
                 persistence.load_person_name.return_value = None
                 persistence.load_delegation_model.return_value = BACKEND_MODEL
                 persistence.load_last_talked_at.return_value = None
-                persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(relationship=None)
+                persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(relationship=None, history=(), tones=())
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

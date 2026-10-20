@@ -9,6 +9,7 @@ from textual.widget import Widget
 CELL = "■"
 LABEL_STYLE = "#8f98a8"
 TRACK_STYLE = "#415575"
+TONE_STYLES = {"warm": "#8fcca6", "neutral": "#8f98a8", "curt": "#e6c07b", "hostile": "#f0a38a"}
 
 
 def meter_bar(value: float, width: int) -> str:
@@ -43,4 +44,20 @@ class Meters(Widget):
             text.append(filled)
             text.append(CELL * (bar_width - len(filled)), style=TRACK_STYLE)
             text.append(f" {value:>4.0%}", style=LABEL_STYLE)
+        return text
+
+
+class ToneRibbon(Widget):
+    """One coloured cell per conversation's tone, newest on the right; older ones drop off."""
+
+    tones = reactive(None)  # None until the first snapshot loads
+
+    def render(self) -> Text:
+        if self.tones is None:
+            return Text()
+        if not self.tones:
+            return Text("no everyday conversations yet", style=TRACK_STYLE)
+        text = Text()
+        for tone in self.tones[-self.size.width:]:
+            text.append(CELL, style=TONE_STYLES[tone])
         return text

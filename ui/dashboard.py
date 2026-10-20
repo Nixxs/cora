@@ -8,7 +8,7 @@ from devices.audio_bands import BAND_COUNT
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
-from ui.meters import Meters
+from ui.meters import Meters, ToneRibbon
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -16,6 +16,8 @@ FALL_PER_TICK = 0.08
 
 # How often the open dashboard re-reads the database.
 REFRESH_SECONDS = 30
+
+RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 
 
 # Box id -> border title, in the btop-style layout: a wide voice band with the chat beside
@@ -79,6 +81,13 @@ class DashboardScreen(Screen):
             with Horizontal(id="dashboard-middle", classes="dashboard-row"):
                 with Vertical(id="relationship-box", classes="dashboard-box"):
                     yield Meters(id="relationship-meters", placeholder="loading…")
+                    yield Static("history", classes="relationship-label")
+                    for name in RELATIONSHIP_VALUES:
+                        with Horizontal(classes="relationship-history"):
+                            yield Static(name, classes="relationship-history-name")
+                            yield BrailleGraph(id=f"{name}-history")
+                    yield Static("recent tone", classes="relationship-label")
+                    yield ToneRibbon(id="relationship-tones")
                 yield Vertical(id="memories-box", classes="dashboard-box")
                 yield Vertical(id="interests-box", classes="dashboard-box")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
@@ -111,11 +120,14 @@ class DashboardScreen(Screen):
             meters.placeholder = "no relationship yet"
             meters.rows = ()
         else:
-            meters.rows = (
-                ("trust", relationship.trust),
-                ("warmth", relationship.warmth),
-                ("familiarity", relationship.familiarity),
+            meters.rows = tuple((name, getattr(relationship, name)) for name in RELATIONSHIP_VALUES)
+        # Ends at the current value, so each graph meets its meter.
+        history = self.snapshot.history + ((relationship,) if relationship else ())
+        for name in RELATIONSHIP_VALUES:
+            self.query_one(f"#{name}-history", BrailleGraph).values = tuple(
+                getattr(values, name) for values in history
             )
+        self.query_one("#relationship-tones", ToneRibbon).tones = self.snapshot.tones
 
     def on_unmount(self) -> None:
         self.conversation.remove_mirror(self.chat_log)

@@ -301,6 +301,29 @@ Screen > .screen--selection {
     color: #8fcca6;
 }
 
+.relationship-label {
+    margin-top: 1;
+    color: #8f98a8;
+}
+
+.relationship-history {
+    height: 2;
+}
+
+/* As wide as the meters' labels, so the graphs line up with the bars. */
+.relationship-history-name {
+    width: 12;
+    color: #8f98a8;
+}
+
+.relationship-history BrailleGraph {
+    color: #8fcca6;
+}
+
+#relationship-tones {
+    height: 1;
+}
+
 #dashboard-chat {
     height: 1fr;
     background: transparent;

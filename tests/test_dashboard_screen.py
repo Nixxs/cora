@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime, timezone
 from time import monotonic
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 from textual.widgets import Button
@@ -12,13 +12,13 @@ from textual.widgets import Button
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
 from session_config import BACKEND_MODEL, MODEL_AREAS
-from storage.dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
+from storage.dashboard_snapshot import HISTORY_LIMIT, DashboardSnapshot, read_dashboard_snapshot
 from subconscious.relationship.relationship_rules import RelationshipValues
 from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
 from ui.composer import ChatComposer
 from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen
-from ui.meters import Meters, meter_bar
+from ui.meters import TONE_STYLES, Meters, ToneRibbon, meter_bar
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 
@@ -58,15 +58,24 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(meter_bar(-1.0, 3), "")
         self.assertEqual(meter_bar(0.5, 0), "")
 
-    def test_snapshot_reads_relationship_values_drifted_to_now(self):
+    def test_snapshot_reads_relationship_values_drifted_to_now_history_and_recent_tones(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
         values = RelationshipValues(0.5, 0.6, 0.7)
+        events = [MagicMock(trust=index / 1000, warmth=0.5, familiarity=0.1) for index in range(250)]
         with patch("storage.dashboard_snapshot.RelationshipStore") as store:
             store.return_value.current_values.return_value = values
+            store.return_value.history.return_value = events
+            store.return_value.recent_tones.return_value = ["warm", "curt"]
             snapshot = read_dashboard_snapshot("engine", now)
         store.assert_called_once_with("engine")
         store.return_value.current_values.assert_called_once_with(now=now)
-        self.assertEqual(snapshot, DashboardSnapshot(relationship=values))
+        store.return_value.recent_tones.assert_called_once_with(HISTORY_LIMIT)
+        self.assertEqual(snapshot.relationship, values)
+        self.assertEqual(snapshot.tones, ("warm", "curt"))
+        # Only the latest events, oldest first.
+        self.assertEqual(len(snapshot.history), HISTORY_LIMIT)
+        self.assertEqual(snapshot.history[0], RelationshipValues(0.05, 0.5, 0.1))
+        self.assertEqual(snapshot.history[-1], RelationshipValues(0.249, 0.5, 0.1))
 
 
 class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
@@ -171,7 +180,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_snapshot_loads_on_open_and_a_failed_refresh_keeps_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            first = DashboardSnapshot(relationship=RelationshipValues(0.5, 0.6, 0.7))
+            first = DashboardSnapshot(relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=())
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
             await pilot.pause()
@@ -186,18 +195,23 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Dashboard load failed (RuntimeError)", entries)
             self.assertNotIn("private details", entries)
 
-    async def test_relationship_box_shows_meters_or_a_placeholder(self):
+    async def test_relationship_box_shows_meters_tones_or_placeholders(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await pilot.click("#view-button")
             await pilot.pause()
             screen = app.screen
             await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
             meters = screen.query_one("#relationship-meters", Meters)
+            ribbon = screen.query_one("#relationship-tones", ToneRibbon)
             self.assertEqual(meters.rows, ())
             self.assertEqual(str(meters.render()), "no relationship yet")
+            self.assertEqual(str(ribbon.render()), "no everyday conversations yet")
 
+            tones = ("warm", "neutral", "curt", "hostile") * 50
             app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
                 relationship=RelationshipValues(0.5, 0.75, 0.25),
+                history=(RelationshipValues(0.5, 0.5, 0.0), RelationshipValues(0.6, 0.7, 0.2)),
+                tones=tones,
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -209,6 +223,17 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(lines[1].startswith("warmth      ■"))
             self.assertTrue(lines[1].endswith(" 75%"))
             self.assertTrue(all(len(line) == meters.size.width for line in lines))
+            # Each graph ends at the current value its meter shows.
+            self.assertEqual(screen.query_one("#trust-history", BrailleGraph).values, (0.5, 0.6, 0.5))
+            self.assertEqual(screen.query_one("#warmth-history", BrailleGraph).values, (0.5, 0.7, 0.75))
+            self.assertEqual(
+                screen.query_one("#familiarity-history", BrailleGraph).values, (0.0, 0.2, 0.25),
+            )
+            # The newest tones that fit, newest (hostile) on the right.
+            cells = ribbon.render()
+            self.assertEqual(str(cells), "■" * ribbon.size.width)
+            self.assertEqual(cells.spans[-1].style, TONE_STYLES["hostile"])
+            self.assertEqual(cells.spans[-4].style, TONE_STYLES["warm"])
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):
