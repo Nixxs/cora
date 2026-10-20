@@ -5,8 +5,8 @@ from textual.reactive import reactive
 from textual.widget import Widget
 
 
-# Eighths of a cell, so a meter moves smoothly instead of a whole cell at a time.
-PARTIAL_BLOCKS = " ▏▎▍▌▋▊▉"
+# Small squares leave gaps between cells and rows, so bars don't merge into one block.
+CELL = "■"
 LABEL_STYLE = "#8f98a8"
 TRACK_STYLE = "#415575"
 
@@ -15,12 +15,11 @@ def meter_bar(value: float, width: int) -> str:
     """The filled part of a meter `width` cells wide; value is clamped to 0..1."""
     if width <= 0:
         return ""
-    full, part = divmod(round(min(max(value, 0.0), 1.0) * width * 8), 8)
-    return "█" * full + (PARTIAL_BLOCKS[part] if part else "")
+    return CELL * round(min(max(value, 0.0), 1.0) * width)
 
 
 class Meters(Widget):
-    """One `label ███──── 62%` line per row, sized to the widget's width."""
+    """One `label ■■■■■■ 62%` line per row, sized to the widget's width."""
 
     rows = reactive(())  # (label, value) pairs
     placeholder = reactive("")
@@ -42,6 +41,6 @@ class Meters(Widget):
             filled = meter_bar(value, bar_width)
             text.append(f"{label:<{label_width}} ", style=LABEL_STYLE)
             text.append(filled)
-            text.append("─" * (bar_width - len(filled)), style=TRACK_STYLE)
+            text.append(CELL * (bar_width - len(filled)), style=TRACK_STYLE)
             text.append(f" {value:>4.0%}", style=LABEL_STYLE)
         return text

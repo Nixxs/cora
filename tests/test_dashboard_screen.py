@@ -51,13 +51,13 @@ class AudioBandTests(unittest.TestCase):
 
 
 class DashboardSnapshotTests(unittest.TestCase):
-    def test_meter_bar_fills_in_eighths_and_clamps(self):
-        self.assertEqual(meter_bar(0.5, 4), "██")
-        # 0.3125 of 2 cells is 5 eighths.
-        self.assertEqual(meter_bar(0.3125, 2), "▋")
-        self.assertEqual(meter_bar(2.0, 3), "███")
+    def test_meter_bar_fills_whole_cells_and_clamps(self):
+        self.assertEqual(meter_bar(0.5, 4), "■■")
+        self.assertEqual(meter_bar(0.7, 4), "■■■")
+        self.assertEqual(meter_bar(2.0, 3), "■■■")
         self.assertEqual(meter_bar(-1.0, 3), "")
         self.assertEqual(meter_bar(0.5, 0), "")
+
     def test_snapshot_reads_relationship_values_drifted_to_now(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
         values = RelationshipValues(0.5, 0.6, 0.7)
@@ -206,7 +206,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             )
             lines = str(meters.render()).splitlines()
             self.assertEqual(len(lines), 3)
-            self.assertTrue(lines[1].startswith("warmth      █"))
+            self.assertTrue(lines[1].startswith("warmth      ■"))
             self.assertTrue(lines[1].endswith(" 75%"))
             self.assertTrue(all(len(line) == meters.size.width for line in lines))
 
