@@ -224,9 +224,17 @@ Screen > .screen--selection {
     max-height: 24;
 }
 
-/* Just tall enough for the relationship box's contents. */
+/* Sized to its boxes plus a scrollbar line when they don't all fit. */
 #dashboard-middle {
+    height: auto;
+    scrollbar-size-horizontal: 1;
+}
+
+/* Just tall enough for the relationship box's contents; narrower than this pans instead. */
+#dashboard-middle > .dashboard-box {
+    width: 25%;
     height: 16;
+    min-width: 34;
 }
 
 #dashboard-bottom {
@@ -379,6 +387,25 @@ Screen > .screen--selection {
 #interest-finding {
     height: auto;
     color: #8f98a8;
+}
+
+/* A box's first label sits right under the border. */
+.dashboard-label.first {
+    margin-top: 0;
+}
+
+#background-runs {
+    height: auto;
+    color: #d0d6e0;
+}
+
+/* Only as wide as its list; conversations takes the rest of the row. */
+#background-box {
+    width: auto;
+}
+
+#background-box > Static {
+    width: auto;
 }
 
 #relationship-tones {

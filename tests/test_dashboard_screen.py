@@ -1,25 +1,28 @@
 """The title bar's view button switches between the chat and the dashboard. Mocked APIs only."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import monotonic
 import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+from textual.containers import HorizontalScroll
 from textual.widgets import Button, Static
 
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.dashboard_snapshot import (
-    HISTORY_LIMIT, DashboardSnapshot, live_interests, read_dashboard_snapshot,
+    HISTORY_LIMIT, DashboardSnapshot, live_interests, next_due, read_dashboard_snapshot,
 )
+from subconscious.interests.evolve_interests import EVOLVE_EVERY
+from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
 from subconscious.relationship.relationship_rules import RelationshipValues
 from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
 from ui.composer import ChatComposer
-from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen
+from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
 from ui.meters import TONE_STYLES, Meters, ToneRibbon, meter_bar
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
@@ -60,12 +63,48 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(meter_bar(-1.0, 3), "")
         self.assertEqual(meter_bar(0.5, 0), "")
 
+    def test_ago_uses_the_largest_whole_unit(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        self.assertEqual(ago(None, now), "never")
+        self.assertEqual(ago(now - timedelta(seconds=59), now), "just now")
+        self.assertEqual(ago(now - timedelta(minutes=5, seconds=59), now), "5m ago")
+        self.assertEqual(ago(now - timedelta(hours=3, minutes=59), now), "3h ago")
+        self.assertEqual(ago(now - timedelta(days=2, hours=23), now), "2d ago")
+
+    def test_until_says_due_once_the_time_has_come(self):
+        now = datetime(2026, 10, 20, tzinfo=timezone.utc)
+        self.assertEqual(until(None, now), "due")
+        self.assertEqual(until(now, now), "due")
+        self.assertEqual(until(now - timedelta(hours=1), now), "due")
+        self.assertEqual(until(now + timedelta(seconds=30), now), "soon")
+        self.assertEqual(until(now + timedelta(hours=5, minutes=30), now), "in 5h")
+
+    def test_next_due_adds_each_cooldown_to_the_last_run(self):
+        now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
+        runs = {"interests": now, "identity": None}
+        with patch("storage.dashboard_snapshot.Session") as session:
+            scalars = session.return_value.__enter__.return_value.scalars.return_value
+            scalars.all.return_value = []
+            self.assertEqual(next_due("engine", runs), {
+                "interests": now + EVOLVE_EVERY, "exploration": None, "identity": None,
+            })
+            # Two recent starts: only the gap after the newest applies.
+            scalars.all.return_value = [now, now - timedelta(hours=7)]
+            self.assertEqual(next_due("engine", runs)["exploration"], now + MIN_GAP)
+            # A full day's starts (the limit is 3): wait until the oldest is 24 hours old.
+            self.assertEqual(DAILY_LIMIT, 3)
+            oldest = now - timedelta(hours=12)
+            scalars.all.return_value = [now, now - timedelta(hours=6), oldest]
+            self.assertEqual(next_due("engine", runs)["exploration"], oldest + timedelta(hours=24))
+
     def test_snapshot_reads_relationship_values_drifted_to_now_history_tones_and_memory_kinds(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
         values = RelationshipValues(0.5, 0.6, 0.7)
         events = [MagicMock(trust=index / 1000, warmth=0.5, familiarity=0.1) for index in range(250)]
         with patch("storage.dashboard_snapshot.RelationshipStore") as store, \
                 patch("storage.dashboard_snapshot.MemoryStore") as memories, \
+                patch("storage.dashboard_snapshot.last_runs", return_value={"summaries": None}), \
+                patch("storage.dashboard_snapshot.next_due", return_value={"identity": None}) as due, \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -82,6 +121,9 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot.memory_pending, {"embedding": 1})
         self.assertEqual(snapshot.interests, (("Tides", 0.3, True),))
         self.assertEqual(snapshot.latest_finding, ("Tides", "Moon"))
+        self.assertEqual(snapshot.last_runs, {"summaries": None})
+        due.assert_called_once_with("engine", {"summaries": None})
+        self.assertEqual(snapshot.next_due, {"identity": None})
         store.return_value.current_values.assert_called_once_with(now=now)
         store.return_value.recent_tones.assert_called_once_with(HISTORY_LIMIT)
         self.assertEqual(snapshot.relationship, values)
@@ -143,6 +185,22 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(box.border_title, title)
                 self.assertGreater(box.size.width, 0)
                 self.assertGreater(box.size.height, 0)
+
+    async def test_middle_row_pans_sideways_when_its_boxes_do_not_fit(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            row = app.screen.query_one("#dashboard-middle", HorizontalScroll)
+            boxes = [app.screen.query_one(f"#{box_id}") for box_id in (
+                "relationship-box", "memories-box", "interests-box", "identity-box",
+            )]
+            # 80 columns can't hold four 34-wide boxes, so the row scrolls instead of squashing them.
+            self.assertEqual({box.outer_size.width for box in boxes}, {34})
+            self.assertGreater(row.max_scroll_x, 0)
+            # The scrollbar gets its own line rather than cutting into the boxes.
+            self.assertEqual({box.outer_size.height for box in boxes}, {16})
+            self.assertEqual(row.outer_size.height, 17)
+            self.assertFalse(row.can_focus)
 
     async def test_voice_bars_jump_up_then_fall_back(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -233,7 +291,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             first = DashboardSnapshot(
                 relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=(), memory_kinds={},
-                memory_days=(), memory_pending={}, interests=(), latest_finding=None,
+                memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
             )
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
@@ -271,6 +329,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 memory_pending={},
                 interests=(),
                 latest_finding=None,
+                last_runs={},
+                next_due={},
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -313,6 +373,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 memory_pending={"embedding": 3, "duplicate check": 0},
                 interests=(),
                 latest_finding=None,
+                last_runs={},
+                next_due={},
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -348,6 +410,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
                 memory_pending={}, interests=interests,
                 latest_finding=("Tidal energy", "Lagoons [bold]store[/bold] tides"),
+                last_runs={},
+                next_due={},
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -364,6 +428,41 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("■", lines[1])
             self.assertTrue(lines[1].endswith(" ↓ 25%"))
             self.assertTrue(all(len(line) == strengths.size.width for line in lines))
+
+    async def test_background_box_lists_when_each_job_last_ran_and_is_next_due(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            now = datetime.now(timezone.utc)
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
+                memory_pending={}, interests=(), latest_finding=None,
+                last_runs={
+                    "summaries": now - timedelta(hours=3, minutes=5),
+                    "duplicate check": None,
+                    "interests": now - timedelta(hours=2, minutes=5),
+                    "identity": None,
+                },
+                next_due={"interests": now + timedelta(hours=21, minutes=55), "identity": None},
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            self.assertEqual(
+                str(screen.query_one("#background-runs", Static).render()).splitlines(),
+                [
+                    "summaries        3h ago",
+                    "duplicate check  never",
+                    "interests        2h ago    in 21h",
+                    "identity         never     due",
+                ],
+            )
+            # The box hugs its widest line (plus border and padding); conversations gets the rest.
+            self.assertEqual(screen.query_one("#background-box").outer_size.width, 33 + 4)
+            self.assertGreater(
+                screen.query_one("#conversations-box").outer_size.width, 80 - 37 - 2,
+            )
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

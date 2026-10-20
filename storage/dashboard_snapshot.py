@@ -3,9 +3,17 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sqlalchemy import Engine
+from sqlalchemy import Engine, func, select
+from sqlalchemy.orm import Session
 
 from memory.store import MemoryStore
+from storage.models import (
+    ConversationSummaryRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
+    InterestExplorationRecord, InterestWorkerStateRecord, MemoryRecord, RelationshipEventRecord,
+)
+from subconscious.identity.reflect_identity import REFLECT_EVERY
+from subconscious.interests.evolve_interests import EVOLVE_EVERY
+from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
 from subconscious.interests.interest_store import InterestStore
 from subconscious.interests.interest_strength import settle
 from subconscious.relationship.relationship_rules import RelationshipValues
@@ -17,6 +25,19 @@ HISTORY_LIMIT = 200
 # An interest reinforced (or spawned) this recently counts as rising; otherwise it is
 # only decaying, so it counts as falling.
 RISING_WINDOW = timedelta(days=3)
+
+# Background job -> the newest time it saved something, in the order the jobs run.
+LAST_RUN_COLUMNS = {
+    "summaries": ConversationSummaryRecord.created_at,
+    "extraction": MemoryRecord.created_at,
+    "embedding": MemoryRecord.embedding_created_at,
+    "duplicate check": MemoryRecord.dedup_checked_at,
+    "appraisal": InteractionAppraisalRecord.appraised_at,
+    "relationship": RelationshipEventRecord.created_at,
+    "interests": InterestWorkerStateRecord.last_evolved_at,
+    "exploration": InterestExplorationRecord.started_at,
+    "identity": IdentityWorkerStateRecord.last_reflected_at,
+}
 
 
 @dataclass(frozen=True)
@@ -37,6 +58,36 @@ class DashboardSnapshot:
     interests: tuple[tuple[str, float, bool], ...]
     # (interest title, finding) for the newest finding on any live interest, or None.
     latest_finding: tuple[str, str] | None
+    # Background job -> when it last saved something, or None if it never has.
+    last_runs: dict[str, datetime | None]
+    # Timed job -> when its cooldown ends, or None if it has never run (due now).
+    next_due: dict[str, datetime | None]
+
+
+def last_runs(engine: Engine) -> dict[str, datetime | None]:
+    # One round trip: each job's newest time as a scalar subquery.
+    query = select(*(select(func.max(column)).scalar_subquery() for column in LAST_RUN_COLUMNS.values()))
+    with Session(engine) as session:
+        return dict(zip(LAST_RUN_COLUMNS, session.execute(query).one()))
+
+
+def next_due(engine: Engine, runs: dict[str, datetime | None]) -> dict[str, datetime | None]:
+    """When each timed job's cooldown ends; the app checks every 10 minutes after that."""
+    started_at = InterestExplorationRecord.started_at
+    with Session(engine) as session:
+        starts = session.scalars(select(started_at).order_by(started_at.desc()).limit(DAILY_LIMIT)).all()
+    exploration = None
+    if starts:
+        exploration = starts[0] + MIN_GAP
+        if len(starts) == DAILY_LIMIT:
+            # A full day's attempts: wait for the oldest of them to leave the 24 hours.
+            exploration = max(exploration, starts[-1] + timedelta(hours=24))
+    evolved, reflected = runs["interests"], runs["identity"]
+    return {
+        "interests": evolved + EVOLVE_EVERY if evolved else None,
+        "exploration": exploration,
+        "identity": reflected + REFLECT_EVERY if reflected else None,
+    }
 
 
 def live_interests(engine: Engine, now: datetime) -> tuple[
@@ -62,6 +113,7 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
     relationships = RelationshipStore(engine)
     memories = MemoryStore(engine)
     interests, latest_finding = live_interests(engine, now)
+    runs = last_runs(engine)
     return DashboardSnapshot(
         relationship=relationships.current_values(now=now),
         history=tuple(
@@ -74,4 +126,6 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         memory_pending=memories.pending_counts(),
         interests=interests,
         latest_finding=latest_finding,
+        last_runs=runs,
+        next_due=next_due(engine, runs),
     )

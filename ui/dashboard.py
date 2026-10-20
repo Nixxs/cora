@@ -1,7 +1,9 @@
+from datetime import datetime, timezone
+
 from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
-from textual.containers import Horizontal, HorizontalGroup, Vertical, VerticalScroll
+from textual.containers import Horizontal, HorizontalGroup, HorizontalScroll, Vertical, VerticalScroll
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
@@ -9,7 +11,7 @@ from devices.audio_bands import BAND_COUNT
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
-from ui.meters import TRACK_STYLE, Meters, ToneRibbon
+from ui.meters import LABEL_STYLE, TRACK_STYLE, Meters, ToneRibbon
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -29,9 +31,34 @@ BOX_TITLES = {
     "relationship-box": "relationship",
     "memories-box": "memories",
     "interests-box": "interests",
+    "identity-box": "identity",
     "conversations-box": "conversations",
     "background-box": "background",
 }
+
+
+def whole_unit(seconds: float) -> str | None:
+    """The largest whole unit, like '5m', '3h' or '2d'; None under a minute."""
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds >= size:
+            return f"{int(seconds // size)}{unit}"
+    return None
+
+
+def ago(then, now) -> str:
+    """How long ago: 'never', 'just now', '5m ago', '3h ago', '2d ago'."""
+    if then is None:
+        return "never"
+    span = whole_unit((now - then).total_seconds())
+    return f"{span} ago" if span else "just now"
+
+
+def until(when, now) -> str:
+    """How long until: 'due' once the time has come, else 'soon', 'in 5m', 'in 3h'."""
+    if when is None or when <= now:
+        return "due"
+    span = whole_unit((when - now).total_seconds())
+    return f"in {span}" if span else "soon"
 
 
 class DashboardScreen(Screen):
@@ -82,7 +109,8 @@ class DashboardScreen(Screen):
                         show_line_numbers=False,
                         highlight_cursor_line=False,
                     )
-            with Horizontal(id="dashboard-middle", classes="dashboard-row"):
+            # Pans sideways when the boxes don't fit; unfocusable so clicks leave typing alone.
+            with HorizontalScroll(id="dashboard-middle", can_focus=False):
                 with Vertical(id="relationship-box", classes="dashboard-box"):
                     yield Meters(id="relationship-meters", placeholder="loading…")
                     yield Static("history", classes="dashboard-label")
@@ -104,9 +132,12 @@ class DashboardScreen(Screen):
                     # Scrolls, so a long finding can be read in full.
                     with VerticalScroll(id="interest-finding-scroll"):
                         yield Static(id="interest-finding")
+                yield Vertical(id="identity-box", classes="dashboard-box")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
                 yield Vertical(id="conversations-box", classes="dashboard-box")
-                yield Vertical(id="background-box", classes="dashboard-box")
+                with Vertical(id="background-box", classes="dashboard-box"):
+                    yield Static("last ran · next", classes="dashboard-label first")
+                    yield Static(id="background-runs")
 
     def on_mount(self) -> None:
         for box_id, title in BOX_TITLES.items():
@@ -168,6 +199,17 @@ class DashboardScreen(Screen):
             Text.assemble((latest[0], "#7fb8d8"), ": ", latest[1]) if latest
             else Text("nothing found yet", style=TRACK_STYLE)
         )
+        now = datetime.now(timezone.utc)
+        width = max(map(len, self.snapshot.last_runs), default=0)
+        runs = Text()
+        for index, (job, then) in enumerate(self.snapshot.last_runs.items()):
+            runs.append(("\n" if index else "") + f"{job:<{width}}  ", style=LABEL_STYLE)
+            last = ago(then, now)
+            runs.append(last, style=TRACK_STYLE if then is None else "")
+            # Only the timed jobs have a next time; the rest run when there is work.
+            if job in self.snapshot.next_due:
+                runs.append(" " * (10 - len(last)) + until(self.snapshot.next_due[job], now), style=LABEL_STYLE)
+        self.query_one("#background-runs", Static).update(runs)
 
     def on_unmount(self) -> None:
         self.conversation.remove_mirror(self.chat_log)

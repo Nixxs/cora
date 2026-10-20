@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from migrate import apply_migrations
 from storage.conversation_store import ConversationStore
+from storage.dashboard_snapshot import last_runs, next_due
 from storage.database import build_engine
 from memory.store import MEMORY_KINDS, RECENT_PLAN_WINDOW, MemoryCandidate, MemoryStore
 from storage.models import MemoryRecord
@@ -176,6 +177,7 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
         self.store.close_conversation(self.conversation_id)
         self.assertIsNone(self.memories.recent_plan(datetime.now(timezone.utc)))
         self.assertEqual(self.memories.kind_counts(), dict.fromkeys(MEMORY_KINDS, 0))
+        self.assertIsNone(last_runs(self.engine)["extraction"])
         self.memories.save_memories(self.conversation_id, [
             self.candidate(source, kind="task", text="Fix the fence", evidence="I will fix the fence"),
             self.candidate(source, kind="task", text="Repair the fence", evidence="fix the fence"),
@@ -190,6 +192,12 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         picked = {self.memories.recent_plan(now) for _ in range(30)}
         self.assertEqual(picked, {"Fix the fence", "Chose Postgres"})
+        runs = last_runs(self.engine)
+        self.assertIsNotNone(runs["extraction"])
+        self.assertIsNotNone(runs["duplicate check"])
+        self.assertIsNone(runs["embedding"])
+        # No explorations yet, so the next one is due now.
+        self.assertIsNone(next_due(self.engine, runs)["exploration"])
         self.assertIsNone(self.memories.recent_plan(now + RECENT_PLAN_WINDOW + timedelta(minutes=1)))
         self.assertEqual(self.memories.kind_counts(), {"fact": 1, "preference": 0, "decision": 1, "task": 1})
         self.assertEqual(self.memories.daily_counts(now, 5), [0, 0, 0, 0, 3])
