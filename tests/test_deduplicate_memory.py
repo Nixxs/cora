@@ -454,6 +454,8 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
         self.assertEqual(embeddings, [UUID(int=999)] + [UUID(int=i) for i in range(10, 109)])
         self.assertEqual(deduplications, [UUID(int=998)] + [UUID(int=i) for i in range(200, 299)])
         self.assertTrue(all(isinstance(item, UUID) for item in embeddings + deduplications))
+        # The counts are not bounded: 105 in each range plus the older 999/998.
+        self.assertEqual(self.memories.pending_counts(), {"embedding": 106, "duplicate check": 106})
 
     def test_candidates_are_only_five_older_canonical_embedded_user_same_kind_with_source_dates(self):
         self.insert_rows([self.embedded(id=UUID(int=i),

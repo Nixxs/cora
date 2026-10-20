@@ -6,6 +6,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import Engine
 
 from .conversation_store import ConversationStore
+from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
@@ -69,6 +70,9 @@ class KeyboardPersistence:
 
     def load_recent_plan(self) -> str | None:
         return MemoryStore(self._get_store().engine).recent_plan(now=datetime.now(timezone.utc))
+
+    def load_dashboard_snapshot(self) -> DashboardSnapshot:
+        return read_dashboard_snapshot(self._get_store().engine, datetime.now(timezone.utc))
 
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()

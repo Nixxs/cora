@@ -131,6 +131,8 @@ not change an existing database's password or user. Back up important data.
   in memory only and is lost on app exit. Failed sends are reported, not retried,
   because they may have partially reached Live. Speaker mute still suppresses playback.
 - **Check Activity:** expand the panel for connection, tool, memory, and error events.
+- **Open the dashboard:** click dashboard on the top border for a read-only view
+  of what Cora has stored. See [The dashboard](#the-dashboard).
 - **Choose models:** click Settings on the top border to pick the model for each
   area. See [Choosing models](#choosing-models).
 - **Quit:** use × on the top border, Ctrl+X, or ask Cora to close. The close tool waits
@@ -141,6 +143,45 @@ available and Cora warns you. A failed send may have partially reached the model
 so there is no automatic resend. If Live drops with unfinished work, Cora warns
 you; reconnect does not replay requests or tools. Check uncertain action outcomes
 before requesting them again.
+
+### The dashboard
+
+Click **dashboard** on the top border to switch to a read-only, btop-style view of
+what Cora has stored; click **chat** to switch back. The conversation carries on
+while it is open: its chat box shows the same messages and sends what you type, and
+the voice box's speaker and mic toggles press the same mute controls as the chat.
+
+| Box | Shows |
+| --- | --- |
+| voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. |
+| chat | The running conversation; type here to send. |
+| relationship | Trust, warmth and familiarity as they stand now (drift included), their history, and the tone of recent everyday conversations. |
+| memories | Memories by kind (duplicates not counted), new memories per day, and how many are waiting for embedding or a duplicate check. |
+| interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
+| identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
+| conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
+| background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
+
+The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
+showing the last values and notes the failure in Activity. In a narrow window the
+middle row of boxes pans sideways. The history graphs rise in when the dashboard
+opens, and their newest point pulses.
+
+These settings are constants in the code rather than `.env` settings; edit them
+and restart Cora:
+
+| Setting | Where | Default | Effect |
+| --- | --- | --- | --- |
+| `REFRESH_SECONDS` | [ui/dashboard.py](ui/dashboard.py) | 30 | How often the open dashboard re-reads the database. |
+| `FALL_PER_TICK` | [ui/dashboard.py](ui/dashboard.py) | 0.08 | How far a voice bar falls per tick (20 ticks a second) after a louder sound. |
+| `HISTORY_LIMIT` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 200 | The most relationship changes, tones and days of new memories read. |
+| `RISING_WINDOW` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 3 days | How recently an interest must have grown to show as rising. |
+| `CALENDAR_DAYS` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 371 (53 weeks) | Days of messages read for the conversations heatmap. |
+| `PULSE_SECONDS` | [ui/braille.py](ui/braille.py) | 2 | How long one pulse of a graph's newest point takes. |
+| `GROW_SECONDS` | [ui/braille.py](ui/braille.py) | 1 | How long the graphs take to rise in. |
+| `BAND_COUNT` | [devices/audio_bands.py](devices/audio_bands.py) | 24 | How many voice bands there are. |
+| `LOW_HZ`, `HIGH_HZ` | [devices/audio_bands.py](devices/audio_bands.py) | 100, 8000 | The pitch range the voice bands cover. |
+| `FLOOR_DB` | [devices/audio_bands.py](devices/audio_bands.py) | -60 | Quieter than this shows as an empty band, hiding ordinary room noise. |
 
 ### Background event foundation
 
@@ -559,9 +600,9 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
 | [greeting.py](greeting.py) | Opening greeting brief: time of day, time since you last talked, name, how she feels about you, and the optional hook. |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
-| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, and the model settings screen. |
-| [devices/](devices/) | Microphone capture and speaker playback. |
-| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, and model settings. |
+| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, the dashboard, and the model settings screen. |
+| [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model settings, and the dashboard's snapshot read. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
@@ -672,6 +713,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Non-destructive duplicate markers and manual memory inspection.
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
+- A read-only dashboard of her relationship, memories, interests, identity, your
+  conversations and the background jobs, beside a live copy of the chat.
 
 ### Next priorities
 
@@ -698,7 +741,8 @@ features it helps check, and package last.
 
 3. ~~Model per background process.~~ Done: a model per area, chosen in Settings
    (see [Choosing models](#choosing-models)).
-4. Dashboard (read-only), to check every later change.
+4. ~~Dashboard (read-only), to check every later change.~~ Done: see
+   [The dashboard](#the-dashboard).
 5. Memory corrections.
 6. Memory fading.
 
@@ -721,22 +765,14 @@ features it helps check, and package last.
 
 15. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-16. Dashboard editing (for example removing a wrong memory).
+16. Dashboard editing (for example removing a wrong memory), with a detail view
+    for picking out the item to change.
 17. Release.
 
 *After 1.0:* local models, then private messaging, which builds on them.
 
 #### Details, in order
 
-- Add a dashboard screen to switch to from the chat, for viewing what Cora has
-  stored: her memories, developing interests and their findings, identity
-  traits, relationship values, conversation summaries, and the activity log.
-  Each overview can be opened for detail, such as a memory's source message or a
-  past conversation's messages. Built in Textual alongside the chat (for example
-  a separate app mode with tabs, tables, bars for relationship values, and
-  sparklines for interest strength over time), so it shares the same database
-  layer and styling. Read-only at first; editing or deleting data (for example
-  removing a wrong memory) can follow.
 - Handle memory corrections: when a newer statement contradicts an older one
   (for example a new home city), prefer the newer one in recall while keeping the
   history. Today both are kept with equal weight.

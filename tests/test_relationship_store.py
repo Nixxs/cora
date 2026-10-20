@@ -233,6 +233,15 @@ class RelationshipStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(values(event), apply_appraisal(before, HOSTILE))
         self.assertEqual(self.relationship().updated_at, at(14))
 
+    def test_recent_tones_are_the_latest_everyday_ones_in_conversation_order(self):
+        self.assertEqual(self.store.recent_tones(5), [])
+        self.appraised(3, HOSTILE)
+        self.appraised(1, Appraisal("everyday", "warm", "none", False, "none", "A good chat"))
+        self.appraised(2, WARM)  # development never shows
+        self.appraised(4, Appraisal("everyday", "curt", "none", False, "none", "Short replies"))
+        self.assertEqual(self.store.recent_tones(5), ["warm", "hostile", "curt"])
+        self.assertEqual(self.store.recent_tones(2), ["hostile", "curt"])
+
     def test_startup_context_describes_the_current_person_after_drift_to_now(self):
         self.assertEqual(self.store.get_startup_context(at(5)), "")
         self.appraised(1, HOSTILE)

@@ -17,6 +17,15 @@ class Conversation:
         self.active_transcript_index = None
         self.log_entries = []
         self.written_item_ids = set()
+        # Extra logs, such as the dashboard's chat box, that show the same conversation.
+        self.mirrors = []
+
+    def add_mirror(self, output: RichLog) -> None:
+        self.mirrors.append(output)
+        self.draw(output)
+
+    def remove_mirror(self, output: RichLog) -> None:
+        self.mirrors.remove(output)
 
     def get_reconnect_history(self) -> list[dict]:
         """Bounded visible chat, not tool calls, internal reasoning, or unsent drafts."""
@@ -49,7 +58,8 @@ class Conversation:
     def write_log(self, message: str) -> None:
         self.flush_transcript()
         self.log_entries.append(message)
-        self.output.write(message)
+        for output in (self.output, *self.mirrors):
+            output.write(message)
 
     def append_transcript(self, speaker: str, delta: str) -> None:
         if not delta:
@@ -95,11 +105,15 @@ class Conversation:
                 self.record_message("user" if speaker == "You" else "assistant", text, "voice")
 
     def redraw_log(self) -> None:
+        for output in (self.output, *self.mirrors):
+            self.draw(output)
+
+    def draw(self, output: RichLog) -> None:
         # RichLog.write adds lines, so redraw to update the active message.
-        self.output.clear()
+        output.clear()
         for entry in self.log_entries:
-            self.output.write(entry, scroll_end=False)
-        self.output.scroll_end(animate=False)
+            output.write(entry, scroll_end=False)
+        output.scroll_end(animate=False)
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

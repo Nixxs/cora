@@ -14,6 +14,7 @@ from app import CoraApp
 from session_config import BACKEND_MODEL
 from ui.composer import ChatComposer
 from storage.conversation_store import ConversationStore
+from storage.dashboard_snapshot import DashboardSnapshot
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
 from migrate import apply_migrations, database_settings
@@ -120,6 +121,7 @@ async def running_app(persistence=None):
                 persistence.load_person_name.return_value = None
                 persistence.load_delegation_model.return_value = BACKEND_MODEL
                 persistence.load_last_talked_at.return_value = None
+                persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(), traits=())
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

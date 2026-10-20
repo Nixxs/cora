@@ -24,6 +24,16 @@ MEMORY_SEARCH_MAX_RESULTS = 20
 RECENT_PLAN_WINDOW = timedelta(days=7)
 PLAN_KINDS = ("task", "decision")
 
+# What the background embedding and deduplication passes pick up next, joined to source messages.
+PENDING_EMBEDDING = (
+    MemoryRecord.embedding.is_(None), MemoryRecord.duplicate_of.is_(None), MessageRecord.role == "user",
+)
+PENDING_DEDUPLICATION = (
+    MemoryRecord.embedding.is_not(None), MemoryRecord.duplicate_of.is_(None),
+    MemoryRecord.dedup_checked_at.is_(None), MessageRecord.role == "user",
+    MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
+)
+
 
 def validate_search_limit(limit: int) -> None:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MEMORY_SEARCH_MAX_RESULTS:
@@ -97,6 +107,34 @@ class MemoryStore:
         with Session(self.engine) as session:
             return session.get(MemoryRecord, memory_id)
 
+    def kind_counts(self) -> dict[str, int]:
+        """How many memories of each kind, not counting duplicates."""
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(MemoryRecord.kind, func.count()).where(MemoryRecord.duplicate_of.is_(None))
+                .group_by(MemoryRecord.kind)
+            ).all()
+        return {**dict.fromkeys(MEMORY_KINDS, 0), **dict(rows)}
+
+    def daily_counts(self, now: datetime, days: int) -> list[int]:
+        """New memories per local day the person said them, oldest first, ending today.
+
+        Duplicates are not counted.
+        """
+        first = now.astimezone().date() - timedelta(days=days - 1)
+        with Session(self.engine) as session:
+            said_at = session.scalars(select(MessageRecord.created_at).join(
+                MemoryRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(
+                MemoryRecord.duplicate_of.is_(None), MessageRecord.created_at >= now - timedelta(days=days + 1),
+            )).all()
+        counts = [0] * days
+        for time in said_at:
+            day = (time.astimezone().date() - first).days
+            if 0 <= day < days:
+                counts[day] += 1
+        return counts
+
     def recent_plan(self, now: datetime) -> str | None:
         """One random task or decision the person mentioned within the last week, if any."""
         with Session(self.engine) as session:
@@ -109,20 +147,25 @@ class MemoryStore:
 
     def get_pending_embedding_ids(self) -> list[UUID]:
         with Session(self.engine) as session:
-            return list(session.scalars(select(MemoryRecord.id).where(
-                MemoryRecord.embedding.is_(None), MemoryRecord.duplicate_of.is_(None),
-            ).join(MessageRecord, MemoryRecord.source_message_id == MessageRecord.id).where(
-                MessageRecord.role == "user",
-            ).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
+            return list(session.scalars(select(MemoryRecord.id).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(*PENDING_EMBEDDING).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
 
     def get_pending_deduplication_ids(self) -> list[UUID]:
         with Session(self.engine) as session:
-            return list(session.scalars(select(MemoryRecord.id).where(
-                MemoryRecord.embedding.is_not(None), MemoryRecord.duplicate_of.is_(None),
-                MemoryRecord.dedup_checked_at.is_(None),
-            ).join(MessageRecord, MemoryRecord.source_message_id == MessageRecord.id).where(
-                MessageRecord.role == "user", MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
-            ).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
+            return list(session.scalars(select(MemoryRecord.id).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(*PENDING_DEDUPLICATION).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
+
+    def pending_counts(self) -> dict[str, int]:
+        """How many memories wait for an embedding, and how many for a duplicate check."""
+        with Session(self.engine) as session:
+            return {
+                name: session.scalar(select(func.count()).select_from(MemoryRecord).join(
+                    MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+                ).where(*conditions))
+                for name, conditions in (("embedding", PENDING_EMBEDDING), ("duplicate check", PENDING_DEDUPLICATION))
+            }
 
     def get_source_created_at(self, source_message_id: UUID) -> datetime:
         with Session(self.engine) as session:

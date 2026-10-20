@@ -7,7 +7,7 @@ Screen > .screen--selection {
     background: #31557a;
 }
 
-#chat-panel {
+#chat-panel, #dashboard-panel {
     height: 1fr;
     background: #141820;
     border: round #7799cc;
@@ -152,7 +152,7 @@ Screen > .screen--selection {
     border: round #7799cc;
 }
 
-#chat-input {
+#chat-input, #dashboard-input {
     height: 1;
     margin: 0;
     padding: 0 1;
@@ -164,7 +164,7 @@ Screen > .screen--selection {
     overflow-y: auto;
 }
 
-#chat-input:focus {
+#chat-input:focus, #dashboard-input:focus {
     border: none;
     background: #141820;
     background-tint: transparent;
@@ -186,7 +186,7 @@ Screen > .screen--selection {
     color: #7799cc;
 }
 
-#settings-button, #close-button {
+#view-button, #settings-button, #close-button {
     width: auto;
     min-width: 0;
     height: 1;
@@ -200,8 +200,8 @@ Screen > .screen--selection {
     color: #7799cc;
 }
 
-#settings-button:hover,
-#settings-button:focus {
+#view-button:hover, #view-button:focus,
+#settings-button:hover, #settings-button:focus {
     background: #202838;
     color: #e0e6ef;
     text-style: none;
@@ -212,6 +212,220 @@ Screen > .screen--selection {
     background: #202838;
     color: #f0a38a;
     text-style: none;
+}
+
+.dashboard-row {
+    height: 1fr;
+}
+
+/* Voice and chat grow with the window up to a cap, then the bottom row takes the rest. */
+#dashboard-top {
+    min-height: 11;
+    max-height: 24;
+}
+
+/* Sized to its boxes plus a scrollbar line when they don't all fit. */
+#dashboard-middle {
+    height: auto;
+    scrollbar-size-horizontal: 1;
+}
+
+/* Just tall enough for the relationship box's contents; narrower than this pans instead. */
+#dashboard-middle > .dashboard-box {
+    width: 25%;
+    height: 16;
+    min-width: 34;
+}
+
+#dashboard-bottom {
+    min-height: 8;
+}
+
+.dashboard-box {
+    width: 1fr;
+    height: 1fr;
+    padding: 0 1;
+    border: round #415575;
+    border-title-color: #8f98a8;
+}
+
+#voice-column {
+    width: 2fr;
+    height: 1fr;
+}
+
+#voice-box {
+    border-bottom: none;
+}
+
+#voice-controls {
+    height: 1;
+}
+
+#voice-controls .voice-line {
+    width: auto;
+    color: #415575;
+}
+
+#voice-controls-fill {
+    width: 1fr;
+    height: 1;
+    color: #415575;
+}
+
+/* The chat's latest activity summary, sitting on the voice box's bottom border. */
+#dashboard-activity {
+    width: auto;
+    max-width: 60%;
+    padding: 0 1;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+    color: #8f98a8;
+}
+
+#dashboard-activity.activity-error {
+    color: #f0a38a;
+}
+
+#dashboard-speaker, #dashboard-mic {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    line-pad: 1;
+    border: none;
+    background: transparent;
+    text-style: none;
+    color: #8f98a8;
+}
+
+#dashboard-speaker:hover, #dashboard-speaker:focus,
+#dashboard-mic:hover, #dashboard-mic:focus {
+    background: #202838;
+    color: #e0e6ef;
+    text-style: none;
+}
+
+#dashboard-speaker.audio-muted, #dashboard-mic.audio-muted {
+    color: #f0a38a;
+}
+
+#speaker-graph, #mic-graph {
+    height: 1fr;
+}
+
+#speaker-graph {
+    color: #8fcca6;
+}
+
+#mic-graph {
+    color: #a6acd8;
+}
+
+#voice-axis, #dashboard-input-line {
+    height: 1;
+    color: #415575;
+}
+
+#relationship-meters {
+    height: auto;
+    color: #8fcca6;
+}
+
+.dashboard-label {
+    margin-top: 1;
+    color: #8f98a8;
+}
+
+.relationship-history {
+    height: 2;
+}
+
+/* As wide as the meters' labels, so the graphs line up with the bars. */
+.relationship-history-name {
+    width: 12;
+    height: 2;
+    content-align: left bottom;
+    color: #8f98a8;
+}
+
+.relationship-history BrailleGraph {
+    color: #8fcca6;
+}
+
+#memory-kinds {
+    height: auto;
+    color: #a6acd8;
+}
+
+#memory-days {
+    height: 3;
+    color: #a6acd8;
+}
+
+#memory-pending {
+    color: #415575;
+}
+
+#memory-pending.memory-waiting {
+    color: #e6c07b;
+}
+
+#interest-strengths {
+    height: auto;
+    color: #7fb8d8;
+}
+
+/* Fills the rest of the box; scroll to read a long finding. */
+#interest-finding-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#interest-finding {
+    height: auto;
+    color: #8f98a8;
+}
+
+#identity-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#identity-traits {
+    height: auto;
+    color: #d0d6e0;
+}
+
+#background-runs {
+    height: auto;
+    color: #d0d6e0;
+}
+
+/* Only as wide as its list; conversations takes the rest of the row. */
+#background-box {
+    width: auto;
+}
+
+#conversation-days {
+    height: 7;
+}
+
+#background-box > Static {
+    width: auto;
+}
+
+#relationship-tones {
+    height: 1;
+}
+
+#dashboard-chat {
+    height: 1fr;
+    background: transparent;
+    background-tint: transparent;
+    scrollbar-size: 0 0;
 }
 
 ModelSettingsScreen {

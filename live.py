@@ -4,10 +4,12 @@ import json
 from collections import deque
 from contextlib import aclosing
 from datetime import datetime, timezone
+from time import monotonic
 from uuid import uuid4
 
 from openai import AsyncOpenAI
 
+from devices.audio_bands import audio_bands
 from devices.microphone import microphone_chunks
 from devices.speaker import Speaker
 from session_config import BACKEND_MODEL, build_session_config
@@ -39,6 +41,7 @@ class CoraLive:
         self.speaker = None
         self.speaker_muted = False
         self.microphone_muted = False
+        self._microphone_bands = ((), 0.0)
         self.on_mic_status = None
 
     async def run(self, on_event, on_mic_status, on_audio_status=None):
@@ -243,6 +246,13 @@ class CoraLive:
         if muted and self.speaker is not None:
             # Abort playback and discard queued speech; close() permits later reuse.
             self.speaker.close()
+
+    def get_microphone_bands(self) -> tuple[float, ...]:
+        """The latest sent chunk's loudness bands, or none once capture stops or is muted."""
+        bands, sampled_at = self._microphone_bands
+        if self.microphone_muted or monotonic() - sampled_at > 0.15:
+            return ()
+        return bands
 
     async def stop_microphone(self) -> None:
         task = self.microphone_task
@@ -460,6 +470,7 @@ class CoraLive:
                         chunk_count += 1
                         audio = base64.b64encode(chunk).decode("ascii")
                         await connection.session.input_audio.append(audio=audio)
+                        self._microphone_bands = (audio_bands(chunk), monotonic())
                         if not mic_working:
                             mic_working = True
                             on_mic_status(True, "first audio chunk sent")

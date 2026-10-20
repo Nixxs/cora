@@ -4,10 +4,12 @@ from rich.panel import Panel
 from rich.style import Style
 from rich.syntax import Syntax
 from rich.text import Text
+from textual.app import ComposeResult
+from textual.containers import HorizontalGroup
 from textual.selection import Selection
 from textual.strip import Strip
 from textual.widget import Widget
-from textual.widgets import RichLog
+from textual.widgets import Button, RichLog, Static
 
 
 class BorderLine(Widget):
@@ -15,6 +17,24 @@ class BorderLine(Widget):
 
     def render(self) -> str:
         return "─" * self.size.width
+
+
+class TitleBar(HorizontalGroup):
+    """A panel's top border, drawn as widgets so its buttons can sit on the line."""
+
+    def __init__(self, view: str) -> None:
+        super().__init__(id="title-bar")
+        self.view = view
+
+    def compose(self) -> ComposeResult:
+        yield Static("╭─ CORA ", classes="title-line")
+        yield BorderLine(id="title-fill")
+        yield Button(self.view, id="view-button", tooltip=f"Switch to the {self.view}")
+        yield Static("─", classes="title-line")
+        yield Button("settings", id="settings-button", tooltip="Model settings")
+        yield Static("─", classes="title-line")
+        yield Button("close", id="close-button", tooltip="Quit Cora")
+        yield Static("─╮", classes="title-line")
 
 
 class BlueCodeBlock(CodeBlock):
