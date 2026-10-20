@@ -1,0 +1,47 @@
+"""Labelled horizontal meters for dashboard values between 0 and 1."""
+
+from rich.text import Text
+from textual.reactive import reactive
+from textual.widget import Widget
+
+
+# Eighths of a cell, so a meter moves smoothly instead of a whole cell at a time.
+PARTIAL_BLOCKS = " ▏▎▍▌▋▊▉"
+LABEL_STYLE = "#8f98a8"
+TRACK_STYLE = "#415575"
+
+
+def meter_bar(value: float, width: int) -> str:
+    """The filled part of a meter `width` cells wide; value is clamped to 0..1."""
+    if width <= 0:
+        return ""
+    full, part = divmod(round(min(max(value, 0.0), 1.0) * width * 8), 8)
+    return "█" * full + (PARTIAL_BLOCKS[part] if part else "")
+
+
+class Meters(Widget):
+    """One `label ███──── 62%` line per row, sized to the widget's width."""
+
+    rows = reactive(())  # (label, value) pairs
+    placeholder = reactive("")
+
+    def __init__(self, placeholder: str = "", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.placeholder = placeholder
+
+    def render(self) -> Text:
+        if not self.rows:
+            return Text(self.placeholder, style=TRACK_STYLE)
+        label_width = max(len(label) for label, _ in self.rows)
+        # A space either side of the bar, then a four-character percentage.
+        bar_width = self.size.width - label_width - 6
+        text = Text()
+        for index, (label, value) in enumerate(self.rows):
+            if index:
+                text.append("\n")
+            filled = meter_bar(value, bar_width)
+            text.append(f"{label:<{label_width}} ", style=LABEL_STYLE)
+            text.append(filled)
+            text.append("─" * (bar_width - len(filled)), style=TRACK_STYLE)
+            text.append(f" {value:>4.0%}", style=LABEL_STYLE)
+        return text

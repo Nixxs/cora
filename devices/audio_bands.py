@@ -13,7 +13,8 @@ FLOOR_DB = -60
 def audio_bands(chunk: bytes, sample_rate: int = 24000, count: int = BAND_COUNT) -> tuple[float, ...]:
     """Each band's loudness, from 0.0 at FLOOR_DB to 1.0 for a full-scale tone."""
     samples = np.frombuffer(chunk, dtype="<i2") / 32768
-    if len(samples) < 2:
+    # A window over 2 or fewer samples is all zeros, so there is nothing to measure.
+    if len(samples) < 3:
         return (0.0,) * count
     window = np.hanning(len(samples))
     # Scaled so a full-scale sine peaks at 1.0.

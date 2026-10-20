@@ -152,7 +152,7 @@ Screen > .screen--selection {
     border: round #7799cc;
 }
 
-#chat-input {
+#chat-input, #dashboard-input {
     height: 1;
     margin: 0;
     padding: 0 1;
@@ -164,7 +164,7 @@ Screen > .screen--selection {
     overflow-y: auto;
 }
 
-#chat-input:focus {
+#chat-input:focus, #dashboard-input:focus {
     border: none;
     background: #141820;
     background-tint: transparent;
@@ -230,8 +230,53 @@ Screen > .screen--selection {
     border-title-color: #8f98a8;
 }
 
-#voice-box {
+#voice-column {
     width: 2fr;
+    height: 1fr;
+}
+
+#voice-box {
+    border-bottom: none;
+}
+
+#voice-controls {
+    height: 1;
+}
+
+#voice-controls .voice-line {
+    width: auto;
+    color: #415575;
+}
+
+#voice-controls-fill {
+    width: 1fr;
+    height: 1;
+    color: #415575;
+}
+
+#dashboard-speaker, #dashboard-mic {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    line-pad: 1;
+    border: none;
+    background: transparent;
+    text-style: none;
+    color: #8f98a8;
+}
+
+#dashboard-speaker:hover, #dashboard-speaker:focus,
+#dashboard-mic:hover, #dashboard-mic:focus {
+    background: #202838;
+    color: #e0e6ef;
+    text-style: none;
+}
+
+#dashboard-speaker.audio-muted, #dashboard-mic.audio-muted {
+    color: #f0a38a;
 }
 
 #speaker-graph, #mic-graph {
@@ -246,9 +291,21 @@ Screen > .screen--selection {
     color: #a6acd8;
 }
 
-#voice-axis {
+#voice-axis, #dashboard-input-line {
     height: 1;
     color: #415575;
+}
+
+#relationship-meters {
+    height: auto;
+    color: #8fcca6;
+}
+
+#dashboard-chat {
+    height: 1fr;
+    background: transparent;
+    background-tint: transparent;
+    scrollbar-size: 0 0;
 }
 
 ModelSettingsScreen {

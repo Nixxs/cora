@@ -244,6 +244,17 @@ class ConversationPersistence:
             )
             return None
 
+    async def load_dashboard_snapshot(self):
+        """Fresh dashboard data; None if the database could not be read."""
+        try:
+            return await self.call_database(self.storage.load_dashboard_snapshot)
+        except Exception as error:
+            self.write_activity(
+                f"Dashboard load failed ({type(error).__name__}); showing the last data.",
+                "Dashboard unavailable",
+            )
+            return None
+
     async def wait_for_saves(self) -> None:
         for worker in self.workers:
             await worker.wait()

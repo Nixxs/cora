@@ -904,7 +904,10 @@ class CoraApp(App):
             if isinstance(self.screen, DashboardScreen):
                 self.pop_screen()
             else:
-                self.push_screen(DashboardScreen(self.voice_bands))
+                self.push_screen(DashboardScreen(
+                    self.voice_bands, self.conversation, self.audio_status,
+                    self.conversation_persistence.load_dashboard_snapshot,
+                ))
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
