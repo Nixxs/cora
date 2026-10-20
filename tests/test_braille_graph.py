@@ -1,10 +1,11 @@
 """Braille graphs draw two values per cell as filled columns, newest on the right."""
 
 import unittest
+from unittest.mock import patch
 
 from textual.app import App, ComposeResult
 
-from ui.braille import BrailleGraph, braille_bars, braille_graph
+from ui.braille import GROW_SECONDS, PULSE_SECONDS, WHITE, BrailleGraph, braille_bars, braille_graph
 
 
 BLANK, FULL = "\u2800", "\u28ff"
@@ -60,6 +61,49 @@ class BrailleGraphWidgetTests(unittest.IsolatedAsyncioTestCase):
             graph.values = (1.0,) * 8
             await pilot.pause()
             self.assertEqual([graph.render_line(row).text for row in range(2)], [FULL * 4] * 2)
+
+    async def test_a_pulsing_graph_brightens_and_fades_its_newest_cell(self):
+        class GraphApp(App):
+            def compose(self) -> ComposeResult:
+                yield BrailleGraph(id="graph", pulse=True)
+
+        app = GraphApp()
+        async with app.run_test(size=(4, 2)) as pilot:
+            graph = app.query_one(BrailleGraph)
+            self.assertIsInstance(graph.render(), str)  # nothing to pulse yet
+            graph.values = (1.0,) * 8
+            await pilot.pause()
+            base = graph.styles.color
+            with patch("ui.braille.monotonic", return_value=0.0):
+                faded = graph.render()
+            with patch("ui.braille.monotonic", return_value=PULSE_SECONDS / 2):
+                bright = graph.render()
+            # Only the last cell of each row is styled.
+            self.assertEqual([(span.start, span.end) for span in bright.spans], [(3, 4), (8, 9)])
+            self.assertEqual(faded.spans[0].style.color, base.rich_color)
+            self.assertEqual(bright.spans[0].style.color, WHITE.rich_color)
+
+    async def test_a_growing_graph_rises_to_its_first_values(self):
+        class GraphApp(App):
+            def compose(self) -> ComposeResult:
+                yield BrailleGraph(id="graph", grow=True)
+
+        app = GraphApp()
+        async with app.run_test(size=(4, 1)):
+            graph = app.query_one(BrailleGraph)
+            with patch("ui.braille.monotonic", return_value=100.0):
+                graph.values = (1.0,) * 8
+                # The first frame drawn starts the clock.
+                self.assertEqual(graph.render(), BLANK * 4)
+            with patch("ui.braille.monotonic", return_value=100.0 + GROW_SECONDS / 2):
+                self.assertNotIn(graph.render(), (BLANK * 4, FULL * 4))
+            with patch("ui.braille.monotonic", return_value=100.0 + GROW_SECONDS):
+                self.assertEqual(graph.render(), FULL * 4)
+            self.assertIsNone(graph.grow_timer)
+            # Later values are drawn straight away rather than growing again.
+            with patch("ui.braille.monotonic", return_value=200.0):
+                graph.values = (0.5,) * 8
+                self.assertEqual(graph.render(), "\u28e4" * 4)
 
 
 if __name__ == "__main__":

@@ -118,13 +118,13 @@ class DashboardScreen(Screen):
                     for name in RELATIONSHIP_VALUES:
                         with Horizontal(classes="relationship-history"):
                             yield Static(name, classes="relationship-history-name")
-                            yield BrailleGraph(id=f"{name}-history")
+                            yield BrailleGraph(id=f"{name}-history", pulse=True, grow=True)
                     yield Static("recent tone", classes="dashboard-label")
                     yield ToneRibbon(id="relationship-tones")
                 with Vertical(id="memories-box", classes="dashboard-box"):
                     yield Meters(id="memory-kinds", placeholder="loading…")
                     yield Static("new per day", classes="dashboard-label")
-                    yield BrailleGraph(id="memory-days")
+                    yield BrailleGraph(id="memory-days", pulse=True, grow=True)
                     yield Static("waiting", classes="dashboard-label")
                     yield Static(id="memory-pending")
                 with Vertical(id="interests-box", classes="dashboard-box"):

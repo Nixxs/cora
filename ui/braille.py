@@ -1,6 +1,18 @@
+from math import cos, pi
+from time import monotonic
+
+from rich.style import Style
+from rich.text import Text
+from textual.color import Color
 from textual.reactive import reactive
 from textual.widget import Widget
 
+
+# A pulsing graph's newest point brightens and fades back over this many seconds.
+PULSE_SECONDS = 2.0
+# A growing graph rises from the bottom to its values over this many seconds when they first arrive.
+GROW_SECONDS = 1.0
+WHITE = Color(255, 255, 255)
 
 # A braille cell is 2 dots wide and 4 high; each dot is one bit added to U+2800.
 # Indexed [column][row from the top].
@@ -51,14 +63,51 @@ class BrailleGraph(Widget):
 
     values = reactive(())
 
-    def __init__(self, maximum: float = 1.0, downward: bool = False, bars: bool = False, **kwargs) -> None:
+    def __init__(
+        self, maximum: float = 1.0, downward: bool = False, bars: bool = False, pulse: bool = False,
+        grow: bool = False, **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.maximum = maximum
         self.downward = downward
         self.bars = bars
+        self.pulse = pulse
+        self.grow = grow
+        self.grow_started = None
+        self.grow_timer = None
 
-    def render(self) -> str:
+    def on_mount(self) -> None:
+        if self.pulse:
+            self.set_interval(0.1, self.refresh)
+
+    def watch_values(self, old, new) -> None:
+        # Only the first values grow in; later refreshes just redraw.
+        if self.grow and new and not old:
+            self.grow_started = None
+            self.grow_timer = self.set_interval(1 / 30, self.refresh)
+
+    def render(self) -> str | Text:
         draw = braille_bars if self.bars else braille_graph
-        return "\n".join(draw(
-            self.values, self.size.width, self.size.height, self.maximum, self.downward,
-        ))
+        values = self.values
+        if self.grow_timer is not None:
+            # The clock starts at the first frame drawn, so a slow first layout can't skip the growth.
+            if self.grow_started is None:
+                self.grow_started = monotonic()
+            progress = min((monotonic() - self.grow_started) / GROW_SECONDS, 1.0)
+            if progress == 1.0:
+                self.grow_timer.stop()
+                self.grow_timer = None
+            # Eases out: fast at first, slowing as it reaches the real values.
+            values = tuple(value * (1 - (1 - progress) ** 2) for value in values)
+        rows = draw(values, self.size.width, self.size.height, self.maximum, self.downward)
+        if not (self.pulse and self.values):
+            return "\n".join(rows)
+        # 0 to 1 and back: brightest halfway through each pulse.
+        level = (1 - cos(2 * pi * monotonic() / PULSE_SECONDS)) / 2
+        style = Style(color=self.styles.color.blend(WHITE, level).rich_color)
+        text = Text("\n".join(rows))
+        for row in range(len(rows)):
+            # The last cell of each row holds the newest point.
+            end = (row + 1) * (self.size.width + 1) - 1
+            text.stylize(style, end - 1, end)
+        return text
