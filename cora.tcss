@@ -320,6 +320,11 @@ Screen > .screen--selection {
     color: #8fcca6;
 }
 
+#memory-kinds {
+    height: auto;
+    color: #a6acd8;
+}
+
 #relationship-tones {
     height: 1;
 }

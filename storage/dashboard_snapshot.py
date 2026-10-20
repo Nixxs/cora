@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import Engine
 
+from memory.store import MemoryStore
 from subconscious.relationship.relationship_rules import RelationshipValues
 from subconscious.relationship.relationship_store import RelationshipStore
 
@@ -20,6 +21,8 @@ class DashboardSnapshot:
     history: tuple[RelationshipValues, ...]
     # How the person treated Cora in recent everyday conversations, oldest first.
     tones: tuple[str, ...]
+    # Memory kind -> how many, not counting duplicates.
+    memory_kinds: dict[str, int]
 
 
 def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
@@ -31,4 +34,5 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
             for event in relationships.history()[-HISTORY_LIMIT:]
         ),
         tones=tuple(relationships.recent_tones(HISTORY_LIMIT)),
+        memory_kinds=MemoryStore(engine).kind_counts(),
     )

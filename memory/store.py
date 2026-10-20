@@ -97,6 +97,15 @@ class MemoryStore:
         with Session(self.engine) as session:
             return session.get(MemoryRecord, memory_id)
 
+    def kind_counts(self) -> dict[str, int]:
+        """How many memories of each kind, not counting duplicates."""
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(MemoryRecord.kind, func.count()).where(MemoryRecord.duplicate_of.is_(None))
+                .group_by(MemoryRecord.kind)
+            ).all()
+        return {**dict.fromkeys(MEMORY_KINDS, 0), **dict(rows)}
+
     def recent_plan(self, now: datetime) -> str | None:
         """One random task or decision the person mentioned within the last week, if any."""
         with Session(self.engine) as session:

@@ -58,20 +58,24 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(meter_bar(-1.0, 3), "")
         self.assertEqual(meter_bar(0.5, 0), "")
 
-    def test_snapshot_reads_relationship_values_drifted_to_now_history_and_recent_tones(self):
+    def test_snapshot_reads_relationship_values_drifted_to_now_history_tones_and_memory_kinds(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
         values = RelationshipValues(0.5, 0.6, 0.7)
         events = [MagicMock(trust=index / 1000, warmth=0.5, familiarity=0.1) for index in range(250)]
-        with patch("storage.dashboard_snapshot.RelationshipStore") as store:
+        with patch("storage.dashboard_snapshot.RelationshipStore") as store, \
+                patch("storage.dashboard_snapshot.MemoryStore") as memories:
             store.return_value.current_values.return_value = values
             store.return_value.history.return_value = events
             store.return_value.recent_tones.return_value = ["warm", "curt"]
+            memories.return_value.kind_counts.return_value = {"fact": 3}
             snapshot = read_dashboard_snapshot("engine", now)
         store.assert_called_once_with("engine")
+        memories.assert_called_once_with("engine")
         store.return_value.current_values.assert_called_once_with(now=now)
         store.return_value.recent_tones.assert_called_once_with(HISTORY_LIMIT)
         self.assertEqual(snapshot.relationship, values)
         self.assertEqual(snapshot.tones, ("warm", "curt"))
+        self.assertEqual(snapshot.memory_kinds, {"fact": 3})
         # Only the latest events, oldest first.
         self.assertEqual(len(snapshot.history), HISTORY_LIMIT)
         self.assertEqual(snapshot.history[0], RelationshipValues(0.05, 0.5, 0.1))
@@ -180,7 +184,9 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_snapshot_loads_on_open_and_a_failed_refresh_keeps_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            first = DashboardSnapshot(relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=())
+            first = DashboardSnapshot(
+                relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=(), memory_kinds={},
+            )
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
             await pilot.pause()
@@ -212,6 +218,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 relationship=RelationshipValues(0.5, 0.75, 0.25),
                 history=(RelationshipValues(0.5, 0.5, 0.0), RelationshipValues(0.6, 0.7, 0.2)),
                 tones=tones,
+                memory_kinds={},
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -234,6 +241,29 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(cells), "■" * ribbon.size.width)
             self.assertEqual(cells.spans[-1].style, TONE_STYLES["hostile"])
             self.assertEqual(cells.spans[-4].style, TONE_STYLES["warm"])
+
+    async def test_memories_box_shows_counts_by_kind_or_a_placeholder(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            kinds = screen.query_one("#memory-kinds", Meters)
+            self.assertEqual(str(kinds.render()), "no memories yet")
+
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(),
+                memory_kinds={"fact": 12000, "preference": 4000, "decision": 0, "task": 4000},
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            self.assertEqual(kinds.rows[0], ("fact", 0.6, "12000"))
+            lines = str(kinds.render()).splitlines()
+            self.assertEqual(len(lines), 4)
+            self.assertTrue(lines[0].startswith("fact       ■"))
+            self.assertTrue(lines[0].endswith(" 12000"))
+            self.assertTrue(lines[2].endswith("     0"))
+            self.assertTrue(all(len(line) == kinds.size.width for line in lines))
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

@@ -88,7 +88,8 @@ class DashboardScreen(Screen):
                             yield BrailleGraph(id=f"{name}-history")
                     yield Static("recent tone", classes="relationship-label")
                     yield ToneRibbon(id="relationship-tones")
-                yield Vertical(id="memories-box", classes="dashboard-box")
+                with Vertical(id="memories-box", classes="dashboard-box"):
+                    yield Meters(id="memory-kinds", placeholder="loading…")
                 yield Vertical(id="interests-box", classes="dashboard-box")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
                 yield Vertical(id="conversations-box", classes="dashboard-box")
@@ -128,6 +129,12 @@ class DashboardScreen(Screen):
                 getattr(values, name) for values in history
             )
         self.query_one("#relationship-tones", ToneRibbon).tones = self.snapshot.tones
+        kinds = self.query_one("#memory-kinds", Meters)
+        total = sum(self.snapshot.memory_kinds.values())
+        kinds.placeholder = "no memories yet"
+        kinds.rows = tuple(
+            (kind, count / total, str(count)) for kind, count in self.snapshot.memory_kinds.items()
+        ) if total else ()
 
     def on_unmount(self) -> None:
         self.conversation.remove_mirror(self.chat_log)

@@ -22,7 +22,8 @@ def meter_bar(value: float, width: int) -> str:
 class Meters(Widget):
     """One `label ■■■■■■ 62%` line per row, sized to the widget's width."""
 
-    rows = reactive(())  # (label, value) pairs
+    # (label, value) pairs, or (label, value, text) to show text instead of the percentage.
+    rows = reactive(())
     placeholder = reactive("")
 
     def __init__(self, placeholder: str = "", **kwargs) -> None:
@@ -32,18 +33,20 @@ class Meters(Widget):
     def render(self) -> Text:
         if not self.rows:
             return Text(self.placeholder, style=TRACK_STYLE)
-        label_width = max(len(label) for label, _ in self.rows)
-        # A space either side of the bar, then a four-character percentage.
-        bar_width = self.size.width - label_width - 6
+        label_width = max(len(row[0]) for row in self.rows)
+        shown = [row[2] if len(row) > 2 else f"{row[1]:.0%}" for row in self.rows]
+        shown_width = max(4, *(len(item) for item in shown))
+        # A space either side of the bar, then the right-aligned value.
+        bar_width = self.size.width - label_width - shown_width - 2
         text = Text()
-        for index, (label, value) in enumerate(self.rows):
+        for index, ((label, value, *_), value_text) in enumerate(zip(self.rows, shown)):
             if index:
                 text.append("\n")
             filled = meter_bar(value, bar_width)
             text.append(f"{label:<{label_width}} ", style=LABEL_STYLE)
             text.append(filled)
             text.append(CELL * (bar_width - len(filled)), style=TRACK_STYLE)
-            text.append(f" {value:>4.0%}", style=LABEL_STYLE)
+            text.append(f" {value_text:>{shown_width}}", style=LABEL_STYLE)
         return text
 
 
