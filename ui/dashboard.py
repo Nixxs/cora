@@ -8,6 +8,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Static
 
 from devices.audio_bands import BAND_COUNT
+from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
@@ -132,7 +133,10 @@ class DashboardScreen(Screen):
                     # Scrolls, so a long finding can be read in full.
                     with VerticalScroll(id="interest-finding-scroll"):
                         yield Static(id="interest-finding")
-                yield Vertical(id="identity-box", classes="dashboard-box")
+                with Vertical(id="identity-box", classes="dashboard-box"):
+                    # Scrolls, so every trait can be read in full.
+                    with VerticalScroll(id="identity-scroll"):
+                        yield Static(id="identity-traits")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
                 with Vertical(id="conversations-box", classes="dashboard-box"):
                     yield Static("your messages per day", classes="dashboard-label")
@@ -201,6 +205,14 @@ class DashboardScreen(Screen):
             Text.assemble((latest[0], "#7fb8d8"), ": ", latest[1]) if latest
             else Text("nothing found yet", style=TRACK_STYLE)
         )
+        traits = Text()
+        for index, trait in enumerate(self.snapshot.traits):
+            held = is_held(trait)
+            # A forming trait is dimmed: it doesn't reach conversations until it is held.
+            traits.append(("\n\n" if index else "") + f"{trait.confidence:.0%} ", style="#d8a6c8" if held else LABEL_STYLE)
+            traits.append(trait.kind + ("" if held else " · forming"), style=LABEL_STYLE)
+            traits.append("\n" + trait.statement, style="" if held else LABEL_STYLE)
+        self.query_one("#identity-traits", Static).update(traits or Text("no traits yet", style=TRACK_STYLE))
         now = datetime.now(timezone.utc)
         heatmap = self.query_one("#conversation-days", CalendarHeatmap)
         heatmap.today_row = now.astimezone().weekday()

@@ -12,6 +12,8 @@ from storage.models import (
     ConversationSummaryRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
     InterestExplorationRecord, InterestWorkerStateRecord, MemoryRecord, RelationshipEventRecord,
 )
+from subconscious.identity.identity_rules import Trait
+from subconscious.identity.identity_store import IdentityStore
 from subconscious.identity.reflect_identity import REFLECT_EVERY
 from subconscious.interests.evolve_interests import EVOLVE_EVERY
 from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
@@ -68,6 +70,8 @@ class DashboardSnapshot:
     next_due: dict[str, datetime | None]
     # Messages the person sent per local day, oldest first, ending today.
     message_days: tuple[int, ...]
+    # Cora's active identity traits, most confident first.
+    traits: tuple[Trait, ...]
 
 
 def last_runs(engine: Engine) -> dict[str, datetime | None]:
@@ -135,4 +139,5 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         last_runs=runs,
         next_due=next_due(engine, runs),
         message_days=tuple(ConversationStore(engine).daily_message_counts(now, CALENDAR_DAYS)),
+        traits=tuple(IdentityStore(engine).list_traits()),
     )

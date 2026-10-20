@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from time import monotonic
 import unittest
 from unittest.mock import MagicMock, PropertyMock, patch
+from uuid import uuid4
 
 import numpy as np
 from textual.containers import HorizontalScroll
@@ -17,6 +18,7 @@ from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.dashboard_snapshot import (
     HISTORY_LIMIT, CALENDAR_DAYS, DashboardSnapshot, live_interests, next_due, read_dashboard_snapshot,
 )
+from subconscious.identity.identity_rules import Trait
 from subconscious.interests.evolve_interests import EVOLVE_EVERY
 from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
 from subconscious.relationship.relationship_rules import RelationshipValues
@@ -129,6 +131,7 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.last_runs", return_value={"summaries": None}), \
                 patch("storage.dashboard_snapshot.next_due", return_value={"identity": None}) as due, \
                 patch("storage.dashboard_snapshot.ConversationStore") as conversations, \
+                patch("storage.dashboard_snapshot.IdentityStore") as identity, \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -138,7 +141,9 @@ class DashboardSnapshotTests(unittest.TestCase):
             memories.return_value.daily_counts.return_value = [0, 2]
             memories.return_value.pending_counts.return_value = {"embedding": 1}
             conversations.return_value.daily_message_counts.return_value = [3, 0]
+            identity.return_value.list_traits.return_value = ["trait"]
             snapshot = read_dashboard_snapshot("engine", now)
+        self.assertEqual(snapshot.traits, ("trait",))
         conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
         self.assertEqual(snapshot.message_days, (3, 0))
         store.assert_called_once_with("engine")
@@ -318,7 +323,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             first = DashboardSnapshot(
                 relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=(), memory_kinds={},
-                memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(),
+                memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(), traits=(),
             )
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
@@ -359,6 +364,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 last_runs={},
                 next_due={},
                 message_days=(),
+                traits=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -404,6 +410,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 last_runs={},
                 next_due={},
                 message_days=(),
+                traits=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -442,6 +449,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 last_runs={},
                 next_due={},
                 message_days=(),
+                traits=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -458,6 +466,41 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("■", lines[1])
             self.assertTrue(lines[1].endswith(" ↓ 25%"))
             self.assertTrue(all(len(line) == strengths.size.width for line in lines))
+
+    async def test_identity_box_lists_traits_and_dims_the_ones_still_forming(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            traits = screen.query_one("#identity-traits", Static)
+            self.assertEqual(str(traits.render()), "no traits yet")
+
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
+                memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
+                message_days=(),
+                traits=(
+                    Trait(uuid4(), "value", "I say what I [b]think[/b]", None, None, 0.7, "active"),
+                    Trait(uuid4(), "tendency", "I ask follow-up questions", None, None, 0.3, "active"),
+                ),
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            text = traits.render()
+            # Brackets in a statement are shown as written, not read as markup.
+            self.assertEqual(str(text).splitlines(), [
+                "70% value",
+                "I say what I [b]think[/b]",
+                "",
+                "30% tendency · forming",
+                "I ask follow-up questions",
+            ])
+            # The held trait's confidence is bright and its statement unstyled; the forming one is dim.
+            colours = [span.style.foreground.hex.lower() for span in text.spans]
+            self.assertNotEqual(colours[0], LABEL_STYLE)
+            self.assertEqual(colours[2:], [LABEL_STYLE] * 3)
+            self.assertEqual(text.spans[1].end, len("70% value"))
 
     async def test_background_box_lists_when_each_job_last_ran_and_is_next_due(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -477,6 +520,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 },
                 next_due={"interests": now + timedelta(hours=21, minutes=55), "identity": None},
                 message_days=(),
+                traits=(),
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()

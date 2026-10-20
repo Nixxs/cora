@@ -389,6 +389,16 @@ Screen > .screen--selection {
     color: #8f98a8;
 }
 
+#identity-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#identity-traits {
+    height: auto;
+    color: #d0d6e0;
+}
+
 #background-runs {
     height: auto;
     color: #d0d6e0;
