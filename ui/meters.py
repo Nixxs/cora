@@ -1,8 +1,10 @@
 """Labelled horizontal meters for dashboard values between 0 and 1."""
 
+from datetime import date, timedelta
 import math
 
 from rich.text import Text
+from textual.events import MouseMove
 from textual.reactive import reactive
 from textual.widget import Widget
 
@@ -101,3 +103,22 @@ class CalendarHeatmap(Widget):
                 level = math.ceil(count / busiest * len(HEAT_STYLES)) - 1 if count else None
                 text.append(CELL + " ", style=TRACK_STYLE if level is None else HEAT_STYLES[level])
         return text
+
+    def days_ago_at(self, x: int, y: int) -> int | None:
+        """How many days before today the cell at (x, y) is, or None off a cell."""
+        # Cells sit on even columns after the initials; odd columns are gaps.
+        if self.days is None or not 0 <= y < len(WEEKDAYS) or x < 2 or x % 2:
+            return None
+        weeks = max((self.size.width - 2) // 2, 0)
+        week = (x - 2) // 2
+        days_ago = (weeks - 1 - week) * 7 + self.today_row - y
+        return days_ago if week < weeks and 0 <= days_ago < len(self.days) else None
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        days_ago = self.days_ago_at(event.x, event.y)
+        if days_ago is None:
+            self.tooltip = None
+            return
+        count = self.days[-1 - days_ago]
+        day = date.today() - timedelta(days=days_ago)
+        self.tooltip = f"{day:%a %d %b}: {count} message{'' if count == 1 else 's'}"

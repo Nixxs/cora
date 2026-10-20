@@ -1,7 +1,7 @@
 """The title bar's view button switches between the chat and the dashboard. Mocked APIs only."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from time import monotonic
 import unittest
 from unittest.mock import MagicMock, PropertyMock, patch
@@ -87,6 +87,24 @@ class DashboardSnapshotTests(unittest.TestCase):
         cells = [span.style for span in text.spans if span.style != LABEL_STYLE]
         # Monday had none; Tuesday 1 and Wednesday 2 of the busiest 4; last Sunday was the busiest.
         self.assertEqual(cells, [TRACK_STYLE, HEAT_STYLES[0], HEAT_STYLES[1], HEAT_STYLES[3]])
+
+    def test_hovering_a_heatmap_cell_tells_its_date_and_message_count(self):
+        heatmap = CalendarHeatmap()
+        heatmap.days = (4, 0, 1, 2)  # 3 days ago .. today
+        heatmap.today_row = 2
+        with patch.object(CalendarHeatmap, "size", new_callable=PropertyMock, return_value=Size(10, 7)):
+            # Today, last Sunday, and nothing on a gap, an initial, the future or before the data.
+            self.assertEqual(heatmap.days_ago_at(8, 2), 0)
+            self.assertEqual(heatmap.days_ago_at(6, 6), 3)
+            for x, y in ((7, 2), (0, 2), (8, 3), (2, 6)):
+                self.assertIsNone(heatmap.days_ago_at(x, y))
+            heatmap.on_mouse_move(MagicMock(x=6, y=6))
+            last_sunday = date.today() - timedelta(days=3)
+            self.assertEqual(heatmap.tooltip, f"{last_sunday:%a %d %b}: 4 messages")
+            heatmap.on_mouse_move(MagicMock(x=8, y=1))
+            self.assertTrue(heatmap.tooltip.endswith(": 1 message"))
+            heatmap.on_mouse_move(MagicMock(x=7, y=1))
+            self.assertIsNone(heatmap.tooltip)
 
     def test_ago_uses_the_largest_whole_unit(self):
         now = datetime(2026, 10, 20, tzinfo=timezone.utc)
