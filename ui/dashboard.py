@@ -81,15 +81,19 @@ class DashboardScreen(Screen):
             with Horizontal(id="dashboard-middle", classes="dashboard-row"):
                 with Vertical(id="relationship-box", classes="dashboard-box"):
                     yield Meters(id="relationship-meters", placeholder="loading…")
-                    yield Static("history", classes="relationship-label")
+                    yield Static("history", classes="dashboard-label")
                     for name in RELATIONSHIP_VALUES:
                         with Horizontal(classes="relationship-history"):
                             yield Static(name, classes="relationship-history-name")
                             yield BrailleGraph(id=f"{name}-history")
-                    yield Static("recent tone", classes="relationship-label")
+                    yield Static("recent tone", classes="dashboard-label")
                     yield ToneRibbon(id="relationship-tones")
                 with Vertical(id="memories-box", classes="dashboard-box"):
                     yield Meters(id="memory-kinds", placeholder="loading…")
+                    yield Static("new per day", classes="dashboard-label")
+                    yield BrailleGraph(id="memory-days")
+                    yield Static("waiting", classes="dashboard-label")
+                    yield Static(id="memory-pending")
                 yield Vertical(id="interests-box", classes="dashboard-box")
             with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
                 yield Vertical(id="conversations-box", classes="dashboard-box")
@@ -135,6 +139,14 @@ class DashboardScreen(Screen):
         kinds.rows = tuple(
             (kind, count / total, str(count)) for kind, count in self.snapshot.memory_kinds.items()
         ) if total else ()
+        days = self.query_one("#memory-days", BrailleGraph)
+        # Scaled to the busiest day on screen, two days per cell.
+        days.maximum = max(self.snapshot.memory_days[-days.size.width * 2:], default=0) or 1
+        days.values = self.snapshot.memory_days
+        waiting = {step: count for step, count in self.snapshot.memory_pending.items() if count}
+        pending = self.query_one("#memory-pending", Static)
+        pending.update(" · ".join(f"{count} {step}" for step, count in waiting.items()) or "nothing")
+        pending.set_class(bool(waiting), "memory-waiting")
 
     def on_unmount(self) -> None:
         self.conversation.remove_mirror(self.chat_log)

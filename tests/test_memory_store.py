@@ -171,7 +171,7 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(self.memories.get_memories(other_id)[0].source_message_id, other.id)
         self.assertEqual(self.memories.get_memories(uuid4()), [])
 
-    def test_recent_plan_and_kind_counts_skip_duplicates(self):
+    def test_recent_plan_kind_and_daily_counts_skip_duplicates(self):
         source = self.save_source(content="I will fix the fence. We chose Postgres. I live in Perth.")
         self.store.close_conversation(self.conversation_id)
         self.assertIsNone(self.memories.recent_plan(datetime.now(timezone.utc)))
@@ -192,6 +192,12 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(picked, {"Fix the fence", "Chose Postgres"})
         self.assertIsNone(self.memories.recent_plan(now + RECENT_PLAN_WINDOW + timedelta(minutes=1)))
         self.assertEqual(self.memories.kind_counts(), {"fact": 1, "preference": 0, "decision": 1, "task": 1})
+        self.assertEqual(self.memories.daily_counts(now, 5), [0, 0, 0, 0, 3])
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.messages SET created_at = created_at - interval '2 days' WHERE id = :id"
+            ), {"id": source.id})
+        self.assertEqual(self.memories.daily_counts(now, 5), [0, 0, 3, 0, 0])
 
     def test_reopened_readback_and_migration_rerun_preserve_sources_and_optional_summary(self):
         source = self.save_source()

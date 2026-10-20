@@ -301,7 +301,7 @@ Screen > .screen--selection {
     color: #8fcca6;
 }
 
-.relationship-label {
+.dashboard-label {
     margin-top: 1;
     color: #8f98a8;
 }
@@ -323,6 +323,19 @@ Screen > .screen--selection {
 #memory-kinds {
     height: auto;
     color: #a6acd8;
+}
+
+#memory-days {
+    height: 3;
+    color: #a6acd8;
+}
+
+#memory-pending {
+    color: #415575;
+}
+
+#memory-pending.memory-waiting {
+    color: #e6c07b;
 }
 
 #relationship-tones {

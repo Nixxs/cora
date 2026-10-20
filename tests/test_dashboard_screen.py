@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 import numpy as np
-from textual.widgets import Button
+from textual.widgets import Button, Static
 
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
@@ -68,9 +68,14 @@ class DashboardSnapshotTests(unittest.TestCase):
             store.return_value.history.return_value = events
             store.return_value.recent_tones.return_value = ["warm", "curt"]
             memories.return_value.kind_counts.return_value = {"fact": 3}
+            memories.return_value.daily_counts.return_value = [0, 2]
+            memories.return_value.pending_counts.return_value = {"embedding": 1}
             snapshot = read_dashboard_snapshot("engine", now)
         store.assert_called_once_with("engine")
         memories.assert_called_once_with("engine")
+        memories.return_value.daily_counts.assert_called_once_with(now, HISTORY_LIMIT)
+        self.assertEqual(snapshot.memory_days, (0, 2))
+        self.assertEqual(snapshot.memory_pending, {"embedding": 1})
         store.return_value.current_values.assert_called_once_with(now=now)
         store.return_value.recent_tones.assert_called_once_with(HISTORY_LIMIT)
         self.assertEqual(snapshot.relationship, values)
@@ -186,6 +191,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             first = DashboardSnapshot(
                 relationship=RelationshipValues(0.5, 0.6, 0.7), history=(), tones=(), memory_kinds={},
+                memory_days=(), memory_pending={},
             )
             app.persistence.load_dashboard_snapshot.return_value = first
             await pilot.click("#view-button")
@@ -219,6 +225,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 history=(RelationshipValues(0.5, 0.5, 0.0), RelationshipValues(0.6, 0.7, 0.2)),
                 tones=tones,
                 memory_kinds={},
+                memory_days=(),
+                memory_pending={},
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -250,10 +258,13 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
             kinds = screen.query_one("#memory-kinds", Meters)
             self.assertEqual(str(kinds.render()), "no memories yet")
+            self.assertEqual(str(screen.query_one("#memory-pending", Static).render()), "nothing")
 
             app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
                 relationship=None, history=(), tones=(),
                 memory_kinds={"fact": 12000, "preference": 4000, "decision": 0, "task": 4000},
+                memory_days=(50,) + (0, 3, 1) * 100,
+                memory_pending={"embedding": 3, "duplicate check": 0},
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
@@ -264,6 +275,13 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(lines[0].endswith(" 12000"))
             self.assertTrue(lines[2].endswith("     0"))
             self.assertTrue(all(len(line) == kinds.size.width for line in lines))
+            days = screen.query_one("#memory-days", BrailleGraph)
+            self.assertEqual(days.values[-3:], (0, 3, 1))
+            # The busy day 300 days ago is off screen, so the busiest shown day fills the height.
+            self.assertEqual(days.maximum, 3)
+            pending = screen.query_one("#memory-pending", Static)
+            self.assertEqual(str(pending.render()), "3 embedding")
+            self.assertTrue(pending.has_class("memory-waiting"))
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

@@ -9,7 +9,7 @@ from memory.store import MemoryStore
 from subconscious.relationship.relationship_rules import RelationshipValues
 from subconscious.relationship.relationship_store import RelationshipStore
 
-# More than the widest tone ribbon or history graph will show.
+# More than the widest tone ribbon or graph will show.
 HISTORY_LIMIT = 200
 
 
@@ -23,10 +23,15 @@ class DashboardSnapshot:
     tones: tuple[str, ...]
     # Memory kind -> how many, not counting duplicates.
     memory_kinds: dict[str, int]
+    # New memories per local day, oldest first, ending today.
+    memory_days: tuple[int, ...]
+    # Background step -> how many memories wait for it.
+    memory_pending: dict[str, int]
 
 
 def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
     relationships = RelationshipStore(engine)
+    memories = MemoryStore(engine)
     return DashboardSnapshot(
         relationship=relationships.current_values(now=now),
         history=tuple(
@@ -34,5 +39,7 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
             for event in relationships.history()[-HISTORY_LIMIT:]
         ),
         tones=tuple(relationships.recent_tones(HISTORY_LIMIT)),
-        memory_kinds=MemoryStore(engine).kind_counts(),
+        memory_kinds=memories.kind_counts(),
+        memory_days=tuple(memories.daily_counts(now, HISTORY_LIMIT)),
+        memory_pending=memories.pending_counts(),
     )
