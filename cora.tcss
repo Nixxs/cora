@@ -215,7 +215,7 @@ Screen > .screen--selection {
 }
 
 #dashboard-top {
-    height: 10;
+    height: 11;
 }
 
 .dashboard-row {
@@ -232,6 +232,23 @@ Screen > .screen--selection {
 
 #voice-box {
     width: 2fr;
+}
+
+#speaker-graph, #mic-graph {
+    height: 1fr;
+}
+
+#speaker-graph {
+    color: #8fcca6;
+}
+
+#mic-graph {
+    color: #a6acd8;
+}
+
+#voice-axis {
+    height: 1;
+    color: #415575;
 }
 
 ModelSettingsScreen {

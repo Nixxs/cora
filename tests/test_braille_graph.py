@@ -21,6 +21,10 @@ class BrailleGraphTests(unittest.TestCase):
         self.assertEqual(braille_graph([1.0, 1.0], 1, 2), [FULL, FULL])
         self.assertEqual(braille_graph([0.5, 0.5], 1, 2), [BLANK, FULL])
 
+    def test_downward_hangs_from_the_top(self):
+        self.assertEqual(braille_graph([0.5, 0.5], 1, 1, downward=True), ["\u281b"])  # top two dot rows
+        self.assertEqual(braille_graph([0.5, 0.5], 1, 2, downward=True), [FULL, BLANK])
+
     def test_keeps_the_newest_values_on_the_right(self):
         self.assertEqual(braille_graph([1.0], 2, 1), [BLANK + "\u28b8"])
         self.assertEqual(braille_graph([1.0, 1.0, 0.0, 0.0], 1, 1), [BLANK])

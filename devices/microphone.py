@@ -1,6 +1,16 @@
 import asyncio
+from array import array
+from math import sqrt
 
 import sounddevice as sd
+
+
+def chunk_level(chunk: bytes) -> float:
+    """Normalized RMS of one PCM16 chunk, from 0.0 to 1.0."""
+    samples = array("h", chunk)
+    if not samples:
+        return 0.0
+    return sqrt(sum(sample * sample for sample in samples) / len(samples)) / 32768
 
 
 async def microphone_chunks():
