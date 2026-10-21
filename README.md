@@ -156,7 +156,7 @@ the voice box's speaker and mic toggles press the same mute controls as the chat
 | voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. |
 | chat | The running conversation; type here to send. |
 | relationship | Trust, warmth and familiarity as they stand now (drift included), their history, and the tone of recent everyday conversations. |
-| memories | Memories by kind (duplicates not counted), new memories per day, and how many are waiting for embedding or a duplicate check. |
+| memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
@@ -348,7 +348,7 @@ finish and incur its separate charges while the local app remains open.
 
 **Cora-prime** is the Live voice model plus its delegation backend: the part of
 Cora you actually talk to. Everything else (memory extraction, summaries,
-embeddings, duplicate checks, conversation appraisals, interest evolution,
+embeddings, duplicate, correction and fade checks, conversation appraisals, interest evolution,
 interest exploration, and identity reflection) runs as **separate background
 processes that make their own API calls**. Relationship updates are plain code
 with no API call.
@@ -397,7 +397,7 @@ rate limits.
 - **Background memory pass** (at launch and each time she enters Standby): for
   each finished conversation not yet summarised, extract memories and then save
   its summary; embed new memories; check them for duplicates, then for
-  corrections of older memories; appraise finished
+  corrections of older memories, then for a date they stop mattering; appraise finished
   conversations; then apply new appraisals to the relationship.
 - **App timers** (while the app runs, cheap when nothing is due): interest
   evolution every 10 minutes (a cycle at most once a day), exploration every 10
@@ -419,7 +419,7 @@ migration 0015, so run `python migrate.py` once after updating):
 | Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
 | Memory | Memory extraction and conversation summaries | The next background memory pass |
 | Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
-| Duplicate check and small jobs | Memory duplicate and correction checks, and future small jobs | The next background memory pass |
+| Duplicate check and small jobs | Memory duplicate, correction and fade checks, and future small jobs | The next background memory pass |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list
 `MODEL_CHOICES` in [session_config.py](session_config.py); a saved model that
@@ -453,9 +453,19 @@ embedding model would also need a migration and re-embedding stored memories.
    same kind: if it replaces one (for example a new home city), the newer memory
    is marked as correcting it. Corrected memories stay stored as history but are
    left out of the startup snapshot, `search_memory`, and greetings.
+   A fade check then asks whether each memory is time-bound (for example a
+   dentist appointment on Friday) and, if so, saves the last day it matters.
+   Lasting facts, preferences and decisions get no date. Run `python migrate.py`
+   once after updating (migration 0017).
 5. **Recall:** Live and the backend receive a startup snapshot of at most 10
    memories / 3,000 characters. The backend can also use `search_memory` to find
    relevant stored memories on demand (eight results by default, maximum 20).
+6. **Fading:** nothing is deleted, but memories lose prominence with age. Search
+   ranks by similarity times a weight that halves every 90 days, down to a floor
+   of 0.5 (`FADE_HALF_LIFE` and `FADE_FLOOR` in [memory/store.py](memory/store.py)),
+   so a strong match can still bring an old memory back. A memory whose day has
+   passed drops straight to the floor, is marked `faded` in `search_memory`
+   results, and is left out of the startup snapshot and greetings.
 
 Memories link back to original user messages and verbatim evidence. Newly embedded
 memories can be searched during the current run; the snapshot is reloaded each time
@@ -466,7 +476,7 @@ automatically re-extracted.
 
 - Saved conversations and memories are local, but normal chat and memory processing
   send relevant text or audio to OpenAI. This is not an offline assistant.
-- Extraction, summarisation, embeddings, duplicate and correction checks, and semantic
+- Extraction, summarisation, embeddings, duplicate, correction and fade checks, and semantic
   searches can make separate **billable API requests**. Loading the startup
   snapshot itself makes no extra request.
 - Voice grouping is approximate, and a crash can lose unsaved text. There is no
@@ -475,10 +485,11 @@ automatically re-extracted.
   hidden backend state, or unfinished tasks. The full displayed chat stays in the UI.
   A two-second transcript/audio quiet gap is only a reconnect safety hint, not a
   guaranteed completed speech turn; real voice/network timing still needs testing.
-- Recall, duplicate, and correction decisions can be wrong. Similarity is not
+- Recall, duplicate, correction, and fade decisions can be wrong. Similarity is not
   confidence; the correction check only replaces a memory when it is clearly the
   same thing changed, so other conflicting statements are still both kept. Ages,
-  plans, and tasks are dated historical information, not necessarily current facts.
+  plans, and tasks are dated historical information, not necessarily current facts;
+  a plan with no clear date never fades early, only by age.
 - Processing is one bounded pass at startup and each standby, not a continuous
   loop. A failure stops the pass; unfinished work can be attempted on a later pass. An in-flight
   request may finish and save after closing, and process exit may wait for it.
@@ -716,7 +727,7 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   conversation, one of her findings, or a recent plan once she knows you well.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
-- Non-destructive duplicate markers and manual memory inspection.
+- Non-destructive duplicate markers, corrections, fading, and manual memory inspection.
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
 - A read-only dashboard of her relationship, memories, interests, identity, your
@@ -751,7 +762,9 @@ features it helps check, and package last.
    [The dashboard](#the-dashboard).
 5. ~~Memory corrections.~~ Done: a newer memory that contradicts an older one
    replaces it in recall (see [How memory works](#how-memory-works)).
-6. Memory fading.
+6. ~~Memory fading.~~ Done: time-bound memories fade once their day has passed,
+   and older memories rank lower in recall; nothing is deleted (see
+   [How memory works](#how-memory-works)).
 
 *Phase 2 — doing things*
 
@@ -780,10 +793,6 @@ features it helps check, and package last.
 
 #### Details, in order
 
-- Add memory fading, so time-bound details (for example an event date) lose
-  prominence once they have passed, and older memories without a date slowly
-  rank lower in recall than newer ones. Nothing is deleted: a strong match can
-  still bring an old memory back.
 - **MCP tools (Cora-prime):** add an MCP client so capabilities come from
   connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
   common `mcpServers` format, lists each user's servers; their credentials stay on
