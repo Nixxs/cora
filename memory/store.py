@@ -39,6 +39,11 @@ PENDING_CORRECTION = (
     MemoryRecord.dedup_checked_at.is_not(None), MemoryRecord.correction_checked_at.is_(None),
     MessageRecord.role == "user", MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
 )
+# Fading comes after the correction check, so it only reads memories that settled.
+PENDING_FADE = (
+    MemoryRecord.duplicate_of.is_(None), MemoryRecord.correction_checked_at.is_not(None),
+    MemoryRecord.fade_checked_at.is_(None), MessageRecord.role == "user",
+)
 # Recall prefers the newer memory; a corrected one stays stored as history.
 _newer = aliased(MemoryRecord)
 NOT_CORRECTED = ~exists().where(_newer.corrects == MemoryRecord.id)
@@ -173,6 +178,12 @@ class MemoryStore:
                 MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
             ).where(*PENDING_CORRECTION).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
 
+    def get_pending_fade_ids(self) -> list[UUID]:
+        with Session(self.engine) as session:
+            return list(session.scalars(select(MemoryRecord.id).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(*PENDING_FADE).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
+
     def pending_counts(self) -> dict[str, int]:
         """How many memories wait for an embedding, and how many for a duplicate check."""
         with Session(self.engine) as session:
@@ -264,6 +275,22 @@ class MemoryStore:
                 memory.corrects = corrected_id
             memory.correction_checked_at = func.current_timestamp()
             return corrected_id is not None
+
+    def save_fade(self, memory_id: UUID, source_text: str, fades_at: datetime | None) -> datetime | None:
+        """Save when a memory fades (None = lasting); a repeat returns the first decision."""
+        with Session(self.engine) as session, session.begin():
+            memory = session.scalar(select(MemoryRecord).where(
+                MemoryRecord.id == memory_id,
+            ).with_for_update())
+            if memory is None:
+                raise LookupError("Memory does not exist")
+            if memory.text != source_text:
+                raise ValueError("Memory changed during fade check")
+            if memory.fade_checked_at is not None:
+                return memory.fades_at
+            memory.fades_at = fades_at
+            memory.fade_checked_at = func.current_timestamp()
+            return fades_at
 
     def save_embedding(self, memory_id: UUID, source_text: str, values: list[float]) -> MemoryRecord:
         vector = validate_memory_embedding(values)

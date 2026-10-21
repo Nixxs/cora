@@ -780,10 +780,10 @@ features it helps check, and package last.
 
 #### Details, in order
 
-- Add memory fading/forgetting, so time-bound details (for example an event date)
-  lose prominence once they have passed, rather than staying in recall forever.
-  Duplicate and correction markers reference older memories, so removing one
-  needs those markers handled first.
+- Add memory fading, so time-bound details (for example an event date) lose
+  prominence once they have passed, and older memories without a date slowly
+  rank lower in recall than newer ones. Nothing is deleted: a strong match can
+  still bring an old memory back.
 - **MCP tools (Cora-prime):** add an MCP client so capabilities come from
   connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
   common `mcpServers` format, lists each user's servers; their credentials stay on
