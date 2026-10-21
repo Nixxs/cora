@@ -28,6 +28,8 @@ class ChatSubmission:
         composer = event.composer
 
         if not message or composer.disabled or self.is_closing() or self.is_reconnecting():
+            if not message and composer.image_png:
+                self.notify("Add a message to send with the image.", severity="warning")
             return
         if self.is_standby():
             self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
@@ -67,7 +69,10 @@ class ChatSubmission:
             try:
                 self.backend_work.start_typed_request()
                 self.trace("typed.submit", message_id=str(message_id))
-                await self.live.send_text(message)
+                if composer.image_png:
+                    await self.live.send_text(message, image_png=composer.image_png)
+                else:
+                    await self.live.send_text(message)
                 self.trace("typed.sent", message_id=str(message_id))
             except Exception as error:
                 self.backend_work.finish_typed_request()
@@ -84,6 +89,7 @@ class ChatSubmission:
             self.conversation.write_log(f"You: {message}")
             self.conversation.write_log("")
             composer.clear()
+            composer.remove_image()
         finally:
             self.record_activity()
             composer.disabled = self.is_closing() or self.is_reconnecting()

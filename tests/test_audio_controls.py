@@ -101,6 +101,21 @@ class SpeakerMuteTests(unittest.IsolatedAsyncioTestCase):
             connection.response.create.assert_awaited_once()
             self.assertTrue(connection.response.create.call_args.kwargs["event_id"].startswith("typed_response_"))
 
+    async def test_typed_message_can_carry_one_png_for_the_backend(self):
+        live = CoraLive()
+        live.set_speaker_muted(True)
+        await live.set_microphone_muted(True)
+        async with live_transport(live) as (connection, speaker, emit):
+            await live.send_text("What's this?", image_png=b"\x89PNG")
+            self.assertIn("with an image attached", connection.session.thinking.append.call_args.kwargs["content"])
+            connection.response.item.create.assert_awaited_once_with(item={
+                "type": "message", "role": "user",
+                "content": [
+                    {"type": "input_text", "text": "What's this?"},
+                    {"type": "input_image", "image_url": "data:image/png;base64,iVBORw==", "detail": "high"},
+                ],
+            })
+
 
 class SpeakerQueueTests(unittest.TestCase):
     def test_mute_clears_pending_and_queued_audio_and_reopens_for_fresh_playback(self):

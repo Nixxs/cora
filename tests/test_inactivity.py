@@ -295,7 +295,8 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("backspace")
             self.assertEqual(app.inactivity.last_activity, 1010)
             clock.return_value = 1020
-            with patch("ui.composer.pyperclip.paste", return_value="pasted text"):
+            with patch("ui.composer.pyperclip.paste", return_value="pasted text"), \
+                    patch("ui.composer.ImageGrab.grabclipboard", return_value=None):
                 await pilot.press("ctrl+v")
             self.assertIn("pasted text", composer.text)
             self.assertEqual(app.inactivity.last_activity, 1020)

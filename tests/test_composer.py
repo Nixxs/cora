@@ -1,11 +1,13 @@
+import io
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from PIL import Image
 from textual import events
 from textual.document._document import Selection
 
 from app import CoraApp
-from ui.composer import ChatComposer
+from ui.composer import IMAGE_MARKER, ChatComposer
 
 
 class ComposerTests(unittest.IsolatedAsyncioTestCase):
@@ -83,6 +85,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_and_windows_clipboard_paste_do_not_send(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
                 patch("ui.composer.sys.platform", "win32"), \
+                patch("ui.composer.ImageGrab.grabclipboard", return_value=None), \
                 patch("ui.composer.pyperclip.paste", return_value="one\r\ntwo\rthree") as paste:
             app = CoraApp()
             async with app.run_test(size=(90, 35)) as pilot:
@@ -103,6 +106,49 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await app.workers.wait_for_complete()
                 await pilot.pause()
                 app.live.send_text.assert_awaited_once_with("replacement\n    indented")
+
+    async def test_pasted_image_is_marked_sent_with_the_message_then_cleared(self):
+        screenshot = Image.new("RGB", (3000, 1500), "white")
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+                patch("ui.composer.ImageGrab.grabclipboard", return_value=screenshot), \
+                patch("ui.composer.pyperclip.paste") as paste:
+            app = CoraApp()
+            async with app.run_test(size=(90, 35)) as pilot:
+                await pilot.pause()
+                composer = app.query_one("#chat-input", ChatComposer)
+                frame = app.query_one("#input-frame")
+                app.persistence = MagicMock()
+                app.live.send_text = AsyncMock()
+                await pilot.press("ctrl+v")
+                paste.assert_not_called()
+                self.assertEqual(composer.text, "")
+                self.assertEqual(frame.border_subtitle, IMAGE_MARKER)
+                # Downscaled to fit the backend's 2048 limit before it is kept.
+                self.assertEqual(Image.open(io.BytesIO(composer.image_png)).size, (2048, 1024))
+                await pilot.press("enter")
+                await pilot.pause()
+                app.live.send_text.assert_not_called()
+                await pilot.press("w", "h", "y", "enter")
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                app.live.send_text.assert_awaited_once()
+                self.assertEqual(app.live.send_text.await_args.args, ("why",))
+                self.assertTrue(app.live.send_text.await_args.kwargs["image_png"].startswith(b"\x89PNG"))
+                self.assertIsNone(composer.image_png)
+                self.assertEqual(frame.border_subtitle, "")
+
+    async def test_escape_removes_an_attached_image(self):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+                patch("ui.composer.ImageGrab.grabclipboard", return_value=Image.new("RGB", (4, 4))):
+            app = CoraApp()
+            async with app.run_test(size=(90, 35)) as pilot:
+                await pilot.pause()
+                composer = app.query_one("#chat-input", ChatComposer)
+                await pilot.press("ctrl+v")
+                self.assertIsNotNone(composer.image_png)
+                await pilot.press("escape")
+                self.assertIsNone(composer.image_png)
+                self.assertEqual(app.query_one("#input-frame").border_subtitle, "")
 
 
 if __name__ == "__main__":
