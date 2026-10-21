@@ -74,6 +74,11 @@ not change an existing database's password or user. Back up important data.
 
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in
+  the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for
+  an image). The box border shows “image attached · Esc removes”. Type a question
+  and press Enter; the image goes with that one message. Large images are scaled
+  to 2048 pixels on the longest side. Works the same in the dashboard chat.
 - **Check connection state:** the left side of the bottom row shows Active,
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
 - **Close Live without quitting:** click Active to enter Standby. Wait for speech

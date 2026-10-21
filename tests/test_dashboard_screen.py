@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, PropertyMock, patch
 from uuid import uuid4
 
 import numpy as np
+from PIL import Image
 from textual.containers import HorizontalScroll
 from textual.geometry import Size
 from textual.widgets import Button, Static
@@ -24,7 +25,7 @@ from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
 from subconscious.relationship.relationship_rules import RelationshipValues
 from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
-from ui.composer import ChatComposer
+from ui.composer import IMAGE_MARKER, ChatComposer
 from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
 from ui.meters import (
     HEAT_STYLES, LABEL_STYLE, TONE_STYLES, TRACK_STYLE, CalendarHeatmap, Meters, ToneRibbon, meter_bar,
@@ -303,6 +304,29 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(composer.text, "")
             chat = app.screen.query_one("#dashboard-chat", SelectableRichLog)
             self.assertIn("You: Hi Cora", "\n".join(line.text for line in chat.lines))
+
+    async def test_dashboard_attaches_removes_and_sends_a_pasted_image_like_the_chat(self):
+        with patch("ui.composer.ImageGrab.grabclipboard", return_value=Image.new("RGB", (4, 4))):
+            async with keyboard_tests.running_app() as (app, pilot):
+                await pilot.click("#view-button")
+                await pilot.pause()
+                composer = app.screen.query_one("#dashboard-input", ChatComposer)
+                box = app.screen.query_one("#chat-box")
+                await pilot.press("ctrl+v")
+                self.assertEqual(box.border_subtitle, IMAGE_MARKER)
+                await pilot.press("escape")
+                self.assertIsNone(composer.image_png)
+                self.assertEqual(box.border_subtitle, "")
+                self.assertIsInstance(app.screen, DashboardScreen)
+                await pilot.press("ctrl+v")
+                composer.load_text("What's this?")
+                await pilot.press("enter")
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+                await pilot.pause()
+                self.assertEqual(app.live.send_text.await_args.args, ("What's this?",))
+                self.assertTrue(app.live.send_text.await_args.kwargs["image_png"].startswith(b"\x89PNG"))
+                self.assertIsNone(composer.image_png)
+                self.assertEqual(box.border_subtitle, "")
 
     async def test_voice_box_toggles_mute_like_the_chat_buttons(self):
         async with keyboard_tests.running_app() as (app, pilot):
