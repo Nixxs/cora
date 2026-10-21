@@ -13,14 +13,21 @@ from textual.widgets import TextArea
 IMAGE_MAX_SIDE = 2048
 IMAGE_MARKER = "image attached · Esc removes"
 SENDING_IMAGE = "sending image…"
+NO_IMAGE_TOOL = "To paste images, install wl-clipboard (Wayland) or xclip (X11)."
 
 
 def clipboard_png() -> bytes | None:
-    """The clipboard's image as PNG, or None when it holds no image or cannot be read."""
+    """The clipboard's image as PNG, or None when it holds no image or cannot be read.
+
+    On Linux, Pillow reads it with wl-paste or xclip and raises NotImplementedError
+    when neither is installed.
+    """
     try:
         image = ImageGrab.grabclipboard()
+    except NotImplementedError:
+        raise
     except Exception:
-        # Some platforms need an external clipboard tool; fall back to pasting text.
+        # An unreadable clipboard falls back to pasting text.
         return None
     if not isinstance(image, Image.Image):
         return None
@@ -41,6 +48,7 @@ class ChatComposer(TextArea):
     ]
 
     image_png: bytes | None = None
+    told_no_image_tool = False
 
     class Submitted(Message):
         def __init__(self, composer: "ChatComposer"):
@@ -69,7 +77,14 @@ class ChatComposer(TextArea):
     def action_paste(self) -> None:
         if self.read_only or self.disabled:
             return
-        image_png = clipboard_png()
+        try:
+            image_png = clipboard_png()
+        except NotImplementedError:
+            image_png = None
+            # Said once per box, since text pastes still work without the tool.
+            if not self.told_no_image_tool:
+                self.told_no_image_tool = True
+                self.notify(NO_IMAGE_TOOL, severity="warning")
         if image_png is not None:
             self.attach_image(image_png)
             return

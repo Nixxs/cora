@@ -1,16 +1,56 @@
 import io
+import subprocess
 import threading
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from PIL import Image
+from PIL import Image, ImageGrab
 from textual import events
 from textual.document._document import Selection
 
+import ui.composer
 from app import CoraApp
 from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION
 from ui.chat_widgets import ChatImage
-from ui.composer import IMAGE_MARKER, SENDING_IMAGE, ChatComposer
+from ui.composer import IMAGE_MARKER, NO_IMAGE_TOOL, SENDING_IMAGE, ChatComposer, clipboard_png
+
+
+class LinuxClipboardTests(unittest.TestCase):
+    """Pillow's Linux path, with fake environment and tools (tested on Windows)."""
+
+    def grab(self, env, tools, returncode=0, stdout=b"", stderr=b""):
+        run = MagicMock(return_value=subprocess.CompletedProcess([], returncode, stdout, stderr))
+        with patch.object(ImageGrab, "sys", SimpleNamespace(platform="linux")), \
+                patch.object(ImageGrab, "os", SimpleNamespace(getenv=env.get)), \
+                patch.object(ImageGrab, "shutil", SimpleNamespace(
+                    which=lambda name: f"/usr/bin/{name}" if name in tools else None)), \
+                patch.object(ImageGrab, "subprocess", SimpleNamespace(run=run)):
+            return clipboard_png(), run
+
+    def png(self):
+        buffer = io.BytesIO()
+        Image.new("RGB", (3, 2), "red").save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_wayland_uses_wl_paste_and_x11_uses_xclip(self):
+        for env, args in (
+            ({"WAYLAND_DISPLAY": "wayland-0"}, ["wl-paste", "-t", "image"]),
+            ({"DISPLAY": ":0"}, ["xclip", "-selection", "clipboard", "-t", "image/png", "-o"]),
+        ):
+            with self.subTest(env=env):
+                png, run = self.grab(env, {"wl-paste", "xclip"}, stdout=self.png())
+                self.assertEqual(run.call_args.args[0], args)
+                self.assertEqual(Image.open(io.BytesIO(png)).size, (3, 2))
+
+    def test_no_image_on_the_clipboard_is_none(self):
+        png, _ = self.grab({"WAYLAND_DISPLAY": "wayland-0"}, {"wl-paste"},
+                           returncode=1, stderr=b"No suitable type of content copied")
+        self.assertIsNone(png)
+
+    def test_missing_tool_is_raised_so_the_user_can_be_told(self):
+        with self.assertRaises(NotImplementedError):
+            self.grab({"DISPLAY": ":0"}, set())
 
 
 class ComposerTests(unittest.IsolatedAsyncioTestCase):
@@ -228,6 +268,22 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 activity = "\n".join(app.activity.entries)
                 self.assertIn("Pasted image look failed (RuntimeError).", activity)
                 self.assertNotIn("private request", activity)
+
+    async def test_linux_without_a_clipboard_tool_says_so_once_and_still_pastes_text(self):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+                patch.object(ui.composer, "sys", SimpleNamespace(platform="linux")), \
+                patch("ui.composer.ImageGrab.grabclipboard", side_effect=NotImplementedError):
+            app = CoraApp()
+            async with app.run_test(size=(90, 35)) as pilot:
+                await pilot.pause()
+                composer = app.query_one("#chat-input", ChatComposer)
+                app.copy_to_clipboard("hi")
+                with patch.object(composer, "notify") as notify:
+                    await pilot.press("ctrl+v", "ctrl+v")
+                    await pilot.pause()
+                notify.assert_called_once_with(NO_IMAGE_TOOL, severity="warning")
+                self.assertEqual(composer.text, "hihi")
+                self.assertIsNone(composer.image_png)
 
     async def test_escape_removes_an_attached_image(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \

@@ -87,6 +87,9 @@ not change an existing database's password or user. Back up important data.
   database only shows “[image]” in its place, and the image itself is never saved. Large
   images are scaled
   to 2048 pixels on the longest side. Works the same in the dashboard chat.
+  On Linux, image pasting needs `wl-clipboard` (Wayland) or `xclip` (X11)
+  installed; without one Cora says so once and pastes text as usual. The Linux
+  path is tested with stand-ins only, not yet on a real Linux desktop.
 - **Show Cora your screen:** ask her to look at your screen, or let her look on her
   own when it would help (for example you mention something on it). She takes one
   screenshot of the main monitor and asks a separate one-off model request about it;
