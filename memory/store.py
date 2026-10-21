@@ -55,6 +55,11 @@ PASSED = func.coalesce(MemoryRecord.fades_at <= func.current_timestamp(), False)
 NOT_PASSED = ~PASSED
 
 
+def fade_weight(age: timedelta) -> float:
+    """How much recall still counts a memory said this long ago, as search does."""
+    return max(FADE_FLOOR, 0.5 ** (max(age, timedelta()) / FADE_HALF_LIFE))
+
+
 def validate_search_limit(limit: int) -> None:
     if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= MEMORY_SEARCH_MAX_RESULTS:
         raise ValueError("Memory search limit must be an integer from 1 to 20")
@@ -197,13 +202,16 @@ class MemoryStore:
             ).where(*PENDING_FADE).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
 
     def pending_counts(self) -> dict[str, int]:
-        """How many memories wait for an embedding, and how many for a duplicate check."""
+        """How many memories wait at each background step."""
         with Session(self.engine) as session:
             return {
                 name: session.scalar(select(func.count()).select_from(MemoryRecord).join(
                     MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
                 ).where(*conditions))
-                for name, conditions in (("embedding", PENDING_EMBEDDING), ("duplicate check", PENDING_DEDUPLICATION))
+                for name, conditions in (
+                    ("embedding", PENDING_EMBEDDING), ("duplicate check", PENDING_DEDUPLICATION),
+                    ("correction check", PENDING_CORRECTION), ("fade check", PENDING_FADE),
+                )
             }
 
     def get_source_created_at(self, source_message_id: UUID) -> datetime:

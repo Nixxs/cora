@@ -83,6 +83,24 @@ class BrailleGraphWidgetTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(faded.spans[0].style.color, base.rich_color)
             self.assertEqual(bright.spans[0].style.color, WHITE.rich_color)
 
+    async def test_a_shaded_graph_dims_older_cells_by_age(self):
+        class GraphApp(App):
+            def compose(self) -> ComposeResult:
+                yield BrailleGraph(id="graph", shade=lambda age: 1.0 if age == 0 else 0.5)
+
+        app = GraphApp()
+        async with app.run_test(size=(4, 2)) as pilot:
+            graph = app.query_one(BrailleGraph)
+            graph.values = (1.0,) * 8
+            await pilot.pause()
+            text = graph.render()
+            colors = {span.start: span.style.color for span in text.spans}
+            dim = graph.styles.color.blend(graph.background_colors[1], 0.5).rich_color
+            # Each row: three older cells dimmed, the newest at full colour.
+            for start in (0, 5):
+                self.assertEqual([colors[start + column] for column in range(4)],
+                                 [dim] * 3 + [graph.styles.color.rich_color])
+
     async def test_a_growing_graph_rises_to_its_first_values(self):
         class GraphApp(App):
             def compose(self) -> ComposeResult:

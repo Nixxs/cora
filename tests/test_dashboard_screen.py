@@ -422,7 +422,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 relationship=None, history=(), tones=(),
                 memory_kinds={"fact": 12000, "preference": 4000, "decision": 0, "task": 4000},
                 memory_days=(50,) + (0, 3, 1) * 100,
-                memory_pending={"embedding": 3, "duplicate check": 0},
+                memory_pending={"embedding": 3, "duplicate check": 0, "correction check": 0, "fade check": 2},
                 interests=(),
                 latest_finding=None,
                 last_runs={},
@@ -444,8 +444,11 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(days.values[-3:], (0, 3, 1))
             # The busy day 300 days ago is off screen, so the busiest shown day fills the height.
             self.assertEqual(days.maximum, 3)
+            # Shaded with recall's fade weight: today full, older days dimmer.
+            self.assertEqual(days.shade(0), 1.0)
+            self.assertLess(days.shade(45), 1.0)
             pending = screen.query_one("#memory-pending", Static)
-            self.assertEqual(str(pending.render()), "3 embedding")
+            self.assertEqual(str(pending.render()), "3 embedding · 2 fade check")
             self.assertTrue(pending.has_class("memory-waiting"))
 
     async def test_interests_box_shows_strengths_or_a_placeholder(self):

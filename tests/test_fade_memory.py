@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import memory.fade_memory as fading
-from memory.store import MemoryStore
+from memory.store import FADE_FLOOR, FADE_HALF_LIFE, MemoryStore, fade_weight
 from session_config import BACKEND_MODEL
 from storage.models import MEMORY_EMBEDDING_DIMENSIONS, MEMORY_EMBEDDING_MODEL, MemoryRecord, MessageRecord
 import test_deduplicate_memory as dedup_tests
@@ -53,6 +53,12 @@ class FadeColumnTests(unittest.TestCase):
         constraint = next(item for item in MemoryRecord.__table__.constraints
                           if item.name == "memories_fade_check")
         self.assertIn("fade_checked_at IS NOT NULL", str(constraint.sqltext))
+
+    def test_weight_halves_each_half_life_down_to_the_floor(self):
+        self.assertEqual(fade_weight(timedelta()), 1.0)
+        self.assertEqual(fade_weight(-timedelta(days=1)), 1.0)
+        self.assertAlmostEqual(fade_weight(FADE_HALF_LIFE / 2), 0.5 ** 0.5)
+        self.assertEqual(fade_weight(FADE_HALF_LIFE * 5), FADE_FLOOR)
 
 
 class FadeMemoryTests(unittest.TestCase):
