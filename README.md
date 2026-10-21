@@ -81,6 +81,13 @@ not change an existing database's password or user. Back up important data.
   database show “[image]” in its place; the image itself is never saved. Large
   images are scaled
   to 2048 pixels on the longest side. Works the same in the dashboard chat.
+- **Show Cora your screen:** ask her to look at your screen, or let her look on her
+  own when it would help (for example you mention something on it). She takes one
+  screenshot of the main monitor and asks a separate one-off model request about it;
+  only that short text answer enters her session, so images never fill its limited
+  history. The screenshot is never saved. Activity shows “Screen captured” each time.
+  Turn it off under Settings > General; nothing is captured while it is off. The
+  switch resets to on when Cora restarts.
 - **Check connection state:** the left side of the bottom row shows Active,
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
 - **Close Live without quitting:** click Active to enter Standby. Wait for speech

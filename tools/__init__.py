@@ -2,6 +2,7 @@
 
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
+from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
 from .registry import ToolRegistry
@@ -12,6 +13,7 @@ from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, val
 
 def create_tool_registry(
     *, get_connection, is_closing, shutdown, request_standby, write_debug, schedule,
+    screen_looking=lambda: True,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -28,4 +30,6 @@ def create_tool_registry(
     registry.register(SELF_SCHEMA, validate_self_arguments, recall_self.handle)
     random_number = RandomNumberTool(get_connection, is_closing, write_debug)
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
+    screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)
+    registry.register(SCREEN_SCHEMA, validate_screen_arguments, screen.handle)
     return registry

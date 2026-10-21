@@ -462,6 +462,10 @@ ModelSettingsScreen {
     width: 1fr;
 }
 
+#model-settings TabPane {
+    padding: 0;
+}
+
 #model-settings-close {
     margin: 1 0 0 0;
     width: 1fr;
