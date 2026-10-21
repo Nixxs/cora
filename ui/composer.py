@@ -12,6 +12,7 @@ from textual.widgets import TextArea
 # The backend scales high-detail images to fit 2048x2048, so larger only costs upload time.
 IMAGE_MAX_SIDE = 2048
 IMAGE_MARKER = "image attached · Esc removes"
+SENDING_IMAGE = "sending image…"
 
 
 def clipboard_png() -> bytes | None:

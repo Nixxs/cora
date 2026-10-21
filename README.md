@@ -77,11 +77,14 @@ not change an existing database's password or user. Back up important data.
 - **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in
   the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for
   an image). The box border shows “image attached · Esc removes”. Type a question
-  if you like and press Enter; the image goes with that one message. A separate
+  if you like and press Enter; the image goes with that one message. While it is
+  being sent (“sending image…”) you can keep typing; the next message waits until
+  it is done, and if sending fails your draft and image come back. A separate
   one-off model request reads the image with your message as the question, and
   only its short description enters Cora's session, so she cannot look at the
-  image again later. The chat and
-  database show “[image]” in its place; the image itself is never saved. Large
+  image again later. The chat shows a small copy of the image under your message
+  (click it to see it sharply); the
+  database only shows “[image]” in its place, and the image itself is never saved. Large
   images are scaled
   to 2048 pixels on the longest side. Works the same in the dashboard chat.
 - **Show Cora your screen:** ask her to look at your screen, or let her look on her

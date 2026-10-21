@@ -459,8 +459,10 @@ class CoraApp(App):
         self.submission.submitted(event)
 
     @work(group="keyboard-submit")
-    async def submit_keyboard_message(self, message: str, message_id: UUID, composer: ChatComposer) -> None:
-        await self.submission.submit_keyboard_message(message, message_id, composer)
+    async def submit_keyboard_message(
+        self, message: str, message_id: UUID, composer: ChatComposer, image_png: bytes | None = None
+    ) -> None:
+        await self.submission.submit_keyboard_message(message, message_id, composer, image_png)
 
     def record_chat_message(self, role: str, text: str, channel: str) -> None:
         self.conversation_persistence.record_chat_message(role, text, channel)

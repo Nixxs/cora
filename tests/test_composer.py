@@ -1,4 +1,5 @@
 import io
+import threading
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,7 +9,8 @@ from textual.document._document import Selection
 
 from app import CoraApp
 from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION
-from ui.composer import IMAGE_MARKER, ChatComposer
+from ui.chat_widgets import ChatImage
+from ui.composer import IMAGE_MARKER, SENDING_IMAGE, ChatComposer
 
 
 class ComposerTests(unittest.IsolatedAsyncioTestCase):
@@ -149,9 +151,58 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.live.send_text.await_args.args, ("why",))
                 self.assertEqual(look.call_args.args[0], "why")
                 self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image] why")
-                self.assertEqual(app.conversation.log_entries, ["You: [image]", "", "You: [image] why", ""])
+                entries = app.conversation.log_entries
+                self.assertEqual([entries[i] for i in (0, 2, 3, 5)], ["You: [image]", "", "You: [image] why", ""])
+                # Each sent image shows as a clickable thumbnail under its message.
+                self.assertEqual([type(entries[i]) for i in (1, 4)], [ChatImage, ChatImage])
+                self.assertEqual([entries[i].caption for i in (1, 4)], ["Pasted image", "why"])
+                self.assertEqual(entries[1].image.size, (1024, 512))
+                self.assertEqual(len(entries), 6)
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(frame.border_subtitle, "")
+
+    async def test_box_stays_usable_while_a_pasted_image_is_read_but_next_send_waits(self):
+        release = threading.Event()
+
+        def slow_look(*args, **kwargs):
+            release.wait(5)
+            return "A page."
+
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+                patch("ui.composer.ImageGrab.grabclipboard", return_value=Image.new("RGB", (4, 4))), \
+                patch("ui.chat_submission.look", side_effect=slow_look):
+            app = CoraApp()
+            async with app.run_test(size=(90, 35)) as pilot:
+                try:
+                    await pilot.pause()
+                    composer = app.query_one("#chat-input", ChatComposer)
+                    frame = app.query_one("#input-frame")
+                    app.submission.persistence.call_database = AsyncMock()
+                    app.live.send_text = AsyncMock()
+                    await pilot.press("ctrl+v", "w", "h", "y", "enter")
+                    await pilot.pause()
+                    self.assertFalse(composer.disabled)
+                    self.assertEqual(composer.text, "")
+                    self.assertIsNone(composer.image_png)
+                    self.assertEqual(frame.border_subtitle, SENDING_IMAGE)
+                    with patch.object(app, "notify") as notify:
+                        await pilot.press("n", "e", "x", "t", "enter")
+                        await pilot.pause()
+                        notify.assert_called_once()
+                    self.assertEqual(composer.text, "next")
+                    app.live.send_text.assert_not_awaited()
+                finally:
+                    release.set()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                app.live.send_text.assert_awaited_once_with("why", image_seen="A page.")
+                self.assertEqual(composer.text, "next")
+                self.assertEqual(frame.border_subtitle, "")
+                await pilot.press("enter")
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                app.live.send_text.assert_awaited_with("next")
+                self.assertEqual(composer.text, "")
 
     async def test_failed_image_look_saves_and_sends_nothing_and_keeps_the_draft(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
@@ -173,6 +224,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 app.live.send_text.assert_not_awaited()
                 self.assertEqual(composer.text, "why")
                 self.assertIsNotNone(composer.image_png)
+                self.assertEqual(app.query_one("#input-frame").border_subtitle, IMAGE_MARKER)
                 activity = "\n".join(app.activity.entries)
                 self.assertIn("Pasted image look failed (RuntimeError).", activity)
                 self.assertNotIn("private request", activity)
