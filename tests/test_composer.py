@@ -107,7 +107,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 app.live.send_text.assert_awaited_once_with("replacement\n    indented")
 
-    async def test_pasted_image_is_marked_sent_with_the_message_then_cleared(self):
+    async def test_pasted_image_is_marked_sent_alone_or_with_text_then_cleared(self):
         screenshot = Image.new("RGB", (3000, 1500), "white")
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
                 patch("ui.composer.ImageGrab.grabclipboard", return_value=screenshot), \
@@ -117,23 +117,32 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 composer = app.query_one("#chat-input", ChatComposer)
                 frame = app.query_one("#input-frame")
-                app.persistence = MagicMock()
+                persistence = app.submission.persistence
+                persistence.call_database = AsyncMock()
                 app.live.send_text = AsyncMock()
                 await pilot.press("ctrl+v")
                 paste.assert_not_called()
                 self.assertEqual(composer.text, "")
                 self.assertEqual(frame.border_subtitle, IMAGE_MARKER)
+                self.assertEqual(frame.styles.border_subtitle_align, "left")
                 # Downscaled to fit the backend's 2048 limit before it is kept.
                 self.assertEqual(Image.open(io.BytesIO(composer.image_png)).size, (2048, 1024))
                 await pilot.press("enter")
-                await pilot.pause()
-                app.live.send_text.assert_not_called()
-                await pilot.press("w", "h", "y", "enter")
                 await app.workers.wait_for_complete()
                 await pilot.pause()
-                app.live.send_text.assert_awaited_once()
-                self.assertEqual(app.live.send_text.await_args.args, ("why",))
+                self.assertEqual(app.live.send_text.await_args.args, ("",))
                 self.assertTrue(app.live.send_text.await_args.kwargs["image_png"].startswith(b"\x89PNG"))
+                # Only the marker is saved, never the image bytes.
+                self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image]")
+                self.assertIsNone(composer.image_png)
+                self.assertEqual(frame.border_subtitle, "")
+                persistence.call_database.reset_mock()
+                await pilot.press("ctrl+v", "w", "h", "y", "enter")
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertEqual(app.live.send_text.await_args.args, ("why",))
+                self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image] why")
+                self.assertEqual(app.conversation.log_entries, ["You: [image]", "", "You: [image] why", ""])
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(frame.border_subtitle, "")
 

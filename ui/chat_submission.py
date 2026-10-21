@@ -27,9 +27,8 @@ class ChatSubmission:
         message = event.text.strip()
         composer = event.composer
 
-        if not message or composer.disabled or self.is_closing() or self.is_reconnecting():
-            if not message and composer.image_png:
-                self.notify("Add a message to send with the image.", severity="warning")
+        if (not message and not composer.image_png) or composer.disabled \
+                or self.is_closing() or self.is_reconnecting():
             return
         if self.is_standby():
             self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
@@ -48,8 +47,10 @@ class ChatSubmission:
         try:
             if self.is_closing():
                 return
+            # Image bytes are never stored; the saved and shown text only marks one was sent.
+            shown = f"[image] {message}".rstrip() if composer.image_png else message
             try:
-                await self.persistence.call_database(self.persistence.storage.save_message, message_id, message)
+                await self.persistence.call_database(self.persistence.storage.save_message, message_id, shown)
             except Exception as error:
                 # SQL errors may include query parameters: never log private text/credentials.
                 self.write_activity(
@@ -86,7 +87,7 @@ class ChatSubmission:
             self.pending_message = None
             await self.record_keyboard_delivery(message_id, "sent")
             self.conversation.flush_transcript()
-            self.conversation.write_log(f"You: {message}")
+            self.conversation.write_log(f"You: {shown}")
             self.conversation.write_log("")
             composer.clear()
             composer.remove_image()

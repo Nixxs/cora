@@ -314,6 +314,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 box = app.screen.query_one("#chat-box")
                 await pilot.press("ctrl+v")
                 self.assertEqual(box.border_subtitle, IMAGE_MARKER)
+                self.assertEqual(box.styles.border_subtitle_align, "left")
                 await pilot.press("escape")
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(box.border_subtitle, "")

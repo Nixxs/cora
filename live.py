@@ -299,7 +299,7 @@ class CoraLive:
         )
         self.trace("send.after", event_type="session.thinking.append", client_event_id=context_id)
 
-        content = [{"type": "input_text", "text": message}]
+        content = [{"type": "input_text", "text": message}] if message else []
         if image_png:
             # Only the backend reads images; the voice model gets the note above.
             image_url = "data:image/png;base64," + base64.b64encode(image_png).decode("ascii")

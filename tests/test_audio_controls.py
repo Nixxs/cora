@@ -115,6 +115,11 @@ class SpeakerMuteTests(unittest.IsolatedAsyncioTestCase):
                     {"type": "input_image", "image_url": "data:image/png;base64,iVBORw==", "detail": "high"},
                 ],
             })
+            await live.send_text("", image_png=b"\x89PNG")
+            # An image sent alone carries no empty text part.
+            self.assertEqual(connection.response.item.create.await_args.kwargs["item"]["content"], [
+                {"type": "input_image", "image_url": "data:image/png;base64,iVBORw==", "detail": "high"},
+            ])
 
 
 class SpeakerQueueTests(unittest.TestCase):

@@ -77,7 +77,9 @@ not change an existing database's password or user. Back up important data.
 - **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in
   the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for
   an image). The box border shows “image attached · Esc removes”. Type a question
-  and press Enter; the image goes with that one message. Large images are scaled
+  if you like and press Enter; the image goes with that one message. The chat and
+  database show “[image]” in its place; the image itself is never saved. Large
+  images are scaled
   to 2048 pixels on the longest side. Works the same in the dashboard chat.
 - **Check connection state:** the left side of the bottom row shows Active,
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
