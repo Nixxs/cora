@@ -7,6 +7,7 @@ from textual import events
 from textual.document._document import Selection
 
 from app import CoraApp
+from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION
 from ui.composer import IMAGE_MARKER, ChatComposer
 
 
@@ -111,6 +112,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
         screenshot = Image.new("RGB", (3000, 1500), "white")
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
                 patch("ui.composer.ImageGrab.grabclipboard", return_value=screenshot), \
+                patch("ui.chat_submission.look", return_value="A white page.") as look, \
                 patch("ui.composer.pyperclip.paste") as paste:
             app = CoraApp()
             async with app.run_test(size=(90, 35)) as pilot:
@@ -131,7 +133,11 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await app.workers.wait_for_complete()
                 await pilot.pause()
                 self.assertEqual(app.live.send_text.await_args.args, ("",))
-                self.assertTrue(app.live.send_text.await_args.kwargs["image_png"].startswith(b"\x89PNG"))
+                # A separate look reads the PNG; only its text goes to Live.
+                self.assertEqual(look.call_args.args[0], PASTE_QUESTION)
+                self.assertTrue(look.call_args.args[1].startswith(b"\x89PNG"))
+                self.assertEqual(look.call_args.kwargs, {"mime": "image/png", "instructions": PASTE_INSTRUCTIONS})
+                self.assertEqual(app.live.send_text.await_args.kwargs, {"image_seen": "A white page."})
                 # Only the marker is saved, never the image bytes.
                 self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image]")
                 self.assertIsNone(composer.image_png)
@@ -141,10 +147,35 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await app.workers.wait_for_complete()
                 await pilot.pause()
                 self.assertEqual(app.live.send_text.await_args.args, ("why",))
+                self.assertEqual(look.call_args.args[0], "why")
                 self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image] why")
                 self.assertEqual(app.conversation.log_entries, ["You: [image]", "", "You: [image] why", ""])
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(frame.border_subtitle, "")
+
+    async def test_failed_image_look_saves_and_sends_nothing_and_keeps_the_draft(self):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+                patch("ui.composer.ImageGrab.grabclipboard", return_value=Image.new("RGB", (4, 4))), \
+                patch("ui.chat_submission.look", side_effect=RuntimeError("private request")):
+            app = CoraApp()
+            async with app.run_test(size=(90, 35)) as pilot:
+                await pilot.pause()
+                composer = app.query_one("#chat-input", ChatComposer)
+                persistence = app.submission.persistence
+                persistence.call_database = AsyncMock()
+                app.live.send_text = AsyncMock()
+                with patch.object(app, "notify") as notify:
+                    await pilot.press("ctrl+v", "w", "h", "y", "enter")
+                    await app.workers.wait_for_complete()
+                    await pilot.pause()
+                    notify.assert_called_once()
+                persistence.call_database.assert_not_awaited()
+                app.live.send_text.assert_not_awaited()
+                self.assertEqual(composer.text, "why")
+                self.assertIsNotNone(composer.image_png)
+                activity = "\n".join(app.activity.entries)
+                self.assertIn("Pasted image look failed (RuntimeError).", activity)
+                self.assertNotIn("private request", activity)
 
     async def test_escape_removes_an_attached_image(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \

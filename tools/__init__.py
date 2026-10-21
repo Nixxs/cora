@@ -8,12 +8,13 @@ from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_argumen
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
+from .show_web_image import ShowWebImageTool, SCHEMA as WEB_IMAGE_SCHEMA, validate_arguments as validate_web_image_arguments
 from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, validate_arguments as validate_random_number_arguments
 
 
 def create_tool_registry(
     *, get_connection, is_closing, shutdown, request_standby, write_debug, schedule,
-    screen_looking=lambda: True,
+    screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -32,4 +33,6 @@ def create_tool_registry(
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)
     registry.register(SCREEN_SCHEMA, validate_screen_arguments, screen.handle)
+    web_image = ShowWebImageTool(get_connection, is_closing, show_image, write_debug)
+    registry.register(WEB_IMAGE_SCHEMA, validate_web_image_arguments, web_image.handle)
     return registry

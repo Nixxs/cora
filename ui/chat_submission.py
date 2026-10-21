@@ -1,5 +1,7 @@
 """Typed-message transaction and draft state, independent of worker scheduling."""
+import asyncio
 from uuid import UUID, uuid4
+from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION, look
 from ui.composer import ChatComposer
 
 
@@ -47,6 +49,25 @@ class ChatSubmission:
         try:
             if self.is_closing():
                 return
+            image_seen = None
+            if composer.image_png:
+                # A separate one-off request reads the image so it never fills Cora's session.
+                try:
+                    image_seen = await asyncio.to_thread(
+                        look, message or PASTE_QUESTION, composer.image_png,
+                        mime="image/png", instructions=PASTE_INSTRUCTIONS,
+                    )
+                except Exception as error:
+                    # Errors may echo the request; log only the type.
+                    self.write_activity(
+                        f"Pasted image look failed ({type(error).__name__}). Draft kept; nothing sent.",
+                        "Image look failed",
+                    )
+                    self.notify("Message not sent: the image could not be read. Draft kept.", severity="error")
+                    return
+                self.write_activity("Pasted image read for Cora", "Image read")
+                if self.is_closing():
+                    return
             # Image bytes are never stored; the saved and shown text only marks one was sent.
             shown = f"[image] {message}".rstrip() if composer.image_png else message
             try:
@@ -70,8 +91,8 @@ class ChatSubmission:
             try:
                 self.backend_work.start_typed_request()
                 self.trace("typed.submit", message_id=str(message_id))
-                if composer.image_png:
-                    await self.live.send_text(message, image_png=composer.image_png)
+                if image_seen:
+                    await self.live.send_text(message, image_seen=image_seen)
                 else:
                     await self.live.send_text(message)
                 self.trace("typed.sent", message_id=str(message_id))

@@ -470,3 +470,35 @@ ModelSettingsScreen {
     margin: 1 0 0 0;
     width: 1fr;
 }
+
+ImageScreen {
+    align: center middle;
+    background: #141820 70%;
+}
+
+#image-view {
+    width: 90%;
+    height: 90%;
+    padding: 0 1;
+    background: #141820;
+    border: round #7799cc;
+}
+
+#image-view-caption, #image-view-hint {
+    width: 1fr;
+    color: #e0e6ef;
+}
+
+#image-view-hint {
+    color: #8f98a8;
+}
+
+/* A fixed area so the auto-sized image fits inside it, keeping its shape. */
+#image-view-frame {
+    height: 1fr;
+}
+
+#image-view-image {
+    width: auto;
+    height: auto;
+}

@@ -24,12 +24,12 @@ class LookAtScreenToolTests(unittest.IsolatedAsyncioTestCase):
     def items(self):
         return [entry.kwargs["item"] for entry in self.connection.response.item.create.await_args_list]
 
-    def test_registered_last_with_a_strict_question_schema(self):
+    def test_registered_with_a_strict_question_schema(self):
         registry = create_tool_registry(
             get_connection=lambda: None, is_closing=lambda: False, shutdown=AsyncMock(),
             request_standby=MagicMock(), write_debug=MagicMock(), schedule=MagicMock(),
         )
-        self.assertEqual(registry.schemas()[-1], SCHEMA)
+        self.assertIn(SCHEMA, registry.schemas())
         validate_arguments({"question": "What error is shown?"})
         for arguments in ({}, {"question": " "}, {"question": "x" * 501}, {"question": 3},
                           {"question": "q", "monitor": 2}):

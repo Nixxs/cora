@@ -77,7 +77,10 @@ not change an existing database's password or user. Back up important data.
 - **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in
   the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for
   an image). The box border shows “image attached · Esc removes”. Type a question
-  if you like and press Enter; the image goes with that one message. The chat and
+  if you like and press Enter; the image goes with that one message. A separate
+  one-off model request reads the image with your message as the question, and
+  only its short description enters Cora's session, so she cannot look at the
+  image again later. The chat and
   database show “[image]” in its place; the image itself is never saved. Large
   images are scaled
   to 2048 pixels on the longest side. Works the same in the dashboard chat.
@@ -88,6 +91,14 @@ not change an existing database's password or user. Back up important data.
   history. The screenshot is never saved. Activity shows “Screen captured” each time.
   Turn it off under Settings > General; nothing is captured while it is off. The
   switch resets to on when Cora restarts.
+- **Pictures from the web:** ask to see something (“show me the cafe”), or Cora may
+  show a picture on her own. She picks a page from web search and the app fetches
+  that page's preview image (its `og:image`), only from public https sites, and
+  draws it small in the chat with coloured blocks, captioned and with the site's
+  name; click the name to open the page in your browser. Click the picture to see
+  it sharply in a pop-up (Sixel in Windows Terminal); Esc or a click closes it.
+  She does not see the picture herself. The image is never saved; the database
+  keeps “[image] caption (link)”. Copying chat text skips the picture.
 - **Check connection state:** the left side of the bottom row shows Active,
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
 - **Close Live without quitting:** click Active to enter Standby. Wait for speech
@@ -814,8 +825,9 @@ features it helps check, and package last.
     message. The Live voice model takes no image input, but its Responses
     backend does: an `input_image` part added to the typed message is read
     correctly (checked with a code screenshot in
-    [examples/image_input_check/](examples/image_input_check/)), so no separate
-    image model is needed.
+    [examples/image_input_check/](examples/image_input_check/)). The backend
+    session's history is limited (128 items and 4 MB in total), so the image is
+    read by a separate one-off request and only the text description is added.
   - *Seeing the screen:* a tool Cora can call to capture the person's current
     screen when asked (for example "what's this error?"), never silently.
   - *Showing images:* Cora can put web images into the chat (such as photos of a

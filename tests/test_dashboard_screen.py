@@ -306,7 +306,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("You: Hi Cora", "\n".join(line.text for line in chat.lines))
 
     async def test_dashboard_attaches_removes_and_sends_a_pasted_image_like_the_chat(self):
-        with patch("ui.composer.ImageGrab.grabclipboard", return_value=Image.new("RGB", (4, 4))):
+        with patch("ui.composer.ImageGrab.grabclipboard", return_value=Image.new("RGB", (4, 4))), \
+                patch("ui.chat_submission.look", return_value="A black square."):
             async with keyboard_tests.running_app() as (app, pilot):
                 await pilot.click("#view-button")
                 await pilot.pause()
@@ -325,7 +326,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(app.workers.wait_for_complete(), 3)
                 await pilot.pause()
                 self.assertEqual(app.live.send_text.await_args.args, ("What's this?",))
-                self.assertTrue(app.live.send_text.await_args.kwargs["image_png"].startswith(b"\x89PNG"))
+                self.assertEqual(app.live.send_text.await_args.kwargs, {"image_seen": "A black square."})
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(box.border_subtitle, "")
 

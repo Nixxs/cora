@@ -199,6 +199,7 @@ class CoraApp(App):
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
             screen_looking=lambda: self.screen_looking,
+            show_image=self.conversation.show_image,
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
         self.submission = ChatSubmission(
