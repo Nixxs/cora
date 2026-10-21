@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from rich.text import Text
 from textual import work
@@ -8,6 +8,7 @@ from textual.screen import Screen
 from textual.widgets import Button, Static
 
 from devices.audio_bands import BAND_COUNT
+from memory.store import fade_weight
 from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
@@ -124,7 +125,9 @@ class DashboardScreen(Screen):
                 with Vertical(id="memories-box", classes="dashboard-box"):
                     yield Meters(id="memory-kinds", placeholder="loading…")
                     yield Static("new per day", classes="dashboard-label")
-                    yield BrailleGraph(id="memory-days", pulse=True, grow=True)
+                    # Older days dim as recall fades them.
+                    yield BrailleGraph(id="memory-days", pulse=True, grow=True,
+                                       shade=lambda days: fade_weight(timedelta(days=days)))
                     yield Static("waiting", classes="dashboard-label")
                     yield Static(id="memory-pending")
                 with Vertical(id="interests-box", classes="dashboard-box"):

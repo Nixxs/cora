@@ -109,6 +109,7 @@ class MemoryRecord(Base):
             "corrects IS NULL OR (corrects <> id AND correction_checked_at IS NOT NULL)",
             name="memories_correction_check",
         ),
+        CheckConstraint("fades_at IS NULL OR fade_checked_at IS NOT NULL", name="memories_fade_check"),
         {"schema": "public"},
     )
 
@@ -131,6 +132,8 @@ class MemoryRecord(Base):
         ForeignKey("public.memories.id", name="memories_corrects_fkey", ondelete="RESTRICT"),
     )
     correction_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fades_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fade_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PersonRecord(Base):

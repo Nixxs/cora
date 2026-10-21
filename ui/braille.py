@@ -59,13 +59,14 @@ class BrailleGraph(Widget):
     """A btop-style braille graph that fills whatever size it is given.
 
     As bars, each value is one bar across the width rather than a moment in a scrolling history.
+    A shade maps a point's age (in points, 0 newest) to a brightness from 0 to 1, dimming older cells.
     """
 
     values = reactive(())
 
     def __init__(
         self, maximum: float = 1.0, downward: bool = False, bars: bool = False, pulse: bool = False,
-        grow: bool = False, **kwargs,
+        grow: bool = False, shade=None, **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.maximum = maximum
@@ -73,6 +74,7 @@ class BrailleGraph(Widget):
         self.bars = bars
         self.pulse = pulse
         self.grow = grow
+        self.shade = shade
         self.grow_started = None
         self.grow_timer = None
 
@@ -100,14 +102,26 @@ class BrailleGraph(Widget):
             # Eases out: fast at first, slowing as it reaches the real values.
             values = tuple(value * (1 - (1 - progress) ** 2) for value in values)
         rows = draw(values, self.size.width, self.size.height, self.maximum, self.downward)
-        if not (self.pulse and self.values):
+        if not (self.pulse and self.values) and self.shade is None:
             return "\n".join(rows)
+        text = Text("\n".join(rows))
+        width = self.size.width
+        if self.shade is not None:
+            background = self.background_colors[1]
+            for column in range(width):
+                # The newer of the cell's two points sets its shade.
+                age = 2 * (width - 1 - column)
+                style = Style(color=self.styles.color.blend(background, 1 - self.shade(age)).rich_color)
+                for row in range(len(rows)):
+                    start = row * (width + 1) + column
+                    text.stylize(style, start, start + 1)
+        if not (self.pulse and self.values):
+            return text
         # 0 to 1 and back: brightest halfway through each pulse.
         level = (1 - cos(2 * pi * monotonic() / PULSE_SECONDS)) / 2
         style = Style(color=self.styles.color.blend(WHITE, level).rich_color)
-        text = Text("\n".join(rows))
         for row in range(len(rows)):
             # The last cell of each row holds the newest point.
-            end = (row + 1) * (self.size.width + 1) - 1
+            end = (row + 1) * (width + 1) - 1
             text.stylize(style, end - 1, end)
         return text
