@@ -3,11 +3,11 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
-from math import isfinite
+from math import isfinite, log2
 from uuid import UUID
 
 from pgvector import Vector
-from sqlalchemy import Engine, and_, case, exists, func, or_, select
+from sqlalchemy import Engine, Float, and_, case, cast, exists, extract, func, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from storage.models import (
@@ -47,6 +47,12 @@ PENDING_FADE = (
 # Recall prefers the newer memory; a corrected one stays stored as history.
 _newer = aliased(MemoryRecord)
 NOT_CORRECTED = ~exists().where(_newer.corrects == MemoryRecord.id)
+# Recall fades with age: a memory's weight halves every half-life, down to the floor.
+# A dated memory whose day has passed counts as fully faded.
+FADE_HALF_LIFE = timedelta(days=90)
+FADE_FLOOR = 0.5
+PASSED = func.coalesce(MemoryRecord.fades_at <= func.current_timestamp(), False)
+NOT_PASSED = ~PASSED
 
 
 def validate_search_limit(limit: int) -> None:
@@ -85,6 +91,7 @@ class MemoryMatch:
     conversation_id: UUID
     source_created_at: datetime
     distance: float
+    faded: bool
 
 
 @dataclass(frozen=True)
@@ -100,21 +107,26 @@ class MemoryStore:
         self.engine = engine
 
     def search_memories(self, query_embedding: list[float], limit: int = 8) -> list[MemoryMatch]:
-        """Return nearest embedded user memories, not vectors or full chat histories."""
+        """Return the closest embedded user memories, newer ones ranked ahead of faded ones."""
         validate_search_limit(limit)
         vector = validate_memory_embedding(query_embedding)
-        distance = MemoryRecord.embedding.cosine_distance(vector).label("distance")
+        distance = MemoryRecord.embedding.cosine_distance(vector)
+        half_lives = cast(extract("epoch", func.current_timestamp() - MessageRecord.created_at), Float) / (
+            FADE_HALF_LIFE.total_seconds())
+        weight = case((PASSED, FADE_FLOOR), else_=func.power(
+            0.5, func.least(func.greatest(half_lives, 0.0), log2(1 / FADE_FLOOR)),
+        ))
         with Session(self.engine) as session:
             rows = session.execute(select(
                 MemoryRecord.id, MemoryRecord.kind, MemoryRecord.text,
                 MemoryRecord.source_message_id, MessageRecord.conversation_id,
-                MessageRecord.created_at, distance,
+                MessageRecord.created_at, distance.label("distance"), PASSED.label("faded"),
             ).join(MessageRecord, MemoryRecord.source_message_id == MessageRecord.id).where(
                 MemoryRecord.embedding.is_not(None),
                 MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
                 MemoryRecord.duplicate_of.is_(None),
                 MessageRecord.role == "user", NOT_CORRECTED,
-            ).order_by(distance, MemoryRecord.id).limit(limit)).all()
+            ).order_by(((1 - distance) * weight).desc(), MemoryRecord.id).limit(limit)).all()
             return [MemoryMatch(*row) for row in rows]
 
     def get_memory(self, memory_id: UUID) -> MemoryRecord | None:
@@ -157,7 +169,7 @@ class MemoryStore:
             ).where(
                 MemoryRecord.kind.in_(PLAN_KINDS), MemoryRecord.duplicate_of.is_(None),
                 MessageRecord.role == "user", MessageRecord.created_at >= now - RECENT_PLAN_WINDOW,
-                NOT_CORRECTED,
+                NOT_CORRECTED, or_(MemoryRecord.fades_at.is_(None), MemoryRecord.fades_at > now),
             ).order_by(func.random()).limit(1))
 
     def get_pending_embedding_ids(self) -> list[UUID]:
@@ -322,6 +334,7 @@ class MemoryStore:
                     MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
                 ).where(
                     MessageRecord.role == "user", MemoryRecord.duplicate_of.is_(None), NOT_CORRECTED,
+                    NOT_PASSED,
                 ).order_by(
                     case((MemoryRecord.kind.in_(("fact", "preference")), 0), else_=1),
                     MessageRecord.created_at.desc(), MemoryRecord.id.desc(),

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 import memory.fade_memory as fading
 from memory.store import MemoryStore
 from session_config import BACKEND_MODEL
-from storage.models import MemoryRecord
+from storage.models import MEMORY_EMBEDDING_DIMENSIONS, MEMORY_EMBEDDING_MODEL, MemoryRecord, MessageRecord
 import test_deduplicate_memory as dedup_tests
 import test_memory_store as memory_tests
 
@@ -201,6 +201,40 @@ class FadeDatabaseTests(unittest.TestCase):
                     "correction_checked_at": SOURCE_DATE, **changes,
                 }))
         self.assertEqual(self.memories.get_pending_fade_ids(), [UUID(int=2), UUID(int=1)])
+
+    def add_said(self, number, *, days_ago, kind, vector, fades_at=None):
+        """An embedded memory from its own user message, said days_ago."""
+        now = datetime.now(timezone.utc)
+        message = self.store.save_message(
+            self.conversation_id, message_id=uuid4(), role="user", text=f"Said {number}",
+            channel="voice", status="completed",
+        )
+        with Session(self.engine) as session, session.begin():
+            session.get(MessageRecord, message.id).created_at = now - timedelta(days=days_ago)
+            session.add(MemoryRecord(
+                id=UUID(int=number), source_message_id=message.id, kind=kind, text=f"Memory {number}",
+                evidence=message.text, embedding=list(vector) + [0.0] * (MEMORY_EMBEDDING_DIMENSIONS - 2),
+                embedding_model=MEMORY_EMBEDDING_MODEL, embedding_created_at=now,
+                fades_at=fades_at, fade_checked_at=None if fades_at is None else now,
+            ))
+
+    def test_recall_ranks_old_memories_lower_and_skips_passed_ones_but_keeps_rows(self):
+        now = datetime.now(timezone.utc)
+        self.add_said(2, days_ago=200, kind="fact", vector=(1, 0))       # exact match, fully faded by age
+        self.add_said(3, days_ago=0, kind="task", vector=(1, 1),         # weaker match, said today
+                      fades_at=now + timedelta(days=2))
+        self.add_said(4, days_ago=0, kind="task", vector=(1, 0.2),       # close match, day passed
+                      fades_at=now - timedelta(hours=1))
+        matches = self.memories.search_memories([1.0] + [0.0] * (MEMORY_EMBEDDING_DIMENSIONS - 1))
+        self.assertEqual([(match.memory_id, match.faded) for match in matches],
+                         [(UUID(int=3), False), (UUID(int=2), False), (UUID(int=4), True)])
+        context = self.memories.get_startup_context()
+        for kept in ("Memory 2", "Memory 3", "Dentist on Friday"):
+            self.assertIn(kept, context)
+        self.assertNotIn("Memory 4", context)
+        plans = {self.memories.recent_plan(now) for _ in range(20)}
+        self.assertLessEqual(plans, {"Memory 3", "Dentist on Friday"})
+        self.assertIsNotNone(self.memories.get_memory(UUID(int=4)))
 
     def test_service_saves_date_with_mocked_model(self):
         day = date.today() + timedelta(days=3)
