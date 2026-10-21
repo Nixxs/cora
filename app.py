@@ -170,6 +170,8 @@ class CoraApp(App):
         self.requested_standby_timer = None
         self.requested_standby_deadline = 0.0
         self.conversation_end_timer = None
+        # Settings > General. Kept for this run only; not saved yet.
+        self.screen_looking = True
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -196,6 +198,8 @@ class CoraApp(App):
             request_standby=self.request_standby,
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
+            screen_looking=lambda: self.screen_looking,
+            show_image=self.conversation.show_image,
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
         self.submission = ChatSubmission(
@@ -455,8 +459,10 @@ class CoraApp(App):
         self.submission.submitted(event)
 
     @work(group="keyboard-submit")
-    async def submit_keyboard_message(self, message: str, message_id: UUID, composer: ChatComposer) -> None:
-        await self.submission.submit_keyboard_message(message, message_id, composer)
+    async def submit_keyboard_message(
+        self, message: str, message_id: UUID, composer: ChatComposer, image_png: bytes | None = None
+    ) -> None:
+        await self.submission.submit_keyboard_message(message, message_id, composer, image_png)
 
     def record_chat_message(self, role: str, text: str, channel: str) -> None:
         self.conversation_persistence.record_chat_message(role, text, channel)
@@ -715,7 +721,16 @@ class CoraApp(App):
             self.notify("Could not load model settings. Check Activity.", severity="error")
             return
         if not self.closing:
-            self.push_screen(ModelSettingsScreen(models, self.save_model_setting))
+            self.push_screen(ModelSettingsScreen(
+                models, self.save_model_setting, self.screen_looking, self.set_screen_looking,
+            ))
+
+    def set_screen_looking(self, enabled: bool) -> None:
+        self.screen_looking = enabled
+        self.activity.write(
+            "Cora can look at the screen." if enabled else "Cora cannot look at the screen.",
+            "Screen looking on" if enabled else "Screen looking off",
+        )
 
     @work(group="model-settings-save")
     async def save_model_setting(self, area: str, model: str) -> None:

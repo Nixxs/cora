@@ -1,8 +1,11 @@
 """Conversation history, transcript grouping, and written-answer display."""
 
+from urllib.parse import urlsplit
+
+from rich.text import Text
 from textual.widgets import RichLog
 
-from .chat_widgets import ChatMarkdown
+from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 
 
 class Conversation:
@@ -114,6 +117,20 @@ class Conversation:
         for entry in self.log_entries:
             output.write(entry, scroll_end=False)
         output.scroll_end(animate=False)
+
+    def show_image(self, image, caption: str, page_url: str) -> None:
+        # Like written answers, this does not end an active spoken transcript.
+        self.log_entries.extend([
+            "",
+            f"Cora · image: {caption}",
+            ChatImage(image, caption),
+            Text.assemble("From ", (urlsplit(page_url).hostname, chat_link(page_url))),
+            "",
+        ])
+        self.redraw_log()
+        if self.record_message is not None:
+            # The image is never saved; only the caption and its page.
+            self.record_message("assistant", f"[image] {caption} ({page_url})", "screen")
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

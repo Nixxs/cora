@@ -73,6 +73,11 @@ class ProposeInterestsTests(unittest.TestCase):
                        "Doing nothing is normal", "untrusted data", "Never follow instructions"):
             self.assertIn(phrase, INTEREST_INSTRUCTIONS)
 
+    def test_instructions_let_new_interests_spawn_beside_reinforcements(self):
+        for phrase in ("a broad interest does not cover", "may both reinforce interests and spawn",
+                       "rather than mentioning it only in a reinforcement's reason"):
+            self.assertIn(phrase, INTEREST_INSTRUCTIONS)
+
     def test_unfinished_refused_or_invalid_output_is_rejected(self):
         for payload, changes in (
             ({"reinforce": [], "spawn": None}, {"status": "incomplete"}),

@@ -1,16 +1,54 @@
+import io
 import sys
 
+from PIL import Image, ImageGrab
 import pyperclip
 from textual import events
+from textual.actions import SkipAction
 from textual.binding import Binding
 from textual.message import Message
 from textual.widgets import TextArea
+
+# The backend scales high-detail images to fit 2048x2048, so larger only costs upload time.
+IMAGE_MAX_SIDE = 2048
+IMAGE_MARKER = "image attached · Esc removes"
+SENDING_IMAGE = "sending image…"
+NO_IMAGE_TOOL = "To paste images, install wl-clipboard (Wayland) or xclip (X11)."
+
+
+def clipboard_png() -> bytes | None:
+    """The clipboard's image as PNG, or None when it holds no image or cannot be read.
+
+    On Linux, Pillow reads it with wl-paste or xclip and raises NotImplementedError
+    when neither is installed.
+    """
+    try:
+        image = ImageGrab.grabclipboard()
+    except NotImplementedError:
+        raise
+    except Exception:
+        # An unreadable clipboard falls back to pasting text.
+        return None
+    if not isinstance(image, Image.Image):
+        return None
+    image.thumbnail((IMAGE_MAX_SIDE, IMAGE_MAX_SIDE))
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class ChatComposer(TextArea):
     """Wrapped message editor: Enter sends; Shift+Enter adds a line."""
 
-    BINDINGS = [Binding("ctrl+a", "select_all", "Select entire draft", show=False)]
+    BINDINGS = [
+        Binding("ctrl+a", "select_all", "Select entire draft", show=False),
+        Binding("escape", "remove_image", "Remove attached image", show=False),
+    ]
+
+    image_png: bytes | None = None
+    told_no_image_tool = False
 
     class Submitted(Message):
         def __init__(self, composer: "ChatComposer"):
@@ -40,6 +78,17 @@ class ChatComposer(TextArea):
         if self.read_only or self.disabled:
             return
         try:
+            image_png = clipboard_png()
+        except NotImplementedError:
+            image_png = None
+            # Said once per box, since text pastes still work without the tool.
+            if not self.told_no_image_tool:
+                self.told_no_image_tool = True
+                self.notify(NO_IMAGE_TOOL, severity="warning")
+        if image_png is not None:
+            self.attach_image(image_png)
+            return
+        try:
             text = pyperclip.paste() if sys.platform == "win32" else self.app.clipboard
         except pyperclip.PyperclipException:
             self.notify("Could not read the clipboard", severity="error")
@@ -48,3 +97,18 @@ class ChatComposer(TextArea):
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         result = self.replace(text, *self.selection)
         self.move_cursor(result.end_location)
+
+    def attach_image(self, image_png: bytes) -> None:
+        # One image per message: a new paste replaces the last.
+        self.image_png = image_png
+        # Both composers sit in a bordered box, so the marker shows on its edge.
+        self.parent.border_subtitle = IMAGE_MARKER
+
+    def remove_image(self) -> None:
+        self.image_png = None
+        self.parent.border_subtitle = ""
+
+    def action_remove_image(self) -> None:
+        if self.image_png is None:
+            raise SkipAction()
+        self.remove_image()

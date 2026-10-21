@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 
-from textual.widgets import Select
+from textual.widgets import Select, Switch, TabbedContent
 
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.keyboard_persistence import KeyboardPersistence
@@ -79,6 +79,29 @@ class ModelSettingsScreenTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(app, "request_live_transition") as transition, patch.object(app, "notify"):
                 await app.save_model_setting("delegation", "gpt-6-luna").wait()
             transition.assert_not_called()
+
+    async def test_general_page_switch_turns_screen_looking_off_and_on(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.persistence.load_models.return_value = MODELS
+            self.assertTrue(app.screen_looking)
+            await self.open_settings(app, pilot)
+            app.screen.query_one(TabbedContent).active = "settings-general"
+            await pilot.pause()
+            switch = app.screen.query_one("#screen-looking", Switch)
+            self.assertTrue(switch.value)
+            await pilot.click("#screen-looking")
+            await pilot.pause()
+            self.assertFalse(app.screen_looking)
+            self.assertIn("Cora cannot look at the screen.", "\n".join(app.activity.entries))
+            await pilot.click("#screen-looking")
+            await pilot.pause()
+            self.assertTrue(app.screen_looking)
+            await pilot.press("escape")
+            await pilot.pause()
+            # Reopening shows the current value.
+            app.screen_looking = False
+            await self.open_settings(app, pilot)
+            self.assertFalse(app.screen.query_one("#screen-looking", Switch).value)
 
     async def test_close_button_dismisses(self):
         async with keyboard_tests.running_app() as (app, pilot):

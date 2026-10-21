@@ -74,6 +74,37 @@ not change an existing database's password or user. Back up important data.
 
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in
+  the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for
+  an image). The box border shows “image attached · Esc removes”. Type a question
+  if you like and press Enter; the image goes with that one message. While it is
+  being sent (“sending image…”) you can keep typing; the next message waits until
+  it is done, and if sending fails your draft and image come back. A separate
+  one-off model request reads the image with your message as the question, and
+  only its short description enters Cora's session, so she cannot look at the
+  image again later. The chat shows a small copy of the image under your message
+  (click it to see it sharply); the
+  database only shows “[image]” in its place, and the image itself is never saved. Large
+  images are scaled
+  to 2048 pixels on the longest side. Works the same in the dashboard chat.
+  On Linux, image pasting needs `wl-clipboard` (Wayland) or `xclip` (X11)
+  installed; without one Cora says so once and pastes text as usual. The Linux
+  path is tested with stand-ins only, not yet on a real Linux desktop.
+- **Show Cora your screen:** ask her to look at your screen, or let her look on her
+  own when it would help (for example you mention something on it). She takes one
+  screenshot of the main monitor and asks a separate one-off model request about it;
+  only that short text answer enters her session, so images never fill its limited
+  history. The screenshot is never saved. Activity shows “Screen captured” each time.
+  Turn it off under Settings > General; nothing is captured while it is off. The
+  switch resets to on when Cora restarts.
+- **Pictures from the web:** ask to see something (“show me the cafe”), or Cora may
+  show a picture on her own. She picks a page from web search and the app fetches
+  that page's preview image (its `og:image`), only from public https sites, and
+  draws it small in the chat with coloured blocks, captioned and with the site's
+  name; click the name to open the page in your browser. Click the picture to see
+  it sharply in a pop-up (Sixel in Windows Terminal); Esc or a click closes it.
+  She does not see the picture herself. The image is never saved; the database
+  keeps “[image] caption (link)”. Copying chat text skips the picture.
 - **Check connection state:** the left side of the bottom row shows Active,
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
 - **Close Live without quitting:** click Active to enter Standby. Wait for speech
@@ -768,8 +799,9 @@ features it helps check, and package last.
 
 *Phase 2 — doing things*
 
-7. MCP M1–M3, starting with GitHub.
-8. Image support: pasting, the screen tool, then showing images.
+7. Image support: pasting, the screen tool, then showing images (Cora's own
+   pick; it does not depend on MCP).
+8. MCP M1–M3, starting with GitHub.
 
 *Phase 3 — noticing things*
 
@@ -793,6 +825,21 @@ features it helps check, and package last.
 
 #### Details, in order
 
+- **Image support:** three separate pieces.
+  - *Pasting images into the chat:* terminals do not paste images, so a key
+    binding reads the image from the system clipboard and sends it with the
+    message. The Live voice model takes no image input, but its Responses
+    backend does: an `input_image` part added to the typed message is read
+    correctly (checked with a code screenshot in
+    [examples/image_input_check/](examples/image_input_check/)). The backend
+    session's history is limited (128 items and 4 MB in total), so the image is
+    read by a separate one-off request and only the text description is added.
+  - *Seeing the screen:* a tool Cora can call to capture the person's current
+    screen when asked (for example "what's this error?"), never silently.
+  - *Showing images:* Cora can put web images into the chat (such as photos of a
+    suggested restaurant), the way code blocks appear on screen. No image
+    generation. Terminal image support varies, so this needs a Textual image
+    widget with a fallback (a lower-resolution render or a link).
 - **MCP tools (Cora-prime):** add an MCP client so capabilities come from
   connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
   common `mcpServers` format, lists each user's servers; their credentials stay on
@@ -819,20 +866,6 @@ features it helps check, and package last.
   and short guidance for Cora, tested before release. Custom servers can still be
   added by hand in `mcp.json` for advanced use. With many servers, a router tool
   may later replace exposing every tool.
-- **Image support:** three separate pieces.
-  - *Pasting images into the chat:* terminals do not paste images, so a key
-    binding reads the image from the system clipboard and sends it with the
-    message. The Live voice model takes no image input, but its Responses
-    backend does: an `input_image` part added to the typed message is read
-    correctly (checked with a code screenshot in
-    [examples/image_input_check/](examples/image_input_check/)), so no separate
-    image model is needed.
-  - *Seeing the screen:* a tool Cora can call to capture the person's current
-    screen when asked (for example "what's this error?"), never silently.
-  - *Showing images:* Cora can put web images into the chat (such as photos of a
-    suggested restaurant), the way code blocks appear on screen. No image
-    generation. Terminal image support varies, so this needs a Textual image
-    widget with a fallback (a lower-resolution render or a link).
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are
@@ -877,8 +910,39 @@ features it helps check, and package last.
   awareness, and the on-demand screen tool, each get an on/off control like the
   existing microphone and audio controls, off by default, with a visible
   indicator while active.
-- Add an emotions subsystem (such as excitement), separate from the slower-moving
-  relationship.
+- **Emotions:** short-lived feelings (such as excitement or hurt), separate from
+  the slower-moving relationship. Nothing depends on them, and the foundation
+  already limits mood to tone, warmth and initiative, so they can move earlier
+  (Cora chose image support first). Agreed so far: she reports her own feelings
+  with a silent tool during a conversation, rather than a background watcher
+  judging her or feelings only appearing after the conversation ends. Planned
+  steps:
+  1. **Rules:** a fixed set of feelings, each a level from 0 to 1. A report
+     raises a level by a capped amount (small, medium or strong, at most about
+     0.3), and levels fade back towards 0. Plain code, like memory fading.
+  2. **Storage:** an append-only `feeling_events` table (feeling, strength,
+     short reason, time, conversation). The current level is worked out from
+     the events and the fading, which also keeps the history for the graph.
+  3. **`feel` tool:** strict schema (feeling, strength, reason), silent, only
+     for a genuine reaction in the moment and never to steer the person; code
+     limits how often it is used per conversation, and each feeling goes to
+     Activity.
+  4. **Prompt:** at each connect, any feeling still noticeably high is added as
+     a short "How you're feeling right now" section.
+  5. **Dashboard:** a Feelings box with one braille line per feeling over the
+     last few hours, pulsing when a feeling jumps, and the latest reason
+     underneath.
+  6. **Later:** findings she reacts to and conversation appraisals can also
+     raise feelings through the same rules.
+
+  Guardrails: feelings always fade and each rise is capped; no feeling is
+  designed for guilt, neediness or possessiveness; feelings never reach tool or
+  permission logic. Still to decide: which feelings (suggested excitement,
+  contentment, curiosity, irritation and hurt), how fast they fade (suggested
+  half gone after about 30 minutes), and whether her words always show a
+  feeling or she decides (suggested she decides). The idea came from her
+  pushing back with "don't put words in my mouth, I do care", which only
+  shaped that one reply.
 - **Installable Cora (paused):** an installer for non-technical users is not
   planned for now. Notes for if it returns: keep PostgreSQL rather than moving
   to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was

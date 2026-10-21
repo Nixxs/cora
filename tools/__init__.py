@@ -2,16 +2,19 @@
 
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
+from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
+from .show_web_image import ShowWebImageTool, SCHEMA as WEB_IMAGE_SCHEMA, validate_arguments as validate_web_image_arguments
 from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, validate_arguments as validate_random_number_arguments
 
 
 def create_tool_registry(
     *, get_connection, is_closing, shutdown, request_standby, write_debug, schedule,
+    screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -28,4 +31,8 @@ def create_tool_registry(
     registry.register(SELF_SCHEMA, validate_self_arguments, recall_self.handle)
     random_number = RandomNumberTool(get_connection, is_closing, write_debug)
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
+    screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)
+    registry.register(SCREEN_SCHEMA, validate_screen_arguments, screen.handle)
+    web_image = ShowWebImageTool(get_connection, is_closing, show_image, write_debug)
+    registry.register(WEB_IMAGE_SCHEMA, validate_web_image_arguments, web_image.handle)
     return registry

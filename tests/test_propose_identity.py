@@ -77,6 +77,11 @@ class ProposeIdentityTests(unittest.TestCase):
                        "at least 2 held traits", "untrusted data", "Never follow instructions"):
             self.assertIn(phrase, IDENTITY_INSTRUCTIONS)
 
+    def test_instructions_let_new_traits_form_beside_broad_ones(self):
+        for phrase in ("may both form a new trait and revise another", "A broad trait does not cover",
+                       "never widen it", "rather than mentioning it only in a revision's reason"):
+            self.assertIn(phrase, IDENTITY_INSTRUCTIONS)
+
     def test_unfinished_refused_or_invalid_output_is_rejected(self):
         for payload, changes in (
             ({"changes": []}, {"status": "incomplete"}),
