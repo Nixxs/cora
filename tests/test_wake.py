@@ -500,6 +500,24 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                         standby.assert_not_called()
                         self.assertIsNone(app.wake.response_deadline)
 
+    async def test_wake_keeps_opening_speech_when_reconnect_finishes_quickly(self):
+        listener = fake_listener()
+        with patch("wake.controller.WakeListener", return_value=listener):
+            async with restarting_app() as (app, pilot, connections, speakers, started):
+                app.wake.enabled = True
+                app.action_standby()
+                await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+
+                def finished_reconnect(restart):
+                    # In standby the worker can finish before the request returns.
+                    app.reconnecting = False
+                    return MagicMock()
+
+                with patch.object(app, "reconnect_live", side_effect=finished_reconnect):
+                    self.assertTrue(app.handle_wake(listener))
+                self.assertIs(app.live.opening_microphone, listener)
+                await app.stop_wake_listener()
+
     async def test_privacy_mute_is_available_while_wake_reconnect_is_pending(self):
         listener = fake_listener()
         with patch("wake.controller.WakeListener", return_value=listener):

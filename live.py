@@ -456,7 +456,6 @@ class CoraLive:
         mic_working = False
         chunk_count = 0
         opening = self.opening_microphone
-
         try:
             if self.microphone_muted:
                 # Keep Live's timeline moving without opening a recording device.
@@ -470,6 +469,7 @@ class CoraLive:
                     # Continue the existing local capture; do not open a second
                     # device or send buffered room audio before Live is ready.
                     await self.started.wait()
+                    self.trace("microphone.opening_handoff", buffered_chunks=opening.audio.qsize())
                 source = opening.chunks() if opening is not None else microphone_chunks()
                 async with aclosing(source) as chunks:
                     async for chunk in chunks:
@@ -481,6 +481,7 @@ class CoraLive:
                         self._microphone_bands = (audio_bands(chunk), monotonic())
                         if not mic_working:
                             mic_working = True
+                            self.trace("microphone.first_chunk_sent", from_wake=opening is not None)
                             on_mic_status(True, "first audio chunk sent")
 
         except Exception as error:
