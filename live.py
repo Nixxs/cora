@@ -471,10 +471,19 @@ class CoraLive:
                     await self.started.wait()
                     self.trace("microphone.opening_handoff", buffered_chunks=opening.audio.qsize())
                 source = opening.chunks() if opening is not None else microphone_chunks()
+                began = monotonic()
+                sent_seconds = 0.0
                 async with aclosing(source) as chunks:
                     async for chunk in chunks:
                         if self.microphone_muted:
                             break
+                        if opening is not None:
+                            # Live drops audio beyond a 5 s burst or 1.2x real time; pace the
+                            # wake buffer within that (4 s burst, then 1.1x).
+                            ahead = sent_seconds - 4.0 - (monotonic() - began) * 1.1
+                            if ahead > 0:
+                                await asyncio.sleep(ahead / 1.1)
+                            sent_seconds += len(chunk) / 48000  # PCM16 mono at 24 kHz
                         chunk_count += 1
                         audio = base64.b64encode(chunk).decode("ascii")
                         await connection.session.input_audio.append(audio=audio)
