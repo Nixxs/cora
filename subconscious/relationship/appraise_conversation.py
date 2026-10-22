@@ -103,7 +103,8 @@ def describe(conversation_id: UUID, appraisal: Appraisal) -> str:
 
 
 def appraise_waiting_conversations(
-    engine: Engine, *, should_stop: Callable[[], bool], write_activity: Callable[[str, str], None],
+    engine: Engine, *, model: str = BACKEND_MODEL,
+    should_stop: Callable[[], bool], write_activity: Callable[[str, str], None],
 ) -> None:
     """Appraise and save every finished conversation still waiting, oldest first.
 
@@ -121,7 +122,7 @@ def appraise_waiting_conversations(
                 if should_stop():
                     return
                 appraisal = appraise_saved_conversation(
-                    conversations, conversation_id, client, BACKEND_MODEL, person_name,
+                    conversations, conversation_id, client, model, person_name,
                 )
                 appraisals.save(conversation_id, appraisal)
                 if not should_stop():

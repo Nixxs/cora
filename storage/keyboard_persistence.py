@@ -6,7 +6,9 @@ from uuid import UUID, uuid4
 from sqlalchemy import Engine
 
 from .conversation_store import ConversationStore
+from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
+from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
@@ -51,6 +53,15 @@ class KeyboardPersistence:
         person = PeopleStore(self._get_store().engine).current_person()
         return person.display_name if person is not None else None
 
+    def load_delegation_model(self) -> str:
+        return ModelSettingsStore(self._get_store().engine).model_for("delegation")
+
+    def load_models(self) -> dict:
+        return ModelSettingsStore(self._get_store().engine).models()
+
+    def save_model(self, area: str, model: str) -> None:
+        ModelSettingsStore(self._get_store().engine).set_model(area, model)
+
     def load_last_talked_at(self) -> datetime | None:
         return self._get_store().last_message_time(self.conversation_id)
 
@@ -59,6 +70,9 @@ class KeyboardPersistence:
 
     def load_recent_plan(self) -> str | None:
         return MemoryStore(self._get_store().engine).recent_plan(now=datetime.now(timezone.utc))
+
+    def load_dashboard_snapshot(self) -> DashboardSnapshot:
+        return read_dashboard_snapshot(self._get_store().engine, datetime.now(timezone.utc))
 
     def save_message(self, message_id: UUID, text: str) -> None:
         store = self._get_store()

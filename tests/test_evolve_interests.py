@@ -109,7 +109,10 @@ class EvolveInterestsTests(unittest.TestCase):
 class RunInterestCycleTests(unittest.TestCase):
     def setUp(self):
         self.engine = MagicMock()
+        settings = MagicMock()
+        settings.model_for.return_value = "subconscious-model"
         for name, value in (("build_engine", self.engine), ("OpenAI", MagicMock()),
+                            ("ModelSettingsStore", settings),
                             ("evolve_interests", "Evolved from 3 memories: no changes.")):
             patcher = patch(f"subconscious.interests.evolve_interests.{name}", return_value=value)
             setattr(self, name, patcher.start())
@@ -121,6 +124,9 @@ class RunInterestCycleTests(unittest.TestCase):
         store, client = self.evolve_interests.call_args.args
         self.assertIs(store.engine, self.engine)
         self.assertIs(client, self.OpenAI.return_value.__enter__.return_value)
+        self.ModelSettingsStore.assert_called_once_with(self.engine)
+        self.ModelSettingsStore.return_value.model_for.assert_called_once_with("subconscious")
+        self.assertEqual(self.evolve_interests.call_args.kwargs["model"], "subconscious-model")
         self.engine.dispose.assert_called_once_with()
 
     def test_failures_report_only_the_error_type_and_dispose(self):

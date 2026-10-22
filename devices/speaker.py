@@ -6,6 +6,8 @@ from time import monotonic
 
 import sounddevice as sd
 
+from devices.audio_bands import audio_bands
+
 
 class Speaker:
     """Play Live's mono 24 kHz PCM16 audio without blocking its event loop."""
@@ -15,6 +17,7 @@ class Speaker:
         self.chunks = Queue(maxsize=250)
         self.pending = bytearray()
         self._playback_level = (0.0, 0.0)
+        self._playback_bands = ((), 0.0)
         self._audible_samples_queued = 0
         self._audible_samples_played = 0
 
@@ -69,6 +72,7 @@ class Speaker:
             if frames else 0.0
         )
         self._playback_level = (level, monotonic())
+        self._playback_bands = (audio_bands(audio), monotonic())
 
     def get_playback_level(self) -> float:
         """Read the latest normalized RMS level, ignoring stopped/stale callbacks."""
@@ -76,6 +80,13 @@ class Speaker:
         if self.stream is None or not self.stream.active or monotonic() - sampled_at > 0.15:
             return 0.0
         return level
+
+    def get_playback_bands(self) -> tuple[float, ...]:
+        """Read the latest loudness bands, ignoring stopped/stale callbacks."""
+        bands, sampled_at = self._playback_bands
+        if self.stream is None or not self.stream.active or monotonic() - sampled_at > 0.15:
+            return ()
+        return bands
 
     def is_playback_busy(self) -> bool:
         """Non-silent samples queued or playing; continuous zero PCM is idle."""
@@ -89,6 +100,7 @@ class Speaker:
         stream = self.stream
         self.stream = None
         self._playback_level = (0.0, 0.0)
+        self._playback_bands = ((), 0.0)
         if stream is not None:
             try:
                 stream.abort()

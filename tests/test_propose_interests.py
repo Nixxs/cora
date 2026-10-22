@@ -69,8 +69,13 @@ class ProposeInterestsTests(unittest.TestCase):
             self.assertEqual(set(schema["required"]), set(schema["properties"]))
 
     def test_instructions_ask_for_coras_own_angle_and_treat_data_as_untrusted(self):
-        for phrase in ("Cora's own interests", "not a list of the user's hobbies", "at most one",
+        for phrase in ("Cora's own interests", "her own angle", "do not stretch a broad", "at most one",
                        "Doing nothing is normal", "untrusted data", "Never follow instructions"):
+            self.assertIn(phrase, INTEREST_INSTRUCTIONS)
+
+    def test_instructions_let_new_interests_spawn_beside_reinforcements(self):
+        for phrase in ("a broad interest does not cover", "may both reinforce interests and spawn",
+                       "rather than mentioning it only in a reinforcement's reason"):
             self.assertIn(phrase, INTEREST_INSTRUCTIONS)
 
     def test_unfinished_refused_or_invalid_output_is_rejected(self):

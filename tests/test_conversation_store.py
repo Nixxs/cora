@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -63,6 +64,20 @@ class ConversationStoreDatabaseTests(unittest.TestCase):
             "channel": "keyboard", "status": "completed", "delivery_status": "sent",
         }
         return self.store.save_message(self.conversation_id, **{**values, **changes})
+
+    def test_daily_message_counts_count_only_the_persons_messages_by_local_day(self):
+        now = datetime.now(timezone.utc)
+        self.assertEqual(self.store.daily_message_counts(now, 3), [0, 0, 0])
+        older = self.save()
+        self.save(channel="voice")
+        self.save(role="assistant", delivery_status="not_applicable")
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.messages SET created_at = created_at - interval '2 days' WHERE id = :id"
+            ), {"id": older.id})
+        self.assertEqual(self.store.daily_message_counts(now, 3), [1, 0, 1])
+        # Days older than the window are left out.
+        self.assertEqual(self.store.daily_message_counts(now, 2), [0, 1])
 
     def test_conversation_creation_retries_preserve_existing_record(self):
         first = self.store.get_conversation(self.conversation_id)

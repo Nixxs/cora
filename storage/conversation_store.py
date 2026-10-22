@@ -1,6 +1,6 @@
 """Small synchronous persistence service, independent of Cora and its UI."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import Engine, func, select, update
@@ -129,6 +129,20 @@ class ConversationStore:
                     MessageRecord.conversation_id != current_conversation_id
                 )
             )
+
+    def daily_message_counts(self, now: datetime, days: int) -> list[int]:
+        """Messages the person sent per local day, oldest first, ending today."""
+        first = now.astimezone().date() - timedelta(days=days - 1)
+        with Session(self.engine) as session:
+            sent_at = session.scalars(select(MessageRecord.created_at).where(
+                MessageRecord.role == "user", MessageRecord.created_at >= now - timedelta(days=days + 1),
+            )).all()
+        counts = [0] * days
+        for time in sent_at:
+            day = (time.astimezone().date() - first).days
+            if 0 <= day < days:
+                counts[day] += 1
+        return counts
 
     def last_conversation_summary(self, current_conversation_id: UUID) -> str | None:
         """Return the summary of the earlier run with the newest message, or None if it has none."""

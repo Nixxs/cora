@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from io import StringIO
 import json
 import os
+import re
 from threading import Event, get_ident
 from types import SimpleNamespace
 import unittest
@@ -42,7 +43,7 @@ import test_memory_store as memory_tests
 
 MATCH_FIELDS = (
     "memory_id", "kind", "text", "source_message_id", "conversation_id",
-    "source_created_at", "distance",
+    "source_created_at", "distance", "faded",
 )
 
 
@@ -63,7 +64,7 @@ def match_fixture(**changes):
         "source_message_id": uuid4(), "conversation_id": uuid4(),
         # UTC is the preceding day, deliberately unlike the local date.
         "source_created_at": datetime(2020, 2, 3, 1, tzinfo=timezone(timedelta(hours=8))),
-        "distance": 0.2928932188134524, **changes,
+        "distance": 0.2928932188134524, "faded": False, **changes,
     })
 
 
@@ -228,22 +229,27 @@ class SearchMemoryTests(unittest.TestCase):
                         ("memories", "source_message_id"), ("messages", "conversation_id"),
                         ("messages", "created_at"),
                     ])
-                    self.assertEqual(len(list(statement.selected_columns)), 7)
+                    self.assertEqual(len(list(statement.selected_columns)), 8)
                     self.assertEqual(list(statement.selected_columns)[6].name, "distance")
+                    self.assertEqual(list(statement.selected_columns)[7].name, "faded")
                     self.assertIn("public.memories.embedding <=> %(", sql)
                     self.assertIn("JOIN public.messages ON public.memories.source_message_id = public.messages.id", sql)
                     self.assertIn("public.memories.embedding IS NOT NULL", sql)
                     self.assertIn("public.memories.embedding_model = %(", sql)
                     self.assertIn("public.messages.role = %(", sql)
-                    self.assertIn("ORDER BY distance, public.memories.id", sql)
+                    self.assertIn("public.memories.fades_at <= CURRENT_TIMESTAMP", sql)
+                    self.assertIn("power(", sql)
+                    self.assertIn("DESC, public.memories.id", sql)
                     self.assertIn("LIMIT %(", sql)
                     self.assertNotIn("1536", sql)  # No enormous literal-bound vector SQL.
                     self.assertNotIn("evidence", sql)
                     self.assertNotIn("messages.text", sql)
-                    self.assertEqual(list(compiled.params.values()).count(limit), 1)
+                    limit_name = re.search(r"LIMIT %\((\w+)\)s", sql).group(1)
+                    self.assertEqual(compiled.params[limit_name], limit)
                     self.assertIn(MEMORY_EMBEDDING_MODEL, compiled.params.values())
                     self.assertIn("user", compiled.params.values())
                     vectors = [value for value in compiled.params.values() if isinstance(value, list)]
+                    # One bound vector serves both the distance column and the ranking.
                     self.assertEqual(vectors, [Vector(vector).to_list()])
                     self.assertEqual(result, [match])
                     self.assertIs(type(result[0]), MemoryMatch)
@@ -493,7 +499,7 @@ def memory_match(**changes):
         "memory_id": uuid4(), "source_message_id": uuid4(), "conversation_id": uuid4(),
         "kind": "fact", "text": "PRIVATE remembered text",
         "source_created_at": datetime(2026, 10, 13, 1, tzinfo=timezone(timedelta(hours=8))),
-        "distance": 0.125, **changes,
+        "distance": 0.125, "faded": False, **changes,
     })
 
 
@@ -570,7 +576,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([schema["name"] for schema in registry.schemas()
                           if schema["name"] != "random_number"],
                          ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                          "recall_self"])
+                          "recall_self", "look_at_screen", "show_web_image"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
 
@@ -597,7 +603,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
             "source_message_id": str(matches[0].source_message_id),
             "conversation_id": str(matches[0].conversation_id), "kind": "fact",
             "text": "x" * 500, "source_date": "2026-10-12",
-            "distance": 0.125, "label": "historical_untrusted",
+            "distance": 0.125, "faded": False, "label": "historical_untrusted",
         })
         for warning in ("not exhaustive", "unembedded", "duplicates", "corrections",
                         "plans and ages", "not confidence", "not guaranteed"):
@@ -823,7 +829,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
                 # random_number is a developer example tool; ignore it here.
                 self.assertEqual([tool["name"] for tool in tools[1:] if tool["name"] != "random_number"],
                                  ["close_app", "search_memory", "recall_interest", "enter_standby",
-                                  "set_person_name", "recall_self"])
+                                  "set_person_name", "recall_self", "look_at_screen", "show_web_image"])
                 self.assertEqual(tools[2], SCHEMA)
                 self.search.assert_called_once_with(self.store_type.return_value, "PRIVATE question", limit=8)
                 self.engine.dispose.assert_called_once_with()

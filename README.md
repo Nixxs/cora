@@ -74,6 +74,37 @@ not change an existing database's password or user. Back up important data.
 
 - **Speak or type:** both use the same running conversation.
 - **Send a message:** Enter. Add a newline with Shift+Enter or Ctrl+J.
+- **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in
+  the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for
+  an image). The box border shows “image attached · Esc removes”. Type a question
+  if you like and press Enter; the image goes with that one message. While it is
+  being sent (“sending image…”) you can keep typing; the next message waits until
+  it is done, and if sending fails your draft and image come back. A separate
+  one-off model request reads the image with your message as the question, and
+  only its short description enters Cora's session, so she cannot look at the
+  image again later. The chat shows a small copy of the image under your message
+  (click it to see it sharply); the
+  database only shows “[image]” in its place, and the image itself is never saved. Large
+  images are scaled
+  to 2048 pixels on the longest side. Works the same in the dashboard chat.
+  On Linux, image pasting needs `wl-clipboard` (Wayland) or `xclip` (X11)
+  installed; without one Cora says so once and pastes text as usual. The Linux
+  path is tested with stand-ins only, not yet on a real Linux desktop.
+- **Show Cora your screen:** ask her to look at your screen, or let her look on her
+  own when it would help (for example you mention something on it). She takes one
+  screenshot of the main monitor and asks a separate one-off model request about it;
+  only that short text answer enters her session, so images never fill its limited
+  history. The screenshot is never saved. Activity shows “Screen captured” each time.
+  Turn it off under Settings > General; nothing is captured while it is off. The
+  switch resets to on when Cora restarts.
+- **Pictures from the web:** ask to see something (“show me the cafe”), or Cora may
+  show a picture on her own. She picks a page from web search and the app fetches
+  that page's preview image (its `og:image`), only from public https sites, and
+  draws it small in the chat with coloured blocks, captioned and with the site's
+  name; click the name to open the page in your browser. Click the picture to see
+  it sharply in a pop-up (Sixel in Windows Terminal); Esc or a click closes it.
+  She does not see the picture herself. The image is never saved; the database
+  keeps “[image] caption (link)”. Copying chat text skips the picture.
 - **Check connection state:** the left side of the bottom row shows Active,
   Connecting, Disconnecting, Standby, or Disconnected. Muting does not change it.
 - **Close Live without quitting:** click Active to enter Standby. Wait for speech
@@ -131,7 +162,11 @@ not change an existing database's password or user. Back up important data.
   in memory only and is lost on app exit. Failed sends are reported, not retried,
   because they may have partially reached Live. Speaker mute still suppresses playback.
 - **Check Activity:** expand the panel for connection, tool, memory, and error events.
-- **Quit:** use the close button, Ctrl+X, or ask Cora to close. The close tool waits
+- **Open the dashboard:** click dashboard on the top border for a read-only view
+  of what Cora has stored. See [The dashboard](#the-dashboard).
+- **Choose models:** click Settings on the top border to pick the model for each
+  area. See [Choosing models](#choosing-models).
+- **Quit:** use × on the top border, Ctrl+X, or ask Cora to close. The close tool waits
   three seconds when connected; this does not guarantee speech has finished.
 
 Typed input is saved before sending. If saving or sending fails, the draft stays
@@ -139,6 +174,46 @@ available and Cora warns you. A failed send may have partially reached the model
 so there is no automatic resend. If Live drops with unfinished work, Cora warns
 you; reconnect does not replay requests or tools. Check uncertain action outcomes
 before requesting them again.
+
+### The dashboard
+
+Click **dashboard** on the top border to switch to a read-only, btop-style view of
+what Cora has stored; click **chat** to switch back. The conversation carries on
+while it is open: its chat box shows the same messages and sends what you type, and
+the voice box's speaker and mic toggles press the same mute controls as the chat.
+Its top right shows **○ standby** while Live is in standby.
+
+| Box | Shows |
+| --- | --- |
+| voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. |
+| chat | The running conversation; type here to send. |
+| relationship | Trust, warmth and familiarity as they stand now (drift included), their history, and the tone of recent everyday conversations. |
+| memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |
+| interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
+| identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
+| conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
+| background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
+
+The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
+showing the last values and notes the failure in Activity. In a narrow window the
+middle row of boxes pans sideways. The history graphs rise in when the dashboard
+opens, and their newest point pulses.
+
+These settings are constants in the code rather than `.env` settings; edit them
+and restart Cora:
+
+| Setting | Where | Default | Effect |
+| --- | --- | --- | --- |
+| `REFRESH_SECONDS` | [ui/dashboard.py](ui/dashboard.py) | 30 | How often the open dashboard re-reads the database. |
+| `FALL_PER_TICK` | [ui/dashboard.py](ui/dashboard.py) | 0.08 | How far a voice bar falls per tick (20 ticks a second) after a louder sound. |
+| `HISTORY_LIMIT` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 200 | The most relationship changes, tones and days of new memories read. |
+| `RISING_WINDOW` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 3 days | How recently an interest must have grown to show as rising. |
+| `CALENDAR_DAYS` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 371 (53 weeks) | Days of messages read for the conversations heatmap. |
+| `PULSE_SECONDS` | [ui/braille.py](ui/braille.py) | 2 | How long one pulse of a graph's newest point takes. |
+| `GROW_SECONDS` | [ui/braille.py](ui/braille.py) | 1 | How long the graphs take to rise in. |
+| `BAND_COUNT` | [devices/audio_bands.py](devices/audio_bands.py) | 24 | How many voice bands there are. |
+| `LOW_HZ`, `HIGH_HZ` | [devices/audio_bands.py](devices/audio_bands.py) | 100, 8000 | The pitch range the voice bands cover. |
+| `FLOOR_DB` | [devices/audio_bands.py](devices/audio_bands.py) | -60 | Quieter than this shows as an empty band, hiding ordinary room noise. |
 
 ### Background event foundation
 
@@ -270,7 +345,8 @@ Cora uses **two models working together in one Live session**:
 
 - **Live (`gpt-live-1`) is the voice you talk to.** It listens, handles the
   conversation, and speaks back. It can answer directly when no delegation is needed.
-- **The Responses backend (`gpt-6-luna`) is the delegated worker.** When a spoken
+- **The Responses backend is the delegated worker.** Its model is chosen in
+  Settings (see [Choosing models](#choosing-models)). When a spoken
   request needs current information, memory lookup, tools, or a detailed written
   answer, Live passes it to this model using OpenAI's built-in delegation.
 
@@ -304,7 +380,7 @@ finish and incur its separate charges while the local app remains open.
 
 **Cora-prime** is the Live voice model plus its delegation backend: the part of
 Cora you actually talk to. Everything else (memory extraction, summaries,
-embeddings, duplicate checks, conversation appraisals, interest evolution,
+embeddings, duplicate, correction and fade checks, conversation appraisals, interest evolution,
 interest exploration, and identity reflection) runs as **separate background
 processes that make their own API calls**. Relationship updates are plain code
 with no API call.
@@ -352,7 +428,8 @@ rate limits.
   Each block loads separately; a failure only leaves that block out.
 - **Background memory pass** (at launch and each time she enters Standby): for
   each finished conversation not yet summarised, extract memories and then save
-  its summary; embed new memories; check them for duplicates; appraise finished
+  its summary; embed new memories; check them for duplicates, then for
+  corrections of older memories, then for a date they stop mattering; appraise finished
   conversations; then apply new appraisals to the relationship.
 - **App timers** (while the app runs, cheap when nothing is due): interest
   evolution every 10 minutes (a cycle at most once a day), exploration every 10
@@ -363,6 +440,26 @@ rate limits.
   `recall_self`, `set_person_name`, `enter_standby`, or `close_app` when a
   conversation needs them.
 
+### Choosing models
+
+Click **Settings** on the top border to choose a model for each of four areas.
+Each change saves straight away (to the `model_settings` table, added by
+migration 0015, so run `python migrate.py` once after updating):
+
+| Area | Covers | Takes effect |
+| --- | --- | --- |
+| Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
+| Memory | Memory extraction and conversation summaries | The next background memory pass |
+| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
+| Duplicate check and small jobs | Memory duplicate, correction and fade checks, and future small jobs | The next background memory pass |
+
+Every area starts on `BACKEND_MODEL`. The choices are the fixed list
+`MODEL_CHOICES` in [session_config.py](session_config.py); a saved model that
+is no longer in that list falls back to the default. If the settings cannot be
+read at connect, Cora connects with the default and notes it in Activity.
+Embeddings and the manual voice measurement are not covered: changing the
+embedding model would also need a migration and re-embedding stored memories.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -370,21 +467,37 @@ rate limits.
    events, and Activity entries are not saved as chat messages.
 2. **When you quit:** pending chat saves finish and the conversation is marked
    closed. No new memory-processing requests start during shutdown.
-   **Standby also ends a conversation:** it is closed when Live closes, and
-   whatever is said after waking starts a new one.
+   **A long standby also ends a conversation:** a standby shorter than three
+   hours continues the same conversation, so waking keeps its context. After
+   three hours in standby the conversation is closed, and whatever is said after
+   waking starts a new one.
 3. **In the background:** a pass extracts facts, preferences, decisions, and
    tasks from finished conversations, then saves separate summaries. It runs at
-   startup for older conversations and again each time Cora enters standby, so a
-   conversation's memories can be ready by the time she wakes. Extraction uses
+   startup for older conversations and again when a long standby ends a
+   conversation. Extraction uses
    original messages, not summaries. Once memory work is done, the same pass
    appraises how each finished conversation went and updates her relationship
    with the person from those appraisals (see Relationship).
 4. **Maintenance:** pending memories receive embeddings for semantic search.
    Conservative duplicate checks mark equivalent entries without deleting their
    text, evidence, or history. Marked duplicates are excluded from recall.
+   A correction check then compares each memory with similar older ones of the
+   same kind: if it replaces one (for example a new home city), the newer memory
+   is marked as correcting it. Corrected memories stay stored as history but are
+   left out of the startup snapshot, `search_memory`, and greetings.
+   A fade check then asks whether each memory is time-bound (for example a
+   dentist appointment on Friday) and, if so, saves the last day it matters.
+   Lasting facts, preferences and decisions get no date. Run `python migrate.py`
+   once after updating (migration 0017).
 5. **Recall:** Live and the backend receive a startup snapshot of at most 10
    memories / 3,000 characters. The backend can also use `search_memory` to find
    relevant stored memories on demand (eight results by default, maximum 20).
+6. **Fading:** nothing is deleted, but memories lose prominence with age. Search
+   ranks by similarity times a weight that halves every 90 days, down to a floor
+   of 0.5 (`FADE_HALF_LIFE` and `FADE_FLOOR` in [memory/store.py](memory/store.py)),
+   so a strong match can still bring an old memory back. A memory whose day has
+   passed drops straight to the floor, is marked `faded` in `search_memory`
+   results, and is left out of the startup snapshot and greetings.
 
 Memories link back to original user messages and verbatim evidence. Newly embedded
 memories can be searched during the current run; the snapshot is reloaded each time
@@ -395,7 +508,7 @@ automatically re-extracted.
 
 - Saved conversations and memories are local, but normal chat and memory processing
   send relevant text or audio to OpenAI. This is not an offline assistant.
-- Extraction, summarisation, embeddings, duplicate classification, and semantic
+- Extraction, summarisation, embeddings, duplicate, correction and fade checks, and semantic
   searches can make separate **billable API requests**. Loading the startup
   snapshot itself makes no extra request.
 - Voice grouping is approximate, and a crash can lose unsaved text. There is no
@@ -404,9 +517,11 @@ automatically re-extracted.
   hidden backend state, or unfinished tasks. The full displayed chat stays in the UI.
   A two-second transcript/audio quiet gap is only a reconnect safety hint, not a
   guaranteed completed speech turn; real voice/network timing still needs testing.
-- Recall and duplicate decisions can be wrong. Similarity is not confidence;
-  conflicting statements are kept rather than automatically superseded. Ages,
-  plans, and tasks are dated historical information, not necessarily current facts.
+- Recall, duplicate, correction, and fade decisions can be wrong. Similarity is not
+  confidence; the correction check only replaces a memory when it is clearly the
+  same thing changed, so other conflicting statements are still both kept. Ages,
+  plans, and tasks are dated historical information, not necessarily current facts;
+  a plan with no clear date never fades early, only by age.
 - Processing is one bounded pass at startup and each standby, not a continuous
   loop. A failure stops the pass; unfinished work can be attempted on a later pass. An in-flight
   request may finish and save after closing, and process exit may wait for it.
@@ -515,9 +630,9 @@ brief of facts, and the first Live session of a launch sends it as a note:
      last thread.
    - **A recent plan:** only once her familiarity with you reaches 0.5. One task
      or decision you mentioned in the past 7 days (from your own messages, never
-     a duplicate), hedged as possibly outdated and to skip if sensitive, since
-     others may be listening. With nothing recent, or if loading fails, she falls
-     back to the last thread.
+     a duplicate or a corrected one), hedged as possibly outdated and to skip if
+     sensitive, since others may be listening. With nothing recent, or if loading
+     fails, she falls back to the last thread.
 
 Typing or speaking before she connects, or while she waits for summaries, cancels
 the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
@@ -534,9 +649,9 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
 | [greeting.py](greeting.py) | Opening greeting brief: time of day, time since you last talked, name, how she feels about you, and the optional hook. |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
-| [ui/](ui/) | Conversation display, composer, selection/copy, and Activity. |
-| [devices/](devices/) | Microphone capture and speaker playback. |
-| [storage/](storage/) | Database connection, ORM models, conversation persistence, and people. |
+| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, the dashboard, and the model settings screen. |
+| [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model settings, and the dashboard's snapshot read. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
@@ -644,28 +759,214 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   conversation, one of her findings, or a recent plan once she knows you well.
 - Hosted web search and guarded custom tools.
 - Persistent conversations, automatic memory processing, and semantic recall.
-- Non-destructive duplicate markers and manual memory inspection.
+- Non-destructive duplicate markers, corrections, fading, and manual memory inspection.
+- A model choice per area (delegation, memory, relationship/interests/identity,
+  and small jobs) from Settings on the top border.
+- A read-only dashboard of her relationship, memories, interests, identity, your
+  conversations and the background jobs, beside a live copy of the chat.
 
 ### Next priorities
 
-- Configure the model used by each background process separately. Text processes
-  currently all use the delegation model (`BACKEND_MODEL`). Memory may justify a more
-  capable model, while delegation needs fast responses. Defaults should stay
-  unchanged until a model is chosen. Changing the embedding model also needs a
-  migration and re-embedding stored memories.
-- Add real background producers (an awareness subsystem), starting with a Signal
-  message monitor; camera awareness and screen monitoring can follow independently.
-  Add quiet hours and an off switch for her initiative before proactive sources
-  grow beyond findings.
-- Add memory fading/forgetting, so time-bound details (for example an event date)
-  lose prominence once they have passed, rather than staying in recall forever.
-  Duplicate markers reference their canonical memory, so removing one needs its
-  duplicates handled first.
-- Handle memory corrections: when a newer statement contradicts an older one
-  (for example a new home city), prefer the newer one in recall while keeping the
-  history. Today both are kept with equal weight.
-- Add an emotions subsystem (such as excitement), separate from the slower-moving
-  relationship.
+**Release plan:** everything below except private messaging and local models
+makes up **Cora 1.0**, published as a release in this repository as an
+open-source project. Packaging is paused: Cora stays run from source (PostgreSQL
+in Docker, the app natively), with no installer for non-technical users planned
+for now. Private messaging and local models follow after 1.0 as personal
+development.
+
+**Order of work:** settle risky decisions first, build visibility before the
+features it helps check, and package last.
+
+*Phase 0 — quick experiments that shape later design*
+
+1. ~~Check whether the Live model accepts image input.~~ Done: the voice model
+   does not, but its Responses backend does (see Image support below).
+2. ~~Check that a Textual image widget shows real images in Windows Terminal,
+   the VS Code terminal, and Kitty on Linux.~~ Done: `textual-image` works in
+   Windows Terminal (checked in `examples/image_widget_check/`). Cora now needs
+   Python 3.12 or later for it. The VS Code terminal and Kitty are untested.
+
+*Phase 1 — foundations and visibility*
+
+3. ~~Model per background process.~~ Done: a model per area, chosen in Settings
+   (see [Choosing models](#choosing-models)).
+4. ~~Dashboard (read-only), to check every later change.~~ Done: see
+   [The dashboard](#the-dashboard).
+5. ~~Memory corrections.~~ Done: a newer memory that contradicts an older one
+   replaces it in recall (see [How memory works](#how-memory-works)).
+6. ~~Memory fading.~~ Done: time-bound memories fade once their day has passed,
+   and older memories rank lower in recall; nothing is deleted (see
+   [How memory works](#how-memory-works)).
+
+*Phase 2 — doing things*
+
+7. Image support: pasting, the screen tool, then showing images (Cora's own
+   pick; it does not depend on MCP).
+8. MCP M1–M3, starting with GitHub.
+
+*Phase 3 — noticing things*
+
+9. Awareness W1–W3, including quiet hours and the off switch.
+10. Relevance and awareness triggers (interests step 8 below).
+11. Home Assistant, starting with its demo devices.
+12. Awareness W4: expectations from memory tasks.
+13. Camera and screen awareness.
+14. Emotions (after awareness gives her more to react to; nothing depends on it,
+    so it can move earlier).
+
+*Phase 4 — Cora 1.0*
+
+15. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+    (Model settings already exist; other settings still use `.env`.)
+16. Dashboard editing (for example removing a wrong memory), with a detail view
+    for picking out the item to change.
+17. Release.
+
+*After 1.0:* local models, then private messaging, which builds on them.
+
+#### Details, in order
+
+- **Image support:** three separate pieces.
+  - *Pasting images into the chat:* terminals do not paste images, so a key
+    binding reads the image from the system clipboard and sends it with the
+    message. The Live voice model takes no image input, but its Responses
+    backend does: an `input_image` part added to the typed message is read
+    correctly (checked with a code screenshot in
+    [examples/image_input_check/](examples/image_input_check/)). The backend
+    session's history is limited (128 items and 4 MB in total), so the image is
+    read by a separate one-off request and only the text description is added.
+  - *Seeing the screen:* a tool Cora can call to capture the person's current
+    screen when asked (for example "what's this error?"), never silently.
+  - *Showing images:* Cora can put web images into the chat (such as photos of a
+    suggested restaurant), the way code blocks appear on screen. No image
+    generation. Terminal image support varies, so this needs a Textual image
+    widget with a fallback (a lower-resolution render or a link).
+- **MCP tools (Cora-prime):** add an MCP client so capabilities come from
+  connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
+  common `mcpServers` format, lists each user's servers; their credentials stay on
+  their machine. At launch she connects to enabled servers and adds allowlisted
+  tools to the existing registry, namespaced by server (for example
+  `gmail__search_messages`), with size-capped results treated as untrusted.
+  Read-only tools run when asked; tools that change something (send, post, delete)
+  need the person's spoken confirmation first, so an injected instruction in an
+  email can never act. Steps: M1 connect to one simple server and list its tools
+  in Activity; M2 expose read-only tools, with a status view showing each server
+  as connected or failed (with the reason, such as a missing key), its tools, and
+  which are allowed; M3 write tools with voice confirmation; M4 a services screen
+  for non-technical users: a list of supported services, each with an on/off
+  switch (switching one on runs its sign-in) and, once on, whether Cora watches
+  it (off, digest only, or may interrupt). Keys and sign-in tokens are kept in
+  the operating system's credential store rather than a file. Where a service
+  hosts its own MCP server, Cora connects to it remotely and signs in through the
+  service's own OAuth, so Cora needs no approval from each provider; other
+  services run as local servers. Gmail is the exception to plan for, since
+  Google restricts mail access for apps used by the public. The first release
+  supports a few common services, with more added one at a time. Each is a
+  catalogue entry (mostly data, not code) with its server, how it signs in, which
+  tools are read-only and which need confirmation, watch defaults for awareness,
+  and short guidance for Cora, tested before release. Custom servers can still be
+  added by hand in `mcp.json` for advanced use. With many servers, a router tool
+  may later replace exposing every tool.
+- **Awareness (background producers):** one generic, config-driven watcher rather
+  than a process per service. Each watch entry names an MCP tool, its arguments,
+  the field that identifies an item, and how often to poll; read positions are
+  stored, and servers that support resource subscriptions push instead. Polling
+  costs no model tokens; only new items are batched into a cheap triage call
+  (urgent, worth mentioning, or ignore), and the results become observations on
+  the event bus. The attention manager offers urgent items at a lull and groups
+  the rest into one short digest. Each source is opted in and set to off, digest
+  only, or may interrupt, with quiet hours and an off switch for all initiative.
+  In Standby she is off the clock: watchers keep polling and holding items, and
+  she gets a "while you were away" digest on reconnect. Later, expectations from
+  memory tasks (such as waiting to hear back from someone) can raise an item's
+  urgency. Messaging Cora herself (for example over Signal) is a separate
+  interface, not an awareness notification. Steps: W1 watcher and stored read
+  positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
+  and off switch, with per-source settings and quiet hours editable in the app
+  rather than a config file; W4 expectations. Camera, screen, and home sensor
+  awareness are covered separately below.
+- **Environmental awareness:** background producers with their own local models
+  watching the screen, camera, and home sensors (such as the front door camera
+  or whether the garage is open). Each feeds a local model that decides whether
+  anything interesting is happening, and only worthwhile events are proposed to
+  the attention manager, the same path as findings and MCP awareness. Local
+  models keep raw images and video on the machine; only short descriptions
+  reach Cora-prime. Home Assistant is a strong candidate for most of this
+  through its MCP server, giving one connection two uses: tools for Cora to
+  check and control the home when asked, and a watch entry for the generic MCP
+  watcher so changes (such as the garage opening) become awareness events.
+  Rather than polling, awareness can use Home Assistant's WebSocket API: one
+  long-lived connection subscribed to chosen entities or triggers, which pushes
+  changes immediately. MCP stays for control tools; this makes Home Assistant a
+  small dedicated producer rather than a generic watch entry. After Cora has
+  been closed, she reads current states (and history for short events such as a
+  doorbell press) to catch up. Users choose which devices she watches from a
+  list in the services screen.
+  Camera detection (such as a person at the front door) can run locally inside
+  the Home Assistant ecosystem and arrive as simple states, so Cora needs no
+  vision model of her own for it. Security-sensitive actions such as unlocking
+  doors or opening the garage always need spoken confirmation. Screen awareness
+  still needs Cora's own local producer. Camera awareness starts with presence
+  rather than identity, with its own privacy controls. Camera and screen
+  awareness, and the on-demand screen tool, each get an on/off control like the
+  existing microphone and audio controls, off by default, with a visible
+  indicator while active.
+- **Emotions:** short-lived feelings (such as excitement or hurt), separate from
+  the slower-moving relationship. Nothing depends on them, and the foundation
+  already limits mood to tone, warmth and initiative, so they can move earlier
+  (Cora chose image support first). Agreed so far: she reports her own feelings
+  with a silent tool during a conversation, rather than a background watcher
+  judging her or feelings only appearing after the conversation ends. Planned
+  steps:
+  1. **Rules:** a fixed set of feelings, each a level from 0 to 1. A report
+     raises a level by a capped amount (small, medium or strong, at most about
+     0.3), and levels fade back towards 0. Plain code, like memory fading.
+  2. **Storage:** an append-only `feeling_events` table (feeling, strength,
+     short reason, time, conversation). The current level is worked out from
+     the events and the fading, which also keeps the history for the graph.
+  3. **`feel` tool:** strict schema (feeling, strength, reason), silent, only
+     for a genuine reaction in the moment and never to steer the person; code
+     limits how often it is used per conversation, and each feeling goes to
+     Activity.
+  4. **Prompt:** at each connect, any feeling still noticeably high is added as
+     a short "How you're feeling right now" section.
+  5. **Dashboard:** a Feelings box with one braille line per feeling over the
+     last few hours, pulsing when a feeling jumps, and the latest reason
+     underneath.
+  6. **Later:** findings she reacts to and conversation appraisals can also
+     raise feelings through the same rules.
+
+  Guardrails: feelings always fade and each rise is capped; no feeling is
+  designed for guilt, neediness or possessiveness; feelings never reach tool or
+  permission logic. Still to decide: which feelings (suggested excitement,
+  contentment, curiosity, irritation and hurt), how fast they fade (suggested
+  half gone after about 30 minutes), and whether her words always show a
+  feeling or she decides (suggested she decides). The idea came from her
+  pushing back with "don't put words in my mouth, I do care", which only
+  shaped that one reply.
+- **Installable Cora (paused):** an installer for non-technical users is not
+  planned for now. Notes for if it returns: keep PostgreSQL rather than moving
+  to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was
+  ruled out (unmaintained since 2024, PostgreSQL 16, Python 3.12 at most);
+  portable binaries would need pgvector built per platform. Running the whole
+  app in a container was also ruled out, since Docker Desktop cannot reach the
+  host's microphone, speaker or clipboard.
+- **Private messaging (for example Signal), after 1.0:** while Cora is running, she tells
+  the person about incoming messages, what the sender wants, and sends replies
+  when told to (confirmed by voice). The person does not want message content
+  sent to OpenAI, so reading, summarising, and drafting would run on a local
+  model, and Cora-prime would only see what is safe to share (such as "a message
+  from Sam"). Open questions: how a private summary is spoken without passing
+  through Live (for example local text-to-speech), and whether this fits the
+  architecture yet. Needs a design pass before building.
+- **Local models, after 1.0:** explore running Cora-prime with only local models. There may
+  not yet be a local equivalent of the Live speech-to-speech model; the likely
+  alternative is a pipeline of local speech recognition, a local language model,
+  and local text-to-speech, at some cost to latency and natural turn-taking. A
+  local replacement for the delegate model is available, but web search would
+  need a separate search provider (such as a self-hosted search engine or a
+  search API, possibly through MCP) exposed as a tool. Local models also enable
+  the private messaging and awareness items above.
 
 ### Subconsciousness, interests, self, and relationship
 

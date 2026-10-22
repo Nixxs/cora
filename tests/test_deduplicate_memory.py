@@ -136,6 +136,10 @@ class DeduplicateMemoryTests(unittest.TestCase):
         self.assertIn("café", request["input"])
         self.assertEqual(vars(self.memory), original)
 
+    def test_request_uses_the_chosen_model(self):
+        dedup.deduplicate_memory(self.store, self.memory.id, model="utility-model", client=self.client)
+        self.assertEqual(self.client.responses.create.call_args.kwargs["model"], "utility-model")
+
     def test_fixture_null_or_supplied_id_is_only_a_marker_and_injected_client_is_unowned(self):
         for value in (None, str(self.candidate.memory_id)):
             with self.subTest(value=value):
@@ -367,15 +371,17 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             prior_rows = {table: connection.execute(text(f"SELECT * FROM public.{table}")).all()
                           for table in tables}
         before = {row.id: snapshot(row) for row in self.memories.get_memories(self.conversation_id)}
-        # Roll back migrations 0006 and the later 0007-0014 (history must stay a prefix of the
+        # Roll back migrations 0006 and the later 0007-0017 (history must stay a prefix of the
         # files) in this uniquely named fixture, then apply the actual live migrations
         # to populated pre-0006 rows (no synthetic SQL).
         later = ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql",
                  "0008_create_interest_explorations.sql", "0009_add_finding_mentions.sql",
                  "0010_create_people.sql", "0011_add_exploration_reactions.sql", "0012_create_identity.sql",
-                 "0013_create_interaction_appraisals.sql", "0014_create_relationships.sql"]
+                 "0013_create_interaction_appraisals.sql", "0014_create_relationships.sql",
+                 "0015_create_model_settings.sql", "0016_mark_memory_corrections.sql",
+                 "0017_add_memory_fading.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
-            connection.execute("DROP TABLE public.relationship_events, public.relationships, "
+            connection.execute("DROP TABLE public.model_settings, public.relationship_events, public.relationships, "
                                "public.interaction_appraisals, "
                                "public.identity_event_evidence, public.identity_event_traits, "
                                "public.identity_events, public.identity_traits, public.identity_worker_state, "
@@ -383,7 +389,9 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                                "public.interest_explorations, public.interest_event_memories, "
                                "public.interest_events, public.interest_worker_state, public.interests")
             connection.execute("ALTER TABLE public.memories DROP COLUMN duplicate_of, "
-                               "DROP COLUMN dedup_checked_at")
+                               "DROP COLUMN dedup_checked_at, DROP COLUMN corrects, "
+                               "DROP COLUMN correction_checked_at, DROP COLUMN fades_at, "
+                               "DROP COLUMN fade_checked_at")
             connection.execute("DELETE FROM public.schema_migrations WHERE name = ANY(%s)", (later,))
             self.assertEqual(apply_migrations(connection), later)
             self.assertEqual(apply_migrations(connection), [])
@@ -449,6 +457,11 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
         self.assertEqual(embeddings, [UUID(int=999)] + [UUID(int=i) for i in range(10, 109)])
         self.assertEqual(deduplications, [UUID(int=998)] + [UUID(int=i) for i in range(200, 299)])
         self.assertTrue(all(isinstance(item, UUID) for item in embeddings + deduplications))
+        # The counts are not bounded: 105 in each range plus the older 999/998.
+        # Canonical 1 and 404 are checked for duplicates, so they wait for the correction check.
+        self.assertEqual(self.memories.pending_counts(), {
+            "embedding": 106, "duplicate check": 106, "correction check": 2, "fade check": 0,
+        })
 
     def test_candidates_are_only_five_older_canonical_embedded_user_same_kind_with_source_dates(self):
         self.insert_rows([self.embedded(id=UUID(int=i),

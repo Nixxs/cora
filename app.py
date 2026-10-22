@@ -19,9 +19,11 @@ from textual import events, work
 
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
-from ui.chat_widgets import SelectableRichLog
+from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
+from ui.dashboard import DashboardScreen
+from ui.model_settings import ModelSettingsScreen
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
@@ -59,6 +61,8 @@ FINDING_CHECK_SECONDS = 2 * 60
 FINDING_IDLE_SECONDS = 90
 # Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
 REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
+# A shorter standby continues the same conversation; a longer one ends it so memories form.
+CONVERSATION_END_STANDBY_SECONDS = 3 * 60 * 60
 
 
 class CoraApp(App):
@@ -98,9 +102,8 @@ class CoraApp(App):
         self.submission.worker = value
 
     def compose(self) -> ComposeResult:
+        yield TitleBar("dashboard")
         with Vertical(id="chat-panel"):
-            with HorizontalGroup(id="window-controls"):
-                yield Button("×", id="close-button")
             yield SelectableRichLog(id="chat-output", wrap=True, min_width=1)
             with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
                 yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
@@ -124,7 +127,6 @@ class CoraApp(App):
                 )
 
     def on_mount(self) -> None:
-        self.query_one("#chat-panel").border_title = "CORA"
         self.query_one("#chat-input", ChatComposer).focus()
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
@@ -138,6 +140,7 @@ class CoraApp(App):
             set_identity_context=lambda context: setattr(self.live, "identity_context", context),
             set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
+            set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )
@@ -166,6 +169,9 @@ class CoraApp(App):
         self.idle_standby_timer = None
         self.requested_standby_timer = None
         self.requested_standby_deadline = 0.0
+        self.conversation_end_timer = None
+        # Settings > General. Kept for this run only; not saved yet.
+        self.screen_looking = True
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -192,6 +198,8 @@ class CoraApp(App):
             request_standby=self.request_standby,
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
+            screen_looking=lambda: self.screen_looking,
+            show_image=self.conversation.show_image,
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
         self.submission = ChatSubmission(
@@ -293,8 +301,7 @@ class CoraApp(App):
         return self.wake.handle_wake(listener)
 
     def request_wake_connection(self) -> bool:
-        self.request_live_transition(restart=True, from_wake=True)
-        return self.reconnecting
+        return self.request_live_transition(restart=True, from_wake=True)
 
     @work(group="wake-abort")
     async def abort_wake_connection(self) -> None:
@@ -444,14 +451,17 @@ class CoraApp(App):
         if self.idle_standby_timer is not None:
             self.idle_standby_timer.stop()
         self.stop_requested_standby()
+        self.stop_conversation_end_timer()
 
     # Textual owns worker scheduling and cancellation; coordinators own the work.
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
         self.submission.submitted(event)
 
     @work(group="keyboard-submit")
-    async def submit_keyboard_message(self, message: str, message_id: UUID, composer: ChatComposer) -> None:
-        await self.submission.submit_keyboard_message(message, message_id, composer)
+    async def submit_keyboard_message(
+        self, message: str, message_id: UUID, composer: ChatComposer, image_png: bytes | None = None
+    ) -> None:
+        await self.submission.submit_keyboard_message(message, message_id, composer, image_png)
 
     def record_chat_message(self, role: str, text: str, channel: str) -> None:
         self.conversation_persistence.record_chat_message(role, text, channel)
@@ -595,9 +605,9 @@ class CoraApp(App):
             ("standby heads-up", self.inactivity.alert is not None),
         ) if busy]
 
-    def request_live_transition(self, restart: bool, *, from_wake: bool = False) -> None:
+    def request_live_transition(self, restart: bool, *, from_wake: bool = False) -> bool:
         if self.closing or self.reconnecting:
-            return
+            return False
         blockers = self.live_transition_blockers()
         self.live.trace(
             "transition.request", restart=restart, blockers=blockers,
@@ -611,7 +621,7 @@ class CoraApp(App):
                 f"Wait for speech and pending work to finish, then {action}. Waiting for: {reason}.",
                 severity="warning",
             )
-            return
+            return False
         self.reconnecting = True
         self.wake.reconnecting = from_wake
         if not from_wake:
@@ -622,6 +632,8 @@ class CoraApp(App):
         self.query_one("#speaker-status", Button).disabled = True
         self.set_connection_state("connecting" if restart and self.standby else "disconnecting")
         self.reconnect_worker = self.reconnect_live(restart=restart)
+        # The worker may finish before this returns, so report the request, not self.reconnecting.
+        return True
 
     @work(group="live-reconnect")
     async def reconnect_live(self, restart: bool = True) -> None:
@@ -642,6 +654,7 @@ class CoraApp(App):
                 return
             self.live.conversation_history = self.conversation.get_reconnect_history()
             self.last_live_activity = 0.0
+            self.stop_conversation_end_timer()
             if not restart:
                 if self.live.connection is not None or not self.live.session_close_confirmed:
                     raise RuntimeError("Live close was not confirmed")
@@ -649,9 +662,9 @@ class CoraApp(App):
                 self.handle_mic_status(False)
                 self.set_connection_state("standby")
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
-                # Standby ends the conversation, so its memories and summary form now.
-                if await self.conversation_persistence.end_conversation() and not self.closing:
-                    self.process_finished_conversations()
+                self.conversation_end_timer = self.set_timer(
+                    CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
+                )
                 return
             self.standby = False
             self.activity.write("Restarting Live with recent chat context", "Reconnecting")
@@ -678,6 +691,20 @@ class CoraApp(App):
             if not self.closing:
                 self.query_one("#chat-input", ChatComposer).focus()
 
+    def stop_conversation_end_timer(self) -> None:
+        if self.conversation_end_timer is not None:
+            self.conversation_end_timer.stop()
+            self.conversation_end_timer = None
+
+    @work(group="conversation-end")
+    async def end_standby_conversation(self) -> None:
+        """A long standby ends the conversation, so its memories and summary form now."""
+        self.conversation_end_timer = None
+        if not self.standby or self.closing or self.reconnecting:
+            return
+        if await self.conversation_persistence.end_conversation() and not self.closing:
+            self.process_finished_conversations()
+
     @work(group="database-startup")
     async def check_interrupted_conversations(self) -> None:
         await self.conversation_persistence.check_interrupted_conversations()
@@ -685,6 +712,40 @@ class CoraApp(App):
     @work(group="database-startup")
     async def load_session_context(self) -> None:
         await self.conversation_persistence.load_session_context()
+
+    @work(group="model-settings", exclusive=True)
+    async def open_model_settings(self) -> None:
+        try:
+            models = await self.conversation_persistence.call_database(self.persistence.load_models)
+        except Exception as error:
+            self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
+            self.notify("Could not load model settings. Check Activity.", severity="error")
+            return
+        if not self.closing:
+            self.push_screen(ModelSettingsScreen(
+                models, self.save_model_setting, self.screen_looking, self.set_screen_looking,
+            ))
+
+    def set_screen_looking(self, enabled: bool) -> None:
+        self.screen_looking = enabled
+        self.activity.write(
+            "Cora can look at the screen." if enabled else "Cora cannot look at the screen.",
+            "Screen looking on" if enabled else "Screen looking off",
+        )
+
+    @work(group="model-settings-save")
+    async def save_model_setting(self, area: str, model: str) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_model, area, model)
+        except Exception as error:
+            self.activity.write(f"Model setting save failed ({type(error).__name__}).", "Model settings error")
+            self.notify("Could not save the model setting. Check Activity.", severity="error")
+            return
+        self.activity.write(f"The {area} model is now {model}.", "Model settings saved")
+        # Live's session config holds the delegation model; restart Live so it applies now.
+        # In standby or while disconnected, the next connect loads it anyway.
+        if area == "delegation" and self.live.ready and not self.standby:
+            self.action_reconnect()
 
     def process_finished_conversations(self) -> None:
         # Single flight: a pass already running leaves this one for the next standby or launch.
@@ -853,6 +914,16 @@ class CoraApp(App):
         if event.button.id == "close-button":
             event.button.disabled = True
             await self.action_disconnect_and_quit()
+        elif event.button.id == "settings-button" and not self.closing:
+            self.open_model_settings()
+        elif event.button.id == "view-button" and not self.closing:
+            if isinstance(self.screen, DashboardScreen):
+                self.pop_screen()
+            else:
+                self.push_screen(DashboardScreen(
+                    self.voice_bands, self.conversation, self.audio_status,
+                    self.conversation_persistence.load_dashboard_snapshot, self.activity,
+                ))
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()
@@ -907,6 +978,12 @@ class CoraApp(App):
 
     def update_audio_controls(self) -> None:
         self.audio_status.update_controls()
+
+    def voice_bands(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
+        """Cora's playback and the person's microphone loudness bands, for the dashboard."""
+        speaker = self.live.speaker
+        playing = speaker.get_playback_bands() if speaker is not None and not self.live.speaker_muted else ()
+        return playing, self.live.get_microphone_bands()
 
     def update_speaking_animation(self) -> None:
         self.audio_status.update_speaking_animation()
@@ -968,6 +1045,8 @@ class CoraApp(App):
         self.stop_requested_standby()
         self.update_speaking_animation()
         self.query_one("#close-button", Button).disabled = True
+        self.query_one("#settings-button", Button).disabled = True
+        self.query_one("#view-button", Button).disabled = True
         self.query_one("#mic-status", Button).disabled = True
         self.query_one("#speaker-status", Button).disabled = True
         self.query_one("#wake-status", Button).disabled = True

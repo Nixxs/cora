@@ -11,8 +11,10 @@ from psycopg import sql
 from textual.widgets import Collapsible
 
 from app import CoraApp
+from session_config import BACKEND_MODEL
 from ui.composer import ChatComposer
 from storage.conversation_store import ConversationStore
+from storage.dashboard_snapshot import DashboardSnapshot
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
 from migrate import apply_migrations, database_settings
@@ -102,7 +104,8 @@ async def running_app(persistence=None):
             patch("app.run_identity_cycle", return_value=None), \
             patch("app.run_exploration_cycle", return_value=None), \
             patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
-            patch("memory.background.deduplicate_memory"), \
+            patch("memory.background.deduplicate_memory"), patch("memory.background.correct_memory"), \
+            patch("memory.background.fade_memory"), \
             patch("memory.background.appraise_waiting_conversations"), \
             patch("memory.background.update_relationships"):
         app = CoraApp()
@@ -117,7 +120,9 @@ async def running_app(persistence=None):
                 persistence.load_relationship_values.return_value = None
                 persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None
+                persistence.load_delegation_model.return_value = BACKEND_MODEL
                 persistence.load_last_talked_at.return_value = None
+                persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(), traits=())
             app.persistence = persistence
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()

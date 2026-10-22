@@ -15,6 +15,7 @@ from openai import OpenAI
 
 from session_config import BACKEND_MODEL
 from storage.database import build_engine
+from storage.model_settings_store import ModelSettingsStore
 from subconscious.interests.exploration_store import (
     FINDING_MAX_CHARS, LIST_LIMIT, MAX_NEXT_QUESTIONS, MAX_SOURCES, QUESTION_MAX_CHARS, REACTION_MAX_CHARS,
     Exploration, ExplorationStore, clean_questions, clean_sources,
@@ -176,8 +177,9 @@ def run_exploration_cycle(*, should_stop: Callable[[], bool]) -> str | None:
         if should_stop():
             return None
         engine = build_engine()
+        model = ModelSettingsStore(engine).model_for("subconscious")
         with OpenAI(max_retries=0) as client:
-            outcome = explore_next(ExplorationStore(engine), client, now=utc_now())
+            outcome = explore_next(ExplorationStore(engine), client, model=model, now=utc_now())
     except Exception as error:
         outcome = f"Exploration stopped ({type(error).__name__})."
     finally:

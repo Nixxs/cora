@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from migrate import apply_migrations
 from storage.conversation_store import ConversationStore
+from storage.dashboard_snapshot import last_runs, next_due
 from storage.database import build_engine
 from memory.store import MEMORY_KINDS, RECENT_PLAN_WINDOW, MemoryCandidate, MemoryStore
 from storage.models import MemoryRecord
@@ -171,10 +172,12 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(self.memories.get_memories(other_id)[0].source_message_id, other.id)
         self.assertEqual(self.memories.get_memories(uuid4()), [])
 
-    def test_recent_plan_is_a_task_or_decision_from_the_past_week_never_a_duplicate(self):
+    def test_recent_plan_kind_and_daily_counts_skip_duplicates(self):
         source = self.save_source(content="I will fix the fence. We chose Postgres. I live in Perth.")
         self.store.close_conversation(self.conversation_id)
         self.assertIsNone(self.memories.recent_plan(datetime.now(timezone.utc)))
+        self.assertEqual(self.memories.kind_counts(), dict.fromkeys(MEMORY_KINDS, 0))
+        self.assertIsNone(last_runs(self.engine)["extraction"])
         self.memories.save_memories(self.conversation_id, [
             self.candidate(source, kind="task", text="Fix the fence", evidence="I will fix the fence"),
             self.candidate(source, kind="task", text="Repair the fence", evidence="fix the fence"),
@@ -189,7 +192,20 @@ class MemoryStoreDatabaseTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         picked = {self.memories.recent_plan(now) for _ in range(30)}
         self.assertEqual(picked, {"Fix the fence", "Chose Postgres"})
+        runs = last_runs(self.engine)
+        self.assertIsNotNone(runs["extraction"])
+        self.assertIsNotNone(runs["duplicate check"])
+        self.assertIsNone(runs["embedding"])
+        # No explorations yet, so the next one is due now.
+        self.assertIsNone(next_due(self.engine, runs)["exploration"])
         self.assertIsNone(self.memories.recent_plan(now + RECENT_PLAN_WINDOW + timedelta(minutes=1)))
+        self.assertEqual(self.memories.kind_counts(), {"fact": 1, "preference": 0, "decision": 1, "task": 1})
+        self.assertEqual(self.memories.daily_counts(now, 5), [0, 0, 0, 0, 3])
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.messages SET created_at = created_at - interval '2 days' WHERE id = :id"
+            ), {"id": source.id})
+        self.assertEqual(self.memories.daily_counts(now, 5), [0, 0, 3, 0, 0])
 
     def test_reopened_readback_and_migration_rerun_preserve_sources_and_optional_summary(self):
         source = self.save_source()

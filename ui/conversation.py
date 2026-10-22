@@ -1,8 +1,11 @@
 """Conversation history, transcript grouping, and written-answer display."""
 
+from urllib.parse import urlsplit
+
+from rich.text import Text
 from textual.widgets import RichLog
 
-from .chat_widgets import ChatMarkdown
+from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 
 
 class Conversation:
@@ -17,6 +20,15 @@ class Conversation:
         self.active_transcript_index = None
         self.log_entries = []
         self.written_item_ids = set()
+        # Extra logs, such as the dashboard's chat box, that show the same conversation.
+        self.mirrors = []
+
+    def add_mirror(self, output: RichLog) -> None:
+        self.mirrors.append(output)
+        self.draw(output)
+
+    def remove_mirror(self, output: RichLog) -> None:
+        self.mirrors.remove(output)
 
     def get_reconnect_history(self) -> list[dict]:
         """Bounded visible chat, not tool calls, internal reasoning, or unsent drafts."""
@@ -49,7 +61,8 @@ class Conversation:
     def write_log(self, message: str) -> None:
         self.flush_transcript()
         self.log_entries.append(message)
-        self.output.write(message)
+        for output in (self.output, *self.mirrors):
+            output.write(message)
 
     def append_transcript(self, speaker: str, delta: str) -> None:
         if not delta:
@@ -95,11 +108,29 @@ class Conversation:
                 self.record_message("user" if speaker == "You" else "assistant", text, "voice")
 
     def redraw_log(self) -> None:
+        for output in (self.output, *self.mirrors):
+            self.draw(output)
+
+    def draw(self, output: RichLog) -> None:
         # RichLog.write adds lines, so redraw to update the active message.
-        self.output.clear()
+        output.clear()
         for entry in self.log_entries:
-            self.output.write(entry, scroll_end=False)
-        self.output.scroll_end(animate=False)
+            output.write(entry, scroll_end=False)
+        output.scroll_end(animate=False)
+
+    def show_image(self, image, caption: str, page_url: str) -> None:
+        # Like written answers, this does not end an active spoken transcript.
+        self.log_entries.extend([
+            "",
+            f"Cora · image: {caption}",
+            ChatImage(image, caption),
+            Text.assemble("From ", (urlsplit(page_url).hostname, chat_link(page_url))),
+            "",
+        ])
+        self.redraw_log()
+        if self.record_message is not None:
+            # The image is never saved; only the caption and its page.
+            self.record_message("assistant", f"[image] {caption} ({page_url})", "screen")
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

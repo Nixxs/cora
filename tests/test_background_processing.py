@@ -35,19 +35,22 @@ class BackgroundProcessingTests(unittest.TestCase):
         order.memory_store.get_pending_deduplication_ids.return_value = []
         should_stop, write_activity = (lambda: False), MagicMock()
         with patch("memory.background.build_engine") as build, \
+                patch("memory.background.ModelSettingsStore") as settings, \
                 patch("memory.background.ConversationStore", return_value=store), \
                 patch("memory.background.MemoryStore", return_value=order.memory_store), \
                 patch("memory.background.appraise_waiting_conversations", order.appraise), \
                 patch("memory.background.update_relationships", order.relate):
+            settings.return_value.models.return_value = {"subconscious": "subconscious-model"}
             run_background_memory_pass(
                 uuid4(), should_stop=should_stop, write_activity=write_activity,
                 summaries_done=order.summaries_done,
             )
+        settings.assert_called_once_with(build.return_value)
         names = [call[0] for call in order.mock_calls]
         self.assertLess(names.index("summaries_done"), names.index("memory_store.get_pending_embedding_ids"))
         self.assertEqual(names[-2:], ["appraise", "relate"])
         order.appraise.assert_called_once_with(
-            build.return_value, should_stop=should_stop, write_activity=write_activity,
+            build.return_value, model="subconscious-model", should_stop=should_stop, write_activity=write_activity,
         )
         order.relate.assert_called_once_with(build.return_value, write_activity=write_activity)
 

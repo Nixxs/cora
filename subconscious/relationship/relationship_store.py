@@ -72,6 +72,19 @@ class RelationshipStore:
                 .order_by(RelationshipEventRecord.created_at, RelationshipEventRecord.id)
             ))
 
+    def recent_tones(self, limit: int) -> list[str]:
+        """Tones of the current person's latest `limit` everyday conversations, oldest first."""
+        with Session(self.engine) as session:
+            tones = session.scalars(
+                select(InteractionAppraisalRecord.tone)
+                .join(ConversationRecord, ConversationRecord.id == InteractionAppraisalRecord.conversation_id)
+                .where(InteractionAppraisalRecord.person_id == current_person_id(),
+                       InteractionAppraisalRecord.setting == "everyday")
+                .order_by(ConversationRecord.started_at.desc(), ConversationRecord.id.desc())
+                .limit(limit)
+            ).all()
+        return tones[::-1]
+
     def apply_waiting_appraisals(self) -> list[RelationshipEventRecord]:
         """Apply every appraisal not yet applied, oldest conversation first; return the new events.
 
