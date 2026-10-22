@@ -28,7 +28,6 @@ RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 # Box id -> border title, in the btop-style layout: a wide voice band with the chat beside
 # it, then the database panels below.
 BOX_TITLES = {
-    "voice-box": "voice",
     "chat-box": "chat",
     "relationship-box": "relationship",
     "memories-box": "memories",
@@ -86,6 +85,13 @@ class DashboardScreen(Screen):
         with Vertical(id="dashboard-panel"):
             with Horizontal(id="dashboard-top", classes="dashboard-row"):
                 with Vertical(id="voice-column"):
+                    # The box's top border, drawn as widgets so standby can show at its right.
+                    with HorizontalGroup(id="voice-header"):
+                        yield Static("╭─", classes="voice-line")
+                        yield Static("voice", id="voice-title")
+                        yield BorderLine(id="voice-header-fill")
+                        yield Static("○ standby", id="dashboard-standby")
+                        yield Static("─╮", classes="voice-line")
                     # Cora's voice rises above the line and the person's hangs below it.
                     with Vertical(id="voice-box", classes="dashboard-box"):
                         yield BrailleGraph(id="speaker-graph", bars=True)
@@ -267,6 +273,7 @@ class DashboardScreen(Screen):
             # Text, so brackets in an error summary are not read as markup.
             summary.update(Text(panel.title))
         summary.set_class(panel.has_class("activity-error"), "activity-error")
+        self.query_one("#dashboard-standby", Static).display = self.app.standby
 
     def sample_voice(self) -> None:
         speaker, mic = self.voice_bands()

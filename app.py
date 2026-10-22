@@ -301,8 +301,7 @@ class CoraApp(App):
         return self.wake.handle_wake(listener)
 
     def request_wake_connection(self) -> bool:
-        self.request_live_transition(restart=True, from_wake=True)
-        return self.reconnecting
+        return self.request_live_transition(restart=True, from_wake=True)
 
     @work(group="wake-abort")
     async def abort_wake_connection(self) -> None:
@@ -606,9 +605,9 @@ class CoraApp(App):
             ("standby heads-up", self.inactivity.alert is not None),
         ) if busy]
 
-    def request_live_transition(self, restart: bool, *, from_wake: bool = False) -> None:
+    def request_live_transition(self, restart: bool, *, from_wake: bool = False) -> bool:
         if self.closing or self.reconnecting:
-            return
+            return False
         blockers = self.live_transition_blockers()
         self.live.trace(
             "transition.request", restart=restart, blockers=blockers,
@@ -622,7 +621,7 @@ class CoraApp(App):
                 f"Wait for speech and pending work to finish, then {action}. Waiting for: {reason}.",
                 severity="warning",
             )
-            return
+            return False
         self.reconnecting = True
         self.wake.reconnecting = from_wake
         if not from_wake:
@@ -633,6 +632,8 @@ class CoraApp(App):
         self.query_one("#speaker-status", Button).disabled = True
         self.set_connection_state("connecting" if restart and self.standby else "disconnecting")
         self.reconnect_worker = self.reconnect_live(restart=restart)
+        # The worker may finish before this returns, so report the request, not self.reconnecting.
+        return True
 
     @work(group="live-reconnect")
     async def reconnect_live(self, restart: bool = True) -> None:

@@ -181,6 +181,7 @@ Click **dashboard** on the top border to switch to a read-only, btop-style view 
 what Cora has stored; click **chat** to switch back. The conversation carries on
 while it is open: its chat box shows the same messages and sends what you type, and
 the voice box's speaker and mic toggles press the same mute controls as the chat.
+Its top right shows **○ standby** while Live is in standby.
 
 | Box | Shows |
 | --- | --- |

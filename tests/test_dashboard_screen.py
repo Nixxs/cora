@@ -363,6 +363,25 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(summary.render()), "Activity · Dashboard load failed [x]")
             self.assertTrue(summary.has_class("activity-error"))
 
+    async def test_voice_box_shows_standby_at_its_top_right(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            indicator = app.screen.query_one("#dashboard-standby", Static)
+            self.assertFalse(indicator.display)
+            app.standby = True
+            await pilot.pause(0.3)
+            self.assertTrue(indicator.display)
+            header = app.screen.query_one("#voice-header")
+            # Just before the top right corner, on the same line as the box's title.
+            self.assertEqual(str(indicator.render()), "○ standby")
+            self.assertEqual(indicator.region.y, header.region.y)
+            self.assertEqual(indicator.region.right, header.region.right - 2)
+            self.assertEqual(app.screen.query_one("#voice-title", Static).region.x, header.region.x + 2)
+            app.standby = False
+            await pilot.pause(0.3)
+            self.assertFalse(indicator.display)
+
     async def test_snapshot_loads_on_open_and_a_failed_refresh_keeps_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
             first = DashboardSnapshot(

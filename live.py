@@ -456,7 +456,6 @@ class CoraLive:
         mic_working = False
         chunk_count = 0
         opening = self.opening_microphone
-
         try:
             if self.microphone_muted:
                 # Keep Live's timeline moving without opening a recording device.
@@ -470,17 +469,28 @@ class CoraLive:
                     # Continue the existing local capture; do not open a second
                     # device or send buffered room audio before Live is ready.
                     await self.started.wait()
+                    self.trace("microphone.opening_handoff", buffered_chunks=opening.audio.qsize())
                 source = opening.chunks() if opening is not None else microphone_chunks()
+                began = monotonic()
+                sent_seconds = 0.0
                 async with aclosing(source) as chunks:
                     async for chunk in chunks:
                         if self.microphone_muted:
                             break
+                        if opening is not None:
+                            # Live drops audio beyond a 5 s burst or 1.2x real time; pace the
+                            # wake buffer within that (4 s burst, then 1.1x).
+                            ahead = sent_seconds - 4.0 - (monotonic() - began) * 1.1
+                            if ahead > 0:
+                                await asyncio.sleep(ahead / 1.1)
+                            sent_seconds += len(chunk) / 48000  # PCM16 mono at 24 kHz
                         chunk_count += 1
                         audio = base64.b64encode(chunk).decode("ascii")
                         await connection.session.input_audio.append(audio=audio)
                         self._microphone_bands = (audio_bands(chunk), monotonic())
                         if not mic_working:
                             mic_working = True
+                            self.trace("microphone.first_chunk_sent", from_wake=opening is not None)
                             on_mic_status(True, "first audio chunk sent")
 
         except Exception as error:

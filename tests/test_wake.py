@@ -264,6 +264,26 @@ class WakeListenerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(listener.pre_roll)
         self.assertIsNone(live.opening_microphone)
 
+    async def test_wake_buffer_is_paced_within_live_burst_limit(self):
+        chunk = bytes(960)  # 20 ms PCM16 at 24 kHz
+
+        async def buffered():
+            for _ in range(300):  # 6 s of opening speech
+                yield chunk
+
+        opening = SimpleNamespace(audio=asyncio.Queue(), chunks=buffered, stop=AsyncMock())
+        live = CoraLive()
+        live.opening_microphone = opening
+        live.started.set()
+        connection = SimpleNamespace(session=SimpleNamespace(input_audio=SimpleNamespace(append=AsyncMock())))
+        with patch("live.monotonic", return_value=0.0), \
+                patch("live.asyncio.sleep", new=AsyncMock()) as sleep:
+            await live.send_microphone(connection, MagicMock())
+        self.assertEqual(connection.session.input_audio.append.await_count, 300)
+        # The first 4 s go at once; the rest waits instead of overrunning Live.
+        self.assertIn(sleep.await_count, (99, 100))  # float rounding at the 4 s edge
+        self.assertAlmostEqual(sleep.await_args.args[0], (5.98 - 4.0) / 1.1)
+
     async def test_privacy_mute_during_reconnect_discards_buffer_and_closes_device(self):
         woke, closed = asyncio.Event(), asyncio.Event()
 
@@ -499,6 +519,24 @@ class WakeAppTests(unittest.IsolatedAsyncioTestCase):
                     else:
                         standby.assert_not_called()
                         self.assertIsNone(app.wake.response_deadline)
+
+    async def test_wake_keeps_opening_speech_when_reconnect_finishes_quickly(self):
+        listener = fake_listener()
+        with patch("wake.controller.WakeListener", return_value=listener):
+            async with restarting_app() as (app, pilot, connections, speakers, started):
+                app.wake.enabled = True
+                app.action_standby()
+                await asyncio.wait_for(app.reconnect_worker.wait(), 3)
+
+                def finished_reconnect(restart):
+                    # In standby the worker can finish before the request returns.
+                    app.reconnecting = False
+                    return MagicMock()
+
+                with patch.object(app, "reconnect_live", side_effect=finished_reconnect):
+                    self.assertTrue(app.handle_wake(listener))
+                self.assertIs(app.live.opening_microphone, listener)
+                await app.stop_wake_listener()
 
     async def test_privacy_mute_is_available_while_wake_reconnect_is_pending(self):
         listener = fake_listener()
