@@ -260,19 +260,33 @@ Screen > .screen--selection {
 }
 
 #voice-box {
+    border-top: none;
     border-bottom: none;
 }
 
-#voice-controls {
+#voice-header, #voice-controls {
     height: 1;
 }
 
-#voice-controls .voice-line {
+.voice-line {
     width: auto;
     color: #415575;
 }
 
-#voice-controls-fill {
+#voice-title {
+    width: auto;
+    padding: 0 1;
+    color: #8f98a8;
+}
+
+/* Shown at the voice box's top right while Live is in standby. */
+#dashboard-standby {
+    width: auto;
+    padding: 0 1;
+    color: #a6acd8;
+}
+
+#voice-header-fill, #voice-controls-fill {
     width: 1fr;
     height: 1;
     color: #415575;
