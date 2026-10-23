@@ -34,6 +34,7 @@ BOX_TITLES = {
     "interests-box": "interests",
     "identity-box": "identity",
     "conversations-box": "conversations",
+    "context-box": "context",
     "background-box": "background",
 }
 
@@ -146,10 +147,13 @@ class DashboardScreen(Screen):
                     # Scrolls, so every trait can be read in full.
                     with VerticalScroll(id="identity-scroll"):
                         yield Static(id="identity-traits")
-            with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
+            # Pans sideways like the middle row once the boxes reach their minimum widths.
+            with HorizontalScroll(id="dashboard-bottom", classes="dashboard-row", can_focus=False):
                 with Vertical(id="conversations-box", classes="dashboard-box"):
                     yield Static("your messages per day", classes="dashboard-label")
                     yield CalendarHeatmap(id="conversation-days")
+                with Vertical(id="context-box", classes="dashboard-box"):
+                    yield Static("connect to measure", id="context-placeholder")
                 with Vertical(id="background-box", classes="dashboard-box"):
                     yield Static("last ran · next", classes="dashboard-label")
                     yield Static(id="background-runs")

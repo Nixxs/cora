@@ -28,7 +28,8 @@ from ui.chat_widgets import SelectableRichLog
 from ui.composer import IMAGE_MARKER, ChatComposer
 from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
 from ui.meters import (
-    HEAT_STYLES, LABEL_STYLE, TONE_STYLES, TRACK_STYLE, CalendarHeatmap, Meters, ToneRibbon, meter_bar,
+    HEAT_STYLES, LABEL_STYLE, MAX_WEEKS, MIN_WEEKS, TONE_STYLES, TRACK_STYLE, CalendarHeatmap, Meters,
+    ToneRibbon, meter_bar,
 )
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
@@ -599,11 +600,41 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                     "identity         never     due",
                 ],
             )
-            # The box hugs its widest line (plus border and padding); conversations gets the rest.
+            # The box hugs its widest line (plus border and padding).
             self.assertEqual(screen.query_one("#background-box").outer_size.width, 33 + 4)
+
+    async def test_bottom_row_pans_sideways_when_its_boxes_do_not_fit(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.resize_terminal(60, 35)
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#background-runs", Static).update("x" * 33)
+            await pilot.pause()
+            await pilot.pause()
+            row = screen.query_one("#dashboard-bottom", HorizontalScroll)
+            # Each box stops at its minimum and the row scrolls, rather than squashing them.
+            self.assertEqual(screen.query_one("#conversations-box").outer_size.width, 16)
+            self.assertEqual(screen.query_one("#context-box").outer_size.width, 40)
+            self.assertGreater(row.max_scroll_x, 0)
+            self.assertFalse(row.can_focus)
+            self.assertEqual(screen.query_one("#conversation-days", CalendarHeatmap).visible_weeks(), MIN_WEEKS)
+
+    async def test_wide_bottom_row_caps_the_heatmap_and_gives_context_the_rest(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.resize_terminal(240, 53)
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            heatmap = screen.query_one("#conversation-days", CalendarHeatmap)
+            # No empty columns between the day initials and the grid.
+            self.assertEqual(heatmap.visible_weeks(), MAX_WEEKS)
+            self.assertEqual(heatmap.size.width, 2 + 2 * MAX_WEEKS)
             self.assertGreater(
-                screen.query_one("#conversations-box").outer_size.width, 80 - 37 - 2,
+                screen.query_one("#context-box").outer_size.width,
+                screen.query_one("#conversations-box").outer_size.width,
             )
+            self.assertEqual(screen.query_one("#dashboard-bottom", HorizontalScroll).max_scroll_x, 0)
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

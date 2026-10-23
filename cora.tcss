@@ -244,6 +244,24 @@ Screen > .screen--selection {
 
 #dashboard-bottom {
     min-height: 8;
+    scrollbar-size-horizontal: 1;
+}
+
+/* From 5 to 26 weeks of the heatmap: initials, cells and gaps, plus border and padding. */
+#conversations-box {
+    width: 30%;
+    min-width: 16;
+    max-width: 58;
+}
+
+/* Fr widths grow without limit once a scrolling row overflows, so only this box uses one. */
+#context-box {
+    width: 1fr;
+    min-width: 40;
+}
+
+#context-placeholder {
+    color: #415575;
 }
 
 .dashboard-box {
@@ -423,7 +441,7 @@ Screen > .screen--selection {
     color: #d0d6e0;
 }
 
-/* Only as wide as its list; conversations takes the rest of the row. */
+/* Only as wide as its list; conversations and context share the rest of the row. */
 #background-box {
     width: auto;
 }
