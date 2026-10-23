@@ -7,13 +7,16 @@ from textual.containers import Horizontal, HorizontalGroup, HorizontalScroll, Ve
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
+from context_window import BACKEND, VOICE, short_tokens
 from devices.audio_bands import BAND_COUNT
 from memory.store import fade_weight
+from session_config import BACKEND_CONTEXT_TOKENS
 from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
-from ui.meters import LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, Meters, ToneRibbon
+from ui.context_view import ContextScreen
+from ui.meters import LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, ContextMeters, Meters, ToneRibbon
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -34,6 +37,7 @@ BOX_TITLES = {
     "interests-box": "interests",
     "identity-box": "identity",
     "conversations-box": "conversations",
+    "context-box": "context",
     "background-box": "background",
 }
 
@@ -65,7 +69,7 @@ def until(when, now) -> str:
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
-    def __init__(self, voice_bands, conversation, audio_status, load_snapshot, activity) -> None:
+    def __init__(self, voice_bands, conversation, audio_status, load_snapshot, activity, context) -> None:
         super().__init__()
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
         # or an empty tuple for silence.
@@ -79,6 +83,8 @@ class DashboardScreen(Screen):
         self.snapshot = None
         # The chat's activity panel, whose latest summary the voice box shows.
         self.activity = activity
+        # What Live's last connection started with; kept in memory, so read every second.
+        self.context = context
 
     def compose(self) -> ComposeResult:
         yield TitleBar("chat")
@@ -146,10 +152,20 @@ class DashboardScreen(Screen):
                     # Scrolls, so every trait can be read in full.
                     with VerticalScroll(id="identity-scroll"):
                         yield Static(id="identity-traits")
-            with Horizontal(id="dashboard-bottom", classes="dashboard-row"):
+            # Pans sideways like the middle row once the boxes reach their minimum widths.
+            with HorizontalScroll(id="dashboard-bottom", classes="dashboard-row", can_focus=False):
                 with Vertical(id="conversations-box", classes="dashboard-box"):
                     yield Static("your messages per day", classes="dashboard-label")
                     yield CalendarHeatmap(id="conversation-days")
+                with Vertical(id="context-box", classes="dashboard-box"):
+                    yield Static("connect to measure", id="context-placeholder")
+                    # Each item's share of its model's startup context; scrolls if the box is short.
+                    with VerticalScroll(id="context-scroll"):
+                        # Each model's measured fill, as the API reports it.
+                        yield Meters(id="context-totals")
+                        for side in (VOICE, BACKEND):
+                            yield Static(side, classes="dashboard-label")
+                            yield ContextMeters(id=f"context-{side}")
                 with Vertical(id="background-box", classes="dashboard-box"):
                     yield Static("last ran · next", classes="dashboard-label")
                     yield Static(id="background-runs")
@@ -165,6 +181,8 @@ class DashboardScreen(Screen):
         self.query_one("#dashboard-input", ChatComposer).focus()
         self.refresh_snapshot()
         self.set_interval(REFRESH_SECONDS, self.refresh_snapshot)
+        self.show_context()
+        self.set_interval(1, self.show_context)
 
     @work(group="dashboard-snapshot")
     async def refresh_snapshot(self) -> None:
@@ -236,6 +254,37 @@ class DashboardScreen(Screen):
             if job in self.snapshot.next_due:
                 runs.append(" " * (10 - len(last)) + until(self.snapshot.next_due[job], now), style=LABEL_STYLE)
         self.query_one("#background-runs", Static).update(runs)
+
+    def show_context(self) -> None:
+        started = bool(self.context.startup)
+        self.query_one("#context-placeholder", Static).display = not started
+        self.query_one("#context-scroll", VerticalScroll).display = started
+        # Standby or a dropped connection keeps showing what the last one held.
+        self.query_one("#context-box").border_subtitle = "" if self.context.active or not started else "last session"
+        ratio = self.context.voice_ratio
+        tokens = self.context.backend_tokens
+        limit = BACKEND_CONTEXT_TOKENS.get(self.context.backend_model)
+        if tokens is None:
+            backend = ("backend", 0.0, "after a request")
+        elif limit:
+            backend = ("backend", tokens / limit, f"{tokens / limit:.0%} · {short_tokens(tokens)}")
+        else:
+            backend = ("backend", 0.0, short_tokens(tokens))
+        self.query_one("#context-totals", Meters).rows = (
+            ("voice", ratio or 0.0, "measuring…" if ratio is None else f"{ratio:.0%}"), backend,
+        )
+        for side in (VOICE, BACKEND):
+            items = self.context.items(side)
+            total = sum(item.tokens for item in items) or 1
+            self.query_one(f"#context-{side}", Meters).rows = tuple(
+                (item.name, item.tokens / total, f"~{short_tokens(item.tokens)}") for item in items
+            )
+
+    def on_context_meters_selected(self, event: ContextMeters.Selected) -> None:
+        items = self.context.items(event.meters.id.removeprefix("context-"))
+        # The rows are redrawn every second, so an item may have gone since the click.
+        if event.index < len(items):
+            self.app.push_screen(ContextScreen(items[event.index]))
 
     def on_unmount(self) -> None:
         self.conversation.remove_mirror(self.chat_log)

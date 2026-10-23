@@ -244,6 +244,46 @@ Screen > .screen--selection {
 
 #dashboard-bottom {
     min-height: 8;
+    scrollbar-size-horizontal: 1;
+}
+
+/* From 5 to 26 weeks of the heatmap: initials, cells and gaps, plus border and padding. */
+#conversations-box {
+    width: 30%;
+    min-width: 16;
+    max-width: 58;
+}
+
+/* Fr widths grow without limit once a scrolling row overflows, so only this box uses one. */
+#context-box {
+    width: 1fr;
+    min-width: 40;
+}
+
+#context-placeholder {
+    color: #415575;
+}
+
+#context-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#context-totals, #context-voice, #context-backend {
+    height: auto;
+}
+
+#context-totals {
+    color: #d0d6e0;
+}
+
+/* The voice model in the speaker graph's colour; the backend in the interests' blue. */
+#context-voice {
+    color: #8fcca6;
+}
+
+#context-backend {
+    color: #7fb8d8;
 }
 
 .dashboard-box {
@@ -423,7 +463,7 @@ Screen > .screen--selection {
     color: #d0d6e0;
 }
 
-/* Only as wide as its list; conversations takes the rest of the row. */
+/* Only as wide as its list; conversations and context share the rest of the row. */
 #background-box {
     width: auto;
 }
@@ -505,6 +545,43 @@ ImageScreen {
 
 #image-view-hint {
     color: #8f98a8;
+}
+
+ContextScreen {
+    align: center middle;
+    background: #141820 70%;
+}
+
+#context-view {
+    width: 90%;
+    height: 90%;
+    padding: 0 1;
+    background: #141820;
+    border: round #7799cc;
+}
+
+#context-view-title {
+    width: 1fr;
+    color: #e0e6ef;
+}
+
+#context-view-hint {
+    width: 1fr;
+    color: #8f98a8;
+}
+
+#context-view-text {
+    height: 1fr;
+    margin: 1 0;
+    padding: 0;
+    border: none;
+    background: #141820;
+    color: #d0d6e0;
+}
+
+#context-view-text:focus {
+    border: none;
+    background-tint: transparent;
 }
 
 /* A fixed area so the auto-sized image fits inside it, keeping its shape. */
