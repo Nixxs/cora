@@ -4,7 +4,8 @@ from datetime import date, timedelta
 import math
 
 from rich.text import Text
-from textual.events import MouseMove
+from textual.events import Click, MouseMove
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 
@@ -13,6 +14,7 @@ from textual.widget import Widget
 CELL = "■"
 LABEL_STYLE = "#8f98a8"
 TRACK_STYLE = "#415575"
+HOVER_STYLE = "on #202838"
 TONE_STYLES = {"warm": "#8fcca6", "neutral": "#8f98a8", "curt": "#e6c07b", "hostile": "#f0a38a"}
 # Dim to bright: each step is a quarter of the busiest day.
 HEAT_STYLES = ("#35574a", "#4f8068", "#6fa888", "#8fcca6")
@@ -62,6 +64,41 @@ class Meters(Widget):
             text.append(CELL * (bar_width - len(filled)), style=TRACK_STYLE)
             text.append(f" {value_text:>{shown_width}}", style=LABEL_STYLE)
         return text
+
+
+class ContextMeters(Meters):
+    """Meters whose rows can be clicked; the hovered row is highlighted."""
+
+    hover_row = reactive(None)
+
+    class Selected(Message):
+        def __init__(self, meters: "ContextMeters", index: int) -> None:
+            super().__init__()
+            self.meters = meters
+            self.index = index
+
+        @property
+        def control(self) -> "ContextMeters":
+            return self.meters
+
+    def render(self) -> Text:
+        text = super().render()
+        if self.rows and self.hover_row is not None:
+            # Each row is exactly the widget's width, then a newline.
+            start = self.hover_row * (self.size.width + 1)
+            text.stylize(HOVER_STYLE, start, start + self.size.width)
+        return text
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        self.hover_row = event.y if 0 <= event.y < len(self.rows) else None
+        self.tooltip = "click to see what's in it" if self.hover_row is not None else None
+
+    def on_leave(self) -> None:
+        self.hover_row = None
+
+    def on_click(self, event: Click) -> None:
+        if 0 <= event.y < len(self.rows):
+            self.post_message(self.Selected(self, event.y))
 
 
 class ToneRibbon(Widget):
