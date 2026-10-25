@@ -493,8 +493,9 @@ ModelSettingsScreen {
 }
 
 #model-settings {
-    width: 48;
+    width: 64;
     height: auto;
+    max-height: 95%;
     padding: 0 2 1 2;
     background: #141820;
     border: round #7799cc;
@@ -518,6 +519,59 @@ ModelSettingsScreen {
 
 #model-settings TabPane {
     padding: 0;
+}
+
+#model-settings Input {
+    width: 1fr;
+}
+
+.service-heading {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+.service-heading:hover {
+    background: #1c2230;
+}
+
+.service-title {
+    width: auto;
+    margin: 1 2 0 0;
+    color: #e0e6ef;
+    text-style: bold;
+}
+
+.service-status {
+    width: 1fr;
+    margin: 1 0 0 0;
+}
+
+.service-details {
+    height: auto;
+    display: none;
+}
+
+.service-reason {
+    margin: 1 0 0 0;
+}
+
+.service-help {
+    width: 1fr;
+}
+
+.service-buttons {
+    height: auto;
+}
+
+.service-buttons Button {
+    width: 1fr;
+}
+
+.service-tools {
+    height: 12;
+    margin: 1 0 0 0;
+    border: round #2a3140;
+    padding: 0 1;
 }
 
 #model-settings-close {

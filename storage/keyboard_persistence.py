@@ -10,6 +10,7 @@ from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .service_settings_store import ServiceSettingsStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.interests.interest_store import InterestStore
@@ -61,6 +62,12 @@ class KeyboardPersistence:
 
     def save_model(self, area: str, model: str) -> None:
         ModelSettingsStore(self._get_store().engine).set_model(area, model)
+
+    def load_enabled_services(self) -> set[str]:
+        return ServiceSettingsStore(self._get_store().engine).enabled_services()
+
+    def save_service_enabled(self, service: str, enabled: bool) -> None:
+        ServiceSettingsStore(self._get_store().engine).set_enabled(service, enabled)
 
     def load_last_talked_at(self) -> datetime | None:
         return self._get_store().last_message_time(self.conversation_id)

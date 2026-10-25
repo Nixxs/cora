@@ -23,7 +23,10 @@ from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
-from ui.model_settings import ModelSettingsScreen
+from ui.model_settings import ModelSettingsScreen, ServiceControls
+from services.catalogue import SERVICES
+from services.connection import ServiceManager
+from services.credentials import forget_token, get_token, save_token
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager
@@ -202,6 +205,11 @@ class CoraApp(App):
             show_image=self.conversation.show_image,
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
+        # Outside services over MCP. Their tools are only listed in Settings for now; none reach Cora.
+        self.services = ServiceManager(
+            schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),
+            write_activity=self.activity.write,
+        )
         self.submission = ChatSubmission(
             persistence=self.conversation_persistence, conversation=self.conversation,
             live=self.live, backend_work=self.backend_work,
@@ -437,6 +445,7 @@ class CoraApp(App):
             self.activity.write("Could not write diagnostic trace; Live continues unchanged.", "Diagnostic trace unavailable")
 
     async def on_unmount(self) -> None:
+        self.services.stop_all()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
@@ -480,6 +489,7 @@ class CoraApp(App):
                 await self.startup_worker.wait()
                 self.startup_complete = True
                 self.summary_worker = self.summarize_previous_conversations()
+                self.start_enabled_services()
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
                 self.startup_worker = self.load_session_context()
@@ -717,6 +727,8 @@ class CoraApp(App):
     async def open_model_settings(self) -> None:
         try:
             models = await self.conversation_persistence.call_database(self.persistence.load_models)
+            enabled = await self.conversation_persistence.call_database(self.persistence.load_enabled_services)
+            has_token = {service_id for service_id in SERVICES if await asyncio.to_thread(get_token, service_id)}
         except Exception as error:
             self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
             self.notify("Could not load model settings. Check Activity.", severity="error")
@@ -724,7 +736,76 @@ class CoraApp(App):
         if not self.closing:
             self.push_screen(ModelSettingsScreen(
                 models, self.save_model_setting, self.screen_looking, self.set_screen_looking,
+                services=ServiceControls(
+                    status=self.services.status, set_enabled=self.set_service_enabled,
+                    save_token=self.save_service_token, forget_token=self.forget_service_token,
+                    enabled=set(enabled), has_token=has_token,
+                ),
             ))
+
+    @work(group="services-startup")
+    async def start_enabled_services(self) -> None:
+        """At launch, connect each service left switched on."""
+        try:
+            enabled = await self.conversation_persistence.call_database(self.persistence.load_enabled_services)
+            tokens = {service_id: await asyncio.to_thread(get_token, service_id) for service_id in enabled}
+        except Exception as error:
+            self.activity.write(f"Services load failed ({type(error).__name__}).", "Services error")
+            return
+        for service_id in sorted(enabled):
+            if self.closing:
+                return
+            if tokens[service_id]:
+                self.services.start(service_id, tokens[service_id])
+            else:
+                title = SERVICES[service_id].title
+                self.activity.write(f"{title} is switched on but has no saved token.", "Services error")
+
+    @work(group="services-save")
+    async def set_service_enabled(self, service_id: str, enabled: bool) -> None:
+        title = SERVICES[service_id].title
+        try:
+            await self.conversation_persistence.call_database(
+                self.persistence.save_service_enabled, service_id, enabled,
+            )
+        except Exception as error:
+            self.activity.write(f"{title} setting save failed ({type(error).__name__}).", "Services error")
+            self.notify(f"Could not save the {title} setting. Check Activity.", severity="error")
+            return
+        if not enabled:
+            self.services.stop(service_id)
+            return
+        try:
+            token = await asyncio.to_thread(get_token, service_id)
+        except Exception as error:
+            self.activity.write(f"{title} token load failed ({type(error).__name__}).", "Services error")
+            return
+        if token and not self.closing:
+            self.services.start(service_id, token)
+
+    @work(group="services-save")
+    async def save_service_token(self, service_id: str, token: str) -> None:
+        title = SERVICES[service_id].title
+        try:
+            await asyncio.to_thread(save_token, service_id, token)
+        except Exception as error:
+            self.activity.write(f"{title} token save failed ({type(error).__name__}).", "Services error")
+            self.notify(f"Could not save the {title} token. Check Activity.", severity="error")
+            return
+        self.activity.write(f"{title} token saved to the system credential store.", f"{title} token saved")
+        # A connection already running, or failed with the old token, retries with the new one.
+        if service_id in self.services.connections and not self.closing:
+            self.services.start(service_id, token)
+
+    @work(group="services-save")
+    async def forget_service_token(self, service_id: str) -> None:
+        title = SERVICES[service_id].title
+        try:
+            await asyncio.to_thread(forget_token, service_id)
+        except Exception as error:
+            self.activity.write(f"{title} token removal failed ({type(error).__name__}).", "Services error")
+            return
+        self.activity.write(f"{title} token removed from the system credential store.", f"{title} token removed")
 
     def set_screen_looking(self, enabled: bool) -> None:
         self.screen_looking = enabled

@@ -13,3 +13,5 @@ pillow>=11
 psycopg[binary]>=3.2,<4
 SQLAlchemy>=2.0,<3
 pgvector>=0.5.1,<1
+mcp>=2.3,<3
+keyring>=25.7,<26

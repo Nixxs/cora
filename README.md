@@ -166,6 +166,8 @@ not change an existing database's password or user. Back up important data.
   of what Cora has stored. See [The dashboard](#the-dashboard).
 - **Choose models:** click Settings on the top border to pick the model for each
   area. See [Choosing models](#choosing-models).
+- **Connect services:** Settings > Services connects outside services over MCP,
+  starting with GitHub. See [Connecting services](#connecting-services).
 - **Quit:** use × on the top border, Ctrl+X, or ask Cora to close. The close tool waits
   three seconds when connected; this does not guarantee speech has finished.
 
@@ -468,6 +470,32 @@ read at connect, Cora connects with the default and notes it in Activity.
 Embeddings and the manual voice measurement are not covered: changing the
 embedding model would also need a migration and re-embedding stored memories.
 
+### Connecting services
+
+Settings > **Services** connects Cora to outside services over MCP (the Model
+Context Protocol). GitHub is the first, through GitHub's hosted MCP server. Run
+`python migrate.py` once after updating (migration 0018) and reinstall the
+requirements.
+
+1. Create a fine-grained personal access token on GitHub (Settings > Developer
+   settings > Fine-grained tokens), read-only, for the repositories Cora may see:
+   Contents, Issues, Pull requests and Metadata are enough to start.
+2. Paste it into the token field and press **Save token** (or Enter). It goes
+   to the system credential store (Windows Credential Manager), never to a
+   file, `.env` or the database, and the field is cleared. **Forget token**
+   removes it and switches the service off.
+3. Switch the service on. It connects straight away and again at each launch
+   while switched on; switching it off disconnects it.
+
+The page shows whether the service is connected, or why it failed (for example
+`HTTP 401: unauthorized: token authentication failed`), and lists every tool
+the server offers with its description and whether the server marks it
+read-only. That mark is the server's own hint, not a guarantee. Activity notes
+each connection and failure. **None of these tools reach Cora yet**: this step
+only connects and lists them, so you can see what is on offer before choosing.
+A failed connection is not retried automatically; switch it off and on, or
+save a new token. With no service switched on, MCP stays off entirely.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -660,7 +688,8 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
-| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model settings, and the dashboard's snapshot read. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model and service settings, and the dashboard's snapshot read. |
+| [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, and one long-lived connection per service. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `random_number`). |
@@ -814,7 +843,9 @@ features it helps check, and package last.
 
 7. ~~Image support: pasting, the screen tool, then showing images (Cora's own
    pick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
-8. MCP M1–M3, starting with GitHub.
+8. MCP M1–M3, starting with GitHub. M1 (connect from Settings > Services and
+   list the tools; see [Connecting services](#connecting-services)) is built;
+   next, M2 switches on chosen read-only tools for Cora.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
    whose write-tool confirmation it reuses).
 
@@ -857,9 +888,10 @@ on them.
     generation. Terminal image support varies, so this needs a Textual image
     widget with a fallback (a lower-resolution render or a link).
 - **MCP tools (Cora-prime):** add an MCP client so capabilities come from
-  connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
-  common `mcpServers` format, lists each user's servers; their credentials stay on
-  their machine. At launch she connects to enabled servers and adds allowlisted
+  connected servers rather than hand-built tools. Services are switched on in
+  Settings > Services from a built-in catalogue, with tokens in the system
+  credential store, so credentials stay on the person's machine and no config
+  file is needed; a hand-edited `mcp.json` may come later for custom servers. At launch she connects to enabled servers and adds allowlisted
   tools to the existing registry, namespaced by server (for example
   `gmail__search_messages`), with size-capped results treated as untrusted.
   Read-only tools run when asked; tools that change something (send, post, delete)
