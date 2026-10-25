@@ -779,8 +779,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 
 ### Next priorities
 
-**Release plan:** everything below except private messaging and local models
-makes up **Cora 1.0**, published as a release in this repository as an
+**Release plan:** everything below except private messaging (your own inbox)
+and local models makes up **Cora 1.0**, published as a release in this repository as an
 open-source project. Packaging is paused: Cora stays run from source (PostgreSQL
 in Docker, the app natively), with no installer for non-technical users planned
 for now. Private messaging and local models follow after 1.0 as personal
@@ -812,28 +812,32 @@ features it helps check, and package last.
 
 *Phase 2 — doing things*
 
-7. ~~Image support: pasting, the screen tool, then showing images (Cora's ownpick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
+7. ~~Image support: pasting, the screen tool, then showing images (Cora's own
+   pick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
 8. MCP M1–M3, starting with GitHub.
+9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
+   whose write-tool confirmation it reuses).
 
 *Phase 3 — noticing things*
 
-9. Awareness W1–W3, including quiet hours and the off switch.
-10. Relevance and awareness triggers (interests step 8 below).
-11. Home Assistant, starting with its demo devices.
-12. Awareness W4: expectations from memory tasks.
-13. Camera and screen awareness.
-14. Emotions (after awareness gives her more to react to; nothing depends on it,
+10. Awareness W1–W3, including quiet hours and the off switch.
+11. Relevance and awareness triggers (interests step 8 below).
+12. Home Assistant, starting with its demo devices.
+13. Awareness W4: expectations from memory tasks.
+14. Camera and screen awareness.
+15. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-15. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+16. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-16. Dashboard editing (for example removing a wrong memory), with a detail view
+17. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-17. Release.
+18. Release.
 
-*After 1.0:* local models, then private messaging, which builds on them.
+*After 1.0:* local models, then private messaging (your own inbox), which builds
+on them.
 
 #### Details, in order
 
@@ -878,6 +882,78 @@ features it helps check, and package last.
   and short guidance for Cora, tested before release. Custom servers can still be
   added by hand in `mcp.json` for advanced use. With many servers, a router tool
   may later replace exposing every tool.
+- **Signal (Cora's own number):** so Nick can work with Cora away from his
+  desk, and so she can talk with other people (such as Nick's wife) as herself.
+  She has her own Signal account and phone number; anyone messaging it is
+  talking to Cora, so those chats go to OpenAI like any other conversation with
+  her. She is an individual, not an assistant or servant: she works *with* Nick
+  as a colleague, not for him, and if a company is needed it is Intelligis. That
+  belongs in `CORA_FOUNDATION` and applies everywhere, not only on Signal.
+  Optional and off by default, so the project runs without a `signal-cli`
+  container (an early experiment is in
+  [examples/signal_testings/](examples/signal_testings/)). Steps:
+  1. **S1 text without Live:** today typed chat needs an active Live session.
+     Signal messages arrive while Nick is away and Cora may be in Standby, so
+     they need a path straight to the Responses backend, with the same startup
+     context and tools. Quiet typed use in the app can use it too. Hosted web
+     search already works there. Cora's own tools do not yet: each handler
+     sends its result back through the Live connection
+     (`connection.response.item.create`, then `connection.response.create`, as in
+     [tools/search_memory.py](tools/search_memory.py)), so every tool needs
+     splitting into doing the work and returning the result, letting the same
+     handler answer Live or a direct backend call. Tools also differ per
+     channel: `look_at_screen`, `show_web_image`, `close_app` and
+     `enter_standby` only make sense at the desk and are not offered on Signal.
+  2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
+     Nick's number only (an allowlist), each Signal chat saved as a conversation
+     marked with its channel, so the usual memory pass, summaries and appraisals
+     cover it and she has the same continuity as in the app.
+  3. **S3 other people:** each sender becomes their own person, with their own
+     memories and her own relationship with them; prompts say who she is talking
+     to. Today's code assumes one person, so this needs memories and
+     conversations linked to people. Unknown numbers get a polite introduction
+     or nothing, as configured. Recall must be scoped too: `search_memory`
+     today searches every memory, so someone else could ask what Nick has been
+     stressed about and get an answer. For anyone but Nick, recall covers only
+     memories from conversations with that person, plus memories Nick meant to
+     reach them. Nobody marks memories by hand: a share check, run in the
+     background memory pass beside the duplicate, correction and fade checks
+     (on the small-jobs model), looks for Nick's intent to pass something on
+     ("let Sarah know I'll be late", "tell anyone who asks I'm away until
+     Monday") and saves who it is for, one person or anyone. It judges intent,
+     not whether something is private, because nearly everything Nick says is
+     personal and a wrong "fine to share" is a leak. When unsure it doesn't
+     share; a miss only means "check with Nick". The dashboard lists shared
+     memories and who for, so Nick can check them.
+     Beyond what she can look up, her manner changes too: with anyone but Nick
+     she talks the way a professional talks to a client, friendly and warm, but
+     she doesn't bring up private things about Nick's life, even ones she
+     knows. The prompt for those chats says so, and scoped recall backs it up
+     so a slip can't reveal what she was never given. Asked something private,
+     she declines without confirming it exists ("that's one for Nick", not "I
+     can't tell you about his health"), offers to let Nick know they asked,
+     never invents a cover story, and carries on helping with what she can.
+     Later, each person may get a level (such as close or professional) that
+     sets her tone, so Nick's wife needn't be treated like a client; levels
+     never change what she can see.
+  4. **S4 permissions and catching up:** tool access follows who is asking,
+     checked from the sender's verified number and never from what the message
+     says. Nick gets her tools, with anything that changes something confirmed
+     in the chat first (as MCP M3 confirms by voice); others get conversation
+     only, and all message text is untrusted data. Messages that arrive while
+     Cora is off are read on reconnect and answered once per chat, covering
+     everything that person sent, rather than message by message, and very old
+     ones are acknowledged as late.
+
+  This is a bigger job than MCP: it changes the core (a conversation path
+  without Live, more than one person, and per-sender permissions) rather than
+  adding to the tool registry, so MCP comes first. S1 and S2 together are
+  useful on their own, Cora on Nick's phone with web search and full recall and
+  no permission questions, so they can ship before S3 and S4.
+
+  Still to decide: what unknown numbers get, how "let Nick know they asked"
+  reaches him (next chat, or a Signal message), and how Signal chats show in
+  the app and dashboard.
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are
@@ -890,8 +966,8 @@ features it helps check, and package last.
   In Standby she is off the clock: watchers keep polling and holding items, and
   she gets a "while you were away" digest on reconnect. Later, expectations from
   memory tasks (such as waiting to hear back from someone) can raise an item's
-  urgency. Messaging Cora herself (for example over Signal) is a separate
-  interface, not an awareness notification. Steps: W1 watcher and stored read
+  urgency. Messaging Cora herself over Signal is a separate interface (see
+  Signal below), not an awareness notification. Steps: W1 watcher and stored read
   positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
   and off switch, with per-source settings and quiet hours editable in the app
   rather than a config file; W4 expectations. Camera, screen, and home sensor
@@ -962,8 +1038,9 @@ features it helps check, and package last.
   portable binaries would need pgvector built per platform. Running the whole
   app in a container was also ruled out, since Docker Desktop cannot reach the
   host's microphone, speaker or clipboard.
-- **Private messaging (for example Signal), after 1.0:** while Cora is running, she tells
-  the person about incoming messages, what the sender wants, and sends replies
+- **Private messaging (your own inbox), after 1.0:** separate from Cora's own
+  Signal number above. While Cora is running, she tells
+  the person about incoming messages to *their* account, what the sender wants, and sends replies
   when told to (confirmed by voice). The person does not want message content
   sent to OpenAI, so reading, summarising, and drafting would run on a local
   model, and Cora-prime would only see what is safe to share (such as "a message
