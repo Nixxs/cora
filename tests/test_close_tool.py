@@ -252,7 +252,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(tool["name"], "close_app")
                     self.assertTrue(tool["strict"])
                     self.assertFalse(tool["parameters"]["additionalProperties"])
-                    self.assertEqual(backend["model"], "gpt-6-luna")
+                    self.assertEqual(backend["model"], "gpt-6.1-sol")
                     self.assertEqual(config["model"], "gpt-live-1")
                     self.assertEqual(config["audio"]["format"], {"type": "audio/pcm", "rate": 24000})
                     self.assertEqual(config["audio"]["output"]["voice"], "marin")

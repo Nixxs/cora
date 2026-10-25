@@ -13,7 +13,7 @@ understandable steps.
 ## Getting started
 
 Cora runs directly on Windows; only its PostgreSQL/pgvector database runs in Docker.
-You need Python with a virtual environment, Docker Desktop using Linux containers,
+You need Python 3.12 or later with a virtual environment, Docker Desktop using Linux containers,
 an OpenAI API key, and a microphone/speaker for voice interaction.
 
 Run these commands from the repository root with your Python environment activated.
@@ -192,11 +192,16 @@ Its top right shows **○ standby** while Live is in standby.
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
+| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
 | background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
 
 The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
-showing the last values and notes the failure in Activity. In a narrow window the
-middle row of boxes pans sideways. The history graphs rise in when the dashboard
+showing the last values and notes the failure in Activity. The context box reads
+the running app instead, once a second. Its item sizes are estimates (about four
+bytes a token), good for comparing items but not exact; voice requests Cora
+delegates are counted in "delegated turns" but their wording can't be shown,
+because the Live service doesn't send it back. In a narrow window the middle and
+bottom rows of boxes pan sideways. The history graphs rise in when the dashboard
 opens, and their newest point pulses.
 
 These settings are constants in the code rather than `.env` settings; edit them
@@ -209,6 +214,7 @@ and restart Cora:
 | `HISTORY_LIMIT` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 200 | The most relationship changes, tones and days of new memories read. |
 | `RISING_WINDOW` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 3 days | How recently an interest must have grown to show as rising. |
 | `CALENDAR_DAYS` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 371 (53 weeks) | Days of messages read for the conversations heatmap. |
+| `BACKEND_CONTEXT_TOKENS` | [session_config.py](session_config.py) | 1,050,000 per model | Each backend model's context limit, for the context box. A model missing from it shows a token count without a share. |
 | `PULSE_SECONDS` | [ui/braille.py](ui/braille.py) | 2 | How long one pulse of a graph's newest point takes. |
 | `GROW_SECONDS` | [ui/braille.py](ui/braille.py) | 1 | How long the graphs take to rise in. |
 | `BAND_COUNT` | [devices/audio_bands.py](devices/audio_bands.py) | 24 | How many voice bands there are. |
@@ -355,6 +361,8 @@ question, the backend searches the web, and Live uses the result to answer aloud
 For a question about an earlier conversation, the backend can call `search_memory`.
 Asked how she came to one of her interests or findings, it can call `recall_interest`,
 and asked why she sees herself a certain way, `recall_self`.
+To see your screen it calls `look_at_screen`, and to show a picture from the web,
+`show_web_image` (see [Using Cora](#using-cora)).
 An explicit request to quit can trigger `close_app` instead, and a request to
 rest (or Cora deciding to) can trigger `enter_standby`. When the person tells her
 their name, `set_person_name` saves it for the next connect.
@@ -437,8 +445,8 @@ rate limits.
   reflection every 10 minutes (at most once a day), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `set_person_name`, `enter_standby`, or `close_app` when a
-  conversation needs them.
+  `recall_self`, `look_at_screen`, `show_web_image`, `set_person_name`,
+  `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
 
@@ -646,15 +654,16 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
+| [context_window.py](context_window.py) | What each model holds in context, item by item, for the dashboard's context box. |
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
 | [greeting.py](greeting.py) | Opening greeting brief: time of day, time since you last talked, name, how she feels about you, and the optional hook. |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
-| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, the dashboard, and the model settings screen. |
+| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model settings, and the dashboard's snapshot read. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
+| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -763,7 +772,10 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
 - A read-only dashboard of her relationship, memories, interests, identity, your
-  conversations and the background jobs, beside a live copy of the chat.
+  conversations and the background jobs, beside a live copy of the chat, with a
+  context box showing how full each model's context window is and what fills it.
+- Images: paste a screenshot into the chat, let her look at your screen (with an
+  off switch in Settings), and see pictures she picks from the web.
 
 ### Next priorities
 
@@ -800,8 +812,7 @@ features it helps check, and package last.
 
 *Phase 2 — doing things*
 
-7. Image support: pasting, the screen tool, then showing images (Cora's own
-   pick; it does not depend on MCP).
+7. ~~Image support: pasting, the screen tool, then showing images (Cora's ownpick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
 8. MCP M1–M3, starting with GitHub.
 
 *Phase 3 — noticing things*
