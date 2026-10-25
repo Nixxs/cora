@@ -474,8 +474,8 @@ embedding model would also need a migration and re-embedding stored memories.
 
 Settings > **Services** connects Cora to outside services over MCP (the Model
 Context Protocol). GitHub is the first, through GitHub's hosted MCP server. Run
-`python migrate.py` once after updating (migration 0018) and reinstall the
-requirements.
+`python migrate.py` once after updating (migrations 0018 and 0019) and reinstall
+the requirements.
 
 1. Create a fine-grained personal access token on GitHub (Settings > Developer
    settings > Fine-grained tokens), read-only, for the repositories Cora may see:
@@ -487,14 +487,34 @@ requirements.
 3. Switch the service on. It connects straight away and again at each launch
    while switched on; switching it off disconnects it.
 
-The page shows whether the service is connected, or why it failed (for example
-`HTTP 401: unauthorized: token authentication failed`), and lists every tool
-the server offers with its description and whether the server marks it
-read-only. That mark is the server's own hint, not a guarantee. Activity notes
-each connection and failure. **None of these tools reach Cora yet**: this step
-only connects and lists them, so you can see what is on offer before choosing.
-A failed connection is not retried automatically; switch it off and on, or
-save a new token. With no service switched on, MCP stays off entirely.
+Each service is one row: click it to open its details. They show why a
+connection failed (for example `HTTP 401: unauthorized: token authentication
+failed`) and list every tool the server offers, with its description and
+whether the server marks it read-only. That mark is the server's own hint, not
+a guarantee. Activity notes each connection and failure. A failed connection is
+not retried automatically; switch it off and on, or save a new token. With no
+service switched on, MCP stays off entirely.
+
+4. **Choose Cora's tools.** Every tool starts off, including tools a server adds
+   later. Switch on the read-only ones you want her to have; tools that change
+   things stay off until they can ask for your confirmation first. Each tool
+   reaches Cora as `github__<tool>` at her next connect: closing Settings
+   reconnects Live once if it is Active and a tool changed. At launch, Live waits
+   up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app.py](app.py)) for
+   services to connect so their tools are in the first session; a slower service
+   joins at the next connect.
+
+When she uses one, the app calls the server, keeps the text of its reply,
+including file contents (images and other binary content are only named), and
+hands it to her labelled as untrusted data, never instructions. A long reply
+comes in pages of 8,000 characters (`RESULT_LIMIT` in
+[services/tools.py](services/tools.py)): each says "page 1 of 7", and she reads
+the next by repeating the call with `result_page`, an argument Cora's side adds
+to every service tool (the server never sees it). Replies are kept for five
+minutes, up to 20 of them, so later pages need no new call to the service. A call that fails or takes over a minute
+gets an error result once and is never retried. Activity shows each call and
+its size, never its contents. Every switched-on tool's description takes space
+in her context; the dashboard's context box shows how much.
 
 ## How memory works
 
@@ -689,7 +709,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model and service settings, and the dashboard's snapshot read. |
-| [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, and one long-lived connection per service. |
+| [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `random_number`). |
@@ -734,6 +754,8 @@ provides three things:
 1. **`SCHEMA`:** a strict function schema. `parameters` must be an object, every
    property must be listed in `required`, and `additionalProperties` must be
    `False`. The `description` tells the backend when to use the tool, so be specific.
+   (Service tools from MCP are the exception: their schemas have optional
+   fields, so they are sent with `strict: False` and the server checks arguments.)
 2. **`validate_arguments(arguments)`:** raise `ValueError` for anything outside the
    schema (missing or extra keys, wrong types, and bools posing as integers). The
    registry rejects invalid calls before the handler runs; a rejected call is logged
@@ -844,8 +866,9 @@ features it helps check, and package last.
 7. ~~Image support: pasting, the screen tool, then showing images (Cora's own
    pick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
 8. MCP M1–M3, starting with GitHub. M1 (connect from Settings > Services and
-   list the tools; see [Connecting services](#connecting-services)) is built;
-   next, M2 switches on chosen read-only tools for Cora.
+   list the tools) and M2 (switch on chosen read-only tools for Cora) are built;
+   see [Connecting services](#connecting-services). Next, M3: tools that change
+   things, each call confirmed by the person first.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
    whose write-tool confirmation it reuses).
 

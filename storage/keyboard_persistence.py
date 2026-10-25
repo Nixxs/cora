@@ -69,6 +69,12 @@ class KeyboardPersistence:
     def save_service_enabled(self, service: str, enabled: bool) -> None:
         ServiceSettingsStore(self._get_store().engine).set_enabled(service, enabled)
 
+    def load_service_tools(self) -> dict[str, set[str]]:
+        return ServiceSettingsStore(self._get_store().engine).enabled_tools()
+
+    def save_service_tool(self, service: str, tool: str, enabled: bool) -> None:
+        ServiceSettingsStore(self._get_store().engine).set_tool_enabled(service, tool, enabled)
+
     def load_last_talked_at(self) -> datetime | None:
         return self._get_store().last_message_time(self.conversation_id)
 

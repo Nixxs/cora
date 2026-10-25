@@ -577,3 +577,18 @@ class ServiceSettingRecord(Base):
     service: Mapped[str] = mapped_column(Text, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ServiceToolRecord(Base):
+    """One service tool Cora may use; tools without a row are off."""
+
+    __tablename__ = "service_tools"
+    __table_args__ = (
+        CheckConstraint("btrim(service) <> ''", name="service_tools_service_check"),
+        CheckConstraint("btrim(tool) <> ''", name="service_tools_tool_check"),
+        {"schema": "public"},
+    )
+
+    service: Mapped[str] = mapped_column(Text, primary_key=True)
+    tool: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

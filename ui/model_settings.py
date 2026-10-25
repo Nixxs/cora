@@ -29,8 +29,10 @@ class ServiceControls:
     set_enabled: Callable[[str, bool], None]
     save_token: Callable[[str, str], None]
     forget_token: Callable[[str], None]
+    set_tool_enabled: Callable[[str, str, bool], None] = lambda service, tool, enabled: None
     enabled: set[str] = field(default_factory=set)
     has_token: set[str] = field(default_factory=set)
+    tools_on: dict[str, set[str]] = field(default_factory=dict)
 
 
 def status_line(status: ServiceStatus, enabled: bool) -> Text:
@@ -44,18 +46,25 @@ def status_line(status: ServiceStatus, enabled: bool) -> Text:
     return Text("○ on, not connected" if enabled else "○ off", style="#8f98a8")
 
 
-def tool_list(status: ServiceStatus) -> Text:
-    """Every tool the server offers. Nothing here reaches Cora yet."""
+def tool_label(tool) -> Text:
+    text = Text(tool.name, style="bold #e0e6ef")
+    # The server's own label, a hint only. Tools that change things wait for confirmation support.
+    text.append("  read-only" if tool.read_only else "  changes things · later", style="#8fcf8f" if tool.read_only else "#d7a06a")
+    summary = tool.description.splitlines()[0] if tool.description else ""
+    if summary:
+        text.append(f"\n{summary}", style="#8f98a8")
+    return text
+
+
+def tools_heading(status: ServiceStatus, on: set[str]) -> Text:
     if status.state != CONNECTED:
         return Text("Tools appear here once connected.", style="#8f98a8")
-    text = Text()
-    for tool in status.tools:
-        text.append(tool.name, style="bold #e0e6ef")
-        # The server's own label, a hint only.
-        text.append("  read-only" if tool.read_only else "  changes things", style="#8fcf8f" if tool.read_only else "#d7a06a")
-        summary = tool.description.splitlines()[0] if tool.description else ""
-        text.append(f"\n{summary}\n\n" if summary else "\n\n", style="#8f98a8")
-    return text
+    read_only = [tool for tool in status.tools if tool.read_only]
+    chosen = sum(tool.name in on for tool in read_only)
+    return Text(
+        f"{chosen} of {len(read_only)} read-only tools on for Cora · changes reach her at her next connect",
+        style="#8f98a8",
+    )
 
 
 class ModelSettingsScreen(ModalScreen):
@@ -72,6 +81,8 @@ class ModelSettingsScreen(ModalScreen):
         self.screen_looking = screen_looking
         self.set_screen_looking = set_screen_looking
         self.services = services
+        self.shown_tools: dict[str, tuple] = {}
+        self.tool_switches: dict[str, list[str]] = {}
 
     def compose(self) -> ComposeResult:
         with Vertical(id="model-settings"):
@@ -109,8 +120,9 @@ class ModelSettingsScreen(ModalScreen):
             with Horizontal(classes="service-buttons"):
                 yield Button("Save token", id=f"service-save-{service.id}")
                 yield Button("Forget token", id=f"service-forget-{service.id}")
-            with VerticalScroll(classes="service-tools"):
-                yield Static(id=f"service-tools-{service.id}")
+            yield Static(id=f"service-tools-heading-{service.id}", classes="service-tools-heading")
+            # Filled with one row per tool once connected.
+            yield VerticalScroll(classes="service-tools", id=f"service-tools-{service.id}")
 
     def on_click(self, event: Click) -> None:
         if isinstance(event.widget, Switch):
@@ -126,12 +138,12 @@ class ModelSettingsScreen(ModalScreen):
         arrow = "▾" if details.display else "▸"
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {SERVICES[service_id].title}")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         if self.services is not None:
-            self.show_services()
+            await self.show_services()
             self.set_interval(0.5, self.show_services)
 
-    def show_services(self) -> None:
+    async def show_services(self) -> None:
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -140,7 +152,34 @@ class ModelSettingsScreen(ModalScreen):
             reason = self.query_one(f"#service-reason-{service_id}", Static)
             reason.display = status.state == FAILED
             reason.update(Text(f"Failed: {status.reason}", style="#e07a7a"))
-            self.query_one(f"#service-tools-{service_id}", Static).update(tool_list(status))
+            on = self.services.tools_on.setdefault(service_id, set())
+            self.query_one(f"#service-tools-heading-{service_id}", Static).update(tools_heading(status, on))
+            tools = status.tools if status.state == CONNECTED else ()
+            # Rebuild the rows only when the server's tools change, so switches keep their place.
+            if self.shown_tools.get(service_id) != tools:
+                self.shown_tools[service_id] = tools
+                await self.show_tool_rows(service_id, tools, on)
+
+    async def show_tool_rows(self, service_id: str, tools, on: set[str]) -> None:
+        listing = self.query_one(f"#service-tools-{service_id}", VerticalScroll)
+        # Finish removing the old rows first, so the new ones can reuse their ids.
+        await listing.remove_children()
+        listing.display = bool(tools)
+        # Read-only tools first: those are the ones that can be switched on for now.
+        ordered = sorted(tools, key=lambda tool: (not tool.read_only, tool.name))
+        # Switch ids use positions: tool names come from the server and may not be valid ids.
+        self.tool_switches[service_id] = [tool.name for tool in ordered]
+        await listing.mount_all(
+            Horizontal(
+                Switch(
+                    value=tool.read_only and tool.name in on, disabled=not tool.read_only,
+                    id=f"tool-{service_id}-{index}",
+                ),
+                Static(tool_label(tool), classes="tool-label"),
+                classes="tool-row",
+            )
+            for index, tool in enumerate(ordered)
+        )
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         event.stop()
@@ -149,6 +188,18 @@ class ModelSettingsScreen(ModalScreen):
                 return
             self.screen_looking = event.value
             self.set_screen_looking(event.value)
+            return
+        if event.switch.id.startswith("tool-"):
+            service_id, index = event.switch.id.removeprefix("tool-").rsplit("-", 1)
+            tool = self.tool_switches[service_id][int(index)]
+            on = self.services.tools_on.setdefault(service_id, set())
+            if event.value == (tool in on):
+                return
+            if event.value:
+                on.add(tool)
+            else:
+                on.discard(tool)
+            self.services.set_tool_enabled(service_id, tool, event.value)
             return
         service_id = event.switch.id.removeprefix("service-enabled-")
         # The switch also reports changes made here, such as turning back off below.

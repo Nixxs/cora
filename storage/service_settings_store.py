@@ -1,11 +1,11 @@
-"""Save which outside services are switched on; a service with no saved choice is off."""
+"""Save which outside services, and which of their tools, are switched on; anything not saved is off."""
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from services.catalogue import SERVICES
-from .models import ServiceSettingRecord
+from .models import ServiceSettingRecord, ServiceToolRecord
 
 
 class ServiceSettingsStore:
@@ -32,3 +32,28 @@ class ServiceSettingsStore:
         )
         with Session(self.engine) as session, session.begin():
             session.execute(statement)
+
+    def enabled_tools(self) -> dict[str, set[str]]:
+        """Each service's switched-on tools; services no longer in the catalogue are ignored."""
+        with Session(self.engine) as session:
+            rows = session.execute(select(ServiceToolRecord.service, ServiceToolRecord.tool)).all()
+        tools: dict[str, set[str]] = {}
+        for service, tool in rows:
+            if service in SERVICES:
+                tools.setdefault(service, set()).add(tool)
+        return tools
+
+    def set_tool_enabled(self, service: str, tool: str, enabled: bool) -> None:
+        if service not in SERVICES:
+            raise ValueError(f"Unknown service: {service}")
+        if not tool.strip():
+            raise ValueError("A tool needs a name")
+        with Session(self.engine) as session, session.begin():
+            if enabled:
+                session.execute(
+                    insert(ServiceToolRecord).values(service=service, tool=tool).on_conflict_do_nothing()
+                )
+            else:
+                session.execute(delete(ServiceToolRecord).where(
+                    ServiceToolRecord.service == service, ServiceToolRecord.tool == tool,
+                ))

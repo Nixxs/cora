@@ -87,6 +87,8 @@ class ServiceConnection:
         self.open_client = open_client
         self.status = ServiceStatus(CONNECTING)
         self.stopped = asyncio.Event()
+        # Set only while connected, for calling the server's tools.
+        self.client = None
 
     def stop(self) -> None:
         self.stopped.set()
@@ -98,12 +100,16 @@ class ServiceConnection:
             async with self.open_client(self.service.url, self.token, errors) as client:
                 if self.stopped.is_set():
                     return
-                self.set_status(ServiceStatus(CONNECTED, tools=await list_all_tools(client)))
+                tools = await list_all_tools(client)
+                self.client = client
+                self.set_status(ServiceStatus(CONNECTED, tools=tools))
                 await self.stopped.wait()
         except Exception as error:
+            self.client = None
             if not self.stopped.is_set():
                 self.set_status(ServiceStatus(FAILED, failure_reason(error, errors)))
             return
+        self.client = None
         self.set_status(ServiceStatus(OFF))
 
     def set_status(self, status: ServiceStatus) -> None:
@@ -114,11 +120,29 @@ class ServiceConnection:
 class ServiceManager:
     """Starts and stops each service's connection and reports changes; the app schedules the tasks."""
 
-    def __init__(self, schedule, write_activity, open_client=open_http_client) -> None:
+    def __init__(self, schedule, write_activity, open_client=open_http_client, on_change=lambda: None) -> None:
         self.schedule = schedule
         self.write_activity = write_activity
         self.open_client = open_client
+        # Called whenever a service connects, fails or stops, so the app can update Cora's tools.
+        self.on_change = on_change
         self.connections: dict[str, ServiceConnection] = {}
+
+    async def call_tool(self, service_id: str, tool: str, arguments: dict, timeout: float = 60):
+        """Call one tool on a connected service; raises if it isn't connected or takes too long."""
+        connection = self.connections.get(service_id)
+        client = connection.client if connection is not None else None
+        if client is None:
+            raise ConnectionError(f"{SERVICES[service_id].title} is not connected")
+        return await asyncio.wait_for(client.call_tool(tool, arguments), timeout)
+
+    async def wait_settled(self, timeout: float) -> None:
+        """Wait, up to timeout, until no service is still connecting."""
+        deadline = asyncio.get_running_loop().time() + timeout
+        while any(c.status.state == CONNECTING for c in self.connections.values()):
+            if asyncio.get_running_loop().time() >= deadline:
+                return
+            await asyncio.sleep(0.1)
 
     def status(self, service_id: str) -> ServiceStatus:
         connection = self.connections.get(service_id)
@@ -138,6 +162,7 @@ class ServiceManager:
         connection.stop()
         if not quietly:
             self.write_activity(f"MCP {connection.service.title}: disconnected.", f"{connection.service.title} off")
+        self.on_change()
 
     def stop_all(self) -> None:
         for service_id in list(self.connections):
@@ -157,3 +182,4 @@ class ServiceManager:
             )
         elif status.state == FAILED:
             self.write_activity(f"MCP {title}: connection failed ({status.reason}).", f"{title} connection failed")
+        self.on_change()

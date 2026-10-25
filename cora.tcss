@@ -567,11 +567,24 @@ ModelSettingsScreen {
     width: 1fr;
 }
 
-.service-tools {
-    height: 12;
+.service-tools-heading {
     margin: 1 0 0 0;
+}
+
+.service-tools {
+    height: 16;
     border: round #2a3140;
     padding: 0 1;
+}
+
+.tool-row {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+.tool-label {
+    width: 1fr;
+    margin: 0 0 0 1;
 }
 
 #model-settings-close {
