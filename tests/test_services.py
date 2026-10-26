@@ -14,11 +14,13 @@ import psycopg
 from psycopg import sql
 from sqlalchemy import text
 from keyring.errors import PasswordDeleteError
-from textual.widgets import Input, Label, Static, Switch, TabbedContent
+from textual.widgets import Input, Label, Static, Switch, TabbedContent, TextArea
 
 from migrate import apply_migrations, database_settings
 from services import credentials
 from services.catalogue import SERVICES
+from services.confirmation import APPROVED, DECLINED, TIMED_OUT, Confirmations
+from ui.confirm_view import ConfirmScreen
 from services.connection import (
     CONNECTED, FAILED, OFF, HttpErrors, ServiceConnection, ServiceManager, failure_reason,
 )
@@ -592,13 +594,13 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause(0.7)
             status = str(app.screen.query_one("#service-status-github", Static).render())
             self.assertIn("connected · 3 tools", status)
-            self.assertIn("0 of 1 read-only tools on", str(heading.render()))
+            self.assertIn("0 of 3 tools on", str(heading.render()))
             labels = [str(label.render()) for label in app.screen.query(".tool-label").results(Static)]
-            # Read-only first; tools that change things can't be switched on yet.
+            # Read-only first, then tools that ask the person each time.
             self.assertTrue(labels[0].startswith("search_issues  read-only"))
-            self.assertIn("changes things · later", labels[1])
+            self.assertIn("changes things · asks you first", labels[1])
             switches = list(app.screen.query("#service-tools-github Switch").results(Switch))
-            self.assertEqual([s.disabled for s in switches], [False, True, True])
+            self.assertEqual([s.disabled for s in switches], [False, False, False])
 
             app.persistence.save_service_tool.reset_mock()
             switches[0].value = True
@@ -609,9 +611,57 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("github__search_issues", app.tools.names())
             self.assertTrue(app.service_tools_changed)
             await pilot.pause(0.6)
-            self.assertIn("1 of 1 read-only tools on", str(heading.render()))
+            self.assertIn("1 of 3 tools on", str(heading.render()))
             app.services.stop_all()
             self.assertNotIn("github__search_issues", app.tools.names())
+
+    async def test_a_tool_that_changes_things_is_registered_to_ask_first(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.service_tool_choices = {"github": {"search_issues", "create_issue"}}
+            open_client, _ = fake_open()
+            app.services.open_client = open_client
+            app.services.start("github", TOKEN)
+            await pilot.pause(0.3)
+            handlers = {name: tool.handle.__self__ for name, tool in app.tools._tools.items()
+                        if name.startswith("github__")}
+            self.assertIsNone(handlers["github__search_issues"].confirm)
+            self.assertEqual(handlers["github__create_issue"].confirm, app.confirmations.ask)
+            app.services.stop_all()
+
+    async def test_the_pop_up_shows_the_request_and_the_answer_reaches_the_tool(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {"title": "Standby bug"}))
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ConfirmScreen)
+            self.assertIn('"title": "Standby bug"', app.screen.query_one("#confirm-arguments", TextArea).text)
+            self.assertTrue(app.screen.query_one("#confirm-deny").has_focus)
+            # Typing letters does nothing: there are no shortcuts to approve.
+            await pilot.press("y", "e", "s", "enter")
+            await pilot.pause()
+            self.assertEqual(await asyncio.wait_for(asked, 1), DECLINED)
+            self.assertNotIsInstance(app.screen, ConfirmScreen)
+
+            asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
+            await pilot.pause()
+            await pilot.click("#confirm-approve")
+            self.assertEqual(await asyncio.wait_for(asked, 1), APPROVED)
+
+            asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
+            await pilot.pause()
+            await pilot.press("escape")
+            self.assertEqual(await asyncio.wait_for(asked, 1), DECLINED)
+            self.assertIn("GitHub tool create_issue is waiting for your approval.", "\n".join(app.activity.entries))
+
+    async def test_an_unanswered_pop_up_times_out_and_goes_away(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.confirmations.timeout = 0.2
+            asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ConfirmScreen)
+            self.assertEqual(await asyncio.wait_for(asked, 1), TIMED_OUT)
+            await pilot.pause()
+            self.assertNotIsInstance(app.screen, ConfirmScreen)
+
 
     async def test_closing_settings_after_a_tool_change_reconnects_an_active_live_once(self):
         cases = [  # changed, ready, standby, reconnects
@@ -629,3 +679,119 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
                         await pilot.press("escape")
                         await pilot.pause()
                     self.assertEqual(reconnect.called, reconnects)
+
+
+class ConfirmationQueueTests(unittest.IsolatedAsyncioTestCase):
+    def queue(self, timeout=1):
+        self.shown, self.closed, self.activity = [], [], []
+        return Confirmations(self.shown.append, self.closed.append,
+                             lambda message, summary: self.activity.append(summary), timeout=timeout)
+
+    async def test_requests_are_shown_one_at_a_time_in_order(self):
+        queue = self.queue()
+        first = asyncio.ensure_future(queue.ask("github", "create_issue", {"n": 1}))
+        second = asyncio.ensure_future(queue.ask("github", "add_comment", {"n": 2}))
+        await settle()
+        self.assertEqual([r.tool for r in self.shown], ["create_issue"])
+        queue.answer(self.shown[0].id, True)
+        self.assertEqual(await first, APPROVED)
+        await settle()
+        self.assertEqual([r.tool for r in self.shown], ["create_issue", "add_comment"])
+        self.assertEqual(self.closed, [self.shown[0]])
+        queue.answer(self.shown[1].id, False)
+        self.assertEqual(await second, DECLINED)
+        self.assertEqual(self.activity[-1], "GitHub · add_comment declined")
+
+    async def test_answers_only_count_once_and_only_for_their_request(self):
+        queue = self.queue()
+        asked = asyncio.ensure_future(queue.ask("github", "create_issue", {}))
+        await settle()
+        request = self.shown[0]
+        queue.answer(request.id + 1000, True)
+        queue.answer(request.id, False)
+        queue.answer(request.id, True)
+        self.assertEqual(await asked, DECLINED)
+
+    async def test_no_answer_times_out_and_closing_declines_everything(self):
+        queue = self.queue(timeout=0.05)
+        self.assertEqual(await queue.ask("github", "create_issue", {}), TIMED_OUT)
+        queue = self.queue()
+        asked = [asyncio.ensure_future(queue.ask("github", "create_issue", {})) for _ in range(2)]
+        await settle()
+        queue.decline_all()
+        self.assertEqual(await asyncio.gather(*asked), [DECLINED, DECLINED])
+        self.assertEqual(queue.waiting, [])
+
+    async def test_a_declined_or_timed_out_tool_never_calls_the_service(self):
+        call_tool = AsyncMock()
+        for outcome in (DECLINED, TIMED_OUT):
+            with self.subTest(outcome=outcome):
+                handler = ServiceToolHandler("github", "create_issue", call_tool, MagicMock(), lambda: False,
+                                             MagicMock(), confirm=AsyncMock(return_value=outcome))
+                result = await handler.result({"title": "x"})
+                self.assertEqual(result["status"], "not_done")
+                self.assertIn("not done", result["message"])
+        call_tool.assert_not_called()
+
+    async def test_an_approved_tool_calls_the_service_once_with_what_was_shown(self):
+        call_tool = AsyncMock(return_value=SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="created #24")], structured_content=None, is_error=False,
+        ))
+        confirm = AsyncMock(return_value=APPROVED)
+        handler = ServiceToolHandler("github", "create_issue", call_tool, MagicMock(), lambda: False,
+                                     MagicMock(), confirm=confirm)
+        result = await handler.result({"title": "x", PAGE_ARGUMENT: 1})
+        # The page argument is Cora's own, so it is neither shown for approval nor sent.
+        confirm.assert_awaited_once_with("github", "create_issue", {"title": "x"})
+        call_tool.assert_awaited_once_with("github", "create_issue", {"title": "x"})
+        self.assertEqual(result["output_untrusted"], "created #24")
+
+    async def test_one_reminder_while_still_waiting_and_none_for_requests_not_yet_shown(self):
+        reminded = []
+        queue = Confirmations(MagicMock(), MagicMock(), MagicMock(), timeout=0.3,
+                              remind=reminded.append, remind_after=0.1)
+        first = asyncio.ensure_future(queue.ask("github", "create_issue", {}))
+        second = asyncio.ensure_future(queue.ask("github", "add_comment", {}))
+        self.assertEqual(await first, TIMED_OUT)
+        # Only the request on screen was reminded about, and only once.
+        self.assertEqual([request.tool for request in reminded], ["create_issue"])
+        second.cancel()
+
+    async def test_an_answer_before_the_reminder_means_no_reminder(self):
+        reminded = []
+        shown = []
+        queue = Confirmations(shown.append, MagicMock(), MagicMock(), timeout=1,
+                              remind=reminded.append, remind_after=0.2)
+        asked = asyncio.ensure_future(queue.ask("github", "create_issue", {}))
+        await settle()
+        queue.answer(shown[0].id, True)
+        self.assertEqual(await asked, APPROVED)
+        await asyncio.sleep(0.3)
+        self.assertEqual(reminded, [])
+
+
+class ApprovalNoteTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cora_is_told_when_the_pop_up_opens(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.live.send_approval_waiting = AsyncMock()
+            asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {"title": "x"}))
+            await pilot.pause()
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.live.send_approval_waiting.assert_awaited_once_with("GitHub", "create_issue", reminder=False)
+            await pilot.press("escape")
+            await asyncio.wait_for(asked, 1)
+
+    async def test_the_notes_name_the_tool_ask_for_a_click_and_never_carry_arguments(self):
+        from live import CoraLive
+        live = CoraLive()
+        live.connection = MagicMock()
+        live.ready = True
+        live.append_commentary = AsyncMock()
+        await live.send_approval_waiting("GitHub", "create_issue")
+        await live.send_approval_waiting("GitHub", "create_issue", reminder=True)
+        first, reminder = (call.args[2] for call in live.append_commentary.await_args_list)
+        for note in (first, reminder):
+            self.assertIn("GitHub tool create_issue", note)
+            self.assertIn("Approve or Deny", note)
+        self.assertIn("nothing said aloud approves it", first)
+        self.assertIn("remind them once", reminder)

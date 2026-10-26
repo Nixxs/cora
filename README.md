@@ -496,8 +496,9 @@ not retried automatically; switch it off and on, or save a new token. With no
 service switched on, MCP stays off entirely.
 
 4. **Choose Cora's tools.** Every tool starts off, including tools a server adds
-   later. Switch on the read-only ones you want her to have; tools that change
-   things stay off until they can ask for your confirmation first. Each tool
+   later. Switch on the ones you want her to have. A tool the server doesn't
+   mark read-only (it changes things, such as creating an issue) asks you first
+   every time, as below. Each tool
    reaches Cora as `github__<tool>` at her next connect: closing Settings
    reconnects Live once if it is Active and a tool changed. At launch, Live waits
    up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app.py](app.py)) for
@@ -512,7 +513,24 @@ comes in pages of 8,000 characters (`RESULT_LIMIT` in
 the next by repeating the call with `result_page`, an argument Cora's side adds
 to every service tool (the server never sees it). Replies are kept for five
 minutes, up to 20 of them, so later pages need no new call to the service. A call that fails or takes over a minute
-gets an error result once and is never retried. Activity shows each call and
+gets an error result once and is never retried.
+
+**Tools that change things ask you first.** When Cora calls one, nothing is sent
+to the service: a pop-up shows the service, the tool and exactly the arguments
+that would be sent, with **Deny** and **Approve**. Only what you do in the app
+answers it, so nothing Cora says and no text from a service (such as an issue
+asking to be approved) can. Deny has focus and there are no letter shortcuts,
+so typing elsewhere when it appears can't approve by accident: click Approve,
+or Tab to it and press Enter; Esc denies. Unanswered for two minutes
+(`CONFIRM_SECONDS` in [services/confirmation.py](services/confirmation.py)), it
+counts as declined. When it appears, Cora gets a note naming the service and
+tool (never the arguments) so she can tell you it's waiting for your click;
+after 45 seconds unanswered (`REMIND_SECONDS`) she gets one more, to remind you.
+Approving is by click only, never by voice: what she or you say aloud doesn't
+answer it. Cora is told the outcome once: done, declined (and not to try again
+unless you ask), or not answered in time. Several requests wait their
+turn, one pop-up at a time, and quitting declines any still waiting. This works
+the same for every service's tools; nothing is specific to GitHub. Activity shows each call and
 its size, never its contents. Every switched-on tool's description takes space
 in her context; the dashboard's context box shows how much.
 
@@ -866,9 +884,12 @@ features it helps check, and package last.
 7. ~~Image support: pasting, the screen tool, then showing images (Cora's own
    pick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
 8. MCP M1–M3, starting with GitHub. M1 (connect from Settings > Services and
-   list the tools) and M2 (switch on chosen read-only tools for Cora) are built;
-   see [Connecting services](#connecting-services). Next, M3: tools that change
-   things, each call confirmed by the person first.
+   list the tools), M2 (switch on chosen tools for Cora) and M3a (tools that
+   change things, each call approved in a pop-up first) are built; see
+   [Connecting services](#connecting-services). Approval stays click-only by
+   choice: Cora is told the pop-up is waiting and asks for the click, rather than
+   approving by voice. MCP M1–M3 are done; M4 (more services in the catalogue)
+   is in Phase 4.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
    whose write-tool confirmation it reuses).
 
@@ -994,7 +1015,7 @@ on them.
   4. **S4 permissions and catching up:** tool access follows who is asking,
      checked from the sender's verified number and never from what the message
      says. Nick gets her tools, with anything that changes something confirmed
-     in the chat first (as MCP M3 confirms by voice); others get conversation
+     in the chat first (as MCP M3 confirms with a pop-up in the app); others get conversation
      only, and all message text is untrusted data. Messages that arrive while
      Cora is off are read on reconnect and answered once per chat, covering
      everything that person sent, rather than message by message, and very old

@@ -592,6 +592,47 @@ ModelSettingsScreen {
     width: 1fr;
 }
 
+ConfirmScreen {
+    align: center middle;
+    background: #141820 70%;
+}
+
+#confirm-view {
+    width: 72;
+    height: auto;
+    max-height: 90%;
+    padding: 0 2 1 2;
+    background: #141820;
+    border: round #d7a06a;
+}
+
+#confirm-title {
+    width: 1fr;
+    margin: 1 0 1 0;
+    color: #e0e6ef;
+    text-style: bold;
+}
+
+#confirm-arguments {
+    height: auto;
+    max-height: 16;
+    margin: 1 0 0 0;
+}
+
+#confirm-buttons {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+#confirm-buttons Button {
+    width: 1fr;
+}
+
+#confirm-hint {
+    margin: 1 0 0 0;
+    color: #8f98a8;
+}
+
 ImageScreen {
     align: center middle;
     background: #141820 70%;

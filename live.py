@@ -398,6 +398,30 @@ class CoraLive:
             "mention this note, standby or the app."
         ))
 
+    async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
+        """Tell Cora a tool call of hers is waiting on the person's approval pop-up."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Live is not ready for an approval note")
+
+        event_id = f"approval_{uuid4().hex}"
+        if reminder:
+            content = (
+                "Approval note, not a message from the person. Your request to use the "
+                f"{service} tool {tool} is still waiting on the approval pop-up on their screen. "
+                "Gently remind them once, in a few words, that you're waiting for them to click "
+                "Approve or Deny. Do not mention this note."
+            )
+        else:
+            content = (
+                "Approval note, not a message from the person. Your request to use the "
+                f"{service} tool {tool} changes something, so an approval pop-up is now on their "
+                "screen and nothing has been done yet. Briefly let them know, in your own words, "
+                "that it needs them to click Approve or Deny. Only their click counts: you cannot "
+                "approve it, and nothing said aloud approves it. Do not mention this note."
+            )
+        await self.append_commentary(connection, event_id, content)
+
     async def send_standby_alert(self, event_id: str) -> None:
         connection = self.connection
         if connection is None or not self.ready:

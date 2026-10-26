@@ -48,8 +48,9 @@ def status_line(status: ServiceStatus, enabled: bool) -> Text:
 
 def tool_label(tool) -> Text:
     text = Text(tool.name, style="bold #e0e6ef")
-    # The server's own label, a hint only. Tools that change things wait for confirmation support.
-    text.append("  read-only" if tool.read_only else "  changes things · later", style="#8fcf8f" if tool.read_only else "#d7a06a")
+    # The server's own label, a hint only. Anything not marked read-only asks the person each time.
+    text.append("  read-only" if tool.read_only else "  changes things · asks you first",
+                style="#8fcf8f" if tool.read_only else "#d7a06a")
     summary = tool.description.splitlines()[0] if tool.description else ""
     if summary:
         text.append(f"\n{summary}", style="#8f98a8")
@@ -59,10 +60,9 @@ def tool_label(tool) -> Text:
 def tools_heading(status: ServiceStatus, on: set[str]) -> Text:
     if status.state != CONNECTED:
         return Text("Tools appear here once connected.", style="#8f98a8")
-    read_only = [tool for tool in status.tools if tool.read_only]
-    chosen = sum(tool.name in on for tool in read_only)
+    chosen = sum(tool.name in on for tool in status.tools)
     return Text(
-        f"{chosen} of {len(read_only)} read-only tools on for Cora · changes reach her at her next connect",
+        f"{chosen} of {len(status.tools)} tools on for Cora · changes reach her at her next connect",
         style="#8f98a8",
     )
 
@@ -165,16 +165,13 @@ class ModelSettingsScreen(ModalScreen):
         # Finish removing the old rows first, so the new ones can reuse their ids.
         await listing.remove_children()
         listing.display = bool(tools)
-        # Read-only tools first: those are the ones that can be switched on for now.
+        # Read-only tools first, then those that ask the person each time.
         ordered = sorted(tools, key=lambda tool: (not tool.read_only, tool.name))
         # Switch ids use positions: tool names come from the server and may not be valid ids.
         self.tool_switches[service_id] = [tool.name for tool in ordered]
         await listing.mount_all(
             Horizontal(
-                Switch(
-                    value=tool.read_only and tool.name in on, disabled=not tool.read_only,
-                    id=f"tool-{service_id}-{index}",
-                ),
+                Switch(value=tool.name in on, id=f"tool-{service_id}-{index}"),
                 Static(tool_label(tool), classes="tool-label"),
                 classes="tool-row",
             )

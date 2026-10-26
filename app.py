@@ -25,7 +25,9 @@ from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
 from ui.model_settings import ModelSettingsScreen, ServiceControls
 from services.catalogue import SERVICES
+from services.confirmation import Confirmations
 from services.connection import CONNECTED, ServiceManager
+from ui.confirm_view import ConfirmScreen
 from services.tools import PAGE_ARGUMENT, ResultCache, ServiceToolHandler, tool_name, tool_schema
 from services.tools import validate_arguments as validate_service_arguments
 from services.credentials import forget_token, get_token, save_token
@@ -215,6 +217,11 @@ class CoraApp(App):
         self.service_tools_changed = False
         # Recent long replies from service tools, so Cora can read their later pages.
         self.service_results = ResultCache()
+        # Tool calls that change things wait here for the person's answer.
+        self.confirmations = Confirmations(
+            show=self.show_confirmation, close=self.close_confirmation, write_activity=self.activity.write,
+            remind=lambda request: self.tell_cora_approval_waiting(request.title, request.tool, reminder=True),
+        )
         self.services = ServiceManager(
             schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),
             write_activity=self.activity.write,
@@ -455,6 +462,7 @@ class CoraApp(App):
             self.activity.write("Could not write diagnostic trace; Live continues unchanged.", "Diagnostic trace unavailable")
 
     async def on_unmount(self) -> None:
+        self.confirmations.decline_all()
         self.services.stop_all()
         self.event_bus.close()
         self.attention.stop()
@@ -759,6 +767,25 @@ class CoraApp(App):
                 ),
             ), callback=self.settings_closed)
 
+    def show_confirmation(self, request) -> None:
+        self.push_screen(ConfirmScreen(request, self.confirmations.answer))
+        self.tell_cora_approval_waiting(request.title, request.tool)
+
+    @work(group="approval-notes")
+    async def tell_cora_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
+        """Let Cora know her request waits on the pop-up, so she can ask the person to click it."""
+        try:
+            await self.live.send_approval_waiting(service, tool, reminder=reminder)
+        except Exception as error:
+            # The pop-up still works without her mentioning it.
+            self.activity.write(f"Approval note to Cora failed ({type(error).__name__}).", "Approval note failed")
+
+    def close_confirmation(self, request) -> None:
+        """A request ended without the person answering (timed out or closing): take its pop-up away."""
+        for screen in self.screen_stack:
+            if isinstance(screen, ConfirmScreen) and screen.request is request:
+                screen.dismiss()
+
     def settings_closed(self, _result=None) -> None:
         # Tool changes reach Cora at a connect, so reconnect once now rather than after every switch.
         if self.service_tools_changed and self.live.ready and not self.standby and not self.closing:
@@ -807,8 +834,7 @@ class CoraApp(App):
                 continue
             chosen = self.service_tool_choices.get(service_id, set())
             for tool in status.tools:
-                # Only tools the server marks read-only, until tools that change things need confirmation.
-                schema = tool_schema(service_id, tool) if tool.name in chosen and tool.read_only else None
+                schema = tool_schema(service_id, tool) if tool.name in chosen else None
                 if schema is not None:
                     wanted[schema["name"]] = (service_id, tool, schema)
         current = {
@@ -824,6 +850,8 @@ class CoraApp(App):
                 lambda: self.closing or self.reconnecting, self.activity.write,
                 cache=self.service_results,
                 paged=PAGE_ARGUMENT not in tool.input_schema.get("properties", {}),
+                # Anything the server doesn't mark read-only asks the person first.
+                confirm=None if tool.read_only else self.confirmations.ask,
             )
             self.tools.register(schema, validate_service_arguments, handler.handle)
         if current != set(wanted):
@@ -1199,6 +1227,8 @@ class CoraApp(App):
         if self.closing:
             return
         self.closing = True
+        # Nothing still waiting for approval may run while shutting down.
+        self.confirmations.decline_all()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
