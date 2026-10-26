@@ -25,12 +25,14 @@ class ConfirmationRequest:
     service_id: str
     tool: str
     arguments: dict
+    # What the pop-up and Cora's notes call it: a service's title, or a name for one of Cora's own tools.
+    given_title: str | None = None
     id: int = field(default_factory=lambda: next(_ids))
     answer: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
 
     @property
     def title(self) -> str:
-        return SERVICES[self.service_id].title
+        return self.given_title or SERVICES[self.service_id].title
 
 
 class Confirmations:
@@ -48,9 +50,12 @@ class Confirmations:
         self.remind_after = remind_after
         self.waiting: list[ConfirmationRequest] = []
 
-    async def ask(self, service_id: str, tool: str, arguments: dict) -> str:
-        """Wait for the person's answer: APPROVED, DECLINED or TIMED_OUT."""
-        request = ConfirmationRequest(service_id, tool, dict(arguments))
+    async def ask(self, service_id: str, tool: str, arguments: dict, title: str | None = None) -> str:
+        """Wait for the person's answer: APPROVED, DECLINED or TIMED_OUT.
+
+        `title` names one of Cora's own tools' areas (such as Signal); a service's comes from the catalogue.
+        """
+        request = ConfirmationRequest(service_id, tool, dict(arguments), title)
         self.waiting.append(request)
         self.write_activity(
             f"{request.title} tool {tool} is waiting for your approval.", f"{request.title} · {tool} needs approval",

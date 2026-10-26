@@ -232,6 +232,10 @@ class CoraApp(App):
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
             screen_looking=lambda: self.screen_looking,
             show_image=self.conversation.show_image,
+            find_signal_contact=self.find_signal_contact,
+            # Looked up when called: the approval queue is set up after the tools.
+            confirm=lambda *args, **options: self.confirmations.ask(*args, **options),
+            send_signal=self.send_to_signal_contact,
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
@@ -1145,6 +1149,41 @@ class CoraApp(App):
             route=BackendRoute(excluded=frozenset(self.tools.names())),
             extra_instructions=client_chat_instructions(client.name, self.live.person_name),
         )
+
+    def find_signal_contact(self, name: str) -> tuple[Client | None, str | None]:
+        """Someone the person added, by name (or first name if only one matches), for Cora to message."""
+        if self.signal.status.state != SIGNAL_LINKED:
+            return None, "Signal isn't set up and linked, so nothing can be sent."
+        contacts = list(self.signal_clients.values())
+        if not contacts:
+            return None, "Nobody has been added for you to message yet (Settings > Services > Signal)."
+        wanted = " ".join(name.split()).casefold()
+        matches = [contact for contact in contacts if contact.name.casefold() == wanted] or [
+            contact for contact in contacts if contact.name.casefold().split()[0] == wanted.split()[0]
+        ]
+        if len(matches) == 1:
+            return matches[0], None
+        names = ", ".join(sorted(contact.name for contact in contacts))
+        if matches:
+            return None, f"More than one contact matches; ask which one: {names}."
+        return None, f"There's no contact by that name. You can message: {names}."
+
+    async def send_to_signal_contact(self, contact: Client, text: str) -> None:
+        """Send from Cora's number and save it in that person's conversation, so she sees it when they reply."""
+        account = self.signal.status.account
+        if not account:
+            raise RuntimeError("Signal is not linked")
+        await self.signal.client.send(account, contact.number, text)
+        try:
+            conversation_id = await self.conversation_persistence.call_database(
+                self.persistence.client_conversation, contact.id,
+            )
+            await self.conversation_persistence.call_database(
+                self.persistence.save_client_message, conversation_id, "assistant", text,
+            )
+        except Exception as error:
+            # Sent all the same; only her record of it is missing.
+            self.activity.write(f"Saving the message to {contact.name} failed ({type(error).__name__}).", "Signal error")
 
     @work(group="signal-stranger")
     async def answer_stranger(self, number: str) -> None:

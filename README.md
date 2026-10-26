@@ -373,7 +373,8 @@ For a question about an earlier conversation, the backend can call `search_memor
 Asked how she came to one of her interests or findings, it can call `recall_interest`,
 and asked why she sees herself a certain way, `recall_self`.
 To see your screen it calls `look_at_screen`, and to show a picture from the web,
-`show_web_image` (see [Using Cora](#using-cora)).
+`show_web_image` (see [Using Cora](#using-cora)). Asked to message someone you've added on Signal, she
+calls `send_signal_message`, which you approve first (see [Cora's Signal](#coras-signal)).
 An explicit request to quit can trigger `close_app` instead, and a request to
 rest (or Cora deciding to) can trigger `enter_standby`. When the person tells her
 their name, `set_person_name` saves it for the next connect.
@@ -456,7 +457,7 @@ rate limits.
   reflection every 10 minutes (at most once a day), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `look_at_screen`, `show_web_image`, `set_person_name`,
+  `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
   `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
@@ -608,6 +609,9 @@ the way a professional talks with a client:
   Signal", without contents.
 - She has her own identity and interests, but none of your memories, your
   relationship or your name as "the person", and no tools except web search.
+  She is still herself with them (her views, humour, curiosity and interests);
+  "professional" means discretion about you, not a flat tone. She keeps no
+  relationship with clients and doesn't warm to them over time, by design.
 - She is friendly and helpful but never shares anything about your private life,
   even what she knows. Asked something private, she declines without confirming
   she knows anything ("that's one for Nick"), suggests they ask you directly,
@@ -617,6 +621,17 @@ the way a professional talks with a client:
   they never affect your relationship, your greeting or "when you last talked".
 - Removing someone stops her answering them; their past chats are kept.
 - Different people are answered independently, each in order.
+
+**Cora messaging them first.** At the desk (voice, or typing in Standby) you can
+ask her to message someone you've added, for example "introduce yourself to
+Sarah". She writes it and calls `send_signal_message`; an approval pop-up shows
+exactly who it's to (name and number) and the text, and nothing is sent until
+you click Approve, as with any tool that reaches outside. She tells you it's
+waiting for your click. Only people you've added can be messaged, by name (or
+first name if only one matches); an unknown or unclear name gets her the list to
+ask you about. The message is saved in that person's conversation, so when they
+reply she sees her own introduction. She can't do this from Signal (you couldn't
+approve it there) or from a client's chat.
 
 ## How memory works
 
@@ -823,7 +838,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 

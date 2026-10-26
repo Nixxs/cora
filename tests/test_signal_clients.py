@@ -40,6 +40,9 @@ class ClientPromptTests(unittest.TestCase):
     def test_professional_mode_names_both_and_keeps_the_persons_life_out(self):
         prompt = client_chat_instructions("Sarah", "Nick")
         self.assertIn('with "Sarah", someone "Nick" has introduced you to', prompt)
+        # Discreet, not flat: her personality stays.
+        self.assertIn("Be yourself with them", prompt)
+        self.assertIn("discretion, not a flat or formal tone", prompt)
         self.assertIn("never share anything about \"Nick\"'s private life", prompt)
         self.assertIn("that's one for \"Nick\"", prompt)
         self.assertIn("suggest they ask \"Nick\" directly", prompt)

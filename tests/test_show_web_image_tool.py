@@ -32,12 +32,12 @@ def resolving_to(address):
 
 
 class ShowWebImageFetchTests(unittest.TestCase):
-    def test_registered_last_with_a_strict_link_and_caption_schema(self):
+    def test_registered_with_a_strict_link_and_caption_schema(self):
         registry = create_tool_registry(
             get_connection=lambda: None, is_closing=lambda: False, shutdown=AsyncMock(),
             request_standby=MagicMock(), write_debug=MagicMock(), schedule=MagicMock(),
         )
-        self.assertEqual(registry.schemas()[-1], SCHEMA)
+        self.assertIn(SCHEMA, registry.schemas())
         validate_arguments({"page_url": PAGE, "caption": "The cafe"})
         for arguments in ({}, {"page_url": PAGE}, {"page_url": "http://example.com", "caption": "c"},
                           {"page_url": "file:///C:/secret.png", "caption": "c"},

@@ -19,9 +19,9 @@ TOOL_RESULT_SECONDS = 180
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby"})
-# Signal, away from the desk: nothing that needs the screen either. Tools that ask for approval
-# are added per message, since the pop-up is on the desk.
-SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image"}
+# Signal, away from the desk: nothing that needs the screen either, and nothing that needs the
+# approval pop-up on the desk (service tools that ask are added per message).
+SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image", "send_signal_message"}
 
 TOOL_REFUSED ='{"status": "error", "message": "That tool is not available here."}'
 TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in time; do not guess its result."}'
