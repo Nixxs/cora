@@ -33,6 +33,8 @@ class ConversationRecord(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(Text, server_default="active")
+    # None for the primary person; a client's id for their own Signal chats.
+    person_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("public.people.id", ondelete="RESTRICT"))
 
     messages: Mapped[list[MessageRecord]] = relationship(
         back_populates="conversation", order_by="MessageRecord.sequence_number",
@@ -146,12 +148,23 @@ class PersonRecord(Base):
             "AND display_name <> '' AND char_length(display_name) <= 100)",
             name="people_display_name_check",
         ),
+        CheckConstraint("kind IN ('primary', 'client')", name="people_kind_check"),
+        CheckConstraint("kind = 'primary' OR display_name IS NOT NULL", name="people_client_named_check"),
+        UniqueConstraint("signal_number", name="people_signal_number_key"),
         {"schema": "public"},
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
     display_name: Mapped[str | None] = mapped_column(Text)
     first_met_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    # 'primary' for the person Cora works with; 'client' for others she may talk with on Signal.
+    kind: Mapped[str] = mapped_column(Text, server_default="primary")
+    signal_number: Mapped[str | None] = mapped_column(Text)
+
+
+# The person Cora works with, never a client; and conversations with them, never a client's.
+PRIMARY_PERSON = PersonRecord.kind == "primary"
+WITH_PRIMARY_PERSON = ConversationRecord.person_id.is_(None)
 
 
 class InterestRecord(Base):

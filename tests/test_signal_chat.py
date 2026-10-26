@@ -15,7 +15,7 @@ from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
 from messaging.receiver import IncomingMessage, SignalReceiver, parse_event
 from messaging.setup import LINKED, OFF, SignalStatus
 from messaging.signal_cli import SignalClient
-from session_config import SIGNAL_CHAT_INSTRUCTIONS
+from session_config import SIGNAL_CHAT_INSTRUCTIONS, stranger_reply
 from storage.signal_settings_store import SignalSettings
 import test_keyboard_persistence as keyboard_tests
 
@@ -193,15 +193,17 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(batches, [["one"], ["two", "three"]])
             self.assertEqual(app.signal.client.send.await_count, 2)
 
-    async def test_anyone_else_is_ignored_and_never_shown(self):
+    async def test_a_number_nobody_added_gets_one_polite_reply_and_is_never_shown(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.linked_app(app)
-            app.on_signal_message(incoming("Hi, who's this?", sender="+61499999999"))
-            await self.settle(app, pilot)
+            app.live.person_name = "Nick"
+            for _ in range(2):
+                app.on_signal_message(incoming("Hi, who's this?", sender="+61499999999"))
+                await self.settle(app, pilot)
             app.backend_chat.reply.assert_not_called()
-            app.signal.client.send.assert_not_called()
+            app.signal.client.send.assert_awaited_once_with(CORA, "+61499999999", stranger_reply("Nick"))
             self.assertFalse(any("who's this" in str(entry) for entry in app.conversation.log_entries))
-            self.assertIn("A Signal message from someone else was ignored.", "\n".join(app.activity.entries))
+            app.persistence.save_client_message.assert_not_called()
 
     async def test_a_failed_reply_sends_a_short_apology_and_says_why_in_activity(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -268,9 +270,9 @@ class LaunchGreetingTests(unittest.IsolatedAsyncioTestCase):
             app.signal_last_message_at = now
             self.assertTrue(app.signal_catching_up())
             app.signal_last_message_at = now - 10
-            app.signal_waiting = [incoming("one")]
+            app.signal_waiting = {NICK: [incoming("one")]}
             self.assertTrue(app.signal_catching_up())
-            app.signal_waiting = []
+            app.signal_waiting = {}
             app.signal_startup = SimpleNamespace(is_finished=False)
             self.assertTrue(app.signal_catching_up())
 

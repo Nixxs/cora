@@ -7,7 +7,7 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from .models import ConversationRecord, ConversationSummaryRecord, MessageRecord
+from .models import WITH_PRIMARY_PERSON, ConversationRecord, ConversationSummaryRecord, MessageRecord
 
 
 class ConversationStore:
@@ -125,8 +125,8 @@ class ConversationStore:
         """Return when the newest message of any earlier run was saved, or None."""
         with Session(self.engine) as session:
             return session.scalar(
-                select(func.max(MessageRecord.created_at)).where(
-                    MessageRecord.conversation_id != current_conversation_id
+                select(func.max(MessageRecord.created_at)).join(ConversationRecord).where(
+                    MessageRecord.conversation_id != current_conversation_id, WITH_PRIMARY_PERSON,
                 )
             )
 
@@ -134,8 +134,9 @@ class ConversationStore:
         """Messages the person sent per local day, oldest first, ending today."""
         first = now.astimezone().date() - timedelta(days=days - 1)
         with Session(self.engine) as session:
-            sent_at = session.scalars(select(MessageRecord.created_at).where(
+            sent_at = session.scalars(select(MessageRecord.created_at).join(ConversationRecord).where(
                 MessageRecord.role == "user", MessageRecord.created_at >= now - timedelta(days=days + 1),
+                WITH_PRIMARY_PERSON,
             )).all()
         counts = [0] * days
         for time in sent_at:
@@ -147,8 +148,8 @@ class ConversationStore:
     def last_conversation_summary(self, current_conversation_id: UUID) -> str | None:
         """Return the summary of the earlier run with the newest message, or None if it has none."""
         with Session(self.engine) as session:
-            last_conversation_id = select(MessageRecord.conversation_id).where(
-                MessageRecord.conversation_id != current_conversation_id
+            last_conversation_id = select(MessageRecord.conversation_id).join(ConversationRecord).where(
+                MessageRecord.conversation_id != current_conversation_id, WITH_PRIMARY_PERSON,
             ).order_by(MessageRecord.created_at.desc()).limit(1).scalar_subquery()
             return session.scalar(
                 select(ConversationSummaryRecord.text).where(
@@ -200,6 +201,8 @@ class ConversationStore:
             return list(session.scalars(
                 select(ConversationRecord.id).where(
                     ConversationRecord.id != current_conversation_id,
+                    # Client chats wait until memories can say who said them.
+                    WITH_PRIMARY_PERSON,
                     ConversationRecord.status.in_(("closed", "interrupted")),
                     select(MessageRecord.id).where(
                         MessageRecord.conversation_id == ConversationRecord.id

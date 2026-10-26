@@ -49,12 +49,21 @@ class SignalControls:
     link: Callable[[], None]
     enabled: bool = False
     person_number: str | None = None
+    # People she may talk with as clients, and adding or removing them (by number).
+    clients: Callable[[], list] = lambda: []
+    add_client: Callable[[str, str], None] = lambda name, number: None
+    remove_client: Callable[[str], None] = lambda number: None
 
 
 SIGNAL_INTRO = (
     "This is Cora's own Signal account, on her own phone and number, not yours. Put Signal on a "
     "spare phone or second SIM with Cora's number, then link that phone here. Never scan the code "
     "with your own phone: Cora would become you."
+)
+SIGNAL_CLIENTS_HELP = (
+    "She talks with them like a professional with a client: friendly, but never about your "
+    "private life, in their own chats you can't see here yet. Anyone not listed gets one short "
+    "polite reply."
 )
 SIGNAL_SCAN_HINT = (
     "On Cora's phone: Signal › Settings › Linked devices › +, then scan. The code lasts five minutes."
@@ -124,6 +133,7 @@ class ModelSettingsScreen(ModalScreen):
         self.services = services
         self.signal = signal
         self.shown_link_uri: str | None = None
+        self.shown_clients: list[tuple[str, str]] | None = None
         self.shown_tools: dict[str, tuple] = {}
         self.tool_switches: dict[str, list[str]] = {}
 
@@ -167,6 +177,14 @@ class ModelSettingsScreen(ModalScreen):
                 yield Button("Link Cora's phone", id="signal-link")
             yield Static(id="signal-qr", classes="signal-qr")
             yield Label(SIGNAL_SCAN_HINT, id="signal-scan-hint", classes="model-settings-label service-help")
+            yield Label("People she may talk with, as clients", classes="model-settings-label")
+            yield Static(Text(SIGNAL_CLIENTS_HELP, style="#8f98a8"), classes="service-help")
+            # One row per person, filled from the app's list.
+            yield Vertical(id="signal-clients", classes="signal-clients")
+            with Horizontal(classes="service-buttons"):
+                yield Input(placeholder="name", id="signal-client-name")
+                yield Input(placeholder="+61400000000", id="signal-client-number")
+            yield Button("Add person", id="signal-add-client")
 
     def compose_service(self, service) -> ComposeResult:
         # One row per service; clicking it (anywhere but the switch) opens or closes its details.
@@ -208,7 +226,25 @@ class ModelSettingsScreen(ModalScreen):
             await self.show_services()
             self.set_interval(0.5, self.show_services)
 
-    def show_signal(self) -> None:
+    async def show_signal_clients(self) -> None:
+        clients = [(client.name, client.number) for client in self.signal.clients()]
+        if clients == self.shown_clients:
+            return
+        self.shown_clients = clients
+        listing = self.query_one("#signal-clients", Vertical)
+        # Finish removing the old rows first, so the new ones can reuse their ids.
+        await listing.remove_children()
+        await listing.mount_all(
+            Horizontal(
+                Static(f"{name} · {number}", classes="tool-label"),
+                Button("Remove", id=f"signal-remove-{index}"),
+                classes="tool-row",
+            )
+            for index, (name, number) in enumerate(clients)
+        ) if clients else listing.mount(Static(Text("Nobody added yet.", style="#8f98a8")))
+
+    async def show_signal(self) -> None:
+        await self.show_signal_clients()
         status = self.signal.status()
         self.query_one("#signal-status", Static).update(signal_line(status, self.signal.enabled))
         reason = self.query_one("#signal-reason", Static)
@@ -228,7 +264,7 @@ class ModelSettingsScreen(ModalScreen):
 
     async def show_services(self) -> None:
         if self.signal is not None:
-            self.show_signal()
+            await self.show_signal()
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -315,8 +351,25 @@ class ModelSettingsScreen(ModalScreen):
         event.stop()
         if event.input.id == "signal-person":
             self.save_person_number()
+        elif event.input.id in ("signal-client-name", "signal-client-number"):
+            self.add_client()
         else:
             self.save_service_token(event.input.id.removeprefix("service-token-"))
+
+    def add_client(self) -> None:
+        name_field = self.query_one("#signal-client-name", Input)
+        number_field = self.query_one("#signal-client-number", Input)
+        if not name_field.value.strip():
+            self.notify("Give them a name.", severity="warning")
+            return
+        try:
+            number = normalise_number(number_field.value)
+        except ValueError as error:
+            self.notify(str(error), severity="warning")
+            return
+        # The app checks the rest (not yours, not Cora's, not already added) and says if not.
+        self.signal.add_client(name_field.value, number)
+        name_field.value = number_field.value = ""
 
     def save_person_number(self) -> None:
         field_ = self.query_one("#signal-person", Input)
@@ -351,6 +404,11 @@ class ModelSettingsScreen(ModalScreen):
             self.save_person_number()
         elif button == "signal-link":
             self.signal.link()
+        elif button == "signal-add-client":
+            self.add_client()
+        elif button.startswith("signal-remove-"):
+            _, number = self.shown_clients[int(button.removeprefix("signal-remove-"))]
+            self.signal.remove_client(number)
         elif button.startswith("service-save-"):
             self.save_service_token(button.removeprefix("service-save-"))
         elif button.startswith("service-forget-"):

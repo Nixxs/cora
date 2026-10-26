@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from storage.database import build_engine
 from storage.models import (
+    PRIMARY_PERSON,
     ConversationRecord, InteractionAppraisalRecord, PersonRecord, RelationshipEventRecord, RelationshipRecord,
 )
 from subconscious.relationship.appraisal import Appraisal
@@ -29,7 +30,7 @@ RESET_REASON_MAX_CHARS = 1000
 
 def current_person_id():
     """The current person is the earliest met, matching PeopleStore.current_person."""
-    return (select(PersonRecord.id).order_by(PersonRecord.first_met_at, PersonRecord.id)
+    return (select(PersonRecord.id).where(PRIMARY_PERSON).order_by(PersonRecord.first_met_at, PersonRecord.id)
             .limit(1).scalar_subquery())
 
 

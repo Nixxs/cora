@@ -574,8 +574,9 @@ phone again. If the app finds the saved account is no longer linked (unlinked
 from her phone, or the volume was lost), it says so and asks you to link again.
 
 **Messaging her.** Once linked, Cora listens while the app runs and answers
-**your** number only; messages from anyone else are noted in Activity and
-ignored (never shown or saved), and group chats are skipped. Your messages are
+your number and the people you've added (below); anyone else gets one short
+polite reply per run ("I'm Cora; I only chat with people Nick has introduced me
+to") with no model call, and is never shown or saved. Group chats are skipped. Your messages are
 part of the same conversation as the desktop: they appear in the chat as
 **You · Signal**, her replies as **Cora · Signal**, both saved with a `signal`
 channel, so memories, summaries and your relationship come from them as from
@@ -595,6 +596,27 @@ that arrive while she is replying, including those, are answered together in
 her next reply, and any sent more than two minutes earlier are marked with when
 they were sent so she knows they are late. (Updating from the previous version
 recreates the container the next time Signal starts; her link is kept.)
+
+**Other people, as clients.** Under "People she may talk with" in the Signal
+details, add someone with a name and their Signal number (not yours and not
+Cora's; run `python migrate.py` once for migration 0022). Cora talks with them
+the way a professional talks with a client:
+
+- Each person has their own conversations with her, saved with who they were
+  with; a new one starts after three quiet hours. They never appear in your
+  chat or in voice Cora's history; Activity only notes "Answered Sarah on
+  Signal", without contents.
+- She has her own identity and interests, but none of your memories, your
+  relationship or your name as "the person", and no tools except web search.
+- She is friendly and helpful but never shares anything about your private life,
+  even what she knows. Asked something private, she declines without confirming
+  she knows anything ("that's one for Nick"), suggests they ask you directly,
+  and never makes up a cover story.
+- Their conversations are not processed yet: no memories, summaries or
+  appraisals come from them (memories that record who said them come next), and
+  they never affect your relationship, your greeting or "when you last talked".
+- Removing someone stops her answering them; their past chats are kept.
+- Different people are answered independently, each in order.
 
 ## How memory works
 
@@ -796,7 +818,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
-| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model and service settings, and the dashboard's snapshot read. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
@@ -1121,7 +1143,9 @@ features it helps check, and package last.
   S3 is built in steps, each tried before the next: S3a the launch greeting
   follows on from Signal messages answered at launch (built); S3b other people as
   separate client conversations in professional mode (web search only, no
-  relationship, not in Nick's chat); S3c memories record who said them; S3d
+  relationship, not in Nick's chat; built, see [Cora's Signal](#coras-signal));
+  S3c memories record who said them, and client conversations join the memory
+  pass (until then they are left out of it); S3d
   scoped recall for clients plus the share check; S3e the dashboard's Signal box.
 
   Still to decide: how "let Nick know they asked" reaches him (next chat, or a

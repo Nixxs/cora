@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
 
+from .client_store import Client, ClientStore
 from .conversation_store import ConversationStore
 from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
@@ -69,6 +70,24 @@ class KeyboardPersistence:
 
     def save_service_enabled(self, service: str, enabled: bool) -> None:
         ServiceSettingsStore(self._get_store().engine).set_enabled(service, enabled)
+
+    def load_clients(self) -> list[Client]:
+        return ClientStore(self._get_store().engine).clients()
+
+    def add_client(self, name: str, number: str) -> Client:
+        return ClientStore(self._get_store().engine).add(name, number)
+
+    def remove_client(self, person_id: UUID) -> None:
+        ClientStore(self._get_store().engine).remove(person_id)
+
+    def client_conversation(self, person_id: UUID) -> UUID:
+        return ClientStore(self._get_store().engine).conversation_for(person_id, datetime.now(timezone.utc))
+
+    def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
+        ClientStore(self._get_store().engine).save(conversation_id, role, text)
+
+    def load_client_history(self, conversation_id: UUID) -> list[dict]:
+        return ClientStore(self._get_store().engine).history(conversation_id)
 
     def load_signal_settings(self) -> SignalSettings:
         return SignalSettingsStore(self._get_store().engine).settings()
