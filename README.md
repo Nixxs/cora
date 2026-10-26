@@ -68,7 +68,36 @@ docker compose --env-file .env.database down
 **Your data lives in a persistent Docker volume, but this is not a backup.**
 Do not use `down -v` / `down --volumes`, delete the volume, or reset Docker's data:
 these can erase saved conversations. Changing settings after initial setup does
-not change an existing database's password or user. Back up important data.
+not change an existing database's password or user.
+
+### Backups
+
+Everything that makes Cora who she is (conversations, memories, identity and its
+history, interests, your relationship, people, settings) is in the database
+volume, inside Docker Desktop's virtual machine, not a folder you can copy. Back
+it up with [backup.py](backup.py):
+
+```powershell
+python backup.py                          # back up now: database and Signal keys
+python backup.py --list                   # the backups there are
+python backup.py restore backups\cora-database-2026-10-26_211101.dump
+```
+
+- The database backup is a `pg_dump` snapshot, consistent while the database
+  runs and restorable onto any fresh install (a few MB). Her Signal keys are
+  archived with signal-cli paused for a moment; without them you only re-link
+  her phone.
+- Backups go in `backups/` (ignored by Git), keeping the newest 14 of each.
+  **They hold every private conversation**: keep them private.
+- **Automatic:** at launch, if the newest database backup is more than a day old,
+  Cora backs up the database in the background and notes it in Activity (Signal
+  keys only with the manual command, so Signal is never paused while you use her).
+- **A second copy:** set `CORA_BACKUP_COPY_DIR` in `.env` to a folder on another
+  disk, and every backup is copied there too, pruned the same way. A cloud folder
+  works, but uploads your conversations to that service.
+- **Restoring** replaces the whole database with the backup. Quit Cora first; it
+  asks you to type `restore`, and saves the current database as a backup before
+  replacing it, in case the wrong file was chosen. Then start Cora as usual.
 
 ## Using Cora
 
@@ -890,6 +919,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
 | [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
+| [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
 Memory services are synchronous; UI-facing database calls and background

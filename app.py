@@ -25,6 +25,7 @@ from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
 from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalControls
+from backup import BackupError, daily_backup_due, run_backup
 from messaging.container import signal_port, start_container, stop_container
 from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
 from messaging.receiver import IncomingMessage, SignalReceiver
@@ -594,6 +595,7 @@ class CoraApp(App):
                 await self.wait_for_services()
                 # Signal starts on its own time; it never holds up Live.
                 self.signal_startup = self.start_signal_if_enabled()
+                self.daily_backup()
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
                 self.startup_worker = self.load_session_context()
@@ -866,6 +868,27 @@ class CoraApp(App):
                     enabled=self.signal_settings.enabled, person_number=self.signal_settings.allowed_number,
                 ),
             ), callback=self.settings_closed)
+
+    @work(thread=True, group="backup", exit_on_error=False)
+    def daily_backup(self) -> None:
+        """At launch, back the database up if the newest backup is a day old (see backup.py)."""
+        outcome = self.back_up_if_due()
+        if outcome is not None:
+            self.call_from_thread(self.activity.write, *outcome)
+
+    def back_up_if_due(self) -> tuple[str, str] | None:
+        """Back up the database if due; returns what to say in Activity, or None if nothing was due."""
+        try:
+            if not daily_backup_due(datetime.now()):
+                return None
+            made, copied = run_backup(include_signal=False)
+        except BackupError as error:
+            # Docker's own reason, which never contains her data.
+            return f"Daily backup failed: {error}", "Backup failed"
+        except Exception as error:
+            return f"Daily backup failed ({type(error).__name__}).", "Backup failed"
+        where = f"; copied to {copied}" if copied else ""
+        return f"Backup saved: {made[0].name}{where}", "Backup saved"
 
     @work(group="signal")
     async def start_signal_if_enabled(self) -> None:
