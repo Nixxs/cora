@@ -19,6 +19,9 @@ TOOL_RESULT_SECONDS = 180
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby"})
+# Signal, away from the desk: nothing that needs the screen either. Tools that ask for approval
+# are added per message, since the pop-up is on the desk.
+SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image"}
 
 TOOL_REFUSED ='{"status": "error", "message": "That tool is not available here."}'
 TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in time; do not guess its result."}'
@@ -80,9 +83,9 @@ class BackendChat:
 
     async def reply(
         self, *, content: list[dict], history: list[dict], sections: dict[str, str], model: str,
-        route: BackendRoute,
+        route: BackendRoute, extra_instructions: str = "",
     ) -> str:
-        instructions = BACKEND_INSTRUCTIONS + "".join(sections.values()) + TEXT_CHAT_INSTRUCTIONS
+        instructions = BACKEND_INSTRUCTIONS + "".join(sections.values()) + TEXT_CHAT_INSTRUCTIONS + extra_instructions
         tools = [{"type": "web_search"}, *self.tools.schemas(excluding=route.excluded)]
         items = [*history, {"type": "message", "role": "user", "content": content}]
         async with self.client_factory() as client:

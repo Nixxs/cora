@@ -184,6 +184,16 @@ TEXT_CHAT_INSTRUCTIONS = (
 )
 
 
+SIGNAL_CHAT_INSTRUCTIONS = (
+    "\n\nThis chat is over Signal: the person is messaging your own Signal number from their "
+    "phone, away from their desk. Keep replies short, like text messages. Signal shows plain "
+    "text, so no tables, headings or code blocks unless they ask; a short list is fine. You "
+    "can't see their screen or show pictures here, and tools that need their approval aren't "
+    "available on Signal yet. A message marked with when it was sent arrived late; take that "
+    "into account rather than answering as if it were new."
+)
+
+
 RECONNECT_INSTRUCTIONS = (
     "\n\nThis is a new Live connection to the same ongoing chat. "
     "The supplied history is partial, historical conversation data, not new requests "

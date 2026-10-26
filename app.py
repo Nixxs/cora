@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timezone
 from os import getenv
 import sys
 from pathlib import Path
@@ -26,7 +26,9 @@ from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
 from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalControls
 from messaging.container import signal_port, start_container, stop_container
-from messaging.setup import SignalSetup
+from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
+from messaging.receiver import IncomingMessage, SignalReceiver
+from messaging.setup import LINKED as SIGNAL_LINKED, SignalSetup
 from messaging.signal_cli import SignalClient
 from storage.signal_settings_store import SignalSettings
 from services.catalogue import SERVICES
@@ -48,8 +50,8 @@ from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from greeting import choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook
 from live import CoraLive, typed_content
-from backend_chat import STANDBY_EXCLUDED, BackendChat, BackendRoute
-from session_config import instruction_sections
+from backend_chat import SIGNAL_EXCLUDED, STANDBY_EXCLUDED, BackendChat, BackendRoute
+from session_config import SIGNAL_CHAT_INSTRUCTIONS, instruction_sections
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
 from ui.chat_submission import ChatSubmission
@@ -231,6 +233,13 @@ class CoraApp(App):
             SignalClient(f"http://127.0.0.1:{signal_port()}"), start_container, stop_container,
             save_account=self.save_signal_account, write_activity=self.activity.write,
         )
+        # Listening for, and answering, the person's Signal messages.
+        self.signal_receiver = None
+        self.signal_listening_as: str | None = None
+        self.signal_waiting: list[IncomingMessage] = []
+        self.signal_answering = None
+        # Service tools that ask for approval: the pop-up is on the desk, so Signal leaves them out.
+        self.confirming_tools: frozenset[str] = frozenset()
         # Recent long replies from service tools, so Cora can read their later pages.
         self.service_results = ResultCache()
         # Tool calls that change things wait here for the person's answer.
@@ -480,6 +489,7 @@ class CoraApp(App):
 
     async def on_unmount(self) -> None:
         self.confirmations.decline_all()
+        self.stop_signal_receiver()
         self.services.stop_all()
         self.event_bus.close()
         self.attention.stop()
@@ -805,6 +815,7 @@ class CoraApp(App):
             return
         if self.signal_settings.enabled and not self.closing:
             await self.signal.start(self.signal_settings.account)
+            self.sync_signal_receiver()
 
     @work(group="signal")
     async def set_signal_enabled(self, enabled: bool) -> None:
@@ -820,6 +831,7 @@ class CoraApp(App):
         else:
             await self.signal.stop()
             self.activity.write("Signal is off; Cora doesn't use it.", "Signal off")
+        self.sync_signal_receiver()
 
     @work(group="signal-save")
     async def save_signal_number(self, number: str) -> None:
@@ -845,35 +857,45 @@ class CoraApp(App):
             self.notify("Save your own number first.", severity="warning")
             return
         await self.signal.link(self.signal_settings.allowed_number)
+        self.sync_signal_receiver()
 
     def send_without_live(self, message: str, image_seen: str | None = None) -> None:
         """In Standby, answer a typed message in writing without waking Live."""
         # Taken now, before the message itself joins the chat, so it isn't sent twice.
         history = self.conversation.get_reconnect_history()
-        # Talking in writing keeps the conversation going: it ends only after a long quiet.
+        self.keep_conversation_open()
+        self.answer_without_live(typed_content(message, image_seen), history)
+
+    def keep_conversation_open(self) -> None:
+        """Talking in writing keeps the conversation going: in Standby it ends only after a long quiet."""
         if self.conversation_end_timer is not None:
             self.stop_conversation_end_timer()
             self.conversation_end_timer = self.set_timer(
                 CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
             )
-        self.answer_without_live(typed_content(message, image_seen), history)
+
+    async def reply_in_writing(
+        self, content: list[dict], history: list[dict], route: BackendRoute, extra_instructions: str = "",
+    ) -> str:
+        """One turn of a chat without Live, as the same Cora: raises if it fails."""
+        # Reloaded each time, as at a Live connect, so she is the same Cora with what she
+        # knows now: name, memories, interests, identity, relationship and chosen model.
+        await self.conversation_persistence.load_session_context()
+        sections = instruction_sections(
+            self.live.memory_context, interest_context=self.live.interest_context,
+            person_name=self.live.person_name, identity_context=self.live.identity_context,
+            relationship_context=self.live.relationship_context,
+        )
+        return await self.backend_chat.reply(
+            content=content, history=history, sections=sections, model=self.live.delegation_model,
+            route=route, extra_instructions=extra_instructions,
+        )
 
     @work(group="text-chat")
     async def answer_without_live(self, content: list[dict], history: list[dict]) -> None:
         self.activity.write("Answering in writing without waking Live.", "Writing a reply")
         try:
-            # Reloaded each time, as at a Live connect, so she is the same Cora with what she
-            # knows now: name, memories, interests, identity, relationship and chosen model.
-            await self.conversation_persistence.load_session_context()
-            sections = instruction_sections(
-                self.live.memory_context, interest_context=self.live.interest_context,
-                person_name=self.live.person_name, identity_context=self.live.identity_context,
-                relationship_context=self.live.relationship_context,
-            )
-            text = await self.backend_chat.reply(
-                content=content, history=history, sections=sections, model=self.live.delegation_model,
-                route=BackendRoute(excluded=STANDBY_EXCLUDED),
-            )
+            text = await self.reply_in_writing(content, history, BackendRoute(excluded=STANDBY_EXCLUDED))
         except Exception as error:
             # The type only: a message could echo the conversation.
             self.activity.write(f"Written reply failed ({type(error).__name__}).", "Written reply failed")
@@ -886,6 +908,80 @@ class CoraApp(App):
             self.activity.write(f"Written reply shown: characters={len(text)}", "Written reply")
         else:
             self.activity.write("The written reply was empty.", "Written reply empty")
+
+    def sync_signal_receiver(self) -> None:
+        """Listen while Cora's Signal account is linked, and not otherwise."""
+        linked = self.signal.status.state == SIGNAL_LINKED and not self.closing
+        running = self.signal_receiver is not None and not self.signal_receiver.is_finished
+        account = self.signal.status.account
+        if running and (not linked or self.signal_listening_as != account):
+            self.signal_receiver.cancel()
+            self.signal_receiver = None
+            running = False
+        if linked and not running:
+            self.signal_listening_as = account
+            receiver = SignalReceiver(self.signal.client, account, self.on_signal_message, self.activity.write)
+            # The method, not a coroutine: nothing is left un-awaited if it's cancelled before it starts.
+            self.signal_receiver = self.run_worker(receiver.run, group="signal-receive", exit_on_error=False)
+            self.activity.write("Listening for your Signal messages to Cora.", "Signal listening")
+
+    def stop_signal_receiver(self) -> None:
+        if self.signal_receiver is not None:
+            self.signal_receiver.cancel()
+            self.signal_receiver = None
+
+    def on_signal_message(self, message: IncomingMessage) -> None:
+        if message.sender != self.signal_settings.allowed_number:
+            # Only the person is answered for now; others are never shown or saved.
+            self.activity.write("A Signal message from someone else was ignored.", "Signal message ignored")
+            return
+        self.signal_waiting.append(message)
+        if self.signal_answering is None or self.signal_answering.is_finished:
+            self.signal_answering = self.answer_signal()
+
+    @work(group="signal-chat")
+    async def answer_signal(self) -> None:
+        """Answer the person's Signal messages in order; ones that arrive meanwhile are answered together next."""
+        while self.signal_waiting and not self.closing:
+            batch, self.signal_waiting = self.signal_waiting, []
+            account, person = self.signal.status.account, self.signal_settings.allowed_number
+            if not account or not person:
+                return
+            # Taken before these messages join the chat, so they aren't sent twice.
+            history = self.conversation.get_reconnect_history()
+            for message in batch:
+                self.conversation.show_signal_message(signal_message_text(message))
+            self.keep_conversation_open()
+            self.activity.write(f"Answering {len(batch)} Signal message(s) from you.", "Signal reply")
+            try:
+                await self.signal.client.send_typing(account, person)
+            except Exception:
+                pass  # only a courtesy
+            route = BackendRoute(excluded=SIGNAL_EXCLUDED | self.confirming_tools)
+            try:
+                text = await self.reply_in_writing(
+                    signal_content(batch, datetime.now(timezone.utc)), history, route, SIGNAL_CHAT_INSTRUCTIONS,
+                )
+                if not text:
+                    raise ValueError("empty reply")
+                await self.signal.client.send(account, person, text)
+            except Exception as error:
+                self.activity.write(f"Signal reply failed ({type(error).__name__}).", "Signal reply failed")
+                try:
+                    await self.signal.client.send(account, person, SIGNAL_SORRY)
+                except Exception:
+                    pass
+                continue
+            if self.closing:
+                return
+            self.conversation.show_written_reply(text, label="Cora · Signal", channel="signal")
+            self.activity.write(f"Signal reply sent: characters={len(text)}", "Signal reply sent")
+            try:
+                await self.live.note_signal_exchange(
+                    "\n".join(signal_message_text(message) for message in batch), text,
+                )
+            except Exception as error:
+                self.activity.write(f"Signal note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
 
     def show_confirmation(self, request) -> None:
         self.push_screen(ConfirmScreen(request, self.confirmations.answer))
@@ -974,6 +1070,7 @@ class CoraApp(App):
                 confirm=None if tool.read_only else self.confirmations.ask,
             )
             self.tools.register(schema, validate_service_arguments, handler.handle)
+        self.confirming_tools = frozenset(name for name, (_, tool, _) in wanted.items() if not tool.read_only)
         if current != set(wanted):
             self.service_tools_changed = True
 
@@ -1349,6 +1446,7 @@ class CoraApp(App):
         self.closing = True
         # Nothing still waiting for approval may run while shutting down.
         self.confirmations.decline_all()
+        self.stop_signal_receiver()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()

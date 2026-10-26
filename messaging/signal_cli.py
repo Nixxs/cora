@@ -50,6 +50,29 @@ class SignalClient:
         result = await self.rpc("finishLink", {"deviceLinkUri": uri, "deviceName": device_name}, timeout=timeout)
         return result["number"]
 
+    async def send(self, account: str, recipient: str, message: str) -> None:
+        await self.rpc("send", {"account": account, "recipient": [recipient], "message": message})
+
+    async def send_typing(self, account: str, recipient: str, stop: bool = False) -> None:
+        params = {"account": account, "recipient": [recipient]}
+        if stop:
+            params["stop"] = True
+        await self.rpc("sendTyping", params)
+
+    async def events(self, account: str):
+        """Each event the daemon streams for one account, as its raw JSON text, until it drops."""
+        async with self.http(None) as http:
+            async with http.stream("GET", "/api/v1/events", params={"account": account}) as response:
+                response.raise_for_status()
+                data = []
+                async for line in response.aiter_lines():
+                    if line.startswith("data:"):
+                        data.append(line[5:].lstrip())
+                    elif not line and data:
+                        # A blank line ends one server-sent event.
+                        yield "\n".join(data)
+                        data = []
+
     async def delete_account(self, number: str) -> None:
         """Forget an account here (its keys and messages); the phone keeps it."""
         await self.rpc("deleteLocalAccountData", {"account": number, "ignoreRegistered": True})

@@ -628,29 +628,34 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(handlers["github__create_issue"].confirm, app.confirmations.ask)
             app.services.stop_all()
 
+    async def wait_for_screen(self, app, pilot, showing):
+        """Pushing and dismissing screens takes a few frames, more under load."""
+        for _ in range(30):
+            if isinstance(app.screen, ConfirmScreen) == showing:
+                return
+            await pilot.pause(0.1)
+        self.fail(f"pop-up {'never appeared' if showing else 'never went away'}")
+
     async def test_the_pop_up_shows_the_request_and_the_answer_reaches_the_tool(self):
         async with keyboard_tests.running_app() as (app, pilot):
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {"title": "Standby bug"}))
-            await pilot.pause()
-            self.assertIsInstance(app.screen, ConfirmScreen)
+            await self.wait_for_screen(app, pilot, True)
             self.assertIn('"title": "Standby bug"', app.screen.query_one("#confirm-arguments", TextArea).text)
             self.assertTrue(app.screen.query_one("#confirm-deny").has_focus)
             # Typing letters does nothing: there are no shortcuts to approve.
             await pilot.press("y", "e", "s", "enter")
-            await pilot.pause()
             self.assertEqual(await asyncio.wait_for(asked, 5), DECLINED)
-            self.assertNotIsInstance(app.screen, ConfirmScreen)
+            await self.wait_for_screen(app, pilot, False)
 
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
-            await pilot.pause()
+            await self.wait_for_screen(app, pilot, True)
             await pilot.click("#confirm-approve")
-            await pilot.pause()
             self.assertEqual(await asyncio.wait_for(asked, 5), APPROVED)
+            await self.wait_for_screen(app, pilot, False)
 
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
-            await pilot.pause()
+            await self.wait_for_screen(app, pilot, True)
             await pilot.press("escape")
-            await pilot.pause()
             self.assertEqual(await asyncio.wait_for(asked, 5), DECLINED)
             self.assertIn("GitHub tool create_issue is waiting for your approval.", "\n".join(app.activity.entries))
 

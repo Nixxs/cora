@@ -26,7 +26,9 @@ services:
     profiles: ["signal"]
     restart: unless-stopped
     # Received messages go to Cora over the local API only, never into the container's log.
-    command: ["daemon", "--http", "0.0.0.0:8080", "--no-receive-stdout"]
+    # It fetches messages only while Cora listens, so ones sent while she's closed wait on
+    # Signal's servers until she next connects rather than being fetched with nobody to read them.
+    command: ["daemon", "--http", "0.0.0.0:8080", "--no-receive-stdout", "--receive-mode", "on-connection"]
     ports:
       - "127.0.0.1:${CORA_SIGNAL_PORT:-8090}:8080"
     volumes:

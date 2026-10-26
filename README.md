@@ -572,7 +572,29 @@ container's log. **Her Signal keys live in the `signal-data` Docker volume**: as
 with the database, don't delete it, and back it up; losing it means linking her
 phone again. If the app finds the saved account is no longer linked (unlinked
 from her phone, or the volume was lost), it says so and asks you to link again.
-This step only sets her account up; she doesn't send or answer messages yet.
+
+**Messaging her.** Once linked, Cora listens while the app runs and answers
+**your** number only; messages from anyone else are noted in Activity and
+ignored (never shown or saved), and group chats are skipped. Your messages are
+part of the same conversation as the desktop: they appear in the chat as
+**You · Signal**, her replies as **Cora · Signal**, both saved with a `signal`
+channel, so memories, summaries and your relationship come from them as from
+voice, and waking Live carries them in the recent history. Each reply is
+written like typing in Standby (startup context reloaded, recent chat as
+history, `store=False`) with a note to keep it short and plain, since Signal
+shows no Markdown, and goes back over Signal; she shows "typing…" meanwhile.
+She doesn't have the desk-only tools (closing the app, standby, the screen,
+pictures) or tools that need the approval pop-up, which you couldn't click from
+your phone. If Live is active at the desk, voice Cora gets a silent note of the
+exchange so she knows. Attachments are only noted ("[1 attachment, not
+opened]"). If a reply fails, she sends a short apology and Activity says why.
+
+The service only fetches messages while Cora listens, so messages sent while the
+app is closed wait on Signal's servers and arrive when it next runs. Messages
+that arrive while she is replying, including those, are answered together in
+her next reply, and any sent more than two minutes earlier are marked with when
+they were sent so she knows they are late. (Updating from the previous version
+recreates the container the next time Signal starts; her link is kept.)
 
 ## How memory works
 
@@ -768,7 +790,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model and service settings, and the dashboard's snapshot read. |
-| [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code. |
+| [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
@@ -932,7 +954,8 @@ features it helps check, and package last.
    approving by voice. MCP M1–M3 are done; M4 (more services in the catalogue)
    is in Phase 4.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
-   whose write-tool confirmation it reuses).
+   whose write-tool confirmation it reuses). S1 and S2 are built: she answers
+   your messages on her own number; next, S3 (other people, as clients).
 
 *Phase 3 — noticing things*
 
@@ -1021,10 +1044,15 @@ features it helps check, and package last.
      fit it: typing in Standby leaves out `close_app` and `enter_standby`, and
      Signal will also leave out `look_at_screen` and `show_web_image`.
   2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
-     Nick's number only (an allowlist). S2a, setting up her account from
-     Settings (the compose service, linking her phone by QR code, Nick's number),
-     is built: see [Cora's Signal](#coras-signal). S2b, receiving and replying, is
-     next. Nick's Signal messages are the same
+     Nick's number only (an allowlist). Built: setting up her account from
+     Settings (S2a) and receiving and replying (S2b); see
+     [Cora's Signal](#coras-signal). **To fix (small):** at launch, Signal
+     messages that waited while the app was closed are answered over Signal and
+     shown in the chat, but the opening greeting doesn't know about them, so
+     voice Cora greets as if nothing happened. The greeting should take them
+     into account: for example wait briefly (as it already does for summaries)
+     until the waiting messages are answered, then mention or follow on from
+     that exchange instead of picking an unrelated hook. Nick's Signal messages are the same
      conversation as the desktop, not a separate one: one ongoing conversation
      with him, whichever way he reaches her. They appear in the desktop chat
      labelled by channel (**You · Signal**, **Cora · Signal**), are saved with a

@@ -46,7 +46,7 @@ class MessageRecord(Base):
         UniqueConstraint("conversation_id", "sequence_number", name="messages_conversation_sequence_key"),
         CheckConstraint("sequence_number > 0", name="messages_sequence_check"),
         CheckConstraint("role IN ('user', 'assistant')", name="messages_role_check"),
-        CheckConstraint("channel IN ('voice', 'keyboard', 'screen')", name="messages_channel_check"),
+        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal')", name="messages_channel_check"),
         CheckConstraint("status IN ('incomplete', 'completed', 'interrupted')", name="messages_status_check"),
         CheckConstraint(
             "delivery_status IN ('not_applicable', 'pending', 'sent', 'failed')",

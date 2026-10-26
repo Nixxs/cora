@@ -404,6 +404,21 @@ class CoraLive:
             "mention this note, standby or the app."
         ))
 
+    async def note_signal_exchange(self, message: str, reply: str) -> None:
+        """Let voice Cora know about a Signal exchange that happened while she was connected."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            return
+        event_id = f"signal_{uuid4().hex}"
+        note = (
+            "Silent context, not a request: the person just messaged you on Signal and you replied "
+            "there already. Don't answer it again or mention this note; keep it in mind. "
+            f"Their message: {json.dumps(message, ensure_ascii=False)}. "
+            f"Your reply: {json.dumps(reply, ensure_ascii=False)}"
+        )
+        await connection.session.thinking.append(event_id=event_id, delegation_id=None, content=note)
+        self.context.note(note)
+
     async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
         """Tell Cora a tool call of hers is waiting on the person's approval pop-up."""
         connection = self.connection
