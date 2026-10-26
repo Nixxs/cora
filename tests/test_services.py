@@ -86,6 +86,14 @@ def fake_open(client=None, error=None, http_error=None):
     return open_client, seen
 
 
+async def until(pilot, condition, seconds=5):
+    """Pause until the condition holds; timing varies under a full test run."""
+    for _ in range(int(seconds / 0.05)):
+        if condition():
+            return
+        await pilot.pause(0.05)
+
+
 async def settle():
     for _ in range(5):
         await asyncio.sleep(0)
@@ -591,7 +599,8 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
             open_client, _ = fake_open()
             app.services.open_client = open_client
             app.services.start("github", TOKEN)
-            await pilot.pause(0.7)
+            # The page refreshes twice a second; wait for the rows rather than a fixed time.
+            await until(pilot, lambda: len(app.screen.query(".tool-label")) == 3)
             status = str(app.screen.query_one("#service-status-github", Static).render())
             self.assertIn("connected · 3 tools", status)
             self.assertIn("0 of 3 tools on", str(heading.render()))
@@ -604,13 +613,13 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
 
             app.persistence.save_service_tool.reset_mock()
             switches[0].value = True
-            # The connection's worker stays open, so pause rather than wait for every worker.
-            await pilot.pause(0.3)
+            # The connection's worker stays open, so wait for the save rather than every worker.
+            await until(pilot, lambda: app.persistence.save_service_tool.called and app.service_tool_choices)
             app.persistence.save_service_tool.assert_called_once_with("github", "search_issues", True)
             self.assertEqual(app.service_tool_choices, {"github": {"search_issues"}})
             self.assertIn("github__search_issues", app.tools.names())
             self.assertTrue(app.service_tools_changed)
-            await pilot.pause(0.6)
+            await until(pilot, lambda: "1 of 3 tools on" in str(heading.render()))
             self.assertIn("1 of 3 tools on", str(heading.render()))
             app.services.stop_all()
             self.assertNotIn("github__search_issues", app.tools.names())

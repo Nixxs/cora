@@ -29,6 +29,12 @@ class Client:
     id: UUID
     name: str
     number: str
+    # Their Signal ID once learned; messages go to it, so a hidden number doesn't matter.
+    signal_id: str | None = None
+
+    @property
+    def recipient(self) -> str:
+        return self.signal_id or self.number
 
 
 def clean_name(name: str) -> str:
@@ -47,7 +53,9 @@ class ClientStore:
     def clients(self) -> list[Client]:
         """Everyone she may currently talk with, by name."""
         with Session(self.engine) as session:
-            rows = session.execute(select(PersonRecord.id, PersonRecord.display_name, PersonRecord.signal_number).where(
+            rows = session.execute(select(
+                PersonRecord.id, PersonRecord.display_name, PersonRecord.signal_number, PersonRecord.signal_id,
+            ).where(
                 PersonRecord.kind == "client", PersonRecord.signal_number.is_not(None),
             ).order_by(PersonRecord.display_name, PersonRecord.id)).all()
         return [Client(*row) for row in rows]
@@ -66,9 +74,16 @@ class ClientStore:
     def remove(self, person_id: UUID) -> None:
         """She stops answering them; their past conversations are kept."""
         with Session(self.engine) as session, session.begin():
+            # The ID goes too, so adding them again later is a fresh entry.
             session.execute(update(PersonRecord).where(
                 PersonRecord.id == person_id, PersonRecord.kind == "client",
-            ).values(signal_number=None))
+            ).values(signal_number=None, signal_id=None))
+
+    def set_signal_id(self, person_id: UUID, signal_id: str) -> None:
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(PersonRecord).where(
+                PersonRecord.id == person_id, PersonRecord.kind == "client",
+            ).values(signal_id=signal_id))
 
     def conversation_for(self, person_id: UUID, now: datetime) -> UUID:
         """Their current conversation, or a new one after a long quiet (closing the old one)."""

@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock
+from uuid import uuid4
 
 import httpx2
 
@@ -16,6 +17,7 @@ from messaging.receiver import IncomingMessage, SignalReceiver, parse_event
 from messaging.setup import LINKED, OFF, SignalStatus
 from messaging.signal_cli import SignalClient
 from session_config import SIGNAL_CHAT_INSTRUCTIONS, stranger_reply
+from storage.client_store import Client
 from storage.signal_settings_store import SignalSettings
 import test_keyboard_persistence as keyboard_tests
 
@@ -299,3 +301,108 @@ class LaunchGreetingTests(unittest.IsolatedAsyncioTestCase):
             app.on_signal_message(incoming("Later message"))
             await SignalAppTests.settle(self, app, pilot)
             self.assertEqual(app.signal_launch_exchanges, [])
+
+
+class RegisteredTests(unittest.IsolatedAsyncioTestCase):
+    async def test_is_registered_reads_signals_answer(self):
+        replies = iter([
+            [{"recipient": NICK, "isRegistered": True}], [{"recipient": NICK, "isRegistered": False, "uuid": None}], [],
+        ])
+        requests = []
+
+        def handle(request):
+            requests.append(json.loads(request.content))
+            return httpx2.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": next(replies)})
+
+        client = SignalClient("http://signal.test", transport=httpx2.MockTransport(handle))
+        self.assertTrue(await client.is_registered(CORA, NICK))
+        self.assertFalse(await client.is_registered(CORA, NICK))
+        self.assertFalse(await client.is_registered(CORA, NICK))
+        self.assertEqual(requests[0]["method"], "getUserStatus")
+        self.assertEqual(requests[0]["params"], {"account": CORA, "recipient": [NICK]})
+
+
+class FirstMessageTests(unittest.IsolatedAsyncioTestCase):
+    def test_a_first_message_with_only_a_signal_id_is_kept(self):
+        message = parse_event(event({"message": "Hi Cora"}, source=None, sourceUuid="uuid-sarah"))
+        self.assertEqual((message.sender, message.sender_id, message.text), ("", "uuid-sarah", "Hi Cora"))
+        self.assertIsNone(parse_event(event({"message": "Hi"}, source=None)))
+
+    async def test_signal_ids_and_accepting_requests_use_signal_clis_calls(self):
+        requests = []
+
+        def handle(request):
+            body = json.loads(request.content)
+            requests.append(body)
+            result = [{"isRegistered": True, "uuid": "uuid-nick"}] if body["method"] == "getUserStatus" else {}
+            return httpx2.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": result})
+
+        client = SignalClient("http://signal.test", transport=httpx2.MockTransport(handle))
+        self.assertEqual(await client.signal_id(CORA, NICK), "uuid-nick")
+        await client.accept_request(CORA, NICK)
+        self.assertEqual(requests[1], {"jsonrpc": "2.0", "id": requests[1]["id"], "method": "sendMessageRequestResponse",
+                                       "params": {"account": CORA, "recipient": [NICK], "type": "accept"}})
+
+    async def test_a_known_persons_first_message_is_recognised_answered_and_accepted(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app, reply="Hello!")
+            app.signal.client.accept_request = AsyncMock()
+            app.signal.client.signal_id = AsyncMock(return_value="uuid-nick")
+            await app.learn_signal_ids()
+            self.assertEqual(app.signal_ids, {"uuid-nick": NICK})
+            app.on_signal_message(IncomingMessage("", "First hello", datetime.now(timezone.utc), 0, "uuid-nick"))
+            await SignalAppTests.settle(self, app, pilot)
+            app.signal.client.accept_request.assert_awaited_once_with(CORA, NICK)
+            # Replies go to the saved Signal ID, which keeps working if the number is hidden later.
+            app.signal.client.send.assert_awaited_once_with(CORA, "uuid-nick", "Hello!")
+            app.persistence.save_signal_person_id.assert_called_once_with("uuid-nick")
+            self.assertIn("You · Signal: First hello", app.conversation.log_entries)
+
+    async def test_an_unknown_id_gets_the_stranger_reply_by_id_and_no_acceptance(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app)
+            app.signal.client.accept_request = AsyncMock()
+            app.on_signal_message(IncomingMessage("", "Hi?", datetime.now(timezone.utc), 0, "uuid-stranger"))
+            await SignalAppTests.settle(self, app, pilot)
+            app.signal.client.send.assert_awaited_once_with(CORA, "uuid-stranger", stranger_reply(None))
+            app.signal.client.accept_request.assert_not_called()
+            app.backend_chat.reply.assert_not_called()
+
+
+class SavedSignalIdTests(unittest.IsolatedAsyncioTestCase):
+    async def test_saved_ids_are_used_without_looking_anyone_up(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app)
+            app.signal_settings = SignalSettings(True, CORA, NICK, "uuid-nick")
+            app.signal_clients = {"+61400000003": Client(uuid4(), "Karene", "+61400000003", "uuid-karene")}
+            app.signal.client.signal_id = AsyncMock()
+            await app.learn_signal_ids()
+            app.signal.client.signal_id.assert_not_called()
+            self.assertEqual(app.signal_ids, {"uuid-nick": NICK, "uuid-karene": "+61400000003"})
+
+    async def test_a_hidden_number_is_still_recognised_and_answered_by_id(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app, reply="Hi Karene.")
+            karene = Client(uuid4(), "Karene", "+61400000003", "uuid-karene")
+            app.signal_clients = {karene.number: karene}
+            app.signal.client.accept_request = AsyncMock()
+            app.signal.client.signal_id = AsyncMock(return_value=None)  # she now hides her number
+            app.persistence.client_conversation.return_value = uuid4()
+            app.persistence.load_client_history.return_value = []
+            await app.learn_signal_ids()
+            app.on_signal_message(IncomingMessage("", "Hello", datetime.now(timezone.utc), 0, "uuid-karene"))
+            await SignalAppTests.settle(self, app, pilot)
+            app.signal.client.send.assert_awaited_once_with(CORA, "uuid-karene", "Hi Karene.")
+
+    async def test_a_message_with_number_and_id_saves_the_id(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app)
+            karene = Client(uuid4(), "Karene", "+61400000003")
+            app.signal_clients = {karene.number: karene}
+            app.persistence.client_conversation.return_value = uuid4()
+            app.persistence.load_client_history.return_value = []
+            app.on_signal_message(IncomingMessage(karene.number, "Hi", datetime.now(timezone.utc), 0, "uuid-karene"))
+            await SignalAppTests.settle(self, app, pilot)
+            app.persistence.save_client_signal_id.assert_called_once_with(karene.id, "uuid-karene")
+            self.assertEqual(app.signal_clients[karene.number].signal_id, "uuid-karene")
+            self.assertEqual(app.signal_ids["uuid-karene"], karene.number)

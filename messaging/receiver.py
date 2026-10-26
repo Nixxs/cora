@@ -13,10 +13,13 @@ RETRY_SECONDS = (2, 5, 15, 30, 60)
 
 @dataclass(frozen=True)
 class IncomingMessage:
+    # Their number, or '' when Signal hasn't shared it yet (an unaccepted first message).
     sender: str
     text: str
     sent_at: datetime
     attachments: int = 0
+    # Their Signal ID, which every message carries.
+    sender_id: str | None = None
 
 
 def parse_event(data: str) -> IncomingMessage | None:
@@ -31,8 +34,10 @@ def parse_event(data: str) -> IncomingMessage | None:
     event = event.get("params", event)
     envelope = event.get("envelope") or {}
     message = envelope.get("dataMessage")
-    sender = envelope.get("sourceNumber")
-    if not isinstance(message, dict) or not sender:
+    # A first message from someone may carry only their Signal ID: their number comes once accepted.
+    sender = envelope.get("sourceNumber") or ""
+    sender_id = envelope.get("sourceUuid")
+    if not isinstance(message, dict) or not (sender or sender_id):
         return None
     if message.get("groupInfo") or message.get("groupV2"):
         return None  # group chats are not handled
@@ -45,7 +50,7 @@ def parse_event(data: str) -> IncomingMessage | None:
         datetime.fromtimestamp(milliseconds / 1000, timezone.utc) if isinstance(milliseconds, int)
         else datetime.now(timezone.utc)
     )
-    return IncomingMessage(sender, text, sent_at, attachments)
+    return IncomingMessage(sender, text, sent_at, attachments, sender_id)
 
 
 class SignalReceiver:

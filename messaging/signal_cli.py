@@ -9,6 +9,13 @@ class SignalError(Exception):
     """signal-cli answered with an error."""
 
 
+def signal_failure(error: Exception) -> str:
+    """For Activity: signal-cli's own reason (it describes the failure, never message text), else the type."""
+    if isinstance(error, SignalError) and str(error).strip():
+        return f"SignalError: {str(error).strip()[:200]}"
+    return type(error).__name__
+
+
 class SignalClient:
     def __init__(self, base_url: str, transport: httpx.AsyncBaseTransport | None = None) -> None:
         self.base_url = base_url.rstrip("/")
@@ -49,6 +56,27 @@ class SignalClient:
         """Wait until the phone scans the code; returns the linked account's number."""
         result = await self.rpc("finishLink", {"deviceLinkUri": uri, "deviceName": device_name}, timeout=timeout)
         return result["number"]
+
+    async def user_status(self, account: str, number: str) -> dict:
+        result = await self.rpc("getUserStatus", {"account": account, "recipient": [number]})
+        return result[0] if result else {}
+
+    async def is_registered(self, account: str, number: str) -> bool:
+        """Whether Signal can deliver to this number: false if it isn't on Signal, or hides its number."""
+        return bool((await self.user_status(account, number)).get("isRegistered"))
+
+    async def signal_id(self, account: str, number: str) -> str | None:
+        """The Signal ID (uuid) behind a number, or None if it isn't on Signal or can't be found by number.
+
+        A first message from someone often carries only this ID: Signal shares their number once
+        the message request is accepted.
+        """
+        status = await self.user_status(account, number)
+        return status.get("uuid") if status.get("isRegistered") else None
+
+    async def accept_request(self, account: str, recipient: str) -> None:
+        """Accept a message request, so they see her as a contact and her replies show normally."""
+        await self.rpc("sendMessageRequestResponse", {"account": account, "recipient": [recipient], "type": "accept"})
 
     async def send(self, account: str, recipient: str, message: str) -> None:
         await self.rpc("send", {"account": account, "recipient": [recipient], "message": message})

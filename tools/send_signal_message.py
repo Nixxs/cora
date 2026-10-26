@@ -2,6 +2,7 @@
 
 import json
 
+from messaging.signal_cli import signal_failure
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
 
 NAME_MAX_CHARS = 100
@@ -47,7 +48,7 @@ def validate_arguments(arguments: dict) -> None:
 
 
 class SendSignalMessageTool:
-    def __init__(self, get_connection, is_closing, write_debug, find_contact, confirm, send):
+    def __init__(self, get_connection, is_closing, write_debug, find_contact, confirm, send, unreachable=None):
         self.get_connection = get_connection
         self.is_closing = is_closing
         self.write_debug = write_debug
@@ -56,6 +57,8 @@ class SendSignalMessageTool:
         self.confirm = confirm
         # Sends and saves the message into that contact's conversation.
         self.send = send
+        # Returns why a contact can't receive messages (such as not on Signal), or None if they can.
+        self.unreachable = unreachable
 
     def _log(self, message: str, title: str) -> None:
         try:
@@ -66,6 +69,9 @@ class SendSignalMessageTool:
     async def result(self, arguments: dict) -> dict:
         contact, problem = self.find_contact(arguments["to"].strip())
         if contact is None:
+            return {"status": "error", "message": problem}
+        # Checked before asking, so the person is never asked to approve what can't be delivered.
+        if self.unreachable is not None and (problem := await self.unreachable(contact)):
             return {"status": "error", "message": problem}
         message = arguments["message"].strip()
         # The pop-up shows exactly who and what; nothing is sent before the person clicks Approve.
@@ -90,8 +96,8 @@ class SendSignalMessageTool:
             try:
                 result = await self.result(arguments)
             except Exception as error:
-                # The type only: a message could echo the text.
-                self._log(f"Signal message failed ({type(error).__name__})", "Tool error")
+                # The type only, except signal-cli's own reason, which describes the failure, not the text.
+                self._log(f"Signal message failed ({signal_failure(error)})", "Tool error")
                 result = {"status": "error", "message": "It could not be sent; don't assume it arrived."}
             if self.is_closing() or self.get_connection() is not connection:
                 return

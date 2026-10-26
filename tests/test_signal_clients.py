@@ -220,6 +220,16 @@ class ClientStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(self.clients.clients(), [])
         self.assertEqual([m.text for m in self.conversations.get_messages(conversation)], ["Hello"])
 
+    def test_signal_ids_are_saved_and_cleared_on_removal(self):
+        sarah = self.clients.add("Sarah", SARAH)
+        self.clients.set_signal_id(sarah.id, "uuid-sarah")
+        self.assertEqual(self.clients.clients()[0].signal_id, "uuid-sarah")
+        self.assertEqual(self.clients.clients()[0].recipient, "uuid-sarah")
+        self.clients.remove(sarah.id)
+        again = self.clients.add("Sarah", SARAH)
+        self.clients.set_signal_id(again.id, "uuid-sarah")  # free again after removal
+        self.assertEqual(self.clients.clients()[0].signal_id, "uuid-sarah")
+
     def test_a_conversation_continues_until_a_long_quiet(self):
         sarah = self.clients.add("Sarah", SARAH)
         now = datetime.now(timezone.utc)

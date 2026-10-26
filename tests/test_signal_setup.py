@@ -256,9 +256,18 @@ class SignalSettingsStoreDatabaseTests(unittest.TestCase):
         self.store.set_allowed_number("+61 400 000 002")
         self.store.set_enabled(True)
         self.store.set_account(CORA)
-        self.assertEqual(self.store.settings(), SignalSettings(True, CORA, NICK))
+        self.assertEqual(self.store.settings(), SignalSettings(True, CORA, NICK, None))
         self.store.set_account(None)
         self.assertEqual(self.store.settings().account, None)
+
+    def test_the_persons_signal_id_is_kept_until_their_number_changes(self):
+        self.store.set_allowed_number(NICK)
+        self.store.set_allowed_signal_id("uuid-nick")
+        self.store.set_allowed_number(NICK)
+        self.assertEqual(self.store.settings().person_recipient, "uuid-nick")
+        self.store.set_allowed_number("+61400000009")
+        self.assertIsNone(self.store.settings().allowed_signal_id)
+        self.assertEqual(self.store.settings().person_recipient, "+61400000009")
 
     def test_coras_number_and_the_persons_can_never_be_the_same(self):
         self.store.set_allowed_number(NICK)

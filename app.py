@@ -31,7 +31,7 @@ from messaging.receiver import IncomingMessage, SignalReceiver
 from messaging.setup import (
     FAILED as SIGNAL_FAILED, LINKED as SIGNAL_LINKED, NOT_LINKED as SIGNAL_NOT_LINKED, OFF as SIGNAL_OFF, SignalSetup,
 )
-from messaging.signal_cli import SignalClient
+from messaging.signal_cli import SignalClient, signal_failure
 from storage.client_store import Client
 from storage.signal_settings_store import SignalSettings, normalise_number
 from services.catalogue import SERVICES
@@ -236,6 +236,7 @@ class CoraApp(App):
             # Looked up when called: the approval queue is set up after the tools.
             confirm=lambda *args, **options: self.confirmations.ask(*args, **options),
             send_signal=self.send_to_signal_contact,
+            signal_unreachable=self.signal_contact_unreachable,
         )
         self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
@@ -257,6 +258,9 @@ class CoraApp(App):
         # People added in Settings, by number, and numbers that already got the stranger reply.
         self.signal_clients: dict[str, Client] = {}
         self.signal_introduced: set[str] = set()
+        # Signal IDs of the person and everyone added, by ID, and numbers whose requests she accepted this run.
+        self.signal_ids: dict[str, str] = {}
+        self.signal_accepted: set[str] = set()
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
@@ -875,7 +879,7 @@ class CoraApp(App):
         if self.signal_settings.enabled and not self.closing:
             await self.load_signal_clients()
             await self.signal.start(self.signal_settings.account)
-            self.sync_signal_receiver()
+            await self.listen_on_signal()
 
     async def load_signal_clients(self) -> None:
         try:
@@ -905,6 +909,11 @@ class CoraApp(App):
         # Someone added after getting the stranger reply is answered from now on.
         self.signal_introduced.discard(client.number)
         self.activity.write(f"{client.name} added: Cora may talk with them on Signal.", "Signal person added")
+        # Added either way (they may join later), but say now if messages can't reach them.
+        if self.signal.status.state == SIGNAL_LINKED and (problem := await self.signal_contact_unreachable(client)):
+            self.notify(f"{client.name}'s number isn't on Signal, or is hidden. Check the number.", severity="warning")
+            self.activity.write(problem, "Signal number not found")
+        await self.learn_signal_ids()
 
     @work(group="signal-save")
     async def remove_signal_client(self, number: str) -> None:
@@ -934,7 +943,7 @@ class CoraApp(App):
         else:
             await self.signal.stop()
             self.activity.write("Signal is off; Cora doesn't use it.", "Signal off")
-        self.sync_signal_receiver()
+        await self.listen_on_signal()
 
     @work(group="signal-save")
     async def save_signal_number(self, number: str) -> None:
@@ -947,8 +956,11 @@ class CoraApp(App):
             self.activity.write(f"Your Signal number save failed ({type(error).__name__}).", "Signal error")
             self.notify("Could not save your number. Check Activity.", severity="error")
             return
-        self.signal_settings = replace(self.signal_settings, allowed_number=number)
-        self.activity.write("Your number saved: the only one Cora answers on Signal.", "Signal number saved")
+        if number != self.signal_settings.allowed_number:
+            # A new number may be a new account: its ID is learned again.
+            self.signal_settings = replace(self.signal_settings, allowed_number=number, allowed_signal_id=None)
+        self.activity.write("Your number saved: Cora answers you as herself on Signal.", "Signal number saved")
+        await self.learn_signal_ids()
 
     async def save_signal_account(self, account: str | None) -> None:
         await self.conversation_persistence.call_database(self.persistence.save_signal_account, account)
@@ -960,7 +972,7 @@ class CoraApp(App):
             self.notify("Save your own number first.", severity="warning")
             return
         await self.signal.link(self.signal_settings.allowed_number)
-        self.sync_signal_receiver()
+        await self.listen_on_signal()
 
     def send_without_live(self, message: str, image_seen: str | None = None) -> None:
         """In Standby, answer a typed message in writing without waking Live."""
@@ -1012,6 +1024,11 @@ class CoraApp(App):
         else:
             self.activity.write("The written reply was empty.", "Written reply empty")
 
+    async def listen_on_signal(self) -> None:
+        """Learn known people's Signal IDs first: messages that waited arrive the moment listening starts."""
+        await self.learn_signal_ids()
+        self.sync_signal_receiver()
+
     def sync_signal_receiver(self) -> None:
         """Listen while Cora's Signal account is linked, and not otherwise."""
         linked = self.signal.status.state == SIGNAL_LINKED and not self.closing
@@ -1036,10 +1053,19 @@ class CoraApp(App):
 
     def on_signal_message(self, message: IncomingMessage) -> None:
         self.signal_last_message_at = asyncio.get_running_loop().time()
-        sender = message.sender
-        if sender != self.signal_settings.allowed_number and sender not in self.signal_clients:
-            self.answer_stranger(sender)
+        # A first message may carry only their Signal ID until the request is accepted; known people's IDs are looked up.
+        sender = message.sender or self.signal_ids.get(message.sender_id or "", "")
+        known = sender and (sender == self.signal_settings.allowed_number or sender in self.signal_clients)
+        if not known:
+            self.answer_stranger(sender or message.sender_id)
             return
+        if not message.sender:
+            # Someone she knows wrote first: accept their request so her replies show normally.
+            message = replace(message, sender=sender)
+            self.accept_signal_request(sender)
+        elif message.sender_id and message.sender_id not in self.signal_ids:
+            # Number and ID together: saved, for when they hide their number later.
+            self.run_worker(self.remember_signal_id(sender, message.sender_id), group="signal-ids")
         # One queue per sender: each is answered in order, and different people at the same time.
         self.signal_waiting.setdefault(sender, []).append(message)
         worker = self.signal_answering.get(sender)
@@ -1056,7 +1082,7 @@ class CoraApp(App):
             if not account:
                 return
             if sender == self.signal_settings.allowed_number:
-                await self.answer_primary_on_signal(account, sender, batch)
+                await self.answer_primary_on_signal(account, self.signal_settings.person_recipient, batch)
             elif (client := self.signal_clients.get(sender)) is not None:
                 await self.answer_client_on_signal(account, client, batch)
 
@@ -1073,7 +1099,7 @@ class CoraApp(App):
             await self.signal.client.send(account, recipient, text)
             return text
         except Exception as error:
-            self.activity.write(f"Signal reply failed ({type(error).__name__}).", "Signal reply failed")
+            self.activity.write(f"Signal reply failed ({signal_failure(error)}).", "Signal reply failed")
             try:
                 await self.signal.client.send(account, recipient, SIGNAL_SORRY)
             except Exception:
@@ -1124,7 +1150,7 @@ class CoraApp(App):
             return
         self.activity.write(f"Answering {client.name} on Signal.", "Signal client")
         text = await self.send_signal_reply(
-            account, client.number, lambda: self.reply_to_client(client, batch, history),
+            account, client.recipient, lambda: self.reply_to_client(client, batch, history),
         )
         if text is None or self.closing:
             return
@@ -1168,12 +1194,27 @@ class CoraApp(App):
             return None, f"More than one contact matches; ask which one: {names}."
         return None, f"There's no contact by that name. You can message: {names}."
 
+    async def signal_contact_unreachable(self, contact: Client) -> str | None:
+        """Why Signal can't deliver to them, or None. A failed check doesn't block: the send will say."""
+        if contact.signal_id:
+            return None  # known by ID, which works even if they hide their number
+        try:
+            if await self.signal.client.is_registered(self.signal.status.account, contact.number):
+                return None
+        except Exception:
+            return None
+        return (
+            f"{contact.name}'s number isn't on Signal, or they've set Signal to hide their number, so "
+            "nothing can be sent. Ask the person to check the number in Settings, or ask "
+            f"{contact.name} to allow being found by number."
+        )
+
     async def send_to_signal_contact(self, contact: Client, text: str) -> None:
         """Send from Cora's number and save it in that person's conversation, so she sees it when they reply."""
         account = self.signal.status.account
         if not account:
             raise RuntimeError("Signal is not linked")
-        await self.signal.client.send(account, contact.number, text)
+        await self.signal.client.send(account, contact.recipient, text)
         try:
             conversation_id = await self.conversation_persistence.call_database(
                 self.persistence.client_conversation, contact.id,
@@ -1185,17 +1226,73 @@ class CoraApp(App):
             # Sent all the same; only her record of it is missing.
             self.activity.write(f"Saving the message to {contact.name} failed ({type(error).__name__}).", "Signal error")
 
-    @work(group="signal-stranger")
-    async def answer_stranger(self, number: str) -> None:
-        """Someone nobody added gets one polite reply per run, and never a conversation."""
-        if number in self.signal_introduced or not self.signal.status.account:
+    @work(group="signal-accept")
+    async def accept_signal_request(self, number: str) -> None:
+        if number in self.signal_accepted or not self.signal.status.account:
             return
-        self.signal_introduced.add(number)
+        self.signal_accepted.add(number)
+        try:
+            await self.signal.client.accept_request(self.signal.status.account, number)
+            self.activity.write("Accepted a Signal message request from someone you added.", "Signal request accepted")
+        except Exception as error:
+            self.signal_accepted.discard(number)
+            self.activity.write(f"Accepting a Signal request failed ({signal_failure(error)}).", "Signal error")
+
+    async def learn_signal_ids(self) -> None:
+        """Know the Signal IDs of the person and everyone they added, so their messages are recognised.
+
+        Saved IDs come first: they keep working when someone hides their number. Anyone without one
+        is looked up by number, and what's found is saved.
+        """
+        person = self.signal_settings
+        if person.allowed_number and person.allowed_signal_id:
+            self.signal_ids[person.allowed_signal_id] = person.allowed_number
+        for client in self.signal_clients.values():
+            if client.signal_id:
+                self.signal_ids[client.signal_id] = client.number
+        account = self.signal.status.account
+        if self.signal.status.state != SIGNAL_LINKED or not account:
+            return
+        for number in filter(None, [person.allowed_number, *self.signal_clients]):
+            if number in self.signal_ids.values():
+                continue
+            try:
+                signal_id = await self.signal.client.signal_id(account, number)
+            except Exception:
+                continue  # looked up again next time
+            if signal_id:
+                await self.remember_signal_id(number, signal_id)
+
+    async def remember_signal_id(self, number: str, signal_id: str) -> None:
+        """Save someone's Signal ID, so they're still recognised if they later hide their number."""
+        self.signal_ids[signal_id] = number
+        try:
+            if number == self.signal_settings.allowed_number:
+                await self.conversation_persistence.call_database(self.persistence.save_signal_person_id, signal_id)
+                self.signal_settings = replace(self.signal_settings, allowed_signal_id=signal_id)
+            elif (client := self.signal_clients.get(number)) is not None:
+                await self.conversation_persistence.call_database(
+                    self.persistence.save_client_signal_id, client.id, signal_id,
+                )
+                self.signal_clients[number] = replace(client, signal_id=signal_id)
+        except Exception as error:
+            self.activity.write(f"Saving a Signal ID failed ({type(error).__name__}).", "Signal error")
+
+    @work(group="signal-stranger")
+    async def answer_stranger(self, recipient: str) -> None:
+        """Someone nobody added gets one polite reply per run, and never a conversation.
+
+        `recipient` is their number, or their Signal ID when Signal hasn't shared the number. Their
+        message request is left unaccepted.
+        """
+        if not recipient or recipient in self.signal_introduced or not self.signal.status.account:
+            return
+        self.signal_introduced.add(recipient)
         self.activity.write("A Signal message from someone not added got the polite reply.", "Signal stranger")
         try:
-            await self.signal.client.send(self.signal.status.account, number, stranger_reply(self.live.person_name))
+            await self.signal.client.send(self.signal.status.account, recipient, stranger_reply(self.live.person_name))
         except Exception as error:
-            self.activity.write(f"Signal reply failed ({type(error).__name__}).", "Signal reply failed")
+            self.activity.write(f"Signal reply failed ({signal_failure(error)}).", "Signal reply failed")
 
     def show_confirmation(self, request) -> None:
         self.push_screen(ConfirmScreen(request, self.confirmations.answer))

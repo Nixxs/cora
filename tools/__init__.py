@@ -21,6 +21,7 @@ def create_tool_registry(
     *, get_connection, is_closing, shutdown, request_standby, write_debug, schedule,
     screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
+    signal_unreachable=None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -42,7 +43,7 @@ def create_tool_registry(
     web_image = ShowWebImageTool(get_connection, is_closing, show_image, write_debug)
     registry.register(WEB_IMAGE_SCHEMA, validate_web_image_arguments, web_image.handle)
     signal_message = SendSignalMessageTool(
-        get_connection, is_closing, write_debug, find_signal_contact, confirm, send_signal,
+        get_connection, is_closing, write_debug, find_signal_contact, confirm, send_signal, signal_unreachable,
     )
     registry.register(SIGNAL_SCHEMA, validate_signal_arguments, signal_message.handle)
     return registry

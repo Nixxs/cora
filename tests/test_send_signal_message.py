@@ -135,3 +135,57 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
 
     def test_never_offered_on_signal(self):
         self.assertIn("send_signal_message", SIGNAL_EXCLUDED)
+
+
+class FailureTextTests(unittest.TestCase):
+    def test_signal_clis_reason_is_shown_and_other_errors_only_by_type(self):
+        from messaging.signal_cli import SignalError, signal_failure
+        self.assertEqual(signal_failure(SignalError("Failed to send message due to IO exception")),
+                         "SignalError: Failed to send message due to IO exception")
+        self.assertEqual(signal_failure(SignalError("")), "SignalError")
+        self.assertEqual(signal_failure(TimeoutError("private words")), "TimeoutError")
+
+
+class UnreachableTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_unreachable_contact_is_explained_before_any_approval(self):
+        connection = MagicMock()
+        connection.response.item.create = AsyncMock()
+        connection.response.create = AsyncMock()
+        confirm, send = AsyncMock(return_value=APPROVED), AsyncMock()
+        tool = SendSignalMessageTool(
+            lambda: connection, lambda: False, MagicMock(), lambda name: (SARAH, None), confirm, send,
+            AsyncMock(return_value="Sarah Jones's number isn't on Signal"),
+        )
+        await tool.handle("c1", {"to": "Sarah", "message": "Hi"})
+        confirm.assert_not_called()
+        send.assert_not_called()
+        output = json.loads(connection.response.item.create.call_args.kwargs["item"]["output"])
+        self.assertEqual((output["status"], output["message"]), ("error", "Sarah Jones's number isn't on Signal"))
+
+    async def test_the_app_asks_signal_whether_the_number_can_be_reached(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.signal.status = SignalStatus(LINKED, account=CORA)
+            app.signal.client = MagicMock()
+            app.signal.client.is_registered = AsyncMock(return_value=True)
+            self.assertIsNone(await app.signal_contact_unreachable(SARAH))
+            app.signal.client.is_registered.assert_awaited_once_with(CORA, SARAH.number)
+            app.signal.client.is_registered = AsyncMock(return_value=False)
+            problem = await app.signal_contact_unreachable(SARAH)
+            self.assertIn("Sarah Jones's number isn't on Signal", problem)
+            self.assertIn("hide their number", problem)
+            # A check that fails doesn't block; the send itself will say.
+            app.signal.client.is_registered = AsyncMock(side_effect=RuntimeError("down"))
+            self.assertIsNone(await app.signal_contact_unreachable(SARAH))
+
+    async def test_adding_someone_not_on_signal_still_adds_them_but_warns(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.signal.status = SignalStatus(LINKED, account=CORA)
+            app.signal_settings = SignalSettings(True, CORA, NICK)
+            app.signal.client = MagicMock()
+            app.signal.client.is_registered = AsyncMock(return_value=False)
+            app.persistence.add_client.return_value = SARAH
+            from unittest.mock import patch
+            with patch.object(app, "notify") as notify:
+                await app.add_signal_client("Sarah Jones", SARAH.number).wait()
+            self.assertIn(SARAH.number, app.signal_clients)
+            self.assertIn("isn't on Signal", notify.call_args.args[0])

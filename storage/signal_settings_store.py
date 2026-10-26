@@ -18,6 +18,11 @@ class SignalSettings:
     enabled: bool = False
     account: str | None = None  # Cora's own number, once linked
     allowed_number: str | None = None  # the person's number
+    allowed_signal_id: str | None = None  # their Signal ID, once learned
+
+    @property
+    def person_recipient(self) -> str | None:
+        return self.allowed_signal_id or self.allowed_number
 
 
 def normalise_number(number: str) -> str:
@@ -39,7 +44,7 @@ class SignalSettingsStore:
             row = session.execute(select(SignalSettingRecord)).scalar_one_or_none()
         if row is None:
             return SignalSettings()
-        return SignalSettings(row.enabled, row.account, row.allowed_number)
+        return SignalSettings(row.enabled, row.account, row.allowed_number, row.allowed_signal_id)
 
     def _save(self, **values) -> None:
         statement = insert(SignalSettingRecord).values(id=1, **values)
@@ -56,7 +61,12 @@ class SignalSettingsStore:
         number = normalise_number(number)
         if number == self.settings().account:
             raise ValueError("That is Cora's own number, not yours")
-        self._save(allowed_number=number)
+        if number != self.settings().allowed_number:
+            # A new number may be a new Signal account: its ID is learned again.
+            self._save(allowed_number=number, allowed_signal_id=None)
+
+    def set_allowed_signal_id(self, signal_id: str) -> None:
+        self._save(allowed_signal_id=signal_id)
 
     def set_account(self, account: str | None) -> None:
         if account is not None:

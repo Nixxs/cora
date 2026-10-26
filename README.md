@@ -621,6 +621,22 @@ the way a professional talks with a client:
   they never affect your relationship, your greeting or "when you last talked".
 - Removing someone stops her answering them; their past chats are kept.
 - Different people are answered independently, each in order.
+- **First messages.** Signal hides a new sender's number until their message
+  request is accepted, so a first message carries only their Signal ID. Cora
+  looks up the Signal IDs of you and everyone you've added before she starts
+  listening (and when you add someone or save your number), so she recognises
+  them anyway, accepts the request for them automatically (so they see her as a
+  contact and her replies show normally), and answers. Strangers' requests stay
+  unaccepted; they get the one polite reply, sent to their Signal ID.
+- **Hidden numbers.** Each Signal ID is saved once learned (by looking up the
+  number, or from any message carrying both; migration 0023), and Cora
+  recognises and messages people by that saved ID. So someone can switch Signal
+  to "Who can find me / see my number: Nobody" after Cora has learned their ID
+  and nothing changes. Someone who had it set to Nobody before Cora ever learned
+  their ID can't be looked up: they'd need to allow being found by number once
+  (or message Cora with their number visible) so the ID is saved, and can then
+  hide it again. Changing your own number in Settings forgets your saved ID;
+  removing someone forgets theirs.
 
 **Cora messaging them first.** At the desk (voice, or typing in Standby) you can
 ask her to message someone you've added, for example "introduce yourself to
@@ -629,7 +645,12 @@ exactly who it's to (name and number) and the text, and nothing is sent until
 you click Approve, as with any tool that reaches outside. She tells you it's
 waiting for your click. Only people you've added can be messaged, by name (or
 first name if only one matches); an unknown or unclear name gets her the list to
-ask you about. The message is saved in that person's conversation, so when they
+ask you about. Before the pop-up, she checks with Signal that the number can be
+reached; if it isn't on Signal, or the person has set Signal to hide their
+number ("Who can find me by my number: Nobody"), she says so and you're never
+asked to approve something that can't be delivered. Adding someone in Settings
+runs the same check and warns you (they're still added, in case they join
+later). The message is saved in that person's conversation, so when they
 reply she sees her own introduction. She can't do this from Signal (you couldn't
 approve it there) or from a client's chat.
 

@@ -151,6 +151,7 @@ class PersonRecord(Base):
         CheckConstraint("kind IN ('primary', 'client')", name="people_kind_check"),
         CheckConstraint("kind = 'primary' OR display_name IS NOT NULL", name="people_client_named_check"),
         UniqueConstraint("signal_number", name="people_signal_number_key"),
+        UniqueConstraint("signal_id", name="people_signal_id_key"),
         {"schema": "public"},
     )
 
@@ -160,6 +161,8 @@ class PersonRecord(Base):
     # 'primary' for the person Cora works with; 'client' for others she may talk with on Signal.
     kind: Mapped[str] = mapped_column(Text, server_default="primary")
     signal_number: Mapped[str | None] = mapped_column(Text)
+    # Their Signal ID once learned: still identifies them if they hide their number.
+    signal_id: Mapped[str | None] = mapped_column(Text)
 
 
 # The person Cora works with, never a client; and conversations with them, never a client's.
@@ -606,6 +609,7 @@ class SignalSettingRecord(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     account: Mapped[str | None] = mapped_column(Text)
     allowed_number: Mapped[str | None] = mapped_column(Text)
+    allowed_signal_id: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 

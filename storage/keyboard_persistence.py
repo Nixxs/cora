@@ -77,6 +77,12 @@ class KeyboardPersistence:
     def add_client(self, name: str, number: str) -> Client:
         return ClientStore(self._get_store().engine).add(name, number)
 
+    def save_client_signal_id(self, person_id: UUID, signal_id: str) -> None:
+        ClientStore(self._get_store().engine).set_signal_id(person_id, signal_id)
+
+    def save_signal_person_id(self, signal_id: str) -> None:
+        SignalSettingsStore(self._get_store().engine).set_allowed_signal_id(signal_id)
+
     def remove_client(self, person_id: UUID) -> None:
         ClientStore(self._get_store().engine).remove(person_id)
 
