@@ -17,6 +17,7 @@ from storage.conversation_store import ConversationStore
 from storage.dashboard_snapshot import DashboardSnapshot
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
+from storage.signal_settings_store import SignalSettings
 from migrate import apply_migrations, database_settings
 
 
@@ -108,7 +109,8 @@ async def running_app(persistence=None):
             patch("memory.background.fade_memory"), \
             patch("memory.background.appraise_waiting_conversations"), \
             patch("memory.background.update_relationships"), \
-            patch("services.credentials.keyring"):
+            patch("services.credentials.keyring"), \
+            patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:
@@ -122,6 +124,10 @@ async def running_app(persistence=None):
                 persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None
                 persistence.load_delegation_model.return_value = BACKEND_MODEL
+                # Signal and services off, as on a fresh install.
+                persistence.load_signal_settings.return_value = SignalSettings()
+                persistence.load_enabled_services.return_value = set()
+                persistence.load_service_tools.return_value = {}
                 persistence.load_last_talked_at.return_value = None
                 persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(), traits=())
             app.persistence = persistence

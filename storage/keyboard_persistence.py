@@ -11,6 +11,7 @@ from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
 from .service_settings_store import ServiceSettingsStore
+from .signal_settings_store import SignalSettings, SignalSettingsStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.interests.interest_store import InterestStore
@@ -68,6 +69,18 @@ class KeyboardPersistence:
 
     def save_service_enabled(self, service: str, enabled: bool) -> None:
         ServiceSettingsStore(self._get_store().engine).set_enabled(service, enabled)
+
+    def load_signal_settings(self) -> SignalSettings:
+        return SignalSettingsStore(self._get_store().engine).settings()
+
+    def save_signal_enabled(self, enabled: bool) -> None:
+        SignalSettingsStore(self._get_store().engine).set_enabled(enabled)
+
+    def save_signal_allowed_number(self, number: str) -> None:
+        SignalSettingsStore(self._get_store().engine).set_allowed_number(number)
+
+    def save_signal_account(self, account: str | None) -> None:
+        SignalSettingsStore(self._get_store().engine).set_account(account)
 
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()

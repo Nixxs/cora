@@ -579,6 +579,23 @@ class ServiceSettingRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
+class SignalSettingRecord(Base):
+    """Cora's own Signal account and who she answers on it; at most one row."""
+
+    __tablename__ = "signal_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="signal_settings_single_row"),
+        CheckConstraint("account IS NULL OR account <> allowed_number", name="signal_settings_numbers_differ"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, server_default=sql_text("1"))
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    account: Mapped[str | None] = mapped_column(Text)
+    allowed_number: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
 class ServiceToolRecord(Base):
     """One service tool Cora may use; tools without a row are off."""
 

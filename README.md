@@ -543,6 +543,37 @@ the same for every service's tools; nothing is specific to GitHub. Activity show
 its size, never its contents. Every switched-on tool's description takes space
 in her context; the dashboard's context box shows how much.
 
+### Cora's Signal
+
+Cora can have her own Signal account: **her own number on her own phone, never
+yours**. It is optional and off by default; without it nothing else changes.
+Set it up in Settings > Services > **Signal** (run `python migrate.py` once
+after updating, for migration 0020, and reinstall the requirements):
+
+1. Put Signal on a spare phone, or a second SIM, with Cora's own number.
+2. Switch Signal on. The app starts the `signal` service from
+   [compose.yaml](compose.yaml) (`signal-cli`, under the `signal` profile, so a
+   plain `docker compose up` never starts it) and waits for it. Switching it off
+   stops the container.
+3. Enter **your own** number and save it: for now the only person she answers.
+4. Press **Link Cora's phone**. A QR code appears; on **Cora's** phone open Signal
+   › Settings › Linked devices › + and scan it within five minutes. The row then
+   shows "Cora's number · +61…".
+
+Scanning with your own phone would make this app a device on *your* account, so
+Cora would see your messages and could speak as you. If that happens, the app
+notices that the linked number is yours, removes the link straight away, and
+asks you to also remove "Cora" from Linked devices on your phone. Her number and
+yours can never be saved as the same.
+
+The service listens only on `127.0.0.1` (port 8090; set `CORA_SIGNAL_PORT` in
+`.env.database` if that is taken), and received messages never go into the
+container's log. **Her Signal keys live in the `signal-data` Docker volume**: as
+with the database, don't delete it, and back it up; losing it means linking her
+phone again. If the app finds the saved account is no longer linked (unlinked
+from her phone, or the volume was lost), it says so and asks you to link again.
+This step only sets her account up; she doesn't send or answer messages yet.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -737,6 +768,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model and service settings, and the dashboard's snapshot read. |
+| [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
@@ -989,9 +1021,19 @@ features it helps check, and package last.
      fit it: typing in Standby leaves out `close_app` and `enter_standby`, and
      Signal will also leave out `look_at_screen` and `show_web_image`.
   2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
-     Nick's number only (an allowlist), each Signal chat saved as a conversation
-     marked with its channel, so the usual memory pass, summaries and appraisals
-     cover it and she has the same continuity as in the app.
+     Nick's number only (an allowlist). S2a, setting up her account from
+     Settings (the compose service, linking her phone by QR code, Nick's number),
+     is built: see [Cora's Signal](#coras-signal). S2b, receiving and replying, is
+     next. Nick's Signal messages are the same
+     conversation as the desktop, not a separate one: one ongoing conversation
+     with him, whichever way he reaches her. They appear in the desktop chat
+     labelled by channel (**You · Signal**, **Cora · Signal**), are saved with a
+     `signal` channel, and feed the usual memory pass, summaries and
+     appraisals; the three-hour rule closes the conversation only after a real
+     quiet. Waking Live carries them in the recent history. Replies are written
+     by the backend through the chat without Live and go back over Signal, even
+     while Live is active at the desk; then the voice session also gets a silent
+     note of the exchange, as typed messages do, so voice Cora knows.
   3. **S3 other people, as clients:** Nick is her one primary person; everyone
      else is treated like a client. She keeps no relationship with them (no
      appraisals, no trust or warmth, no greeting hooks), so the relationship work
@@ -1000,7 +1042,12 @@ features it helps check, and package last.
      memory who said it, so a client saying "I live in Perth" never becomes a
      fact about Nick; today's extraction assumes every speaker is Nick, so this
      needs that link. Prompts say who she is talking to. Unknown numbers get a
-     polite introduction or nothing, as configured. Recall must be scoped too:
+     polite introduction or nothing, as configured. Client chats are their own
+     conversations and never appear in Nick's chat with her or in voice Cora's
+     history: mixing them in would confuse both and blur the boundary between
+     Nick's life and clients'. Nick sees them read-only in a Signal box on the
+     dashboard: recent chats with who and when and a line or two each, and a
+     click opens the whole chat, as the context box does. Recall must be scoped too:
      `search_memory` today searches every memory, so someone else could ask what
      Nick has been stressed about and get an answer. For anyone but Nick, recall
      covers only memories from conversations with that person, plus memories
@@ -1037,9 +1084,8 @@ features it helps check, and package last.
   useful on their own, Cora on Nick's phone with web search and full recall and
   no permission questions, so they can ship before S3 and S4.
 
-  Still to decide: what unknown numbers get, how "let Nick know they asked"
-  reaches him (next chat, or a Signal message), and how Signal chats show in
-  the app and dashboard.
+  Still to decide: what unknown numbers get, and how "let Nick know they asked"
+  reaches him (next chat, or a Signal message).
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are

@@ -19,5 +19,19 @@ services:
       retries: 12
       start_period: 10s
 
+  # Cora's own Signal account (optional). Started and stopped from Settings > Services;
+  # `docker compose up` without the profile leaves it alone. It holds her Signal keys.
+  signal:
+    image: ghcr.io/asamk/signal-cli:0.14.8
+    profiles: ["signal"]
+    restart: unless-stopped
+    # Received messages go to Cora over the local API only, never into the container's log.
+    command: ["daemon", "--http", "0.0.0.0:8080", "--no-receive-stdout"]
+    ports:
+      - "127.0.0.1:${CORA_SIGNAL_PORT:-8090}:8080"
+    volumes:
+      - signal-data:/var/lib/signal-cli
+
 volumes:
   database-data:
+  signal-data:

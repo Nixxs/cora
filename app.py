@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from datetime import datetime
 from os import getenv
 import sys
@@ -23,7 +24,11 @@ from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
-from ui.model_settings import ModelSettingsScreen, ServiceControls
+from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalControls
+from messaging.container import signal_port, start_container, stop_container
+from messaging.setup import SignalSetup
+from messaging.signal_cli import SignalClient
+from storage.signal_settings_store import SignalSettings
 from services.catalogue import SERVICES
 from services.confirmation import Confirmations
 from services.connection import CONNECTED, ServiceManager
@@ -220,6 +225,12 @@ class CoraApp(App):
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
         self.service_tools_changed = False
+        # Cora's own Signal account: off and unused unless set up in Settings > Services.
+        self.signal_settings = SignalSettings()
+        self.signal = SignalSetup(
+            SignalClient(f"http://127.0.0.1:{signal_port()}"), start_container, stop_container,
+            save_account=self.save_signal_account, write_activity=self.activity.write,
+        )
         # Recent long replies from service tools, so Cora can read their later pages.
         self.service_results = ResultCache()
         # Tool calls that change things wait here for the person's answer.
@@ -514,6 +525,8 @@ class CoraApp(App):
                 self.startup_complete = True
                 self.summary_worker = self.summarize_previous_conversations()
                 await self.wait_for_services()
+                # Signal starts on its own time; it never holds up Live.
+                self.start_signal_if_enabled()
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
                 self.startup_worker = self.load_session_context()
@@ -757,6 +770,9 @@ class CoraApp(App):
             self.service_tool_choices = await self.conversation_persistence.call_database(
                 self.persistence.load_service_tools,
             )
+            self.signal_settings = await self.conversation_persistence.call_database(
+                self.persistence.load_signal_settings,
+            )
             has_token = {service_id for service_id in SERVICES if await asyncio.to_thread(get_token, service_id)}
         except Exception as error:
             self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
@@ -771,7 +787,64 @@ class CoraApp(App):
                     set_tool_enabled=self.set_service_tool, enabled=set(enabled), has_token=has_token,
                     tools_on={service_id: set(tools) for service_id, tools in self.service_tool_choices.items()},
                 ),
+                signal=SignalControls(
+                    status=lambda: self.signal.status, set_enabled=self.set_signal_enabled,
+                    save_number=self.save_signal_number, link=self.link_signal,
+                    enabled=self.signal_settings.enabled, person_number=self.signal_settings.allowed_number,
+                ),
             ), callback=self.settings_closed)
+
+    @work(group="signal")
+    async def start_signal_if_enabled(self) -> None:
+        try:
+            self.signal_settings = await self.conversation_persistence.call_database(
+                self.persistence.load_signal_settings,
+            )
+        except Exception as error:
+            self.activity.write(f"Signal settings load failed ({type(error).__name__}).", "Signal error")
+            return
+        if self.signal_settings.enabled and not self.closing:
+            await self.signal.start(self.signal_settings.account)
+
+    @work(group="signal")
+    async def set_signal_enabled(self, enabled: bool) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_signal_enabled, enabled)
+        except Exception as error:
+            self.activity.write(f"Signal setting save failed ({type(error).__name__}).", "Signal error")
+            self.notify("Could not save the Signal setting. Check Activity.", severity="error")
+            return
+        self.signal_settings = replace(self.signal_settings, enabled=enabled)
+        if enabled:
+            await self.signal.start(self.signal_settings.account)
+        else:
+            await self.signal.stop()
+            self.activity.write("Signal is off; Cora doesn't use it.", "Signal off")
+
+    @work(group="signal-save")
+    async def save_signal_number(self, number: str) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_signal_allowed_number, number)
+        except ValueError as error:
+            self.notify(str(error), severity="warning")
+            return
+        except Exception as error:
+            self.activity.write(f"Your Signal number save failed ({type(error).__name__}).", "Signal error")
+            self.notify("Could not save your number. Check Activity.", severity="error")
+            return
+        self.signal_settings = replace(self.signal_settings, allowed_number=number)
+        self.activity.write("Your number saved: the only one Cora answers on Signal.", "Signal number saved")
+
+    async def save_signal_account(self, account: str | None) -> None:
+        await self.conversation_persistence.call_database(self.persistence.save_signal_account, account)
+        self.signal_settings = replace(self.signal_settings, account=account)
+
+    @work(group="signal-link")
+    async def link_signal(self) -> None:
+        if not self.signal_settings.allowed_number:
+            self.notify("Save your own number first.", severity="warning")
+            return
+        await self.signal.link(self.signal_settings.allowed_number)
 
     def send_without_live(self, message: str, image_seen: str | None = None) -> None:
         """In Standby, answer a typed message in writing without waking Live."""
