@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, aliased
 
 from storage.models import (
     MEMORY_EMBEDDING_DIMENSIONS, MEMORY_EMBEDDING_MODEL,
-    ConversationRecord, MemoryRecord, MessageRecord,
+    ConversationRecord, MemoryRecord, MessageRecord, PersonRecord,
 )
 
 
@@ -44,6 +44,18 @@ PENDING_FADE = (
     MemoryRecord.duplicate_of.is_(None), MemoryRecord.correction_checked_at.is_not(None),
     MemoryRecord.fade_checked_at.is_(None), MessageRecord.role == "user",
 )
+# Who said a memory: its source message's conversation's person, NULL for the primary person.
+SPEAKER = select(ConversationRecord.person_id).where(
+    ConversationRecord.id == MessageRecord.conversation_id,
+).correlate(MessageRecord).scalar_subquery()
+SAID_BY_PRIMARY = SPEAKER.is_(None)
+
+
+def said_by(person_id: UUID | None):
+    """Memories one person said: the primary person (None) or a client."""
+    return SAID_BY_PRIMARY if person_id is None else SPEAKER == person_id
+
+
 # Recall prefers the newer memory; a corrected one stays stored as history.
 _newer = aliased(MemoryRecord)
 NOT_CORRECTED = ~exists().where(_newer.corrects == MemoryRecord.id)
@@ -97,6 +109,8 @@ class MemoryMatch:
     source_created_at: datetime
     distance: float
     faded: bool
+    # The client who said it, or None for the primary person.
+    said_by: str | None = None
 
 
 @dataclass(frozen=True)
@@ -122,10 +136,14 @@ class MemoryStore:
             0.5, func.least(func.greatest(half_lives, 0.0), log2(1 / FADE_FLOOR)),
         ))
         with Session(self.engine) as session:
+            speaker_name = select(PersonRecord.display_name).where(
+                PersonRecord.id == SPEAKER,
+            ).correlate(MessageRecord).scalar_subquery()
             rows = session.execute(select(
                 MemoryRecord.id, MemoryRecord.kind, MemoryRecord.text,
                 MemoryRecord.source_message_id, MessageRecord.conversation_id,
                 MessageRecord.created_at, distance.label("distance"), PASSED.label("faded"),
+                speaker_name.label("said_by"),
             ).join(MessageRecord, MemoryRecord.source_message_id == MessageRecord.id).where(
                 MemoryRecord.embedding.is_not(None),
                 MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
@@ -174,6 +192,7 @@ class MemoryStore:
             ).where(
                 MemoryRecord.kind.in_(PLAN_KINDS), MemoryRecord.duplicate_of.is_(None),
                 MessageRecord.role == "user", MessageRecord.created_at >= now - RECENT_PLAN_WINDOW,
+                SAID_BY_PRIMARY,
                 NOT_CORRECTED, or_(MemoryRecord.fades_at.is_(None), MemoryRecord.fades_at > now),
             ).order_by(func.random()).limit(1))
 
@@ -228,8 +247,12 @@ class MemoryStore:
         return self._nearest_earlier_memories(memory, NOT_CORRECTED)
 
     def _nearest_earlier_memories(self, memory: MemoryRecord, *conditions) -> list[DuplicateCandidate]:
+        """Only the same person's memories: Sarah's home city never corrects or duplicates the person's."""
         vector = validate_memory_embedding(memory.embedding)
         with Session(self.engine) as session:
+            person_id = session.scalar(select(SPEAKER).select_from(MessageRecord).where(
+                MessageRecord.id == memory.source_message_id,
+            ))
             rows = session.execute(select(
                 MemoryRecord.id, MemoryRecord.text, MemoryRecord.evidence, MessageRecord.created_at,
             ).join(MessageRecord, MemoryRecord.source_message_id == MessageRecord.id).where(
@@ -239,6 +262,7 @@ class MemoryStore:
                 or_(MemoryRecord.created_at < memory.created_at, and_(
                     MemoryRecord.created_at == memory.created_at, MemoryRecord.id < memory.id,
                 )),
+                said_by(person_id),
                 *conditions,
             ).order_by(MemoryRecord.embedding.cosine_distance(vector), MemoryRecord.id).limit(5)).all()
             return [DuplicateCandidate(*row) for row in rows]
@@ -334,15 +358,18 @@ class MemoryStore:
             session.refresh(memory)
             return memory
 
-    def get_startup_context(self) -> str:
-        """Read at most ten ranked memories; return bounded, whole JSON records."""
+    def get_startup_context(self, person_id: UUID | None = None) -> str:
+        """Read at most ten ranked memories one person said; return bounded, whole JSON records.
+
+        None is the primary person; a client's id gives what she remembers from their own chats.
+        """
         with Session(self.engine) as session:
             rows = session.execute(
                 select(MemoryRecord.kind, MemoryRecord.text, MessageRecord.created_at).join(
                     MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
                 ).where(
                     MessageRecord.role == "user", MemoryRecord.duplicate_of.is_(None), NOT_CORRECTED,
-                    NOT_PASSED,
+                    NOT_PASSED, said_by(person_id),
                 ).order_by(
                     case((MemoryRecord.kind.in_(("fact", "preference")), 0), else_=1),
                     MessageRecord.created_at.desc(), MemoryRecord.id.desc(),

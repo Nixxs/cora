@@ -616,9 +616,21 @@ the way a professional talks with a client:
   even what she knows. Asked something private, she declines without confirming
   she knows anything ("that's one for Nick"), suggests they ask you directly,
   and never makes up a cover story.
-- Their conversations are not processed yet: no memories, summaries or
-  appraisals come from them (memories that record who said them come next), and
-  they never affect your relationship, your greeting or "when you last talked".
+- **She remembers them.** Their finished conversations go through the usual
+  memory pass, told who the user was, so memories are written with their name
+  ("Sarah lives in Perth"; what they say about others is kept as "Sarah said
+  …"), and summaries name them. Each memory knows who said it through its
+  conversation. Her memories are one pool, but:
+  - each client's chats get what she remembers from *their own* earlier chats
+    (the same bounded snapshot you get, but theirs), never yours;
+  - your startup snapshot, the greeting's recent-plan hook and interest
+    evolution use only your own memories;
+  - duplicate and correction checks only compare one person's memories, so
+    Sarah's home city never "corrects" yours;
+  - at the desk, `search_memory` searches them all and labels a client's with
+    `said_by`, so you can ask "what did Sarah say about the meeting?".
+- They get no appraisals, and never affect your relationship, your greeting or
+  "when you last talked".
 - Removing someone stops her answering them; their past chats are kept.
 - Different people are answered independently, each in order.
 - **First messages.** Signal hides a new sender's number until their message
@@ -1181,7 +1193,7 @@ features it helps check, and package last.
   separate client conversations in professional mode (web search only, no
   relationship, not in Nick's chat; built, see [Cora's Signal](#coras-signal));
   S3c memories record who said them, and client conversations join the memory
-  pass (until then they are left out of it); S3d
+  pass, so she remembers each client across chats (built); S3d
   scoped recall for clients plus the share check; S3e the dashboard's Signal box.
 
   Still to decide: how "let Nick know they asked" reaches him (next chat, or a

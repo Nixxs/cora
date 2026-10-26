@@ -20,6 +20,7 @@ SUMMARY_INSTRUCTIONS = (
     "Capture the main topics, relevant user-stated preferences or facts, "
     "decisions, outcomes, and unresolved questions or next tasks. "
     "Distinguish assistant suggestions from decisions the user actually agreed to. "
+    "If user_is names a client, the user is that client: name them in the summary. "
     "Do not invent facts, missing dialogue, completed actions, or resolutions. "
     "Voice records are approximate display chunks; incomplete does not mean "
     "their text is useless. Sequence reflects saving order, not exact speech timing. "
@@ -32,9 +33,16 @@ SUMMARY_INSTRUCTIONS = (
 )
 
 
-def build_transcript(conversation: ConversationRecord, messages: list[MessageRecord]) -> str:
+def build_transcript(
+    conversation: ConversationRecord, messages: list[MessageRecord], client_name: str | None = None,
+) -> str:
     """Serialise a saved conversation as the JSON the background model calls read."""
+    who = (
+        {"user_is": f"{client_name}, someone Cora talks with as a client, not the person she works with"}
+        if client_name else {}
+    )
     return json.dumps({
+        **who,
         "conversation_status": conversation.status,
         "messages": [{
             "sequence_number": message.sequence_number,
@@ -89,7 +97,7 @@ def summarize_conversation(
     if not messages:
         raise ValueError("Conversation has no saved messages to summarise")
 
-    transcript = build_transcript(conversation, messages)
+    transcript = build_transcript(conversation, messages, store.client_name(conversation_id))
     # No database transaction is held open during the model request.
     if client is None:
         with OpenAI(max_retries=0) as api:

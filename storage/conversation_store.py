@@ -7,7 +7,7 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from .models import WITH_PRIMARY_PERSON, ConversationRecord, ConversationSummaryRecord, MessageRecord
+from .models import WITH_PRIMARY_PERSON, ConversationRecord, ConversationSummaryRecord, MessageRecord, PersonRecord
 
 
 class ConversationStore:
@@ -157,6 +157,13 @@ class ConversationStore:
                 )
             )
 
+    def client_name(self, conversation_id: UUID) -> str | None:
+        """The client this conversation was with, or None when it was with the primary person."""
+        with Session(self.engine) as session:
+            return session.scalar(select(PersonRecord.display_name).join(
+                ConversationRecord, ConversationRecord.person_id == PersonRecord.id,
+            ).where(ConversationRecord.id == conversation_id))
+
     def get_messages(self, conversation_id: UUID) -> list[MessageRecord]:
         """Return history in conversation order (an empty list if none exists)."""
         with Session(self.engine) as session:
@@ -201,8 +208,7 @@ class ConversationStore:
             return list(session.scalars(
                 select(ConversationRecord.id).where(
                     ConversationRecord.id != current_conversation_id,
-                    # Client chats wait until memories can say who said them.
-                    WITH_PRIMARY_PERSON,
+                    # Clients' chats too: their memories say who said them through the conversation.
                     ConversationRecord.status.in_(("closed", "interrupted")),
                     select(MessageRecord.id).where(
                         MessageRecord.conversation_id == ConversationRecord.id

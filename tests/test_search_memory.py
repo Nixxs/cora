@@ -43,7 +43,7 @@ import test_memory_store as memory_tests
 
 MATCH_FIELDS = (
     "memory_id", "kind", "text", "source_message_id", "conversation_id",
-    "source_created_at", "distance", "faded",
+    "source_created_at", "distance", "faded", "said_by",
 )
 
 
@@ -229,7 +229,9 @@ class SearchMemoryTests(unittest.TestCase):
                         ("memories", "source_message_id"), ("messages", "conversation_id"),
                         ("messages", "created_at"),
                     ])
-                    self.assertEqual(len(list(statement.selected_columns)), 8)
+                    # Eight match fields plus who said it.
+                    self.assertEqual(len(list(statement.selected_columns)), 9)
+                    self.assertEqual(list(statement.selected_columns)[8].name, "said_by")
                     self.assertEqual(list(statement.selected_columns)[6].name, "distance")
                     self.assertEqual(list(statement.selected_columns)[7].name, "faded")
                     self.assertIn("public.memories.embedding <=> %(", sql)

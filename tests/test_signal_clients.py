@@ -85,6 +85,7 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_client_gets_their_own_conversation_in_professional_mode(self):
         async with keyboard_tests.running_app() as (app, pilot):
             conversation_id = await self.linked_app(app)
+            app.persistence.load_client_memory_context.return_value = '[{"text": "Sarah lives in Perth"}]'
             app.on_signal_message(incoming("Is Nick free on Friday?"))
             await self.settle(app, pilot)
             kwargs = app.backend_chat.reply.await_args.kwargs
@@ -97,6 +98,9 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("Nick's private memory.", "".join(sections.values()))
             self.assertNotIn("warm toward Nick", "".join(sections.values()))
             self.assertNotIn("name", sections)
+            # What she remembers of Sarah, from Sarah's own chats.
+            self.assertIn("Sarah lives in Perth", sections["memories"])
+            app.persistence.load_client_memory_context.assert_called_with(app.signal_clients[SARAH].id)
             self.assertEqual(kwargs["extra_instructions"], client_chat_instructions("Sarah", "Nick"))
             # Web search only: every one of Cora's own tools is left out.
             self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()))
@@ -267,7 +271,8 @@ class ClientStoreDatabaseTests(unittest.TestCase):
         with Session(self.engine) as session, session.begin():
             session.execute(update(ConversationRecord).where(ConversationRecord.id == hers).values(status="closed"))
         current = uuid4()
-        self.assertEqual(self.conversations.get_unsummarized_conversation_ids(current), [mine])
+        # Clients' chats join the memory pass (their memories say who said them) but never appraisals.
+        self.assertEqual(self.conversations.get_unsummarized_conversation_ids(current), [mine, hers])
         self.assertEqual(AppraisalStore(self.engine).unappraised_conversation_ids(), [mine])
         with Session(self.engine) as session:
             mine_at = session.scalar(text("SELECT created_at FROM public.messages WHERE text = 'Mine'"))

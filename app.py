@@ -1163,10 +1163,18 @@ class CoraApp(App):
         self.activity.write(f"Answered {client.name} on Signal.", "Signal client")
 
     async def reply_to_client(self, client: Client, batch: list[IncomingMessage], history: list[dict]) -> str:
-        """Professional mode: her own identity and interests, none of the person's memories or relationship."""
+        """Professional mode: her own identity and interests and what she remembers of them, none of the person's."""
         await self.conversation_persistence.load_session_context()
+        try:
+            # What she remembers from their earlier chats: theirs only, never the person's.
+            remembered = await self.conversation_persistence.call_database(
+                self.persistence.load_client_memory_context, client.id,
+            )
+        except Exception as error:
+            self.activity.write(f"{client.name}'s memories didn't load ({type(error).__name__}).", "Signal client")
+            remembered = ""
         sections = instruction_sections(
-            interest_context=self.live.interest_context, identity_context=self.live.identity_context,
+            remembered, interest_context=self.live.interest_context, identity_context=self.live.identity_context,
         )
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history, sections=sections,
