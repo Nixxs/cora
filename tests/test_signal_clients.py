@@ -100,10 +100,11 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("name", sections)
             # What she remembers of Sarah, from Sarah's own chats.
             self.assertIn("Sarah lives in Perth", sections["memories"])
-            app.persistence.load_client_memory_context.assert_called_with(app.signal_clients[SARAH].id)
+            app.persistence.load_client_memory_context.assert_called_with(app.signal_clients[SARAH].id, "Sarah")
             self.assertEqual(kwargs["extra_instructions"], client_chat_instructions("Sarah", "Nick"))
-            # Web search only: every one of Cora's own tools is left out.
-            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()))
+            # Web search, and memory search limited to what Sarah may know; every other tool left out.
+            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()) - {"search_memory"})
+            self.assertEqual(kwargs["route"].memory_scope, (app.signal_clients[SARAH].id, "Sarah"))
             app.signal.client.send.assert_awaited_once_with(CORA, SARAH, "Happy to help.")
             saves = [call.args for call in app.persistence.save_client_message.call_args_list]
             self.assertEqual(saves, [

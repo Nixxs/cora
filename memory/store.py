@@ -56,6 +56,28 @@ def said_by(person_id: UUID | None):
     return SAID_BY_PRIMARY if person_id is None else SPEAKER == person_id
 
 
+def client_names(name: str) -> list[str]:
+    """How the person might have named a client: full name or first name, case ignored."""
+    full = " ".join(name.split()).lower()
+    return list({full, full.split()[0]})
+
+
+def visible_to(person_id: UUID, name: str):
+    """What Cora may draw on in a client's chat: what they said, and what the person meant for them."""
+    meant_for_them = and_(SAID_BY_PRIMARY, or_(
+        MemoryRecord.share_audience == "anyone",
+        and_(MemoryRecord.share_audience == "person", func.lower(MemoryRecord.shared_with_name).in_(client_names(name))),
+    ))
+    return or_(said_by(person_id), meant_for_them)
+
+
+# The share check reads the person's own settled memories, after fading.
+PENDING_SHARE = (
+    MemoryRecord.duplicate_of.is_(None), MemoryRecord.fade_checked_at.is_not(None),
+    MemoryRecord.share_checked_at.is_(None), MessageRecord.role == "user", SAID_BY_PRIMARY,
+)
+
+
 # Recall prefers the newer memory; a corrected one stays stored as history.
 _newer = aliased(MemoryRecord)
 NOT_CORRECTED = ~exists().where(_newer.corrects == MemoryRecord.id)
@@ -125,8 +147,13 @@ class MemoryStore:
     def __init__(self, engine: Engine):
         self.engine = engine
 
-    def search_memories(self, query_embedding: list[float], limit: int = 8) -> list[MemoryMatch]:
-        """Return the closest embedded user memories, newer ones ranked ahead of faded ones."""
+    def search_memories(
+        self, query_embedding: list[float], limit: int = 8, visible_to_client: tuple[UUID, str] | None = None,
+    ) -> list[MemoryMatch]:
+        """Return the closest embedded user memories, newer ones ranked ahead of faded ones.
+
+        With `visible_to_client` (id, name), only what that client said or the person meant for them.
+        """
         validate_search_limit(limit)
         vector = validate_memory_embedding(query_embedding)
         distance = MemoryRecord.embedding.cosine_distance(vector)
@@ -149,6 +176,7 @@ class MemoryStore:
                 MemoryRecord.embedding_model == MEMORY_EMBEDDING_MODEL,
                 MemoryRecord.duplicate_of.is_(None),
                 MessageRecord.role == "user", NOT_CORRECTED,
+                *([visible_to(*visible_to_client)] if visible_to_client else []),
             ).order_by(((1 - distance) * weight).desc(), MemoryRecord.id).limit(limit)).all()
             return [MemoryMatch(*row) for row in rows]
 
@@ -214,6 +242,29 @@ class MemoryStore:
                 MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
             ).where(*PENDING_CORRECTION).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
 
+    def get_pending_share_ids(self) -> list[UUID]:
+        with Session(self.engine) as session:
+            return list(session.scalars(select(MemoryRecord.id).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(*PENDING_SHARE).order_by(MemoryRecord.created_at, MemoryRecord.id).limit(100)))
+
+    def save_share(self, memory_id: UUID, source_text: str, audience: str | None, name: str | None) -> tuple:
+        """Save who a memory was meant for (None = nobody); a repeat returns the first decision."""
+        if audience not in (None, "anyone", "person") or (audience == "person") != bool(name and name.strip()):
+            raise ValueError("Invalid share audience")
+        with Session(self.engine) as session, session.begin():
+            memory = session.scalar(select(MemoryRecord).where(MemoryRecord.id == memory_id).with_for_update())
+            if memory is None:
+                raise LookupError("Memory does not exist")
+            if memory.text != source_text:
+                raise ValueError("Memory changed during share check")
+            if memory.share_checked_at is not None:
+                return memory.share_audience, memory.shared_with_name
+            memory.share_audience = audience
+            memory.shared_with_name = " ".join(name.split()) if audience == "person" else None
+            memory.share_checked_at = func.current_timestamp()
+            return memory.share_audience, memory.shared_with_name
+
     def get_pending_fade_ids(self) -> list[UUID]:
         with Session(self.engine) as session:
             return list(session.scalars(select(MemoryRecord.id).join(
@@ -230,6 +281,7 @@ class MemoryStore:
                 for name, conditions in (
                     ("embedding", PENDING_EMBEDDING), ("duplicate check", PENDING_DEDUPLICATION),
                     ("correction check", PENDING_CORRECTION), ("fade check", PENDING_FADE),
+                    ("share check", PENDING_SHARE),
                 )
             }
 
@@ -358,10 +410,11 @@ class MemoryStore:
             session.refresh(memory)
             return memory
 
-    def get_startup_context(self, person_id: UUID | None = None) -> str:
+    def get_startup_context(self, person_id: UUID | None = None, name: str | None = None) -> str:
         """Read at most ten ranked memories one person said; return bounded, whole JSON records.
 
-        None is the primary person; a client's id gives what she remembers from their own chats.
+        None is the primary person; a client's id (and name) gives what she remembers from their own
+        chats and what the person meant for them.
         """
         with Session(self.engine) as session:
             rows = session.execute(
@@ -369,7 +422,7 @@ class MemoryStore:
                     MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
                 ).where(
                     MessageRecord.role == "user", MemoryRecord.duplicate_of.is_(None), NOT_CORRECTED,
-                    NOT_PASSED, said_by(person_id),
+                    NOT_PASSED, visible_to(person_id, name) if person_id and name else said_by(person_id),
                 ).order_by(
                     case((MemoryRecord.kind.in_(("fact", "preference")), 0), else_=1),
                     MessageRecord.created_at.desc(), MemoryRecord.id.desc(),

@@ -622,7 +622,9 @@ the way a professional talks with a client:
   …"), and summaries name them. Each memory knows who said it through its
   conversation. Her memories are one pool, but:
   - each client's chats get what she remembers from *their own* earlier chats
-    (the same bounded snapshot you get, but theirs), never yours;
+    (the same bounded snapshot you get, but theirs), never yours, plus anything
+    you meant for them (below); and her `search_memory` there is limited the
+    same way, in the database query itself, so nothing else can come back;
   - your startup snapshot, the greeting's recent-plan hook and interest
     evolution use only your own memories;
   - duplicate and correction checks only compare one person's memories, so
@@ -631,6 +633,21 @@ the way a professional talks with a client:
     `said_by`, so you can ask "what did Sarah say about the meeting?".
 - They get no appraisals, and never affect your relationship, your greeting or
   "when you last talked".
+- **Passing things on.** A share check in the background memory pass (after the
+  fade check, on the small-jobs model; migration 0024) asks of each of *your*
+  memories one question: did you mean it to reach someone? ("tell Sarah I'll be
+  late", "if anyone asks, I'm away till Monday"). It saves who it's for, one
+  named person or anyone, and when unsure saves nobody. It judges intent, not
+  privacy, because nearly everything you say is personal and a wrong "fine to
+  share" would be a leak; a miss only means "that's one for Nick". The name is
+  matched in full or by first name when she's in a chat, so it works even if
+  you add Sarah after saying it. What you meant for someone shows in their
+  snapshot and their search (marked as passed on by you), so she can bring it up
+  herself. Activity notes only whether a memory was meant for anyone, not who.
+- You don't read client chats in the app; ask her instead ("what have you been
+  talking to Royce about?"). At the desk her search covers everyone's memories,
+  labelled with who said them. It finds memories (facts, plans), not whole
+  conversations, so it may miss the general drift of a chat.
 - Removing someone stops her answering them; their past chats are kept.
 - Different people are answered independently, each in order.
 - **First messages.** Signal hides a new sender's number until their message
@@ -1031,8 +1048,9 @@ features it helps check, and package last.
    approving by voice. MCP M1–M3 are done; M4 (more services in the catalogue)
    is in Phase 4.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
-   whose write-tool confirmation it reuses). S1 and S2 are built: she answers
-   your messages on her own number; next, S3 (other people, as clients).
+   whose write-tool confirmation it reuses). S1–S3 and most of S4 are built: she
+   answers you and the people you add on her own number; left, approving tools
+   that change things from within a Signal chat.
 
 *Phase 3 — noticing things*
 
@@ -1149,9 +1167,8 @@ features it helps check, and package last.
      no API calls are spent on spam. Client chats are their own
      conversations and never appear in Nick's chat with her or in voice Cora's
      history: mixing them in would confuse both and blur the boundary between
-     Nick's life and clients'. Nick sees them read-only in a Signal box on the
-     dashboard: recent chats with who and when and a line or two each, and a
-     click opens the whole chat, as the context box does. Recall must be scoped too:
+     Nick's life and clients'. Nick asks Cora about them rather than reading them
+     in the app. Recall must be scoped too:
      `search_memory` today searches every memory, so someone else could ask what
      Nick has been stressed about and get an answer. For anyone but Nick, recall
      covers only memories from conversations with that person, plus memories
@@ -1173,13 +1190,22 @@ features it helps check, and package last.
      can't tell you about his health"), offers to let Nick know they asked,
      never invents a cover story, and carries on helping with what she can.
   4. **S4 permissions and catching up:** tool access follows who is asking,
-     checked from the sender's verified number and never from what the message
-     says. Nick gets her tools, with anything that changes something confirmed
-     in the chat first (as MCP M3 confirms with a pop-up in the app); others get conversation
-     only, and all message text is untrusted data. Messages that arrive while
-     Cora is off are read on reconnect and answered once per chat, covering
-     everything that person sent, rather than message by message, and very old
-     ones are acknowledged as late.
+     checked from the sender's verified number or Signal ID and never from what
+     the message says, and all message text is untrusted data. **Built:** Nick
+     gets her tools on Signal except desk-only ones and those needing approval;
+     clients get web search and their scoped memory search; strangers get one
+     polite reply. Messages that arrive while Cora is off wait on Signal's servers
+     and are answered once per person on reconnect, late ones marked with when
+     they were sent, and the launch greeting follows on. **Left:** approving in
+     the chat, so Nick can use tools that change things from Signal: she asks
+     ("reply YES to create this issue: …") and only a reply from Nick's own
+     number or Signal ID counts, never text she or anyone else writes, with the
+     same timeout and one-at-a-time rules as the pop-up.
+
+  Possible extras, not planned: passing a client's private question on to Nick
+  ("let Nick know they asked"); searchable client chat summaries, so "what have
+  you been talking to Royce about?" gets the drift as well as the facts; reading
+  attachments; group chats.
 
   This is a bigger job than MCP: it changes the core (a conversation path
   without Live, knowing who each conversation and memory is with, and
@@ -1193,11 +1219,10 @@ features it helps check, and package last.
   separate client conversations in professional mode (web search only, no
   relationship, not in Nick's chat; built, see [Cora's Signal](#coras-signal));
   S3c memories record who said them, and client conversations join the memory
-  pass, so she remembers each client across chats (built); S3d
-  scoped recall for clients plus the share check; S3e the dashboard's Signal box.
+  pass, so she remembers each client across chats (built); S3d scoped recall
+  for clients plus the share check (built). The dashboard Signal box was dropped:
+  Nick asks Cora about client chats instead.
 
-  Still to decide: how "let Nick know they asked" reaches him (next chat, or a
-  Signal message).
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are

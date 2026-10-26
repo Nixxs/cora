@@ -103,6 +103,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0021_add_signal_channel.sql",
             "0022_add_signal_clients.sql",
             "0023_save_signal_ids.sql",
+            "0024_add_memory_sharing.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

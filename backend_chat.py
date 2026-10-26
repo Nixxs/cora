@@ -30,9 +30,11 @@ TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in tim
 class BackendRoute:
     """Looks like a Live connection to the tools: their results are kept for the next request."""
 
-    def __init__(self, excluded: frozenset[str] = frozenset()) -> None:
+    def __init__(self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None) -> None:
         # Tools not offered in this kind of conversation, and refused if called anyway.
         self.excluded = frozenset(excluded)
+        # In a client's chat, (their id, their name): memory search only finds what they may know.
+        self.memory_scope = memory_scope
         self.outputs: dict[str, str] = {}
         self.arrived = asyncio.Event()
         self.response = SimpleNamespace(item=SimpleNamespace(create=self._create_item), create=self._create)

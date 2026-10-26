@@ -112,6 +112,12 @@ class MemoryRecord(Base):
             name="memories_correction_check",
         ),
         CheckConstraint("fades_at IS NULL OR fade_checked_at IS NOT NULL", name="memories_fade_check"),
+        CheckConstraint(
+            "(share_audience IS NULL AND shared_with_name IS NULL) "
+            "OR (share_audience = 'anyone' AND shared_with_name IS NULL AND share_checked_at IS NOT NULL) "
+            "OR (share_audience = 'person' AND btrim(shared_with_name) <> '' AND share_checked_at IS NOT NULL)",
+            name="memories_share_check",
+        ),
         {"schema": "public"},
     )
 
@@ -136,6 +142,10 @@ class MemoryRecord(Base):
     correction_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fades_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fade_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Whether the person meant it to reach a client: 'anyone', or 'person' with the name they used.
+    share_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    share_audience: Mapped[str | None] = mapped_column(Text)
+    shared_with_name: Mapped[str | None] = mapped_column(Text)
 
 
 class PersonRecord(Base):

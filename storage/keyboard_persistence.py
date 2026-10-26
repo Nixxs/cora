@@ -92,9 +92,9 @@ class KeyboardPersistence:
     def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
         ClientStore(self._get_store().engine).save(conversation_id, role, text)
 
-    def load_client_memory_context(self, person_id: UUID) -> str:
-        """What Cora remembers from a client's own chats, for her next chat with them."""
-        return MemoryStore(self._get_store().engine).get_startup_context(person_id)
+    def load_client_memory_context(self, person_id: UUID, name: str) -> str:
+        """What Cora remembers from a client's own chats, and what the person meant for them."""
+        return MemoryStore(self._get_store().engine).get_startup_context(person_id, name)
 
     def load_client_history(self, conversation_id: UUID) -> list[dict]:
         return ClientStore(self._get_store().engine).history(conversation_id)

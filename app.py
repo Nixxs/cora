@@ -1168,7 +1168,7 @@ class CoraApp(App):
         try:
             # What she remembers from their earlier chats: theirs only, never the person's.
             remembered = await self.conversation_persistence.call_database(
-                self.persistence.load_client_memory_context, client.id,
+                self.persistence.load_client_memory_context, client.id, client.name,
             )
         except Exception as error:
             self.activity.write(f"{client.name}'s memories didn't load ({type(error).__name__}).", "Signal client")
@@ -1179,8 +1179,11 @@ class CoraApp(App):
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history, sections=sections,
             model=self.live.delegation_model,
-            # Web search only: no memory, no services, nothing at the desk.
-            route=BackendRoute(excluded=frozenset(self.tools.names())),
+            # Web search, and memory search limited to what they may know; no services, nothing at the desk.
+            route=BackendRoute(
+                excluded=frozenset(self.tools.names()) - {"search_memory"},
+                memory_scope=(client.id, client.name),
+            ),
             extra_instructions=client_chat_instructions(client.name, self.live.person_name),
         )
 

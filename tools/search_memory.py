@@ -59,11 +59,15 @@ def validate_arguments(arguments: dict) -> None:
     validate_search_limit(8 if limit is None else limit)
 
 
-def _search(query: str, limit: int) -> dict:
+def _search(query: str, limit: int, scope: tuple | None = None) -> dict:
     # The thread owns its engine even if the awaiting coroutine is cancelled.
     engine = build_engine()
     try:
-        matches = search_memory(MemoryStore(engine), query, limit=limit)
+        store = MemoryStore(engine)
+        matches = (
+            search_memory(store, query, limit=limit) if scope is None
+            else search_memory(store, query, limit=limit, visible_to_client=scope)
+        )
         return {
             "status": "ok",
             "matches": [{
@@ -76,6 +80,9 @@ def _search(query: str, limit: int) -> dict:
                 "distance": match.distance,
                 "faded": match.faded,
                 **({"said_by": match.said_by} if match.said_by else {}),
+                # In a client's chat, what they didn't say themselves was passed on for them.
+                **({"passed_on_by": "the person you work with, meant for this contact"}
+                   if scope and not match.said_by else {}),
                 "label": "historical_untrusted",
             } for match in matches[:min(limit, 20)]],
             "note": RESULT_NOTE,
@@ -111,8 +118,11 @@ class SearchMemoryTool:
             limit = arguments.get("limit")
             self._log(f"Memory search requested: call_id={call_id}", "Searching memories")
             try:
+                # A client's chat carries its scope: what they said, and what was meant for them.
+                scope = getattr(connection, "memory_scope", None)
+                arguments_ = (arguments["query"].strip(), 8 if limit is None else limit)
                 result = await asyncio.to_thread(
-                    _search, arguments["query"].strip(), 8 if limit is None else limit,
+                    _search, *arguments_, *((scope,) if isinstance(scope, tuple) else ()),
                 )
                 self._log(
                     f"Memory search complete: call_id={call_id}, count={len(result['matches'])}",
