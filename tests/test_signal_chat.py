@@ -163,7 +163,9 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             # One conversation with the desktop: earlier voice is history, and the new message isn't repeated.
             self.assertEqual([h["content"][0]["text"] for h in kwargs["history"]], ["Earlier, by voice"])
             self.assertEqual(kwargs["extra_instructions"], SIGNAL_CHAT_INSTRUCTIONS)
-            self.assertEqual(kwargs["route"].excluded, SIGNAL_EXCLUDED | {"github__create_issue"})
+            # Tools that change things are offered: the person approves them in this chat.
+            self.assertEqual(kwargs["route"].excluded, SIGNAL_EXCLUDED)
+            self.assertIsNotNone(kwargs["route"].ask_approval)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "On my way.")
             app.signal.client.send_typing.assert_awaited_once_with(CORA, NICK)
             self.assertIn("You · Signal: Where are my keys?", app.conversation.log_entries)

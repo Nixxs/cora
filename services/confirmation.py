@@ -54,8 +54,16 @@ class Confirmations:
         """Wait for the person's answer: APPROVED, DECLINED or TIMED_OUT.
 
         `title` names one of Cora's own tools' areas (such as Signal); a service's comes from the catalogue.
+        A call from a chat that asks in the chat (the person's own Signal) is asked there instead of
+        with the pop-up; only their own reply answers it.
         """
+        # Imported here: the tools package imports this module, so a top-level import would be circular.
+        from tools.route import current_route
+
         request = ConfirmationRequest(service_id, tool, dict(arguments), title)
+        route = current_route.get()
+        if route is not None and getattr(route, "ask_approval", None) is not None:
+            return await self.ask_in_chat(request, route)
         self.waiting.append(request)
         self.write_activity(
             f"{request.title} tool {tool} is waiting for your approval.", f"{request.title} · {tool} needs approval",
@@ -83,6 +91,20 @@ class Confirmations:
                 if self.waiting:
                     self.show(self.waiting[0])
         self.write_activity(f"{request.title} tool {tool}: {outcome}.", f"{request.title} · {tool} {outcome}")
+        return outcome
+
+    async def ask_in_chat(self, request: ConfirmationRequest, route) -> str:
+        self.write_activity(
+            f"{request.title} tool {request.tool} is waiting for your approval on Signal.",
+            f"{request.title} · {request.tool} needs approval",
+        )
+        try:
+            approved = await asyncio.wait_for(route.ask_approval(request), route.approval_seconds)
+            outcome = APPROVED if approved else DECLINED
+        except TimeoutError:
+            outcome = TIMED_OUT
+        self.write_activity(f"{request.title} tool {request.tool}: {outcome}.",
+                            f"{request.title} · {request.tool} {outcome}")
         return outcome
 
     def answer(self, request_id: int, approved: bool) -> None:

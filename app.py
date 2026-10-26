@@ -27,7 +27,10 @@ from ui.dashboard import DashboardScreen
 from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalControls
 from backup import BackupError, daily_backup_due, run_backup
 from messaging.container import signal_port, start_container, stop_container
-from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
+from messaging.messages import (
+    APPROVAL_SECONDS, SIGNAL_SORRY, approval_answer, approval_request_text, signal_content,
+    signal_message_text,
+)
 from messaging.receiver import IncomingMessage, SignalReceiver
 from messaging.setup import (
     FAILED as SIGNAL_FAILED, LINKED as SIGNAL_LINKED, NOT_LINKED as SIGNAL_NOT_LINKED, OFF as SIGNAL_OFF, SignalSetup,
@@ -262,6 +265,8 @@ class CoraApp(App):
         # Signal IDs of the person and everyone added, by ID, and numbers whose requests she accepted this run.
         self.signal_ids: dict[str, str] = {}
         self.signal_accepted: set[str] = set()
+        # The person's answer to a request asked in their Signal chat, by their number.
+        self.signal_approvals: dict[str, asyncio.Future] = {}
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
@@ -1086,6 +1091,15 @@ class CoraApp(App):
             # Someone she knows wrote first: accept their request so her replies show normally.
             message = replace(message, sender=sender)
             self.accept_signal_request(sender)
+        # She's waiting for the person's answer to a request: only their own next message answers it.
+        pending = self.signal_approvals.get(sender)
+        if pending is not None and not pending.done():
+            answer = approval_answer(message.text)
+            pending.set_result(answer is True)
+            if answer is not None:
+                self.conversation.show_signal_message(signal_message_text(message))
+                return
+            # Not a clear yes or no: the request is declined, and this is answered as a message.
         elif message.sender_id and message.sender_id not in self.signal_ids:
             # Number and ID together: saved, for when they hide their number later.
             self.run_worker(self.remember_signal_id(sender, message.sender_id), group="signal-ids")
@@ -1137,7 +1151,12 @@ class CoraApp(App):
             self.conversation.show_signal_message(signal_message_text(message))
         self.keep_conversation_open()
         self.activity.write(f"Answering {len(batch)} Signal message(s) from you.", "Signal reply")
-        route = BackendRoute(excluded=SIGNAL_EXCLUDED | self.confirming_tools)
+        # Tools that change things are asked about in this chat, answered only by the person's reply.
+        route = BackendRoute(
+            excluded=SIGNAL_EXCLUDED,
+            ask_approval=self.signal_approval_asker(account, person, self.signal_settings.allowed_number),
+            approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60,
+        )
         text = await self.send_signal_reply(account, person, lambda: self.reply_in_writing(
             signal_content(batch, datetime.now(timezone.utc)), history, route, SIGNAL_CHAT_INSTRUCTIONS,
         ))
@@ -1153,6 +1172,21 @@ class CoraApp(App):
             await self.live.note_signal_exchange(said, text)
         except Exception as error:
             self.activity.write(f"Signal note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
+
+    def signal_approval_asker(self, account: str, recipient: str, number: str):
+        """Ask the person in their Signal chat; the answer is their own next message (see on_signal_message)."""
+        async def ask(request) -> bool:
+            future = asyncio.get_running_loop().create_future()
+            self.signal_approvals[number] = future
+            try:
+                text = approval_request_text(request)
+                await self.signal.client.send(account, recipient, text)
+                self.conversation.show_written_reply(text, label="Cora · Signal", channel="signal")
+                return await future
+            finally:
+                if self.signal_approvals.get(number) is future:
+                    del self.signal_approvals[number]
+        return ask
 
     async def answer_client_on_signal(self, account: str, client: Client, batch: list[IncomingMessage]) -> None:
         """Someone the person added: their own conversation, kept out of the person's chat."""

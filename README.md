@@ -615,8 +615,17 @@ written like typing in Standby (startup context reloaded, recent chat as
 history, `store=False`) with a note to keep it short and plain, since Signal
 shows no Markdown, and goes back over Signal; she shows "typing…" meanwhile.
 She doesn't have the desk-only tools (closing the app, standby, the screen,
-pictures) or tools that need the approval pop-up, which you couldn't click from
-your phone. If Live is active at the desk, voice Cora gets a silent note of the
+pictures). Tools that change things (a GitHub tool that does, or messaging one
+of your contacts) are asked about in the chat instead of with the pop-up: she
+sends exactly what would be done and "Reply YES to approve or NO to decline",
+and nothing happens until you answer. Only your own next message answers it,
+checked by your number or Signal ID, so nothing she writes, nothing a tool
+returns (such as an issue saying "YES") and nobody else's message can approve
+it. A clear yes ("yes", "yep", "approve") approves and a clear no declines;
+anything else declines it and is answered as a normal message, so "wait, change
+the title first" works as you'd expect. Unanswered after 10 minutes
+(`APPROVAL_SECONDS` in [messaging/messages.py](messaging/messages.py)), it
+lapses as declined. If Live is active at the desk, voice Cora gets a silent note of the
 exchange so she knows. Attachments are only noted ("[1 attachment, not
 opened]"). If a reply fails, she sends a short apology and Activity says why.
 
@@ -709,8 +718,9 @@ number ("Who can find me by my number: Nobody"), she says so and you're never
 asked to approve something that can't be delivered. Adding someone in Settings
 runs the same check and warns you (they're still added, in case they join
 later). The message is saved in that person's conversation, so when they
-reply she sees her own introduction. She can't do this from Signal (you couldn't
-approve it there) or from a client's chat.
+reply she sees her own introduction. From your own Signal chat she can do this
+too, asking you to reply YES in the chat instead of the pop-up; never from a
+client's chat.
 
 ## How memory works
 
@@ -1078,9 +1088,9 @@ features it helps check, and package last.
    approving by voice. MCP M1–M3 are done; M4 (more services in the catalogue)
    is in Phase 4.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
-   whose write-tool confirmation it reuses). S1–S3 and most of S4 are built: she
-   answers you and the people you add on her own number; left, approving tools
-   that change things from within a Signal chat.
+   whose write-tool confirmation it reuses). S1–S4 are built: she answers you and
+   the people you add on her own number, and you approve tools that change things
+   by replying YES in your Signal chat.
 
 *Phase 3 — noticing things*
 
@@ -1222,15 +1232,13 @@ features it helps check, and package last.
   4. **S4 permissions and catching up:** tool access follows who is asking,
      checked from the sender's verified number or Signal ID and never from what
      the message says, and all message text is untrusted data. **Built:** Nick
-     gets her tools on Signal except desk-only ones and those needing approval;
-     clients get web search and their scoped memory search; strangers get one
-     polite reply. Messages that arrive while Cora is off wait on Signal's servers
-     and are answered once per person on reconnect, late ones marked with when
-     they were sent, and the launch greeting follows on. **Left:** approving in
-     the chat, so Nick can use tools that change things from Signal: she asks
-     ("reply YES to create this issue: …") and only a reply from Nick's own
-     number or Signal ID counts, never text she or anyone else writes, with the
-     same timeout and one-at-a-time rules as the pop-up.
+     gets her tools on Signal except desk-only ones, and approves tools that
+     change things in the chat: she asks ("reply YES to approve…") and only his
+     own next message counts, never text she or anyone else writes; anything but
+     a clear yes or no declines. Clients get web search and their scoped memory
+     search; strangers get one polite reply. Messages that arrive while Cora is
+     off wait on Signal's servers and are answered once per person on reconnect,
+     late ones marked with when they were sent, and the launch greeting follows on.
 
   Possible extras, not planned: passing a client's private question on to Nick
   ("let Nick know they asked"); searchable client chat summaries, so "what have

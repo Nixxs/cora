@@ -19,9 +19,9 @@ TOOL_RESULT_SECONDS = 180
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby"})
-# Signal, away from the desk: nothing that needs the screen either, and nothing that needs the
-# approval pop-up on the desk (service tools that ask are added per message).
-SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image", "send_signal_message"}
+# Signal, away from the desk: nothing that needs the screen either. Tools that change things are
+# offered: the person approves them in the chat.
+SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image"}
 
 TOOL_REFUSED ='{"status": "error", "message": "That tool is not available here."}'
 TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in time; do not guess its result."}'
@@ -30,11 +30,20 @@ TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in tim
 class BackendRoute:
     """Looks like a Live connection to the tools: their results are kept for the next request."""
 
-    def __init__(self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None) -> None:
+    def __init__(
+        self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None,
+        ask_approval=None, approval_seconds: float = 0, tool_seconds: float | None = None,
+    ) -> None:
         # Tools not offered in this kind of conversation, and refused if called anyway.
         self.excluded = frozenset(excluded)
         # In a client's chat, (their id, their name): memory search only finds what they may know.
         self.memory_scope = memory_scope
+        # In the person's own Signal chat: asks them to approve in the chat (returns their answer),
+        # instead of the pop-up on the desk, waiting at most approval_seconds.
+        self.ask_approval = ask_approval
+        self.approval_seconds = approval_seconds
+        # How long one tool result may take here, if longer than usual (an approval by phone).
+        self.tool_seconds = tool_seconds
         self.outputs: dict[str, str] = {}
         self.arrived = asyncio.Event()
         self.response = SimpleNamespace(item=SimpleNamespace(create=self._create_item), create=self._create)
@@ -117,4 +126,4 @@ class BackendChat:
                 "arguments": call.arguments, "status": "completed"}
         if not self.tools.handle_function_call(item, route=route):
             return TOOL_REFUSED
-        return await route.wait_for(call.call_id, self.tool_seconds)
+        return await route.wait_for(call.call_id, route.tool_seconds or self.tool_seconds)

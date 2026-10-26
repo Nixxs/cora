@@ -133,8 +133,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             app.signal.client.send.assert_awaited_once_with(CORA, SARAH.number, "Hi Sarah, I'm Cora.")
             app.persistence.save_client_message.assert_called_once_with(conversation_id, "assistant", "Hi Sarah, I'm Cora.")
 
-    def test_never_offered_on_signal(self):
-        self.assertIn("send_signal_message", SIGNAL_EXCLUDED)
+    def test_offered_to_the_person_on_signal_where_they_approve_in_the_chat(self):
+        self.assertNotIn("send_signal_message", SIGNAL_EXCLUDED)
 
 
 class FailureTextTests(unittest.TestCase):
