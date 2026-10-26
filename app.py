@@ -42,11 +42,14 @@ from subconscious.interests.exploration_store import claim_mention_now, release_
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from greeting import choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook
-from live import CoraLive
+from live import CoraLive, typed_content
+from backend_chat import STANDBY_EXCLUDED, BackendChat, BackendRoute
+from session_config import instruction_sections
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
 from ui.chat_submission import ChatSubmission
 from tools import create_tool_registry
+from tools.route import routed
 from wake.controller import WakeController
 from wake.listener import WakeListener
 
@@ -200,8 +203,10 @@ class CoraApp(App):
             enter_standby=lambda: self.action_standby(),
             write_activity=self.activity.write,
         )
+        # Tools reply to Live, or to a chat without Live when the call came from one.
+        self.tool_connection = routed(lambda: self.live.connection)
         self.tools = create_tool_registry(
-            get_connection=lambda: self.live.connection,
+            get_connection=self.tool_connection,
             is_closing=lambda: self.closing or self.reconnecting,
             shutdown=lambda: self.action_disconnect_and_quit(),
             request_standby=self.request_standby,
@@ -234,8 +239,9 @@ class CoraApp(App):
             is_standby=lambda: self.standby, schedule=self.submit_keyboard_message,
             record_activity=self.record_idle_activity, write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
-            trace=self.trace_live,
+            trace=self.trace_live, send_without_live=self.send_without_live,
         )
+        self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(
             live=self.live, control=self.query_one("#wake-status", Button),
             enabled=getenv("CORA_WAKE_ENABLED", "0").strip() == "1",
@@ -767,6 +773,47 @@ class CoraApp(App):
                 ),
             ), callback=self.settings_closed)
 
+    def send_without_live(self, message: str, image_seen: str | None = None) -> None:
+        """In Standby, answer a typed message in writing without waking Live."""
+        # Taken now, before the message itself joins the chat, so it isn't sent twice.
+        history = self.conversation.get_reconnect_history()
+        # Talking in writing keeps the conversation going: it ends only after a long quiet.
+        if self.conversation_end_timer is not None:
+            self.stop_conversation_end_timer()
+            self.conversation_end_timer = self.set_timer(
+                CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
+            )
+        self.answer_without_live(typed_content(message, image_seen), history)
+
+    @work(group="text-chat")
+    async def answer_without_live(self, content: list[dict], history: list[dict]) -> None:
+        self.activity.write("Answering in writing without waking Live.", "Writing a reply")
+        try:
+            # Reloaded each time, as at a Live connect, so she is the same Cora with what she
+            # knows now: name, memories, interests, identity, relationship and chosen model.
+            await self.conversation_persistence.load_session_context()
+            sections = instruction_sections(
+                self.live.memory_context, interest_context=self.live.interest_context,
+                person_name=self.live.person_name, identity_context=self.live.identity_context,
+                relationship_context=self.live.relationship_context,
+            )
+            text = await self.backend_chat.reply(
+                content=content, history=history, sections=sections, model=self.live.delegation_model,
+                route=BackendRoute(excluded=STANDBY_EXCLUDED),
+            )
+        except Exception as error:
+            # The type only: a message could echo the conversation.
+            self.activity.write(f"Written reply failed ({type(error).__name__}).", "Written reply failed")
+            self.notify("Cora couldn't reply in writing. Check Activity.", severity="error")
+            return
+        if self.closing:
+            return
+        if text:
+            self.conversation.show_written_reply(text)
+            self.activity.write(f"Written reply shown: characters={len(text)}", "Written reply")
+        else:
+            self.activity.write("The written reply was empty.", "Written reply empty")
+
     def show_confirmation(self, request) -> None:
         self.push_screen(ConfirmScreen(request, self.confirmations.answer))
         self.tell_cora_approval_waiting(request.title, request.tool)
@@ -846,7 +893,7 @@ class CoraApp(App):
         for name in set(wanted) - current:
             service_id, tool, schema = wanted[name]
             handler = ServiceToolHandler(
-                service_id, tool.name, self.services.call_tool, lambda: self.live.connection,
+                service_id, tool.name, self.services.call_tool, self.tool_connection,
                 lambda: self.closing or self.reconnecting, self.activity.write,
                 cache=self.service_results,
                 paged=PAGE_ARGUMENT not in tool.input_schema.get("properties", {}),

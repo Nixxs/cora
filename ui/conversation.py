@@ -132,6 +132,13 @@ class Conversation:
             # The image is never saved; only the caption and its page.
             self.record_message("assistant", f"[image] {caption} ({page_url})", "screen")
 
+    def show_written_reply(self, text: str) -> None:
+        """A reply from a chat without Live: there is no voice, so all of it is shown."""
+        self.log_entries.extend(["", "Cora · written:", ChatMarkdown(text, code_theme="monokai"), ""])
+        self.redraw_log()
+        if self.record_message is not None:
+            self.record_message("assistant", text, "screen")
+
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")
         if not item_id or item_id in self.written_item_ids:

@@ -318,7 +318,9 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
                 app.persistence.close.assert_not_called()
                 exit_app.assert_not_called()
 
-                with patch.object(app, "notify") as notify:
+                # Without a written route, Enter in Standby asks to resume (written replies have their own test).
+                with patch.object(app, "notify") as notify, \
+                        patch.object(app.submission, "send_without_live", None):
                     await pilot.press("enter")
                     self.assertIn("Ctrl+R", notify.call_args.args[0])
                 app.persistence.save_message.assert_not_called()

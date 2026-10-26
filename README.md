@@ -111,8 +111,17 @@ not change an existing database's password or user. Back up important data.
   and pending work to finish first. Cora closes the Live session and Live audio,
   but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
   to resume. The button shows Connecting and cannot be clicked again while waking.
-  Enter during Standby keeps the draft and asks you to resume, rather than saving
-  or sending a failed request.
+- **Type while in Standby:** a typed message is answered in writing ("Cora ·
+  written") straight from her backend, without waking Live, so there is no voice
+  and no Live billing, only the backend request. It is the same Cora: each
+  message reloads her startup context as a Live connect does (name, memories,
+  interests, identity, relationship and chosen model; database reads only), and
+  she has the same tools, except closing the app and going to standby. The chat
+  is saved to the same conversation, so memories, summaries and the relationship
+  come from it as from voice, and writing keeps the conversation open: it closes
+  only after three hours without any. Each message carries the recent visible chat (up to 40
+  messages / 6,000 bytes) from Cora's own records with `store=False`, so nothing
+  is kept on OpenAI's side. Click Standby or press Ctrl+R to talk again.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
 - **Ask Cora for standby:** say something like “go to standby”. She may also
@@ -719,6 +728,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [app.py](app.py) | Application orchestration, background work, and shutdown. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
+| [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
 | [context_window.py](context_window.py) | What each model holds in context, item by item, for the dashboard's context box. |
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
@@ -730,7 +740,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
@@ -848,12 +858,11 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 
 ### Next priorities
 
-**Release plan:** everything below except private messaging (your own inbox)
-and local models makes up **Cora 1.0**, published as a release in this repository as an
-open-source project. Packaging is paused: Cora stays run from source (PostgreSQL
-in Docker, the app natively), with no installer for non-technical users planned
-for now. Private messaging and local models follow after 1.0 as personal
-development.
+**Release plan:** everything below except local models makes up **Cora 1.0**,
+published as a release in this repository as an open-source project. Packaging
+is paused: Cora stays run from source (PostgreSQL in Docker, the app natively),
+with no installer for non-technical users planned for now. Local models follow
+after 1.0 as personal development.
 
 **Order of work:** settle risky decisions first, build visibility before the
 features it helps check, and package last.
@@ -911,8 +920,7 @@ features it helps check, and package last.
     for picking out the item to change.
 18. Release.
 
-*After 1.0:* local models, then private messaging (your own inbox), which builds
-on them.
+*After 1.0:* local models.
 
 #### Details, in order
 
@@ -960,39 +968,43 @@ on them.
   may later replace exposing every tool.
 - **Signal (Cora's own number):** so Nick can work with Cora away from his
   desk, and so she can talk with other people (such as Nick's wife) as herself.
-  She has her own Signal account and phone number; anyone messaging it is
-  talking to Cora, so those chats go to OpenAI like any other conversation with
-  her. She is an individual, not an assistant or servant: she works *with* Nick
+  She has her own Signal account and phone number and sees only her own
+  messages, never Nick's; anyone messaging it is talking to Cora, so those
+  chats go to OpenAI like any other conversation with her. It is separate from
+  the awareness system, which never watches anyone's Signal. She is an individual, not an assistant or servant: she works *with* Nick
   as a colleague, not for him, and if a company is needed it is Intelligis. That
   belongs in `CORA_FOUNDATION` and applies everywhere, not only on Signal.
   Optional and off by default, so the project runs without a `signal-cli`
   container (an early experiment is in
   [examples/signal_testings/](examples/signal_testings/)). Steps:
-  1. **S1 text without Live:** today typed chat needs an active Live session.
+  1. **S1 text without Live (built; see "Type while in Standby" under
+     [Using Cora](#using-cora)):** typed chat used to need an active Live session.
      Signal messages arrive while Nick is away and Cora may be in Standby, so
      they need a path straight to the Responses backend, with the same startup
-     context and tools. Quiet typed use in the app can use it too. Hosted web
-     search already works there. Cora's own tools do not yet: each handler
-     sends its result back through the Live connection
-     (`connection.response.item.create`, then `connection.response.create`, as in
-     [tools/search_memory.py](tools/search_memory.py)), so every tool needs
-     splitting into doing the work and returning the result, letting the same
-     handler answer Live or a direct backend call. Tools also differ per
-     channel: `look_at_screen`, `show_web_image`, `close_app` and
-     `enter_standby` only make sense at the desk and are not offered on Signal.
+     context and tools. Quiet typed use in the app uses it now. Tools reply
+     through `connection.response.item.create` and `connection.response.create`;
+     a chat without Live hands them a route with those same two methods
+     ([tools/route.py](tools/route.py)), so every tool, services' included,
+     works in both unchanged. Each kind of chat leaves out the tools that don't
+     fit it: typing in Standby leaves out `close_app` and `enter_standby`, and
+     Signal will also leave out `look_at_screen` and `show_web_image`.
   2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
      Nick's number only (an allowlist), each Signal chat saved as a conversation
      marked with its channel, so the usual memory pass, summaries and appraisals
      cover it and she has the same continuity as in the app.
-  3. **S3 other people:** each sender becomes their own person, with their own
-     memories and her own relationship with them; prompts say who she is talking
-     to. Today's code assumes one person, so this needs memories and
-     conversations linked to people. Unknown numbers get a polite introduction
-     or nothing, as configured. Recall must be scoped too: `search_memory`
-     today searches every memory, so someone else could ask what Nick has been
-     stressed about and get an answer. For anyone but Nick, recall covers only
-     memories from conversations with that person, plus memories Nick meant to
-     reach them. Nobody marks memories by hand: a share check, run in the
+  3. **S3 other people, as clients:** Nick is her one primary person; everyone
+     else is treated like a client. She keeps no relationship with them (no
+     appraisals, no trust or warmth, no greeting hooks), so the relationship work
+     stays Nick's alone. Her memories stay one pool, whoever they came from: they
+     are her memories. Each conversation records who it was with, and each
+     memory who said it, so a client saying "I live in Perth" never becomes a
+     fact about Nick; today's extraction assumes every speaker is Nick, so this
+     needs that link. Prompts say who she is talking to. Unknown numbers get a
+     polite introduction or nothing, as configured. Recall must be scoped too:
+     `search_memory` today searches every memory, so someone else could ask what
+     Nick has been stressed about and get an answer. For anyone but Nick, recall
+     covers only memories from conversations with that person, plus memories
+     Nick meant to reach them. Nobody marks memories by hand: a share check, run in the
      background memory pass beside the duplicate, correction and fade checks
      (on the small-jobs model), looks for Nick's intent to pass something on
      ("let Sarah know I'll be late", "tell anyone who asks I'm away until
@@ -1009,9 +1021,6 @@ on them.
      she declines without confirming it exists ("that's one for Nick", not "I
      can't tell you about his health"), offers to let Nick know they asked,
      never invents a cover story, and carries on helping with what she can.
-     Later, each person may get a level (such as close or professional) that
-     sets her tone, so Nick's wife needn't be treated like a client; levels
-     never change what she can see.
   4. **S4 permissions and catching up:** tool access follows who is asking,
      checked from the sender's verified number and never from what the message
      says. Nick gets her tools, with anything that changes something confirmed
@@ -1022,8 +1031,9 @@ on them.
      ones are acknowledged as late.
 
   This is a bigger job than MCP: it changes the core (a conversation path
-  without Live, more than one person, and per-sender permissions) rather than
-  adding to the tool registry, so MCP comes first. S1 and S2 together are
+  without Live, knowing who each conversation and memory is with, and
+  per-sender permissions) rather than adding to the tool registry, so MCP comes
+  first. S1 and S2 together are
   useful on their own, Cora on Nick's phone with web search and full recall and
   no permission questions, so they can ship before S3 and S4.
 
@@ -1114,23 +1124,14 @@ on them.
   portable binaries would need pgvector built per platform. Running the whole
   app in a container was also ruled out, since Docker Desktop cannot reach the
   host's microphone, speaker or clipboard.
-- **Private messaging (your own inbox), after 1.0:** separate from Cora's own
-  Signal number above. While Cora is running, she tells
-  the person about incoming messages to *their* account, what the sender wants, and sends replies
-  when told to (confirmed by voice). The person does not want message content
-  sent to OpenAI, so reading, summarising, and drafting would run on a local
-  model, and Cora-prime would only see what is safe to share (such as "a message
-  from Sam"). Open questions: how a private summary is spoken without passing
-  through Live (for example local text-to-speech), and whether this fits the
-  architecture yet. Needs a design pass before building.
 - **Local models, after 1.0:** explore running Cora-prime with only local models. There may
   not yet be a local equivalent of the Live speech-to-speech model; the likely
   alternative is a pipeline of local speech recognition, a local language model,
   and local text-to-speech, at some cost to latency and natural turn-taking. A
   local replacement for the delegate model is available, but web search would
   need a separate search provider (such as a self-hosted search engine or a
-  search API, possibly through MCP) exposed as a tool. Local models also enable
-  the private messaging and awareness items above.
+  search API, possibly through MCP) exposed as a tool. Local models also help
+  the awareness items above.
 
 ### Subconsciousness, interests, self, and relationship
 
@@ -1201,7 +1202,7 @@ Implement and test these in small increments:
   and test awareness-triggered opportunities, without introducing automatic
   interruption or wake-up by default.
 
-Signal, camera, and screen monitors will use the same event path. Start camera
+Camera and screen monitors will use the same event path. Start camera
 awareness with presence rather than identity recognition. Any later presence-based
 sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending work,
 and provide separate camera privacy controls. Cross-process transport can be added
@@ -1554,7 +1555,7 @@ Camera presence detection is separate from sending images to a model for vision.
 Local wake-word listening, the event/attention foundations, the interests worker
 (with lull-based findings), the self worker, the relationship, and the opening
 greeting are implemented, each keeping its state separate from memories about the
-user. Real Signal/camera/screen monitors and relevance- or awareness-driven
+user. Real camera/screen monitors and relevance- or awareness-driven
 initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.

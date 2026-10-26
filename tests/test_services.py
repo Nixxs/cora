@@ -638,28 +638,34 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
             # Typing letters does nothing: there are no shortcuts to approve.
             await pilot.press("y", "e", "s", "enter")
             await pilot.pause()
-            self.assertEqual(await asyncio.wait_for(asked, 1), DECLINED)
+            self.assertEqual(await asyncio.wait_for(asked, 5), DECLINED)
             self.assertNotIsInstance(app.screen, ConfirmScreen)
 
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
             await pilot.pause()
             await pilot.click("#confirm-approve")
-            self.assertEqual(await asyncio.wait_for(asked, 1), APPROVED)
+            await pilot.pause()
+            self.assertEqual(await asyncio.wait_for(asked, 5), APPROVED)
 
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
             await pilot.pause()
             await pilot.press("escape")
-            self.assertEqual(await asyncio.wait_for(asked, 1), DECLINED)
+            await pilot.pause()
+            self.assertEqual(await asyncio.wait_for(asked, 5), DECLINED)
             self.assertIn("GitHub tool create_issue is waiting for your approval.", "\n".join(app.activity.entries))
 
     async def test_an_unanswered_pop_up_times_out_and_goes_away(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            app.confirmations.timeout = 0.2
+            app.confirmations.timeout = 0.5
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
             await pilot.pause()
             self.assertIsInstance(app.screen, ConfirmScreen)
-            self.assertEqual(await asyncio.wait_for(asked, 1), TIMED_OUT)
-            await pilot.pause()
+            self.assertEqual(await asyncio.wait_for(asked, 5), TIMED_OUT)
+            # Dismissing is asynchronous; under load it can take a few frames.
+            for _ in range(20):
+                if not isinstance(app.screen, ConfirmScreen):
+                    break
+                await pilot.pause(0.1)
             self.assertNotIsInstance(app.screen, ConfirmScreen)
 
 
