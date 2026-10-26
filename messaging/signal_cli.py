@@ -59,11 +59,12 @@ class SignalClient:
             params["stop"] = True
         await self.rpc("sendTyping", params)
 
-    async def events(self, account: str):
+    async def events(self, account: str, on_open=lambda: None):
         """Each event the daemon streams for one account, as its raw JSON text, until it drops."""
         async with self.http(None) as http:
             async with http.stream("GET", "/api/v1/events", params={"account": account}) as response:
                 response.raise_for_status()
+                on_open()
                 data = []
                 async for line in response.aiter_lines():
                     if line.startswith("data:"):

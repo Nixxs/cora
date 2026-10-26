@@ -769,6 +769,13 @@ brief of facts, and the first Live session of a launch sends it as a note:
      a duplicate or a corrected one), hedged as possibly outdated and to skip if
      sensitive, since others may be listening. With nothing recent, or if loading
      fails, she falls back to the last thread.
+4. **Signal messages answered at launch come first.** With Signal on, the
+   greeting waits (up to 20 seconds) until messages that waited while the app was
+   closed have arrived and been answered over Signal: Signal is listening,
+   nothing new has come for 3 seconds, and nothing is left to answer. If any were
+   answered, that exchange replaces the hook above, and she follows on from it
+   now that you're there instead of greeting as if nothing happened, without
+   repeating her reply. With Signal off, or nothing waiting, nothing changes.
 
 Typing or speaking before she connects, or while she waits for summaries, cancels
 the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
@@ -1046,13 +1053,9 @@ features it helps check, and package last.
   2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
      Nick's number only (an allowlist). Built: setting up her account from
      Settings (S2a) and receiving and replying (S2b); see
-     [Cora's Signal](#coras-signal). **To fix (small):** at launch, Signal
-     messages that waited while the app was closed are answered over Signal and
-     shown in the chat, but the opening greeting doesn't know about them, so
-     voice Cora greets as if nothing happened. The greeting should take them
-     into account: for example wait briefly (as it already does for summaries)
-     until the waiting messages are answered, then mention or follow on from
-     that exchange instead of picking an unrelated hook. Nick's Signal messages are the same
+     [Cora's Signal](#coras-signal). The opening greeting now follows on from
+     Signal messages answered at launch (S3a; see
+     [How the opening greeting works](#how-the-opening-greeting-works)). Nick's Signal messages are the same
      conversation as the desktop, not a separate one: one ongoing conversation
      with him, whichever way he reaches her. They appear in the desktop chat
      labelled by channel (**You · Signal**, **Cora · Signal**), are saved with a
@@ -1069,8 +1072,11 @@ features it helps check, and package last.
      are her memories. Each conversation records who it was with, and each
      memory who said it, so a client saying "I live in Perth" never becomes a
      fact about Nick; today's extraction assumes every speaker is Nick, so this
-     needs that link. Prompts say who she is talking to. Unknown numbers get a
-     polite introduction or nothing, as configured. Client chats are their own
+     needs that link. Prompts say who she is talking to. Nick adds the people
+     she may talk with in Settings (name and number, such as his wife or a
+     client); anyone not listed gets one short polite reply ("I'm Cora; I only
+     chat with people Nick has introduced me to") and never a conversation, so
+     no API calls are spent on spam. Client chats are their own
      conversations and never appear in Nick's chat with her or in voice Cora's
      history: mixing them in would confuse both and blur the boundary between
      Nick's life and clients'. Nick sees them read-only in a Signal box on the
@@ -1112,8 +1118,14 @@ features it helps check, and package last.
   useful on their own, Cora on Nick's phone with web search and full recall and
   no permission questions, so they can ship before S3 and S4.
 
-  Still to decide: what unknown numbers get, and how "let Nick know they asked"
-  reaches him (next chat, or a Signal message).
+  S3 is built in steps, each tried before the next: S3a the launch greeting
+  follows on from Signal messages answered at launch (built); S3b other people as
+  separate client conversations in professional mode (web search only, no
+  relationship, not in Nick's chat); S3c memories record who said them; S3d
+  scoped recall for clients plus the share check; S3e the dashboard's Signal box.
+
+  Still to decide: how "let Nick know they asked" reaches him (next chat, or a
+  Signal message).
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are

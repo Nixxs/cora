@@ -28,7 +28,9 @@ from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalContro
 from messaging.container import signal_port, start_container, stop_container
 from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
 from messaging.receiver import IncomingMessage, SignalReceiver
-from messaging.setup import LINKED as SIGNAL_LINKED, SignalSetup
+from messaging.setup import (
+    FAILED as SIGNAL_FAILED, LINKED as SIGNAL_LINKED, NOT_LINKED as SIGNAL_NOT_LINKED, OFF as SIGNAL_OFF, SignalSetup,
+)
 from messaging.signal_cli import SignalClient
 from storage.signal_settings_store import SignalSettings
 from services.catalogue import SERVICES
@@ -48,7 +50,9 @@ from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
-from greeting import choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook
+from greeting import (
+    choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook, signal_hook,
+)
 from live import CoraLive, typed_content
 from backend_chat import SIGNAL_EXCLUDED, STANDBY_EXCLUDED, BackendChat, BackendRoute
 from session_config import SIGNAL_CHAT_INSTRUCTIONS, instruction_sections
@@ -82,6 +86,10 @@ REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
 CONVERSATION_END_STANDBY_SECONDS = 3 * 60 * 60
 # At launch, how long Live waits for services to connect so their tools are in the first session.
 SERVICE_STARTUP_WAIT_SECONDS = 10
+# At launch, the greeting waits up to this long for Signal messages that waited while Cora was
+# closed to be answered, counting them all in once nothing new has come for SIGNAL_QUIET_SECONDS.
+SIGNAL_GREETING_WAIT_SECONDS = 20
+SIGNAL_QUIET_SECONDS = 3
 
 
 class CoraApp(App):
@@ -238,6 +246,11 @@ class CoraApp(App):
         self.signal_listening_as: str | None = None
         self.signal_waiting: list[IncomingMessage] = []
         self.signal_answering = None
+        self.signal_listener: SignalReceiver | None = None
+        self.signal_startup = None
+        self.signal_last_message_at: float | None = None
+        # Signal messages answered at launch, before the opening greeting, which follows on from them.
+        self.signal_launch_exchanges: list[tuple[str, str]] = []
         # Service tools that ask for approval: the pop-up is on the desk, so Signal leaves them out.
         self.confirming_tools: frozenset[str] = frozenset()
         # Recent long replies from service tools, so Cora can read their later pages.
@@ -436,6 +449,28 @@ class CoraApp(App):
                 return last_thread_hook(summary), None
         return None, None
 
+    def signal_catching_up(self) -> bool:
+        """Whether Signal may still be delivering, or answering, messages that waited while Cora was closed."""
+        if self.signal_startup is not None and not self.signal_startup.is_finished:
+            return True  # its settings aren't even loaded yet
+        if not self.signal_settings.enabled or self.signal.status.state in (SIGNAL_FAILED, SIGNAL_NOT_LINKED, SIGNAL_OFF):
+            return False
+        if self.signal.status.state != SIGNAL_LINKED:
+            return True  # still starting or linking
+        now = asyncio.get_running_loop().time()
+        listener = self.signal_listener
+        if listener is None or listener.connected_at is None or now - listener.connected_at < SIGNAL_QUIET_SECONDS:
+            return True
+        if self.signal_last_message_at is not None and now - self.signal_last_message_at < SIGNAL_QUIET_SECONDS:
+            return True
+        return bool(self.signal_waiting) or (self.signal_answering is not None and not self.signal_answering.is_finished)
+
+    async def wait_for_signal_catch_up(self) -> None:
+        """At launch, let messages that waited on Signal be answered first, so the greeting can follow on."""
+        deadline = asyncio.get_running_loop().time() + SIGNAL_GREETING_WAIT_SECONDS
+        while self.signal_catching_up() and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.2)
+
     async def release_greeting_finding(self, mention) -> None:
         if mention is None:
             return
@@ -452,7 +487,12 @@ class CoraApp(App):
         if kind == "launch":
             last_talked_at = self.conversation_persistence.last_talked_at
             relationship = await self.conversation_persistence.load_relationship_values()
-            hook, mention = await self.choose_launch_hook(last_talked_at, relationship)
+            await self.wait_for_signal_catch_up()
+            if self.signal_launch_exchanges:
+                # What they just said on Signal beats any other hook.
+                hook = signal_hook(self.signal_launch_exchanges)
+            else:
+                hook, mention = await self.choose_launch_hook(last_talked_at, relationship)
             # The launch greeting stays pending while waiting, so typing or speaking still cancels it.
             if self.pending_greeting != "launch":
                 self.activity.write("Opening greeting skipped: the person spoke first", "Greeting skipped")
@@ -536,7 +576,7 @@ class CoraApp(App):
                 self.summary_worker = self.summarize_previous_conversations()
                 await self.wait_for_services()
                 # Signal starts on its own time; it never holds up Live.
-                self.start_signal_if_enabled()
+                self.signal_startup = self.start_signal_if_enabled()
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
                 self.startup_worker = self.load_session_context()
@@ -921,6 +961,7 @@ class CoraApp(App):
         if linked and not running:
             self.signal_listening_as = account
             receiver = SignalReceiver(self.signal.client, account, self.on_signal_message, self.activity.write)
+            self.signal_listener = receiver
             # The method, not a coroutine: nothing is left un-awaited if it's cancelled before it starts.
             self.signal_receiver = self.run_worker(receiver.run, group="signal-receive", exit_on_error=False)
             self.activity.write("Listening for your Signal messages to Cora.", "Signal listening")
@@ -931,6 +972,7 @@ class CoraApp(App):
             self.signal_receiver = None
 
     def on_signal_message(self, message: IncomingMessage) -> None:
+        self.signal_last_message_at = asyncio.get_running_loop().time()
         if message.sender != self.signal_settings.allowed_number:
             # Only the person is answered for now; others are never shown or saved.
             self.activity.write("A Signal message from someone else was ignored.", "Signal message ignored")
@@ -976,6 +1018,11 @@ class CoraApp(App):
                 return
             self.conversation.show_written_reply(text, label="Cora · Signal", channel="signal")
             self.activity.write(f"Signal reply sent: characters={len(text)}", "Signal reply sent")
+            if self.pending_greeting == "launch":
+                # Answered before she says hello, so the hello can follow on from it.
+                self.signal_launch_exchanges.append(
+                    ("\n".join(signal_message_text(message) for message in batch), text),
+                )
             try:
                 await self.live.note_signal_exchange(
                     "\n".join(signal_message_text(message) for message in batch), text,

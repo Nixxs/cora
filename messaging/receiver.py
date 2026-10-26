@@ -56,13 +56,18 @@ class SignalReceiver:
         self.on_message = on_message
         self.write_activity = write_activity
         self.retry_seconds = retry_seconds
+        # When the stream last opened (loop time), so others can tell when waiting messages have arrived.
+        self.connected_at: float | None = None
+
+    def opened(self) -> None:
+        self.connected_at = asyncio.get_running_loop().time()
 
     async def run(self) -> None:
         """Runs until cancelled; each drop waits a little longer before reconnecting."""
         failures = 0
         while True:
             try:
-                async for data in self.client.events(self.account):
+                async for data in self.client.events(self.account, on_open=self.opened):
                     failures = 0
                     message = parse_event(data)
                     if message is not None:

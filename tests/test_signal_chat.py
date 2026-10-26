@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock
@@ -9,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx2
 
 from backend_chat import SIGNAL_EXCLUDED
+from greeting import signal_hook
 from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
 from messaging.receiver import IncomingMessage, SignalReceiver, parse_event
 from messaging.setup import LINKED, OFF, SignalStatus
@@ -104,8 +106,9 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         connected = []
 
         class Client:
-            async def events(self, account):
+            async def events(self, account, on_open=lambda: None):
                 connected.append(account)
+                on_open()
                 stream = streams.pop(0) if streams else None
                 if stream is None:
                     await asyncio.Event().wait()
@@ -125,6 +128,7 @@ class ReceiverTests(unittest.IsolatedAsyncioTestCase):
         task.cancel()
         self.assertEqual([m.text for m in received], ["one", "two"])
         self.assertEqual(activity, ["Signal reconnecting"])
+        self.assertIsNotNone(receiver.connected_at)
         self.assertTrue(all(account == CORA for account in connected))
 
 
@@ -233,3 +237,63 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsNone(app.signal_receiver)
             self.assertTrue(worker.is_cancelled)
+
+
+class LaunchGreetingTests(unittest.IsolatedAsyncioTestCase):
+    def test_the_signal_hook_quotes_the_exchange_and_asks_her_to_follow_on(self):
+        hook = signal_hook([("Where are my keys?", "By the door, I think.")])
+        self.assertIn("They wrote: Where are my keys?", hook)
+        self.assertIn("You replied: By the door, I think.", hook)
+        self.assertIn("follow on from that", hook)
+        self.assertIn("don't repeat your reply", hook)
+        long = signal_hook([("x" * 3000, "y")])
+        self.assertLess(len(long), 2000)
+
+    async def test_catching_up_until_listening_quietly_with_nothing_left_to_answer(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.signal_settings = SignalSettings(False)
+            self.assertFalse(app.signal_catching_up())
+            app.signal_settings = SignalSettings(True, CORA, NICK)
+            app.signal.status = SignalStatus(OFF)
+            self.assertFalse(app.signal_catching_up())
+            app.signal.status = SignalStatus("starting")
+            self.assertTrue(app.signal_catching_up())
+            app.signal.status = SignalStatus(LINKED, account=CORA)
+            self.assertTrue(app.signal_catching_up())  # not listening yet
+            now = asyncio.get_running_loop().time()
+            app.signal_listener = SimpleNamespace(connected_at=now)
+            self.assertTrue(app.signal_catching_up())  # just connected: waiting messages may still come
+            app.signal_listener.connected_at = now - 10
+            self.assertFalse(app.signal_catching_up())
+            app.signal_last_message_at = now
+            self.assertTrue(app.signal_catching_up())
+            app.signal_last_message_at = now - 10
+            app.signal_waiting = [incoming("one")]
+            self.assertTrue(app.signal_catching_up())
+            app.signal_waiting = []
+            app.signal_startup = SimpleNamespace(is_finished=False)
+            self.assertTrue(app.signal_catching_up())
+
+    async def test_messages_answered_at_launch_become_the_greetings_hook(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app, reply="By the door.")
+            app.pending_greeting = "launch"
+            app.on_signal_message(incoming("Where are my keys?"))
+            await SignalAppTests.settle(self, app, pilot)
+            self.assertEqual(app.signal_launch_exchanges, [("Where are my keys?", "By the door.")])
+            app.signal_catching_up = lambda: False
+            app.conversation_persistence.load_relationship_values = AsyncMock(return_value=None)
+            app.choose_launch_hook = AsyncMock()
+            app.live.send_greeting = AsyncMock()
+            await app.send_greeting("launch").wait()
+            app.choose_launch_hook.assert_not_called()
+            brief = app.live.send_greeting.await_args.args[0]
+            self.assertIn("They wrote: Where are my keys?", brief)
+
+    async def test_after_the_greeting_signal_replies_are_not_saved_for_it(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await SignalAppTests.linked_app(self, app)
+            app.pending_greeting = None
+            app.on_signal_message(incoming("Later message"))
+            await SignalAppTests.settle(self, app, pilot)
+            self.assertEqual(app.signal_launch_exchanges, [])
