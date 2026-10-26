@@ -30,6 +30,13 @@ class ToolRegistry:
             raise ValueError(f"Tool already registered: {name}")
         self._tools[name] = Tool(deepcopy(schema), validate, handler)
 
+    def unregister(self, name: str) -> None:
+        """Remove a tool, such as a service's tool switched off; the next connect leaves it out."""
+        self._tools.pop(name, None)
+
+    def names(self) -> set[str]:
+        return set(self._tools)
+
     def schemas(self) -> list[dict]:
         """Export only registered tools; callers cannot mutate the registry."""
         return [deepcopy(tool.schema) for tool in self._tools.values()]

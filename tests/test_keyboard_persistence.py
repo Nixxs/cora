@@ -107,7 +107,8 @@ async def running_app(persistence=None):
             patch("memory.background.deduplicate_memory"), patch("memory.background.correct_memory"), \
             patch("memory.background.fade_memory"), \
             patch("memory.background.appraise_waiting_conversations"), \
-            patch("memory.background.update_relationships"):
+            patch("memory.background.update_relationships"), \
+            patch("services.credentials.keyring"):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
             if persistence is None:
