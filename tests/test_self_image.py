@@ -22,12 +22,13 @@ from storage.self_image_store import SelfImageStore
 
 class PromptTests(unittest.TestCase):
     def test_her_self_image_sits_before_her_identity_and_says_she_isnt_human(self):
-        context = json.dumps({"self": "Hazel eyes, a moss-green jumper.", "work": "An Intelligis polo."})
+        context = json.dumps({"self": "A red scarf and round glasses.", "work": "A grey blazer."})
         sections = instruction_sections(identity_context="I like old machines.", self_image_context=context)
         self.assertEqual(list(sections), ["self_image", "identity"])
         text = sections["self_image"]
         self.assertIn("You aren't human", text)
-        self.assertIn("'work' is you at work for Intelligis", text)
+        self.assertIn("'work' is you at work.", text)
+        self.assertNotIn("Intelligis", text)
         self.assertIn("You don't see images", text)
         self.assertTrue(text.endswith(context))
         self.assertNotIn("self_image", instruction_sections())
@@ -78,10 +79,10 @@ class SelfImageStoreDatabaseTests(unittest.TestCase):
     def test_images_and_her_words_are_saved_and_can_change(self):
         store = SelfImageStore(self.engine)
         self.assertEqual(store.get_startup_context(), "")
-        store.set("work", "An Intelligis polo.", b"PNG...", "image/png")
-        store.set("self", "  A moss-green   jumper. ")
+        store.set("work", "A grey blazer.", b"PNG...", "image/png")
+        store.set("self", "  A red   scarf. ")
         self.assertEqual(json.loads(store.get_startup_context()),
-                         {"self": "A moss-green jumper.", "work": "An Intelligis polo."})
+                         {"self": "A red scarf.", "work": "A grey blazer."})
         self.assertEqual(store.get("work").image, b"PNG...")
         store.set("self", "A new look.", b"JPG", "image/jpeg")
         self.assertEqual(store.get("self").description, "A new look.")

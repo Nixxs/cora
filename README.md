@@ -1270,6 +1270,13 @@ features it helps check, and package last.
   for clients plus the share check (built). The dashboard Signal box was dropped:
   Nick asks Cora about client chats instead.
 
+- **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)
+  is command-line only today. A "Her picture" section in Settings would make it a
+  normal user step: pick an image file and enter her description for `self` and
+  `work`, see what's saved, and a "Use on Signal" button that sets her Signal
+  profile picture. Small, and needed before 1.0 so each person's Cora can have
+  her own picture without the command line.
+
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are
@@ -1574,18 +1581,18 @@ After the interests steps are working:
 
 ### How she pictures herself
 
-Cora chose how she'd look if she had a picture (a woman in her late 30s or early
-40s, hazel eyes, untidy chestnut hair, a moss-green jumper, lamplight and books),
-and an image was made from her description, which she liked. She isn't human;
-the image represents her. Two are kept, with her own words for each, in the
-`self_image` table (migration 0025), so backups include them: **self**, how she
-sees herself, and **work**, her at work for Intelligis in a navy polo and
-headset. Her words for both reach every prompt (Live, the backend, written and
+Cora can be asked how she'd look if she had a picture, and an image made from
+her description for her to approve. She isn't human; the image represents her.
+Each install's Cora has her own: nothing about her look is in the code, and a
+new install has none until one is saved. Up to two are kept, with her own words
+for each, in the `self_image` table (migration 0025), so backups include them:
+**self**, how she sees herself, and **work**, her at work. Her words for both reach every prompt (Live, the backend, written and
 Signal chats, clients' too) as "How you picture yourself", just before her
 identity traits; she mentions it only when it comes up, and describes it from
 the words, since she doesn't see images. It is separate from her traits, so
 reflection never retires it, but stored rather than fixed in code, so it can
-change if she wants:
+change if she wants. For now it is set from the command line (a Settings
+section is [on the roadmap](#next-priorities)); restart or reconnect afterwards:
 
 ```powershell
 python -m storage.self_image_store                      # what's saved
@@ -1594,8 +1601,8 @@ python -m storage.self_image_store export work FILE      # write an image out
 python -m messaging.profile                             # her Signal name and picture (the work image)
 ```
 
-Her Signal profile shows the work picture and the name "Cora", so people she
-messages see her.
+Her Signal profile shows the work picture (if one is saved) and the name "Cora",
+so people she messages see her.
 
 ### Relationship — complete
 
