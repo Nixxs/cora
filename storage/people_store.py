@@ -3,7 +3,7 @@
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from .models import PersonRecord
+from .models import PRIMARY_PERSON, PersonRecord
 
 
 class PeopleStore:
@@ -16,14 +16,14 @@ class PeopleStore:
         """Return the person Cora met first, or None before she has met anyone."""
         with Session(self.engine) as session:
             return session.scalars(
-                select(PersonRecord).order_by(PersonRecord.first_met_at, PersonRecord.id).limit(1)
+                select(PersonRecord).where(PRIMARY_PERSON).order_by(PersonRecord.first_met_at, PersonRecord.id).limit(1)
             ).first()
 
     def set_current_name(self, display_name: str) -> None:
         """Name the current person, meeting them now if Cora has met nobody yet."""
         with Session(self.engine) as session, session.begin():
             person = session.scalars(
-                select(PersonRecord).order_by(PersonRecord.first_met_at, PersonRecord.id)
+                select(PersonRecord).where(PRIMARY_PERSON).order_by(PersonRecord.first_met_at, PersonRecord.id)
                 .limit(1).with_for_update()
             ).first()
             if person is None:

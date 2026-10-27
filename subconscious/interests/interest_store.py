@@ -23,6 +23,7 @@ from storage.models import (
     InterestEventMemoryRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord,
     InterestWorkerStateRecord, MemoryRecord, MessageRecord,
 )
+from memory.store import SAID_BY_PRIMARY
 from subconscious.interests.interest_strength import (
     INITIAL_STRENGTH, MAX_REINFORCE_DELTA, effective_strength, has_room,
     needs_room, next_status, reinforce, settle,
@@ -190,6 +191,8 @@ class InterestStore:
             ).join(MessageRecord, MemoryRecord.source_message_id == MessageRecord.id).where(
                 MessageRecord.role == "user",
                 MemoryRecord.created_at < func.now() - MEMORY_COMMIT_MARGIN,
+                # Interests start from the person's own conversations, not clients'.
+                SAID_BY_PRIMARY,
             )
             if after is not None:
                 query = query.where(or_(MemoryRecord.created_at > after[0], and_(

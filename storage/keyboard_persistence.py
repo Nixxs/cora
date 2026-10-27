@@ -5,12 +5,15 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
 
+from .client_store import Client, ClientStore
 from .conversation_store import ConversationStore
 from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
+from .signal_settings_store import SignalSettings, SignalSettingsStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.interests.interest_store import InterestStore
@@ -44,6 +47,9 @@ class KeyboardPersistence:
     def load_startup_identity_context(self) -> str:
         return IdentityStore(self._get_store().engine).get_startup_context()
 
+    def load_self_image_context(self) -> str:
+        return SelfImageStore(self._get_store().engine).get_startup_context()
+
     def load_relationship_context(self) -> str:
         return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
 
@@ -68,6 +74,46 @@ class KeyboardPersistence:
 
     def save_service_enabled(self, service: str, enabled: bool) -> None:
         ServiceSettingsStore(self._get_store().engine).set_enabled(service, enabled)
+
+    def load_clients(self) -> list[Client]:
+        return ClientStore(self._get_store().engine).clients()
+
+    def add_client(self, name: str, number: str) -> Client:
+        return ClientStore(self._get_store().engine).add(name, number)
+
+    def save_client_signal_id(self, person_id: UUID, signal_id: str) -> None:
+        ClientStore(self._get_store().engine).set_signal_id(person_id, signal_id)
+
+    def save_signal_person_id(self, signal_id: str) -> None:
+        SignalSettingsStore(self._get_store().engine).set_allowed_signal_id(signal_id)
+
+    def remove_client(self, person_id: UUID) -> None:
+        ClientStore(self._get_store().engine).remove(person_id)
+
+    def client_conversation(self, person_id: UUID) -> UUID:
+        return ClientStore(self._get_store().engine).conversation_for(person_id, datetime.now(timezone.utc))
+
+    def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
+        ClientStore(self._get_store().engine).save(conversation_id, role, text)
+
+    def load_client_memory_context(self, person_id: UUID, name: str) -> str:
+        """What Cora remembers from a client's own chats, and what the person meant for them."""
+        return MemoryStore(self._get_store().engine).get_startup_context(person_id, name)
+
+    def load_client_history(self, conversation_id: UUID) -> list[dict]:
+        return ClientStore(self._get_store().engine).history(conversation_id)
+
+    def load_signal_settings(self) -> SignalSettings:
+        return SignalSettingsStore(self._get_store().engine).settings()
+
+    def save_signal_enabled(self, enabled: bool) -> None:
+        SignalSettingsStore(self._get_store().engine).set_enabled(enabled)
+
+    def save_signal_allowed_number(self, number: str) -> None:
+        SignalSettingsStore(self._get_store().engine).set_allowed_number(number)
+
+    def save_signal_account(self, account: str | None) -> None:
+        SignalSettingsStore(self._get_store().engine).set_account(account)
 
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()

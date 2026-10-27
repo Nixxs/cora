@@ -559,6 +559,26 @@ ModelSettingsScreen {
     width: 1fr;
 }
 
+#services-scroll {
+    height: auto;
+    max-height: 40;
+}
+
+.signal-clients {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+.service-buttons Input {
+    width: 1fr;
+}
+
+.signal-qr {
+    width: auto;
+    height: auto;
+    margin: 1 0 0 0;
+}
+
 .service-buttons {
     height: auto;
 }

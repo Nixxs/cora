@@ -43,6 +43,8 @@ class ExtractMemoriesTests(unittest.TestCase):
         self.store.engine = MagicMock()
         self.store.get_conversation.return_value = SimpleNamespace(status="closed")
         self.store.get_messages.return_value = [self.source]
+        # A conversation with the primary person, not a client.
+        self.store.client_name.return_value = None
         self.store.get_summary.side_effect = AssertionError("Original messages, not summaries")
         self.store.save_summary.side_effect = AssertionError("Do not change summaries")
         factory = patch("memory.extract_memories.MemoryStore")

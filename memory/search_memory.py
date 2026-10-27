@@ -14,6 +14,7 @@ from .store import MemoryMatch, MemoryStore, validate_search_limit
 
 def search_memory(
     store: MemoryStore, query: str, *, limit: int = 8, client: OpenAI | None = None,
+    visible_to_client: tuple | None = None,
 ) -> list[MemoryMatch]:
     validate_search_limit(limit)
     if not isinstance(query, str) or not query.strip() or len(query.strip()) > 1000:
@@ -24,7 +25,9 @@ def search_memory(
             vector = generate_embedding(api, query.strip())
     else:
         vector = generate_embedding(client, query.strip())
-    return store.search_memories(vector, limit)
+    if visible_to_client is None:
+        return store.search_memories(vector, limit)
+    return store.search_memories(vector, limit, visible_to_client)
 
 
 def main() -> None:

@@ -40,6 +40,21 @@ def memory_hook(plan: str) -> str:
     )
 
 
+SIGNAL_HOOK_MAX_CHARS = 1500
+
+
+def signal_hook(exchanges: list[tuple[str, str]]) -> str:
+    """Signal messages that waited while she was closed, answered just before this hello."""
+    lines = "\n".join(f"They wrote: {message}\nYou replied: {reply}" for message, reply in exchanges)
+    if len(lines) > SIGNAL_HOOK_MAX_CHARS:
+        lines = "…" + lines[-SIGNAL_HOOK_MAX_CHARS:]
+    return (
+        "Just before this hello, messages they had sent you on Signal arrived and you already replied "
+        f"there: {json.dumps(lines, ensure_ascii=False)}. Now they're here in person, so follow on from "
+        "that naturally rather than greeting as if nothing happened; don't repeat your reply."
+    )
+
+
 def knows_them_well(relationship: RelationshipValues | None) -> bool:
     return relationship is not None and relationship.familiarity >= MEMORY_HOOK_FAMILIARITY
 

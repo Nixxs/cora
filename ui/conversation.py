@@ -7,6 +7,9 @@ from textual.widgets import RichLog
 
 from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 
+# How the person's own Signal messages appear in the chat.
+SIGNAL_PREFIX = "You · Signal: "
+
 
 class Conversation:
     def __init__(self, output: RichLog, set_timer, write_debug, record_message=None):
@@ -39,6 +42,8 @@ class Conversation:
                 role, text = "assistant", entry.markup
             elif isinstance(entry, str) and entry.startswith("You: "):
                 role, text = "user", entry[5:]
+            elif isinstance(entry, str) and entry.startswith(SIGNAL_PREFIX):
+                role, text = "user", entry[len(SIGNAL_PREFIX):]
             elif isinstance(entry, str) and entry.startswith("Cora: "):
                 role, text = "assistant", entry[6:]
             else:
@@ -131,6 +136,20 @@ class Conversation:
         if self.record_message is not None:
             # The image is never saved; only the caption and its page.
             self.record_message("assistant", f"[image] {caption} ({page_url})", "screen")
+
+    def show_written_reply(self, text: str, label: str = "Cora · written", channel: str = "screen") -> None:
+        """A reply from a chat without Live: there is no voice, so all of it is shown."""
+        self.log_entries.extend(["", f"{label}:", ChatMarkdown(text, code_theme="monokai"), ""])
+        self.redraw_log()
+        if self.record_message is not None:
+            self.record_message("assistant", text, channel)
+
+    def show_signal_message(self, text: str) -> None:
+        """The person's own message over Signal, in the same chat as the desktop's."""
+        self.flush_transcript()
+        self.write_log(f"{SIGNAL_PREFIX}{text}")
+        if self.record_message is not None:
+            self.record_message("user", text, "signal")
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

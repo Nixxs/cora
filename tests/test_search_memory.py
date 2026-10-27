@@ -43,7 +43,7 @@ import test_memory_store as memory_tests
 
 MATCH_FIELDS = (
     "memory_id", "kind", "text", "source_message_id", "conversation_id",
-    "source_created_at", "distance", "faded",
+    "source_created_at", "distance", "faded", "said_by",
 )
 
 
@@ -229,7 +229,9 @@ class SearchMemoryTests(unittest.TestCase):
                         ("memories", "source_message_id"), ("messages", "conversation_id"),
                         ("messages", "created_at"),
                     ])
-                    self.assertEqual(len(list(statement.selected_columns)), 8)
+                    # Eight match fields plus who said it.
+                    self.assertEqual(len(list(statement.selected_columns)), 9)
+                    self.assertEqual(list(statement.selected_columns)[8].name, "said_by")
                     self.assertEqual(list(statement.selected_columns)[6].name, "distance")
                     self.assertEqual(list(statement.selected_columns)[7].name, "faded")
                     self.assertIn("public.memories.embedding <=> %(", sql)
@@ -576,7 +578,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([schema["name"] for schema in registry.schemas()
                           if schema["name"] != "random_number"],
                          ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                          "recall_self", "look_at_screen", "show_web_image"])
+                          "recall_self", "look_at_screen", "show_web_image", "send_signal_message", "tell_nick"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
 
@@ -829,7 +831,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
                 # random_number is a developer example tool; ignore it here.
                 self.assertEqual([tool["name"] for tool in tools[1:] if tool["name"] != "random_number"],
                                  ["close_app", "search_memory", "recall_interest", "enter_standby",
-                                  "set_person_name", "recall_self", "look_at_screen", "show_web_image"])
+                                  "set_person_name", "recall_self", "look_at_screen", "show_web_image", "send_signal_message"])
                 self.assertEqual(tools[2], SCHEMA)
                 self.search.assert_called_once_with(self.store_type.return_value, "PRIVATE question", limit=8)
                 self.engine.dispose.assert_called_once_with()
