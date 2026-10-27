@@ -14,6 +14,7 @@ SUMMARY_WAIT_SECONDS = 30
 class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
+                 set_self_image_context=lambda context: None,
                  set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
@@ -21,6 +22,7 @@ class ConversationPersistence:
         self.set_memory_context = set_memory_context
         self.set_interest_context = set_interest_context
         self.set_identity_context = set_identity_context
+        self.set_self_image_context = set_self_image_context
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
         self.set_delegation_model = set_delegation_model
@@ -138,6 +140,21 @@ class ConversationPersistence:
                 self.write_activity(
                     f"Startup interest context loaded ({len(context)} characters).", "Interest context loaded",
                 )
+
+        # Her chosen picture of herself loads on its own too.
+        if self.is_closing():
+            return
+        self.set_self_image_context("")
+        try:
+            context = await self.call_database(self.storage.load_self_image_context)
+        except Exception as error:
+            self.write_activity(
+                f"Self-image load failed ({type(error).__name__}); connecting without it.",
+                "Self-image unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_self_image_context(context)
 
         # Identity also loads on its own, so a failure here only costs her self-view.
         if self.is_closing():

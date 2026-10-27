@@ -1,7 +1,12 @@
 import asyncio
 import json
 import uuid
+from os import getenv
+from dotenv import load_dotenv
 
+load_dotenv()
+
+PHONE_NUMBER = getenv("PHONE_NUMBER")
 
 async def send_message(process, text, *, recipient=None, group_id=None):
     if (recipient is None) == (group_id is None):
@@ -32,7 +37,7 @@ async def receive_messages():
     process = await asyncio.create_subprocess_exec(
         "docker", "compose", "run", "--rm", "-T",
         "signal-cli",
-        "-a", "+61427697836",
+        "-a", PHONE_NUMBER,
         "jsonRpc",
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
@@ -88,14 +93,6 @@ async def receive_messages():
                 chat = group or "Direct chat"
 
             print(f"[{chat}] {sender}: {text}")
-
-            if group == "NRT":
-                await send_message(
-                    process,
-                    "send test!",
-                    group_id=group_id,
-                )
-
         return_code = await process.wait()
         print(f"Receiver exited with code {return_code}")
 

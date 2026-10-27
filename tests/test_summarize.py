@@ -117,7 +117,7 @@ class SummarizerTests(unittest.TestCase):
             summarize_conversation(self.store, self.conversation_id)
             factory.assert_called_once_with(max_retries=0)
             factory.return_value.__exit__.assert_called_once()
-        self.assertEqual(self.client.responses.create.call_args.kwargs["model"], "gpt-6-luna")
+        self.assertEqual(self.client.responses.create.call_args.kwargs["model"], "gpt-6.1-sol")
 
     def test_cli_disposes_engine_on_success_and_redacts_failure_details(self):
         engine = MagicMock()

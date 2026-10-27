@@ -13,7 +13,7 @@ understandable steps.
 ## Getting started
 
 Cora runs directly on Windows; only its PostgreSQL/pgvector database runs in Docker.
-You need Python with a virtual environment, Docker Desktop using Linux containers,
+You need Python 3.12 or later with a virtual environment, Docker Desktop using Linux containers,
 an OpenAI API key, and a microphone/speaker for voice interaction.
 
 Run these commands from the repository root with your Python environment activated.
@@ -68,7 +68,36 @@ docker compose --env-file .env.database down
 **Your data lives in a persistent Docker volume, but this is not a backup.**
 Do not use `down -v` / `down --volumes`, delete the volume, or reset Docker's data:
 these can erase saved conversations. Changing settings after initial setup does
-not change an existing database's password or user. Back up important data.
+not change an existing database's password or user.
+
+### Backups
+
+Everything that makes Cora who she is (conversations, memories, identity and its
+history, interests, your relationship, people, settings) is in the database
+volume, inside Docker Desktop's virtual machine, not a folder you can copy. Back
+it up with [backup.py](backup.py):
+
+```powershell
+python backup.py                          # back up now: database and Signal keys
+python backup.py --list                   # the backups there are
+python backup.py restore backups\cora-database-2026-10-26_211101.dump
+```
+
+- The database backup is a `pg_dump` snapshot, consistent while the database
+  runs and restorable onto any fresh install (a few MB). Her Signal keys are
+  archived with signal-cli paused for a moment; without them you only re-link
+  her phone.
+- Backups go in `backups/` (ignored by Git), keeping the newest 14 of each.
+  **They hold every private conversation**: keep them private.
+- **Automatic:** at launch, if the newest database backup is more than a day old,
+  Cora backs up the database in the background and notes it in Activity (Signal
+  keys only with the manual command, so Signal is never paused while you use her).
+- **A second copy:** set `CORA_BACKUP_COPY_DIR` in `.env` to a folder on another
+  disk, and every backup is copied there too, pruned the same way. A cloud folder
+  works, but uploads your conversations to that service.
+- **Restoring** replaces the whole database with the backup. Quit Cora first; it
+  asks you to type `restore`, and saves the current database as a backup before
+  replacing it, in case the wrong file was chosen. Then start Cora as usual.
 
 ## Using Cora
 
@@ -111,8 +140,17 @@ not change an existing database's password or user. Back up important data.
   and pending work to finish first. Cora closes the Live session and Live audio,
   but keeps the app, chat, draft, and mute settings. Click Standby or press Ctrl+R
   to resume. The button shows Connecting and cannot be clicked again while waking.
-  Enter during Standby keeps the draft and asks you to resume, rather than saving
-  or sending a failed request.
+- **Type while in Standby:** a typed message is answered in writing ("Cora ·
+  written") straight from her backend, without waking Live, so there is no voice
+  and no Live billing, only the backend request. It is the same Cora: each
+  message reloads her startup context as a Live connect does (name, memories,
+  interests, identity, relationship and chosen model; database reads only), and
+  she has the same tools, except closing the app and going to standby. The chat
+  is saved to the same conversation, so memories, summaries and the relationship
+  come from it as from voice, and writing keeps the conversation open: it closes
+  only after three hours without any. Each message carries the recent visible chat (up to 40
+  messages / 6,000 bytes) from Cora's own records with `store=False`, so nothing
+  is kept on OpenAI's side. Click Standby or press Ctrl+R to talk again.
   Silent output audio does not count as speech or pending playback. If closing
   is blocked, the notification and Activity show what Cora is waiting for.
 - **Ask Cora for standby:** say something like “go to standby”. She may also
@@ -166,6 +204,8 @@ not change an existing database's password or user. Back up important data.
   of what Cora has stored. See [The dashboard](#the-dashboard).
 - **Choose models:** click Settings on the top border to pick the model for each
   area. See [Choosing models](#choosing-models).
+- **Connect services:** Settings > Services connects outside services over MCP,
+  starting with GitHub. See [Connecting services](#connecting-services).
 - **Quit:** use × on the top border, Ctrl+X, or ask Cora to close. The close tool waits
   three seconds when connected; this does not guarantee speech has finished.
 
@@ -192,11 +232,16 @@ Its top right shows **○ standby** while Live is in standby.
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
+| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
 | background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
 
 The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
-showing the last values and notes the failure in Activity. In a narrow window the
-middle row of boxes pans sideways. The history graphs rise in when the dashboard
+showing the last values and notes the failure in Activity. The context box reads
+the running app instead, once a second. Its item sizes are estimates (about four
+bytes a token), good for comparing items but not exact; voice requests Cora
+delegates are counted in "delegated turns" but their wording can't be shown,
+because the Live service doesn't send it back. In a narrow window the middle and
+bottom rows of boxes pan sideways. The history graphs rise in when the dashboard
 opens, and their newest point pulses.
 
 These settings are constants in the code rather than `.env` settings; edit them
@@ -209,6 +254,7 @@ and restart Cora:
 | `HISTORY_LIMIT` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 200 | The most relationship changes, tones and days of new memories read. |
 | `RISING_WINDOW` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 3 days | How recently an interest must have grown to show as rising. |
 | `CALENDAR_DAYS` | [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py) | 371 (53 weeks) | Days of messages read for the conversations heatmap. |
+| `BACKEND_CONTEXT_TOKENS` | [session_config.py](session_config.py) | 1,050,000 per model | Each backend model's context limit, for the context box. A model missing from it shows a token count without a share. |
 | `PULSE_SECONDS` | [ui/braille.py](ui/braille.py) | 2 | How long one pulse of a graph's newest point takes. |
 | `GROW_SECONDS` | [ui/braille.py](ui/braille.py) | 1 | How long the graphs take to rise in. |
 | `BAND_COUNT` | [devices/audio_bands.py](devices/audio_bands.py) | 24 | How many voice bands there are. |
@@ -355,6 +401,9 @@ question, the backend searches the web, and Live uses the result to answer aloud
 For a question about an earlier conversation, the backend can call `search_memory`.
 Asked how she came to one of her interests or findings, it can call `recall_interest`,
 and asked why she sees herself a certain way, `recall_self`.
+To see your screen it calls `look_at_screen`, and to show a picture from the web,
+`show_web_image` (see [Using Cora](#using-cora)). Asked to message someone you've added on Signal, she
+calls `send_signal_message`, which you approve first (see [Cora's Signal](#coras-signal)).
 An explicit request to quit can trigger `close_app` instead, and a request to
 rest (or Cora deciding to) can trigger `enter_standby`. When the person tells her
 their name, `set_person_name` saves it for the next connect.
@@ -437,8 +486,8 @@ rate limits.
   reflection every 10 minutes (at most once a day), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `set_person_name`, `enter_standby`, or `close_app` when a
-  conversation needs them.
+  `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
+  `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
 
@@ -459,6 +508,228 @@ is no longer in that list falls back to the default. If the settings cannot be
 read at connect, Cora connects with the default and notes it in Activity.
 Embeddings and the manual voice measurement are not covered: changing the
 embedding model would also need a migration and re-embedding stored memories.
+
+### Connecting services
+
+Settings > **Services** connects Cora to outside services over MCP (the Model
+Context Protocol). GitHub is the first, through GitHub's hosted MCP server. Run
+`python migrate.py` once after updating (migrations 0018 and 0019) and reinstall
+the requirements.
+
+1. Create a fine-grained personal access token on GitHub (Settings > Developer
+   settings > Fine-grained tokens), read-only, for the repositories Cora may see:
+   Contents, Issues, Pull requests and Metadata are enough to start.
+2. Paste it into the token field and press **Save token** (or Enter). It goes
+   to the system credential store (Windows Credential Manager), never to a
+   file, `.env` or the database, and the field is cleared. **Forget token**
+   removes it and switches the service off.
+3. Switch the service on. It connects straight away and again at each launch
+   while switched on; switching it off disconnects it.
+
+Each service is one row: click it to open its details. They show why a
+connection failed (for example `HTTP 401: unauthorized: token authentication
+failed`) and list every tool the server offers, with its description and
+whether the server marks it read-only. That mark is the server's own hint, not
+a guarantee. Activity notes each connection and failure. A failed connection is
+not retried automatically; switch it off and on, or save a new token. With no
+service switched on, MCP stays off entirely.
+
+4. **Choose Cora's tools.** Every tool starts off, including tools a server adds
+   later. Switch on the ones you want her to have. A tool the server doesn't
+   mark read-only (it changes things, such as creating an issue) asks you first
+   every time, as below. Each tool
+   reaches Cora as `github__<tool>` at her next connect: closing Settings
+   reconnects Live once if it is Active and a tool changed. At launch, Live waits
+   up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app.py](app.py)) for
+   services to connect so their tools are in the first session; a slower service
+   joins at the next connect.
+
+When she uses one, the app calls the server, keeps the text of its reply,
+including file contents (images and other binary content are only named), and
+hands it to her labelled as untrusted data, never instructions. A long reply
+comes in pages of 8,000 characters (`RESULT_LIMIT` in
+[services/tools.py](services/tools.py)): each says "page 1 of 7", and she reads
+the next by repeating the call with `result_page`, an argument Cora's side adds
+to every service tool (the server never sees it). Replies are kept for five
+minutes, up to 20 of them, so later pages need no new call to the service. A call that fails or takes over a minute
+gets an error result once and is never retried.
+
+**Tools that change things ask you first.** When Cora calls one, nothing is sent
+to the service: a pop-up shows the service, the tool and exactly the arguments
+that would be sent, with **Deny** and **Approve**. Only what you do in the app
+answers it, so nothing Cora says and no text from a service (such as an issue
+asking to be approved) can. Deny has focus and there are no letter shortcuts,
+so typing elsewhere when it appears can't approve by accident: click Approve,
+or Tab to it and press Enter; Esc denies. Unanswered for two minutes
+(`CONFIRM_SECONDS` in [services/confirmation.py](services/confirmation.py)), it
+counts as declined. When it appears, Cora gets a note naming the service and
+tool (never the arguments) so she can tell you it's waiting for your click;
+after 45 seconds unanswered (`REMIND_SECONDS`) she gets one more, to remind you.
+Approving is by click only, never by voice: what she or you say aloud doesn't
+answer it. Cora is told the outcome once: done, declined (and not to try again
+unless you ask), or not answered in time. Several requests wait their
+turn, one pop-up at a time, and quitting declines any still waiting. This works
+the same for every service's tools; nothing is specific to GitHub. Activity shows each call and
+its size, never its contents. Every switched-on tool's description takes space
+in her context; the dashboard's context box shows how much.
+
+### Cora's Signal
+
+Cora can have her own Signal account: **her own number on her own phone, never
+yours**. It is optional and off by default; without it nothing else changes.
+Set it up in Settings > Services > **Signal** (run `python migrate.py` once
+after updating, for migration 0020, and reinstall the requirements):
+
+1. Put Signal on a spare phone, or a second SIM, with Cora's own number.
+2. Switch Signal on. The app starts the `signal` service from
+   [compose.yaml](compose.yaml) (`signal-cli`, under the `signal` profile, so a
+   plain `docker compose up` never starts it) and waits for it. Switching it off
+   stops the container.
+3. Enter **your own** number and save it: for now the only person she answers.
+4. Press **Link Cora's phone**. A QR code appears; on **Cora's** phone open Signal
+   › Settings › Linked devices › + and scan it within five minutes. The row then
+   shows "Cora's number · +61…".
+
+Scanning with your own phone would make this app a device on *your* account, so
+Cora would see your messages and could speak as you. If that happens, the app
+notices that the linked number is yours, removes the link straight away, and
+asks you to also remove "Cora" from Linked devices on your phone. Her number and
+yours can never be saved as the same.
+
+The service listens only on `127.0.0.1` (port 8090; set `CORA_SIGNAL_PORT` in
+`.env.database` if that is taken), and received messages never go into the
+container's log. **Her Signal keys live in the `signal-data` Docker volume**: as
+with the database, don't delete it, and back it up; losing it means linking her
+phone again. If the app finds the saved account is no longer linked (unlinked
+from her phone, or the volume was lost), it says so and asks you to link again.
+
+**Messaging her.** Once linked, Cora listens while the app runs and answers
+your number and the people you've added (below); anyone else gets one short
+polite reply per run ("I'm Cora; I only chat with people Nick has introduced me
+to") with no model call, and is never shown or saved. Group chats are skipped. Your messages are
+part of the same conversation as the desktop: they appear in the chat as
+**You · Signal**, her replies as **Cora · Signal**, both saved with a `signal`
+channel, so memories, summaries and your relationship come from them as from
+voice, and waking Live carries them in the recent history. Each reply is
+written like typing in Standby (startup context reloaded, recent chat as
+history, `store=False`) with a note to keep it short and plain, since Signal
+shows no Markdown, and goes back over Signal; she shows "typing…" meanwhile.
+She doesn't have the desk-only tools (closing the app, standby, the screen,
+pictures). Tools that change things (a GitHub tool that does, or messaging one
+of your contacts) are asked about in the chat instead of with the pop-up: she
+sends exactly what would be done and "Reply YES to approve or NO to decline",
+and nothing happens until you answer. Only your own next message answers it,
+checked by your number or Signal ID, so nothing she writes, nothing a tool
+returns (such as an issue saying "YES") and nobody else's message can approve
+it. A clear yes ("yes", "yep", "approve") approves and a clear no declines;
+anything else declines it and is answered as a normal message, so "wait, change
+the title first" works as you'd expect. Unanswered after 10 minutes
+(`APPROVAL_SECONDS` in [messaging/messages.py](messaging/messages.py)), it
+lapses as declined. If Live is active at the desk, voice Cora gets a silent note of the
+exchange so she knows. Attachments are only noted ("[1 attachment, not
+opened]"). If a reply fails, she sends a short apology and Activity says why.
+
+The service only fetches messages while Cora listens, so messages sent while the
+app is closed wait on Signal's servers and arrive when it next runs. Messages
+that arrive while she is replying, including those, are answered together in
+her next reply, and any sent more than two minutes earlier are marked with when
+they were sent so she knows they are late. (Updating from the previous version
+recreates the container the next time Signal starts; her link is kept.)
+
+**Other people, as clients.** Under "People she may talk with" in the Signal
+details, add someone with a name and their Signal number (not yours and not
+Cora's; run `python migrate.py` once for migration 0022). Cora talks with them
+the way a professional talks with a client:
+
+- Each person has their own conversations with her, saved with who they were
+  with; a new one starts after three quiet hours. They never appear in your
+  chat or in voice Cora's history; Activity only notes "Answered Sarah on
+  Signal", without contents.
+- She has her own identity and interests, but none of your memories, your
+  relationship or your name as "the person", and no tools except web search.
+  She is still herself with them (her views, humour, curiosity and interests);
+  "professional" means discretion about you, not a flat tone. She keeps no
+  relationship with clients and doesn't warm to them over time, by design.
+- She is friendly and helpful but never shares anything about your private life,
+  even what she knows. Asked something private, she declines without confirming
+  she knows anything ("that's one for Nick"), suggests they ask you directly,
+  and never makes up a cover story.
+- **She remembers them.** Their finished conversations go through the usual
+  memory pass, told who the user was, so memories are written with their name
+  ("Sarah lives in Perth"; what they say about others is kept as "Sarah said
+  …"), and summaries name them. Each memory knows who said it through its
+  conversation. Her memories are one pool, but:
+  - each client's chats get what she remembers from *their own* earlier chats
+    (the same bounded snapshot you get, but theirs), never yours, plus anything
+    you meant for them (below); and her `search_memory` there is limited the
+    same way, in the database query itself, so nothing else can come back;
+  - your startup snapshot, the greeting's recent-plan hook and interest
+    evolution use only your own memories;
+  - duplicate and correction checks only compare one person's memories, so
+    Sarah's home city never "corrects" yours;
+  - at the desk, `search_memory` searches them all and labels a client's with
+    `said_by`, so you can ask "what did Sarah say about the meeting?".
+- They get no appraisals, and never affect your relationship, your greeting or
+  "when you last talked".
+- **Passing things on to you.** In a client's chat she has `tell_nick`: when
+  they ask her to pass something on (a plan they worked out together, a
+  question, a message), or something clearly needs your attention, she sends it
+  to you on Signal, marked "From Royce, via Cora:", and tells them she's passed
+  it on without promising your reply. It reaches only you, so it needs no
+  approval; each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY`
+  in [app.py](app.py)). It also appears in your desktop chat and conversation,
+  and voice Cora gets a silent note. It's never offered at the desk, in Live or
+  in your own chat.
+- **Passing things on to them.** A share check in the background memory pass (after the
+  fade check, on the small-jobs model; migration 0024) asks of each of *your*
+  memories one question: did you mean it to reach someone? ("tell Sarah I'll be
+  late", "if anyone asks, I'm away till Monday"). It saves who it's for, one
+  named person or anyone, and when unsure saves nobody. It judges intent, not
+  privacy, because nearly everything you say is personal and a wrong "fine to
+  share" would be a leak; a miss only means "that's one for Nick". The name is
+  matched in full or by first name when she's in a chat, so it works even if
+  you add Sarah after saying it. What you meant for someone shows in their
+  snapshot and their search (marked as passed on by you), so she can bring it up
+  herself. Activity notes only whether a memory was meant for anyone, not who.
+- You don't read client chats in the app; ask her instead ("what have you been
+  talking to Royce about?"). At the desk her search covers everyone's memories,
+  labelled with who said them. It finds memories (facts, plans), not whole
+  conversations, so it may miss the general drift of a chat.
+- Removing someone stops her answering them; their past chats are kept.
+- Different people are answered independently, each in order.
+- **First messages.** Signal hides a new sender's number until their message
+  request is accepted, so a first message carries only their Signal ID. Cora
+  looks up the Signal IDs of you and everyone you've added before she starts
+  listening (and when you add someone or save your number), so she recognises
+  them anyway, accepts the request for them automatically (so they see her as a
+  contact and her replies show normally), and answers. Strangers' requests stay
+  unaccepted; they get the one polite reply, sent to their Signal ID.
+- **Hidden numbers.** Each Signal ID is saved once learned (by looking up the
+  number, or from any message carrying both; migration 0023), and Cora
+  recognises and messages people by that saved ID. So someone can switch Signal
+  to "Who can find me / see my number: Nobody" after Cora has learned their ID
+  and nothing changes. Someone who had it set to Nobody before Cora ever learned
+  their ID can't be looked up: they'd need to allow being found by number once
+  (or message Cora with their number visible) so the ID is saved, and can then
+  hide it again. Changing your own number in Settings forgets your saved ID;
+  removing someone forgets theirs.
+
+**Cora messaging them first.** At the desk (voice, or typing in Standby) you can
+ask her to message someone you've added, for example "introduce yourself to
+Sarah". She writes it and calls `send_signal_message`; an approval pop-up shows
+exactly who it's to (name and number) and the text, and nothing is sent until
+you click Approve, as with any tool that reaches outside. She tells you it's
+waiting for your click. Only people you've added can be messaged, by name (or
+first name if only one matches); an unknown or unclear name gets her the list to
+ask you about. Before the pop-up, she checks with Signal that the number can be
+reached; if it isn't on Signal, or the person has set Signal to hide their
+number ("Who can find me by my number: Nobody"), she says so and you're never
+asked to approve something that can't be delivered. Adding someone in Settings
+runs the same check and warns you (they're still added, in case they join
+later). The message is saved in that person's conversation, so when they
+reply she sees her own introduction. From your own Signal chat she can do this
+too, asking you to reply YES in the chat instead of the pop-up; never from a
+client's chat.
 
 ## How memory works
 
@@ -633,6 +904,13 @@ brief of facts, and the first Live session of a launch sends it as a note:
      a duplicate or a corrected one), hedged as possibly outdated and to skip if
      sensitive, since others may be listening. With nothing recent, or if loading
      fails, she falls back to the last thread.
+4. **Signal messages answered at launch come first.** With Signal on, the
+   greeting waits (up to 20 seconds) until messages that waited while the app was
+   closed have arrived and been answered over Signal: Signal is listening,
+   nothing new has come for 3 seconds, and nothing is left to answer. If any were
+   answered, that exchange replaces the hook above, and she follows on from it
+   now that you're there instead of greeting as if nothing happened, without
+   repeating her reply. With Signal off, or nothing waiting, nothing changes.
 
 Typing or speaking before she connects, or while she waits for summaries, cancels
 the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
@@ -645,17 +923,22 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [app.py](app.py) | Application orchestration, background work, and shutdown. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
+| [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
 | [session_config.py](session_config.py) | Models, voice, instructions, and session configuration. |
+| [context_window.py](context_window.py) | What each model holds in context, item by item, for the dashboard's context box. |
 | [inactivity.py](inactivity.py) | Idle timing and optional standby heads-up coordination. |
 | [greeting.py](greeting.py) | Opening greeting brief: time of day, time since you last talked, name, how she feels about you, and the optional hook. |
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
-| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, the dashboard, and the model settings screen. |
+| [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
-| [storage/](storage/) | Database connection, ORM models, conversation persistence, people, model settings, and the dashboard's snapshot read. |
+| [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
+| [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
+| [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
-| [tools/](tools/) | Backend tool registration and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `tell_nick`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
+| [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
 
 Memory services are synchronous; UI-facing database calls and background
@@ -696,6 +979,8 @@ provides three things:
 1. **`SCHEMA`:** a strict function schema. `parameters` must be an object, every
    property must be listed in `required`, and `additionalProperties` must be
    `False`. The `description` tells the backend when to use the tool, so be specific.
+   (Service tools from MCP are the exception: their schemas have optional
+   fields, so they are sent with `strict: False` and the server checks arguments.)
 2. **`validate_arguments(arguments)`:** raise `ValueError` for anything outside the
    schema (missing or extra keys, wrong types, and bools posing as integers). The
    registry rejects invalid calls before the handler runs; a rejected call is logged
@@ -763,16 +1048,18 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
 - A read-only dashboard of her relationship, memories, interests, identity, your
-  conversations and the background jobs, beside a live copy of the chat.
+  conversations and the background jobs, beside a live copy of the chat, with a
+  context box showing how full each model's context window is and what fills it.
+- Images: paste a screenshot into the chat, let her look at your screen (with an
+  off switch in Settings), and see pictures she picks from the web.
 
 ### Next priorities
 
-**Release plan:** everything below except private messaging and local models
-makes up **Cora 1.0**, published as a release in this repository as an
-open-source project. Packaging is paused: Cora stays run from source (PostgreSQL
-in Docker, the app natively), with no installer for non-technical users planned
-for now. Private messaging and local models follow after 1.0 as personal
-development.
+**Release plan:** everything below except local models makes up **Cora 1.0**,
+published as a release in this repository as an open-source project. Packaging
+is paused: Cora stays run from source (PostgreSQL in Docker, the app natively),
+with no installer for non-technical users planned for now. Local models follow
+after 1.0 as personal development.
 
 **Order of work:** settle risky decisions first, build visibility before the
 features it helps check, and package last.
@@ -800,29 +1087,39 @@ features it helps check, and package last.
 
 *Phase 2 — doing things*
 
-7. Image support: pasting, the screen tool, then showing images (Cora's own
-   pick; it does not depend on MCP).
-8. MCP M1–M3, starting with GitHub.
+7. ~~Image support: pasting, the screen tool, then showing images (Cora's own
+   pick; it does not depend on MCP).~~ Done: see [Using Cora](#using-cora).
+8. MCP M1–M3, starting with GitHub. M1 (connect from Settings > Services and
+   list the tools), M2 (switch on chosen tools for Cora) and M3a (tools that
+   change things, each call approved in a pop-up first) are built; see
+   [Connecting services](#connecting-services). Approval stays click-only by
+   choice: Cora is told the pop-up is waiting and asks for the click, rather than
+   approving by voice. MCP M1–M3 are done; M4 (more services in the catalogue)
+   is in Phase 4.
+9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
+   whose write-tool confirmation it reuses). S1–S4 are built: she answers you and
+   the people you add on her own number, and you approve tools that change things
+   by replying YES in your Signal chat.
 
 *Phase 3 — noticing things*
 
-9. Awareness W1–W3, including quiet hours and the off switch.
-10. Relevance and awareness triggers (interests step 8 below).
-11. Home Assistant, starting with its demo devices.
-12. Awareness W4: expectations from memory tasks.
-13. Camera and screen awareness.
-14. Emotions (after awareness gives her more to react to; nothing depends on it,
+10. Awareness W1–W3, including quiet hours and the off switch.
+11. Relevance and awareness triggers (interests step 8 below).
+12. Home Assistant, starting with its demo devices.
+13. Awareness W4: expectations from memory tasks.
+14. Camera and screen awareness.
+15. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-15. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+16. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-16. Dashboard editing (for example removing a wrong memory), with a detail view
+17. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-17. Release.
+18. Release.
 
-*After 1.0:* local models, then private messaging, which builds on them.
+*After 1.0:* local models.
 
 #### Details, in order
 
@@ -842,9 +1139,10 @@ features it helps check, and package last.
     generation. Terminal image support varies, so this needs a Textual image
     widget with a fallback (a lower-resolution render or a link).
 - **MCP tools (Cora-prime):** add an MCP client so capabilities come from
-  connected servers rather than hand-built tools. A gitignored `mcp.json`, in the
-  common `mcpServers` format, lists each user's servers; their credentials stay on
-  their machine. At launch she connects to enabled servers and adds allowlisted
+  connected servers rather than hand-built tools. Services are switched on in
+  Settings > Services from a built-in catalogue, with tokens in the system
+  credential store, so credentials stay on the person's machine and no config
+  file is needed; a hand-edited `mcp.json` may come later for custom servers. At launch she connects to enabled servers and adds allowlisted
   tools to the existing registry, namespaced by server (for example
   `gmail__search_messages`), with size-capped results treated as untrusted.
   Read-only tools run when asked; tools that change something (send, post, delete)
@@ -867,6 +1165,118 @@ features it helps check, and package last.
   and short guidance for Cora, tested before release. Custom servers can still be
   added by hand in `mcp.json` for advanced use. With many servers, a router tool
   may later replace exposing every tool.
+- **Signal (Cora's own number):** so Nick can work with Cora away from his
+  desk, and so she can talk with other people (such as Nick's wife) as herself.
+  She has her own Signal account and phone number and sees only her own
+  messages, never Nick's; anyone messaging it is talking to Cora, so those
+  chats go to OpenAI like any other conversation with her. It is separate from
+  the awareness system, which never watches anyone's Signal. She is an individual, not an assistant or servant: she works *with* Nick
+  as a colleague, not for him, and if a company is needed it is Intelligis. That
+  belongs in `CORA_FOUNDATION` and applies everywhere, not only on Signal.
+  Optional and off by default, so the project runs without a `signal-cli`
+  container (an early experiment is in
+  [examples/signal_testings/](examples/signal_testings/)). Steps:
+  1. **S1 text without Live (built; see "Type while in Standby" under
+     [Using Cora](#using-cora)):** typed chat used to need an active Live session.
+     Signal messages arrive while Nick is away and Cora may be in Standby, so
+     they need a path straight to the Responses backend, with the same startup
+     context and tools. Quiet typed use in the app uses it now. Tools reply
+     through `connection.response.item.create` and `connection.response.create`;
+     a chat without Live hands them a route with those same two methods
+     ([tools/route.py](tools/route.py)), so every tool, services' included,
+     works in both unchanged. Each kind of chat leaves out the tools that don't
+     fit it: typing in Standby leaves out `close_app` and `enter_standby`, and
+     Signal will also leave out `look_at_screen` and `show_web_image`.
+  2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
+     Nick's number only (an allowlist). Built: setting up her account from
+     Settings (S2a) and receiving and replying (S2b); see
+     [Cora's Signal](#coras-signal). The opening greeting now follows on from
+     Signal messages answered at launch (S3a; see
+     [How the opening greeting works](#how-the-opening-greeting-works)). Nick's Signal messages are the same
+     conversation as the desktop, not a separate one: one ongoing conversation
+     with him, whichever way he reaches her. They appear in the desktop chat
+     labelled by channel (**You · Signal**, **Cora · Signal**), are saved with a
+     `signal` channel, and feed the usual memory pass, summaries and
+     appraisals; the three-hour rule closes the conversation only after a real
+     quiet. Waking Live carries them in the recent history. Replies are written
+     by the backend through the chat without Live and go back over Signal, even
+     while Live is active at the desk; then the voice session also gets a silent
+     note of the exchange, as typed messages do, so voice Cora knows.
+  3. **S3 other people, as clients:** Nick is her one primary person; everyone
+     else is treated like a client. She keeps no relationship with them (no
+     appraisals, no trust or warmth, no greeting hooks), so the relationship work
+     stays Nick's alone. Her memories stay one pool, whoever they came from: they
+     are her memories. Each conversation records who it was with, and each
+     memory who said it, so a client saying "I live in Perth" never becomes a
+     fact about Nick; today's extraction assumes every speaker is Nick, so this
+     needs that link. Prompts say who she is talking to. Nick adds the people
+     she may talk with in Settings (name and number, such as his wife or a
+     client); anyone not listed gets one short polite reply ("I'm Cora; I only
+     chat with people Nick has introduced me to") and never a conversation, so
+     no API calls are spent on spam. Client chats are their own
+     conversations and never appear in Nick's chat with her or in voice Cora's
+     history: mixing them in would confuse both and blur the boundary between
+     Nick's life and clients'. Nick asks Cora about them rather than reading them
+     in the app. Recall must be scoped too:
+     `search_memory` today searches every memory, so someone else could ask what
+     Nick has been stressed about and get an answer. For anyone but Nick, recall
+     covers only memories from conversations with that person, plus memories
+     Nick meant to reach them. Nobody marks memories by hand: a share check, run in the
+     background memory pass beside the duplicate, correction and fade checks
+     (on the small-jobs model), looks for Nick's intent to pass something on
+     ("let Sarah know I'll be late", "tell anyone who asks I'm away until
+     Monday") and saves who it is for, one person or anyone. It judges intent,
+     not whether something is private, because nearly everything Nick says is
+     personal and a wrong "fine to share" is a leak. When unsure it doesn't
+     share; a miss only means "check with Nick". The dashboard lists shared
+     memories and who for, so Nick can check them.
+     Beyond what she can look up, her manner changes too: with anyone but Nick
+     she talks the way a professional talks to a client, friendly and warm, but
+     she doesn't bring up private things about Nick's life, even ones she
+     knows. The prompt for those chats says so, and scoped recall backs it up
+     so a slip can't reveal what she was never given. Asked something private,
+     she declines without confirming it exists ("that's one for Nick", not "I
+     can't tell you about his health"), offers to let Nick know they asked,
+     never invents a cover story, and carries on helping with what she can.
+  4. **S4 permissions and catching up:** tool access follows who is asking,
+     checked from the sender's verified number or Signal ID and never from what
+     the message says, and all message text is untrusted data. **Built:** Nick
+     gets her tools on Signal except desk-only ones, and approves tools that
+     change things in the chat: she asks ("reply YES to approve…") and only his
+     own next message counts, never text she or anyone else writes; anything but
+     a clear yes or no declines. Clients get web search and their scoped memory
+     search; strangers get one polite reply. Messages that arrive while Cora is
+     off wait on Signal's servers and are answered once per person on reconnect,
+     late ones marked with when they were sent, and the launch greeting follows on.
+
+  Possible extras, not planned: passing a client's private question on to Nick
+  ("let Nick know they asked"); searchable client chat summaries, so "what have
+  you been talking to Royce about?" gets the drift as well as the facts; reading
+  attachments; group chats.
+
+  This is a bigger job than MCP: it changes the core (a conversation path
+  without Live, knowing who each conversation and memory is with, and
+  per-sender permissions) rather than adding to the tool registry, so MCP comes
+  first. S1 and S2 together are
+  useful on their own, Cora on Nick's phone with web search and full recall and
+  no permission questions, so they can ship before S3 and S4.
+
+  S3 is built in steps, each tried before the next: S3a the launch greeting
+  follows on from Signal messages answered at launch (built); S3b other people as
+  separate client conversations in professional mode (web search only, no
+  relationship, not in Nick's chat; built, see [Cora's Signal](#coras-signal));
+  S3c memories record who said them, and client conversations join the memory
+  pass, so she remembers each client across chats (built); S3d scoped recall
+  for clients plus the share check (built). The dashboard Signal box was dropped:
+  Nick asks Cora about client chats instead.
+
+- **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)
+  is command-line only today. A "Her picture" section in Settings would make it a
+  normal user step: pick an image file and enter her description for `self` and
+  `work`, see what's saved, and a "Use on Signal" button that sets her Signal
+  profile picture. Small, and needed before 1.0 so each person's Cora can have
+  her own picture without the command line.
+
 - **Awareness (background producers):** one generic, config-driven watcher rather
   than a process per service. Each watch entry names an MCP tool, its arguments,
   the field that identifies an item, and how often to poll; read positions are
@@ -879,8 +1289,8 @@ features it helps check, and package last.
   In Standby she is off the clock: watchers keep polling and holding items, and
   she gets a "while you were away" digest on reconnect. Later, expectations from
   memory tasks (such as waiting to hear back from someone) can raise an item's
-  urgency. Messaging Cora herself (for example over Signal) is a separate
-  interface, not an awareness notification. Steps: W1 watcher and stored read
+  urgency. Messaging Cora herself over Signal is a separate interface (see
+  Signal below), not an awareness notification. Steps: W1 watcher and stored read
   positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
   and off switch, with per-source settings and quiet hours editable in the app
   rather than a config file; W4 expectations. Camera, screen, and home sensor
@@ -951,22 +1361,14 @@ features it helps check, and package last.
   portable binaries would need pgvector built per platform. Running the whole
   app in a container was also ruled out, since Docker Desktop cannot reach the
   host's microphone, speaker or clipboard.
-- **Private messaging (for example Signal), after 1.0:** while Cora is running, she tells
-  the person about incoming messages, what the sender wants, and sends replies
-  when told to (confirmed by voice). The person does not want message content
-  sent to OpenAI, so reading, summarising, and drafting would run on a local
-  model, and Cora-prime would only see what is safe to share (such as "a message
-  from Sam"). Open questions: how a private summary is spoken without passing
-  through Live (for example local text-to-speech), and whether this fits the
-  architecture yet. Needs a design pass before building.
 - **Local models, after 1.0:** explore running Cora-prime with only local models. There may
   not yet be a local equivalent of the Live speech-to-speech model; the likely
   alternative is a pipeline of local speech recognition, a local language model,
   and local text-to-speech, at some cost to latency and natural turn-taking. A
   local replacement for the delegate model is available, but web search would
   need a separate search provider (such as a self-hosted search engine or a
-  search API, possibly through MCP) exposed as a tool. Local models also enable
-  the private messaging and awareness items above.
+  search API, possibly through MCP) exposed as a tool. Local models also help
+  the awareness items above.
 
 ### Subconsciousness, interests, self, and relationship
 
@@ -1037,7 +1439,7 @@ Implement and test these in small increments:
   and test awareness-triggered opportunities, without introducing automatic
   interruption or wake-up by default.
 
-Signal, camera, and screen monitors will use the same event path. Start camera
+Camera and screen monitors will use the same event path. Start camera
 awareness with presence rather than identity recognition. Any later presence-based
 sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending work,
 and provide separate camera privacy controls. Cross-process transport can be added
@@ -1176,6 +1578,31 @@ After the interests steps are working:
   load failure only costs this section. Changes made by a reflection take effect
   at the next connect. Asked why she sees herself a certain way, she can call
   `recall_self` for that trait's latest changes and her reasons.
+
+### How she pictures herself
+
+Cora can be asked how she'd look if she had a picture, and an image made from
+her description for her to approve. She isn't human; the image represents her.
+Each install's Cora has her own: nothing about her look is in the code, and a
+new install has none until one is saved. Up to two are kept, with her own words
+for each, in the `self_image` table (migration 0025), so backups include them:
+**self**, how she sees herself, and **work**, her at work. Her words for both reach every prompt (Live, the backend, written and
+Signal chats, clients' too) as "How you picture yourself", just before her
+identity traits; she mentions it only when it comes up, and describes it from
+the words, since she doesn't see images. It is separate from her traits, so
+reflection never retires it, but stored rather than fixed in code, so it can
+change if she wants. For now it is set from the command line (a Settings
+section is [on the roadmap](#next-priorities)); restart or reconnect afterwards:
+
+```powershell
+python -m storage.self_image_store                      # what's saved
+python -m storage.self_image_store set self --image FILE --description "..."
+python -m storage.self_image_store export work FILE      # write an image out
+python -m messaging.profile                             # her Signal name and picture (the work image)
+```
+
+Her Signal profile shows the work picture (if one is saved) and the name "Cora",
+so people she messages see her.
 
 ### Relationship — complete
 
@@ -1390,7 +1817,7 @@ Camera presence detection is separate from sending images to a model for vision.
 Local wake-word listening, the event/attention foundations, the interests worker
 (with lull-based findings), the self worker, the relationship, and the opening
 greeting are implemented, each keeping its state separate from memories about the
-user. Real Signal/camera/screen monitors and relevance- or awareness-driven
+user. Real camera/screen monitors and relevance- or awareness-driven
 initiative are not built yet. Speaker mute has been checked in a live
 conversation, and quiet use with both audio controls muted has been confirmed.
 The playback visualiser still needs a real-device check.

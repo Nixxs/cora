@@ -44,6 +44,18 @@ MEMORY_INSTRUCTIONS = (
     "Only extract grounded memories."
 )
 
+def client_memory_note(client_name: str) -> str:
+    """For a client's conversation: the user is them, not the person Cora works with."""
+    name = json.dumps(client_name, ensure_ascii=False)
+    return (
+        f" In this conversation the user is {name}, someone Cora talks with as a client, not the "
+        "person she works with. Write every memory about them by name, for example "
+        f"'{client_name} lives in Perth', never as if it were about the person she works with. "
+        f"What {name} says about other people is what {name} said, not established fact: write it "
+        f"that way, for example '{client_name} said the meeting moved to Friday'."
+    )
+
+
 MEMORY_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": ["memories"],
     "properties": {"memories": {
@@ -60,14 +72,18 @@ MEMORY_SCHEMA = {
 }
 
 
-def generate_memories(client: OpenAI, model: str, messages: list[MessageRecord]) -> list[MemoryCandidate]:
+def generate_memories(
+    client: OpenAI, model: str, messages: list[MessageRecord], client_name: str | None = None,
+) -> list[MemoryCandidate]:
     transcript = json.dumps({"messages": [{
         "id": str(message.id), "role": message.role, "text": message.text,
         "created_at": message.created_at.isoformat(), "channel": message.channel,
         "status": message.status, "delivery_status": message.delivery_status,
     } for message in messages]}, ensure_ascii=False)
     response = client.responses.create(
-        model=model, instructions=MEMORY_INSTRUCTIONS, input=transcript,
+        model=model,
+        instructions=MEMORY_INSTRUCTIONS + (client_memory_note(client_name) if client_name else ""),
+        input=transcript,
         max_output_tokens=4096, store=False, truncation="disabled",
         text={"format": {"type": "json_schema", "name": "cora_memories",
                          "strict": True, "schema": MEMORY_SCHEMA}},
@@ -120,12 +136,14 @@ def extract_memories(
         raise ValueError("Conversation has no saved messages")
     if not any(message.role == "user" for message in messages):
         return []
+    # Whose words these are: a client's memories are written with their name.
+    client_name = store.client_name(conversation_id)
     # The original transcript is the source; no summary is read or required.
     if client is None:
         with OpenAI(max_retries=0) as api:
-            candidates = generate_memories(api, model, messages)
+            candidates = generate_memories(api, model, messages, client_name)
     else:
-        candidates = generate_memories(client, model, messages)
+        candidates = generate_memories(client, model, messages, client_name)
     return memories.save_memories(conversation_id, candidates)
 
 

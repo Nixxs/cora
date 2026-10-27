@@ -4,7 +4,8 @@ from datetime import date, timedelta
 import math
 
 from rich.text import Text
-from textual.events import MouseMove
+from textual.events import Click, MouseMove
+from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
 
@@ -13,10 +14,14 @@ from textual.widget import Widget
 CELL = "■"
 LABEL_STYLE = "#8f98a8"
 TRACK_STYLE = "#415575"
+HOVER_STYLE = "on #202838"
 TONE_STYLES = {"warm": "#8fcca6", "neutral": "#8f98a8", "curt": "#e6c07b", "hostile": "#f0a38a"}
 # Dim to bright: each step is a quarter of the busiest day.
 HEAT_STYLES = ("#35574a", "#4f8068", "#6fa888", "#8fcca6")
 WEEKDAYS = "MTWTFSS"
+# The heatmap shows about a month at its narrowest and half a year at its widest.
+MIN_WEEKS = 5
+MAX_WEEKS = 26
 
 
 def meter_bar(value: float, width: int) -> str:
@@ -61,6 +66,41 @@ class Meters(Widget):
         return text
 
 
+class ContextMeters(Meters):
+    """Meters whose rows can be clicked; the hovered row is highlighted."""
+
+    hover_row = reactive(None)
+
+    class Selected(Message):
+        def __init__(self, meters: "ContextMeters", index: int) -> None:
+            super().__init__()
+            self.meters = meters
+            self.index = index
+
+        @property
+        def control(self) -> "ContextMeters":
+            return self.meters
+
+    def render(self) -> Text:
+        text = super().render()
+        if self.rows and self.hover_row is not None:
+            # Each row is exactly the widget's width, then a newline.
+            start = self.hover_row * (self.size.width + 1)
+            text.stylize(HOVER_STYLE, start, start + self.size.width)
+        return text
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        self.hover_row = event.y if 0 <= event.y < len(self.rows) else None
+        self.tooltip = "click to see what's in it" if self.hover_row is not None else None
+
+    def on_leave(self) -> None:
+        self.hover_row = None
+
+    def on_click(self, event: Click) -> None:
+        if 0 <= event.y < len(self.rows):
+            self.post_message(self.Selected(self, event.y))
+
+
 class ToneRibbon(Widget):
     """One coloured cell per conversation's tone, newest on the right; older ones drop off."""
 
@@ -83,11 +123,14 @@ class CalendarHeatmap(Widget):
     days = reactive(None)  # counts per day, oldest first, ending today; None until loaded
     today_row = reactive(0)  # today's weekday, Monday = 0
 
+    def visible_weeks(self) -> int:
+        """Weeks that fit after the day initials, each a cell and a gap; capped so a wide box ends at the grid."""
+        return min(max((self.size.width - 2) // 2, 0), MAX_WEEKS)
+
     def render(self) -> Text:
         if self.days is None:
             return Text()
-        # Day initials take two columns, then each week takes a cell and a gap.
-        weeks = max((self.size.width - 2) // 2, 0)
+        weeks = self.visible_weeks()
         busiest = max(self.days, default=0)
         text = Text()
         for row, initial in enumerate(WEEKDAYS):
@@ -109,7 +152,7 @@ class CalendarHeatmap(Widget):
         # Cells sit on even columns after the initials; odd columns are gaps.
         if self.days is None or not 0 <= y < len(WEEKDAYS) or x < 2 or x % 2:
             return None
-        weeks = max((self.size.width - 2) // 2, 0)
+        weeks = self.visible_weeks()
         week = (x - 2) // 2
         days_ago = (weeks - 1 - week) * 7 + self.today_row - y
         return days_ago if week < weeks and 0 <= days_ago < len(self.days) else None

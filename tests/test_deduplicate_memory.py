@@ -371,7 +371,7 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             prior_rows = {table: connection.execute(text(f"SELECT * FROM public.{table}")).all()
                           for table in tables}
         before = {row.id: snapshot(row) for row in self.memories.get_memories(self.conversation_id)}
-        # Roll back migrations 0006 and the later 0007-0017 (history must stay a prefix of the
+        # Roll back migrations 0006 and the later 0007-0025 (history must stay a prefix of the
         # files) in this uniquely named fixture, then apply the actual live migrations
         # to populated pre-0006 rows (no synthetic SQL).
         later = ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql",
@@ -379,9 +379,17 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                  "0010_create_people.sql", "0011_add_exploration_reactions.sql", "0012_create_identity.sql",
                  "0013_create_interaction_appraisals.sql", "0014_create_relationships.sql",
                  "0015_create_model_settings.sql", "0016_mark_memory_corrections.sql",
-                 "0017_add_memory_fading.sql"]
+                 "0017_add_memory_fading.sql", "0018_create_service_settings.sql",
+                 "0019_create_service_tools.sql", "0020_create_signal_settings.sql",
+                 "0021_add_signal_channel.sql",
+                 "0022_add_signal_clients.sql",
+                 "0023_save_signal_ids.sql",
+                 "0024_add_memory_sharing.sql",
+                 "0025_create_self_image.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
-            connection.execute("DROP TABLE public.model_settings, public.relationship_events, public.relationships, "
+            connection.execute("ALTER TABLE public.conversations DROP COLUMN person_id")
+            connection.execute("DROP TABLE public.self_image, public.signal_settings, public.service_tools, public.service_settings, "
+                               "public.model_settings, public.relationship_events, public.relationships, "
                                "public.interaction_appraisals, "
                                "public.identity_event_evidence, public.identity_event_traits, "
                                "public.identity_events, public.identity_traits, public.identity_worker_state, "
@@ -391,7 +399,8 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             connection.execute("ALTER TABLE public.memories DROP COLUMN duplicate_of, "
                                "DROP COLUMN dedup_checked_at, DROP COLUMN corrects, "
                                "DROP COLUMN correction_checked_at, DROP COLUMN fades_at, "
-                               "DROP COLUMN fade_checked_at")
+                               "DROP COLUMN fade_checked_at, DROP COLUMN share_checked_at, "
+                               "DROP COLUMN share_audience, DROP COLUMN shared_with_name")
             connection.execute("DELETE FROM public.schema_migrations WHERE name = ANY(%s)", (later,))
             self.assertEqual(apply_migrations(connection), later)
             self.assertEqual(apply_migrations(connection), [])
@@ -461,6 +470,7 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
         # Canonical 1 and 404 are checked for duplicates, so they wait for the correction check.
         self.assertEqual(self.memories.pending_counts(), {
             "embedding": 106, "duplicate check": 106, "correction check": 2, "fade check": 0,
+            "share check": 0,
         })
 
     def test_candidates_are_only_five_older_canonical_embedded_user_same_kind_with_source_dates(self):

@@ -68,8 +68,8 @@ class LiveEventHandler:
         ):
             response = backend_event.get("response") or {}
             summary = {
-                "response.created": "Luna started",
-                "response.completed": "Luna response complete",
+                "response.created": "Thinking…",
+                "response.completed": "Done thinking",
                 "response.failed": "Backend failed",
                 "response.incomplete": "Backend incomplete",
                 "error": "Backend error",

@@ -11,11 +11,11 @@ import numpy as np
 from PIL import Image
 from textual.containers import HorizontalScroll
 from textual.geometry import Size
-from textual.widgets import Button, Static
+from textual.widgets import Button, Label, Static, TextArea
 
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
-from session_config import BACKEND_MODEL, MODEL_AREAS
+from session_config import BACKEND_MODEL, MODEL_AREAS, config_from_sections, instruction_sections
 from storage.dashboard_snapshot import (
     HISTORY_LIMIT, CALENDAR_DAYS, DashboardSnapshot, live_interests, next_due, read_dashboard_snapshot,
 )
@@ -28,8 +28,10 @@ from ui.chat_widgets import SelectableRichLog
 from ui.composer import IMAGE_MARKER, ChatComposer
 from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
 from ui.meters import (
-    HEAT_STYLES, LABEL_STYLE, TONE_STYLES, TRACK_STYLE, CalendarHeatmap, Meters, ToneRibbon, meter_bar,
+    HEAT_STYLES, HOVER_STYLE, LABEL_STYLE, MAX_WEEKS, MIN_WEEKS, TONE_STYLES, TRACK_STYLE, CalendarHeatmap,
+    ContextMeters, Meters, ToneRibbon, meter_bar,
 )
+from ui.context_view import ContextScreen
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 
@@ -599,11 +601,142 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                     "identity         never     due",
                 ],
             )
-            # The box hugs its widest line (plus border and padding); conversations gets the rest.
+            # The box hugs its widest line (plus border and padding).
             self.assertEqual(screen.query_one("#background-box").outer_size.width, 33 + 4)
+
+    async def test_context_box_lists_each_models_startup_items_once_connected(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            placeholder = screen.query_one("#context-placeholder", Static)
+            self.assertTrue(placeholder.display)
+            self.assertFalse(screen.query_one("#context-scroll").display)
+
+            sections = instruction_sections("[1]")
+            app.live.context.start(config_from_sections([], sections), sections)
+            screen.show_context()
+            await pilot.pause()
+            self.assertFalse(placeholder.display)
+            voice = screen.query_one("#context-voice", Meters)
+            backend = screen.query_one("#context-backend", Meters)
+            self.assertEqual([row[0] for row in voice.rows], ["instructions", "memories"])
+            self.assertEqual([row[0] for row in backend.rows], ["instructions", "tools"])
+            # Each bar is the item's share of its model's total; the text is its estimated size.
+            self.assertAlmostEqual(sum(row[1] for row in voice.rows), 1.0)
+            tokens = app.live.context.items("voice")[0].tokens
+            self.assertEqual(voice.rows[0][2], f"~{tokens / 1000:.1f}k")
+
+    async def test_clicking_a_context_item_shows_its_text_until_escape(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.resize_terminal(190, 53)
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            sections = instruction_sections("[1]")
+            app.live.context.start(config_from_sections([{"type": "function", "name": "close_app"}], sections), sections)
+            screen.show_context()
+            await pilot.pause()
+            backend = screen.query_one("#context-backend", ContextMeters)
+            # The second backend row is the tools.
+            await pilot.click(backend, offset=(1, 1))
+            await pilot.pause()
+            self.assertIsInstance(app.screen, ContextScreen)
+            title = str(app.screen.query_one("#context-view-title", Label).render())
+            self.assertTrue(title.startswith("tools · backend · ~"))
+            text = app.screen.query_one("#context-view-text", TextArea)
+            self.assertTrue(text.read_only)
+            self.assertIn('"name": "close_app"', text.text)
+            # Clicking inside the box keeps it open for reading and selecting.
+            await pilot.click(text)
+            self.assertIsInstance(app.screen, ContextScreen)
+
+            await pilot.press("escape")
+            await pilot.pause()
+            self.assertIs(app.screen, screen)
+
+    def test_context_rows_highlight_on_hover_and_post_their_index_on_click(self):
+        meters = ContextMeters()
+        meters.rows = (("instructions", 0.5, "~1.3k"), ("memories", 0.2, "~532"))
+        with patch.object(ContextMeters, "size", new_callable=PropertyMock, return_value=Size(30, 2)), \
+                patch.object(ContextMeters, "post_message") as post:
+            meters.on_mouse_move(MagicMock(y=1))
+            self.assertEqual(meters.hover_row, 1)
+            self.assertEqual(meters.tooltip, "click to see what's in it")
+            hovered = [span for span in meters.render().spans if span.style == HOVER_STYLE]
+            self.assertEqual([(span.start, span.end) for span in hovered], [(31, 61)])
+            meters.on_click(MagicMock(y=1))
+            self.assertEqual(post.call_args.args[0].index, 1)
+            # Below the last row is neither hovered nor clickable.
+            meters.on_mouse_move(MagicMock(y=2))
+            self.assertIsNone(meters.hover_row)
+            meters.on_click(MagicMock(y=2))
+            self.assertEqual(post.call_count, 1)
+            meters.on_mouse_move(MagicMock(y=0))
+            meters.on_leave()
+            self.assertIsNone(meters.hover_row)
+
+    async def test_context_totals_show_what_the_api_measured(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            context = app.live.context
+            sections = instruction_sections()
+            context.start(config_from_sections([], sections), sections)
+            screen.show_context()
+            totals = screen.query_one("#context-totals", Meters)
+            box = screen.query_one("#context-box")
+            self.assertEqual(totals.rows, (("voice", 0.0, "measuring…"), ("backend", 0.0, "after a request")))
+            self.assertEqual(box.border_subtitle, "")
+
+            context.voice_ratio = 0.62
+            context.backend_tokens = 18200
+            # Without a known limit the backend shows only its size.
+            with patch.dict("ui.dashboard.BACKEND_CONTEXT_TOKENS", clear=True):
+                screen.show_context()
+            self.assertEqual(totals.rows, (("voice", 0.62, "62%"), ("backend", 0.0, "18.2k")))
+            with patch.dict("ui.dashboard.BACKEND_CONTEXT_TOKENS", {BACKEND_MODEL: 91000}):
+                screen.show_context()
+            self.assertEqual(totals.rows[1], ("backend", 0.2, "20% · 18.2k"))
+
+            context.end()
+            screen.show_context()
+            self.assertEqual(box.border_subtitle, "last session")
+            self.assertEqual(totals.rows[0], ("voice", 0.62, "62%"))
+
+    async def test_bottom_row_pans_sideways_when_its_boxes_do_not_fit(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.resize_terminal(60, 35)
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            screen.query_one("#background-runs", Static).update("x" * 33)
+            await pilot.pause()
+            await pilot.pause()
+            row = screen.query_one("#dashboard-bottom", HorizontalScroll)
+            # Each box stops at its minimum and the row scrolls, rather than squashing them.
+            self.assertEqual(screen.query_one("#conversations-box").outer_size.width, 16)
+            self.assertEqual(screen.query_one("#context-box").outer_size.width, 40)
+            self.assertGreater(row.max_scroll_x, 0)
+            self.assertFalse(row.can_focus)
+            self.assertEqual(screen.query_one("#conversation-days", CalendarHeatmap).visible_weeks(), MIN_WEEKS)
+
+    async def test_wide_bottom_row_caps_the_heatmap_and_gives_context_the_rest(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.resize_terminal(240, 53)
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            heatmap = screen.query_one("#conversation-days", CalendarHeatmap)
+            # No empty columns between the day initials and the grid.
+            self.assertEqual(heatmap.visible_weeks(), MAX_WEEKS)
+            self.assertEqual(heatmap.size.width, 2 + 2 * MAX_WEEKS)
             self.assertGreater(
-                screen.query_one("#conversations-box").outer_size.width, 80 - 37 - 2,
+                screen.query_one("#context-box").outer_size.width,
+                screen.query_one("#conversations-box").outer_size.width,
             )
+            self.assertEqual(screen.query_one("#dashboard-bottom", HorizontalScroll).max_scroll_x, 0)
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

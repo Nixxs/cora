@@ -44,7 +44,7 @@ class SessionConfigTests(unittest.TestCase):
         self.assertEqual(config["instructions"], LIVE_INSTRUCTIONS)
         self.assertEqual(config["delegation"]["type"], "responses")
         backend = config["delegation"]["responses"]
-        self.assertEqual(backend["model"], "gpt-6-luna")
+        self.assertEqual(backend["model"], "gpt-6.1-sol")
         self.assertEqual(backend["instructions"], BACKEND_INSTRUCTIONS)
         self.assertEqual(backend["tools"], [{"type": "web_search"}])
         self.assertEqual(backend["tool_choice"], "auto")

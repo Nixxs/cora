@@ -11,7 +11,9 @@ from ui.composer import SENDING_IMAGE, ChatComposer
 class ChatSubmission:
     def __init__(self, *, persistence, conversation, live, backend_work,
                  is_closing, is_reconnecting, is_standby, schedule,
-                 record_activity, write_activity, notify, trace):
+                 record_activity, write_activity, notify, trace, send_without_live=None):
+        # In Standby, a typed message goes here instead: answered in writing without waking Live.
+        self.send_without_live = send_without_live
         self.persistence = persistence
         self.conversation = conversation
         self.live = live
@@ -39,7 +41,7 @@ class ChatSubmission:
         if self.sending_image:
             self.notify("Your image is still being sent; this message is kept until it is done.")
             return
-        if self.is_standby():
+        if self.is_standby() and self.send_without_live is None:
             self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
             return
 
@@ -105,16 +107,22 @@ class ChatSubmission:
             if self.is_closing():
                 # Saved text remains pending; shutdown must not start a new send.
                 return
+            without_live = self.is_standby() and self.send_without_live is not None
             try:
-                self.backend_work.start_typed_request()
-                self.trace("typed.submit", message_id=str(message_id))
-                if image_seen:
-                    await self.live.send_text(message, image_seen=image_seen)
+                if without_live:
+                    # The written reply arrives later; Live stays closed.
+                    self.send_without_live(message, image_seen)
                 else:
-                    await self.live.send_text(message)
-                self.trace("typed.sent", message_id=str(message_id))
+                    self.backend_work.start_typed_request()
+                    self.trace("typed.submit", message_id=str(message_id))
+                    if image_seen:
+                        await self.live.send_text(message, image_seen=image_seen)
+                    else:
+                        await self.live.send_text(message)
+                    self.trace("typed.sent", message_id=str(message_id))
             except Exception as error:
-                self.backend_work.finish_typed_request()
+                if not without_live:
+                    self.backend_work.finish_typed_request()
                 self.trace("typed.failed", message_id=str(message_id), error_type=type(error).__name__)
                 # A failed send may have reached the backend partially; do not auto-retry it.
                 self.pending_message = None

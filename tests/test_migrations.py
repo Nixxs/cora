@@ -97,6 +97,14 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0015_create_model_settings.sql",
             "0016_mark_memory_corrections.sql",
             "0017_add_memory_fading.sql",
+            "0018_create_service_settings.sql",
+            "0019_create_service_tools.sql",
+            "0020_create_signal_settings.sql",
+            "0021_add_signal_channel.sql",
+            "0022_add_signal_clients.sql",
+            "0023_save_signal_ids.sql",
+            "0024_add_memory_sharing.sql",
+            "0025_create_self_image.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

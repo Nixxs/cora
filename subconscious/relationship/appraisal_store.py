@@ -6,7 +6,10 @@ from uuid import UUID
 from sqlalchemy import Engine, func, select
 from sqlalchemy.orm import Session
 
-from storage.models import ConversationRecord, InteractionAppraisalRecord, MessageRecord, PersonRecord
+from storage.models import (
+    PRIMARY_PERSON, WITH_PRIMARY_PERSON, ConversationRecord, InteractionAppraisalRecord, MessageRecord,
+    PersonRecord,
+)
 from subconscious.relationship.appraisal import Appraisal
 
 
@@ -21,6 +24,8 @@ class AppraisalStore:
         with Session(self.engine) as session:
             return list(session.scalars(
                 select(ConversationRecord.id).where(
+                    # Clients are not appraised: the relationship is only with the primary person.
+                    WITH_PRIMARY_PERSON,
                     ConversationRecord.status.in_(("closed", "interrupted")),
                     select(MessageRecord.id).where(
                         MessageRecord.conversation_id == ConversationRecord.id
@@ -45,7 +50,7 @@ class AppraisalStore:
             if existing is not None:
                 return existing
             person = session.scalars(
-                select(PersonRecord).order_by(PersonRecord.first_met_at, PersonRecord.id).limit(1)
+                select(PersonRecord).where(PRIMARY_PERSON).order_by(PersonRecord.first_met_at, PersonRecord.id).limit(1)
             ).first()
             if person is None:
                 # Cora met this unnamed person when their first conversation began.

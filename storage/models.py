@@ -7,7 +7,8 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid,
+    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, LargeBinary, SmallInteger, Text, UniqueConstraint,
+    Uuid,
 )
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -33,6 +34,8 @@ class ConversationRecord(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(Text, server_default="active")
+    # None for the primary person; a client's id for their own Signal chats.
+    person_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("public.people.id", ondelete="RESTRICT"))
 
     messages: Mapped[list[MessageRecord]] = relationship(
         back_populates="conversation", order_by="MessageRecord.sequence_number",
@@ -46,7 +49,7 @@ class MessageRecord(Base):
         UniqueConstraint("conversation_id", "sequence_number", name="messages_conversation_sequence_key"),
         CheckConstraint("sequence_number > 0", name="messages_sequence_check"),
         CheckConstraint("role IN ('user', 'assistant')", name="messages_role_check"),
-        CheckConstraint("channel IN ('voice', 'keyboard', 'screen')", name="messages_channel_check"),
+        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal')", name="messages_channel_check"),
         CheckConstraint("status IN ('incomplete', 'completed', 'interrupted')", name="messages_status_check"),
         CheckConstraint(
             "delivery_status IN ('not_applicable', 'pending', 'sent', 'failed')",
@@ -110,6 +113,12 @@ class MemoryRecord(Base):
             name="memories_correction_check",
         ),
         CheckConstraint("fades_at IS NULL OR fade_checked_at IS NOT NULL", name="memories_fade_check"),
+        CheckConstraint(
+            "(share_audience IS NULL AND shared_with_name IS NULL) "
+            "OR (share_audience = 'anyone' AND shared_with_name IS NULL AND share_checked_at IS NOT NULL) "
+            "OR (share_audience = 'person' AND btrim(shared_with_name) <> '' AND share_checked_at IS NOT NULL)",
+            name="memories_share_check",
+        ),
         {"schema": "public"},
     )
 
@@ -134,6 +143,10 @@ class MemoryRecord(Base):
     correction_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fades_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fade_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Whether the person meant it to reach a client: 'anyone', or 'person' with the name they used.
+    share_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    share_audience: Mapped[str | None] = mapped_column(Text)
+    shared_with_name: Mapped[str | None] = mapped_column(Text)
 
 
 class PersonRecord(Base):
@@ -146,12 +159,26 @@ class PersonRecord(Base):
             "AND display_name <> '' AND char_length(display_name) <= 100)",
             name="people_display_name_check",
         ),
+        CheckConstraint("kind IN ('primary', 'client')", name="people_kind_check"),
+        CheckConstraint("kind = 'primary' OR display_name IS NOT NULL", name="people_client_named_check"),
+        UniqueConstraint("signal_number", name="people_signal_number_key"),
+        UniqueConstraint("signal_id", name="people_signal_id_key"),
         {"schema": "public"},
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
     display_name: Mapped[str | None] = mapped_column(Text)
     first_met_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    # 'primary' for the person Cora works with; 'client' for others she may talk with on Signal.
+    kind: Mapped[str] = mapped_column(Text, server_default="primary")
+    signal_number: Mapped[str | None] = mapped_column(Text)
+    # Their Signal ID once learned: still identifies them if they hide their number.
+    signal_id: Mapped[str | None] = mapped_column(Text)
+
+
+# The person Cora works with, never a client; and conversations with them, never a client's.
+PRIMARY_PERSON = PersonRecord.kind == "primary"
+WITH_PRIMARY_PERSON = ConversationRecord.person_id.is_(None)
 
 
 class InterestRecord(Base):
@@ -563,3 +590,69 @@ class ModelSettingRecord(Base):
     area: Mapped[str] = mapped_column(Text, primary_key=True)
     model: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ServiceSettingRecord(Base):
+    """Whether one outside service is switched on; services without a row are off."""
+
+    __tablename__ = "service_settings"
+    __table_args__ = (
+        CheckConstraint("btrim(service) <> ''", name="service_settings_service_check"),
+        {"schema": "public"},
+    )
+
+    service: Mapped[str] = mapped_column(Text, primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class SignalSettingRecord(Base):
+    """Cora's own Signal account and who she answers on it; at most one row."""
+
+    __tablename__ = "signal_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="signal_settings_single_row"),
+        CheckConstraint("account IS NULL OR account <> allowed_number", name="signal_settings_numbers_differ"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, server_default=sql_text("1"))
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    account: Mapped[str | None] = mapped_column(Text)
+    allowed_number: Mapped[str | None] = mapped_column(Text)
+    allowed_signal_id: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class SelfImageRecord(Base):
+    """An image Cora chose to represent her, and her own description of it."""
+
+    __tablename__ = "self_image"
+    __table_args__ = (
+        CheckConstraint("kind IN ('self', 'work')", name="self_image_kind_check"),
+        CheckConstraint("btrim(description) <> '' AND char_length(description) <= 1000",
+                        name="self_image_description_check"),
+        CheckConstraint("(image IS NULL) = (image_type IS NULL)", name="self_image_image_check"),
+        {"schema": "public"},
+    )
+
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    description: Mapped[str] = mapped_column(Text)
+    image: Mapped[bytes | None] = mapped_column(LargeBinary)
+    image_type: Mapped[str | None] = mapped_column(Text)
+    chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ServiceToolRecord(Base):
+    """One service tool Cora may use; tools without a row are off."""
+
+    __tablename__ = "service_tools"
+    __table_args__ = (
+        CheckConstraint("btrim(service) <> ''", name="service_tools_service_check"),
+        CheckConstraint("btrim(tool) <> ''", name="service_tools_tool_check"),
+        {"schema": "public"},
+    )
+
+    service: Mapped[str] = mapped_column(Text, primary_key=True)
+    tool: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

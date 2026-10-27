@@ -14,6 +14,7 @@ from .deduplicate_memory import deduplicate_memory
 from .embed_memory import embed_memory
 from .extract_memories import extract_memories
 from .fade_memory import fade_memory
+from .share_memory import share_memory
 from .store import MemoryStore
 from .summarize import summarize_conversation
 
@@ -89,6 +90,16 @@ def run_background_memory_pass(
                     f"Memory fade checked: memory_id={memory_id}, "
                     f"fades_at={None if fades_at is None else fades_at.isoformat()}",
                     "Memory fade checked",
+                )
+        for memory_id in memory_store.get_pending_share_ids():
+            if should_stop():
+                return
+            audience, _ = share_memory(memory_store, memory_id, model=models["utility"])
+            if not should_stop():
+                # Who it was meant for stays out of Activity; only whether it was meant for anyone.
+                write_activity(
+                    f"Memory share checked: memory_id={memory_id}, shared={audience is not None}",
+                    "Memory share checked",
                 )
         # Last, so a first-run backfill never delays memories; it reports its own failures.
         if not should_stop():
