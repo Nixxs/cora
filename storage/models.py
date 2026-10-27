@@ -7,7 +7,8 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, SmallInteger, Text, UniqueConstraint, Uuid,
+    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, LargeBinary, SmallInteger, Text, UniqueConstraint,
+    Uuid,
 )
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import ARRAY
@@ -621,6 +622,25 @@ class SignalSettingRecord(Base):
     allowed_number: Mapped[str | None] = mapped_column(Text)
     allowed_signal_id: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class SelfImageRecord(Base):
+    """An image Cora chose to represent her, and her own description of it."""
+
+    __tablename__ = "self_image"
+    __table_args__ = (
+        CheckConstraint("kind IN ('self', 'work')", name="self_image_kind_check"),
+        CheckConstraint("btrim(description) <> '' AND char_length(description) <= 1000",
+                        name="self_image_description_check"),
+        CheckConstraint("(image IS NULL) = (image_type IS NULL)", name="self_image_image_check"),
+        {"schema": "public"},
+    )
+
+    kind: Mapped[str] = mapped_column(Text, primary_key=True)
+    description: Mapped[str] = mapped_column(Text)
+    image: Mapped[bytes | None] = mapped_column(LargeBinary)
+    image_type: Mapped[str | None] = mapped_column(Text)
+    chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
 class ServiceToolRecord(Base):

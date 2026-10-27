@@ -671,7 +671,16 @@ the way a professional talks with a client:
     `said_by`, so you can ask "what did Sarah say about the meeting?".
 - They get no appraisals, and never affect your relationship, your greeting or
   "when you last talked".
-- **Passing things on.** A share check in the background memory pass (after the
+- **Passing things on to you.** In a client's chat she has `tell_nick`: when
+  they ask her to pass something on (a plan they worked out together, a
+  question, a message), or something clearly needs your attention, she sends it
+  to you on Signal, marked "From Royce, via Cora:", and tells them she's passed
+  it on without promising your reply. It reaches only you, so it needs no
+  approval; each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY`
+  in [app.py](app.py)). It also appears in your desktop chat and conversation,
+  and voice Cora gets a silent note. It's never offered at the desk, in Live or
+  in your own chat.
+- **Passing things on to them.** A share check in the background memory pass (after the
   fade check, on the small-jobs model; migration 0024) asks of each of *your*
   memories one question: did you mean it to reach someone? ("tell Sarah I'll be
   late", "if anyone asks, I'm away till Monday"). It saves who it's for, one
@@ -923,11 +932,11 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
-| [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input. |
+| [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `tell_nick`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1562,6 +1571,31 @@ After the interests steps are working:
   load failure only costs this section. Changes made by a reflection take effect
   at the next connect. Asked why she sees herself a certain way, she can call
   `recall_self` for that trait's latest changes and her reasons.
+
+### How she pictures herself
+
+Cora chose how she'd look if she had a picture (a woman in her late 30s or early
+40s, hazel eyes, untidy chestnut hair, a moss-green jumper, lamplight and books),
+and an image was made from her description, which she liked. She isn't human;
+the image represents her. Two are kept, with her own words for each, in the
+`self_image` table (migration 0025), so backups include them: **self**, how she
+sees herself, and **work**, her at work for Intelligis in a navy polo and
+headset. Her words for both reach every prompt (Live, the backend, written and
+Signal chats, clients' too) as "How you picture yourself", just before her
+identity traits; she mentions it only when it comes up, and describes it from
+the words, since she doesn't see images. It is separate from her traits, so
+reflection never retires it, but stored rather than fixed in code, so it can
+change if she wants:
+
+```powershell
+python -m storage.self_image_store                      # what's saved
+python -m storage.self_image_store set self --image FILE --description "..."
+python -m storage.self_image_store export work FILE      # write an image out
+python -m messaging.profile                             # her Signal name and picture (the work image)
+```
+
+Her Signal profile shows the work picture and the name "Cora", so people she
+messages see her.
 
 ### Relationship — complete
 

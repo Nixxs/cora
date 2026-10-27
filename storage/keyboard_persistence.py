@@ -11,6 +11,7 @@ from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
 from memory.store import MemoryStore
@@ -45,6 +46,9 @@ class KeyboardPersistence:
 
     def load_startup_identity_context(self) -> str:
         return IdentityStore(self._get_store().engine).get_startup_context()
+
+    def load_self_image_context(self) -> str:
+        return SelfImageStore(self._get_store().engine).get_startup_context()
 
     def load_relationship_context(self) -> str:
         return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))

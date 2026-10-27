@@ -60,6 +60,7 @@ from greeting import (
 )
 from live import CoraLive, typed_content
 from backend_chat import SIGNAL_EXCLUDED, STANDBY_EXCLUDED, BackendChat, BackendRoute
+from tools.tell_nick import CLIENT_ONLY
 from session_config import (
     SIGNAL_CHAT_INSTRUCTIONS, client_chat_instructions, instruction_sections, stranger_reply,
 )
@@ -93,6 +94,8 @@ REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
 CONVERSATION_END_STANDBY_SECONDS = 3 * 60 * 60
 # At launch, how long Live waits for services to connect so their tools are in the first session.
 SERVICE_STARTUP_WAIT_SECONDS = 10
+# The most things one client can pass on to the person in a day.
+SIGNAL_RELAYS_PER_DAY = 5
 # At launch, the greeting waits up to this long for Signal messages that waited while Cora was
 # closed to be answered, counting them all in once nothing new has come for SIGNAL_QUIET_SECONDS.
 SIGNAL_GREETING_WAIT_SECONDS = 20
@@ -172,6 +175,7 @@ class CoraApp(App):
             set_memory_context=lambda context: setattr(self.live, "memory_context", context),
             set_interest_context=lambda context: setattr(self.live, "interest_context", context),
             set_identity_context=lambda context: setattr(self.live, "identity_context", context),
+            set_self_image_context=lambda context: setattr(self.live, "self_image_context", context),
             set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
@@ -241,8 +245,10 @@ class CoraApp(App):
             confirm=lambda *args, **options: self.confirmations.ask(*args, **options),
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
+            relay_to_person=self.relay_to_person,
         )
-        self.live = CoraLive(tool_schemas=self.tools.schemas, on_trace=self.trace_live)
+        # Live never sees client-only tools such as tell_nick.
+        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
@@ -267,6 +273,8 @@ class CoraApp(App):
         self.signal_accepted: set[str] = set()
         # The person's answer to a request asked in their Signal chat, by their number.
         self.signal_approvals: dict[str, asyncio.Future] = {}
+        # How many things each client passed on to the person today, by (client id, day).
+        self.signal_relays: dict[tuple, int] = {}
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
@@ -1027,6 +1035,7 @@ class CoraApp(App):
         sections = instruction_sections(
             self.live.memory_context, interest_context=self.live.interest_context,
             person_name=self.live.person_name, identity_context=self.live.identity_context,
+            self_image_context=self.live.self_image_context,
             relationship_context=self.live.relationship_context,
         )
         return await self.backend_chat.reply(
@@ -1232,13 +1241,15 @@ class CoraApp(App):
             remembered = ""
         sections = instruction_sections(
             remembered, interest_context=self.live.interest_context, identity_context=self.live.identity_context,
+            self_image_context=self.live.self_image_context,
         )
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history, sections=sections,
             model=self.live.delegation_model,
-            # Web search, and memory search limited to what they may know; no services, nothing at the desk.
+            # Web search, memory search limited to what they may know, and passing things on to the
+            # person; no services, nothing at the desk.
             route=BackendRoute(
-                excluded=frozenset(self.tools.names()) - {"search_memory"},
+                excluded=frozenset(self.tools.names()) - {"search_memory", *CLIENT_ONLY},
                 memory_scope=(client.id, client.name),
             ),
             extra_instructions=client_chat_instructions(client.name, self.live.person_name),
@@ -1276,6 +1287,27 @@ class CoraApp(App):
             "nothing can be sent. Ask the person to check the number in Settings, or ask "
             f"{contact.name} to allow being found by number."
         )
+
+    async def relay_to_person(self, client_id, client_name: str, text: str) -> str | None:
+        """From a client's chat to the person, marked as theirs; None once sent, else why not."""
+        account, person = self.signal.status.account, self.signal_settings.person_recipient
+        if not account or not person:
+            return "Signal isn't set up to reach them right now."
+        today = datetime.now().date()
+        key = (client_id, today)
+        if self.signal_relays.get(key, 0) >= SIGNAL_RELAYS_PER_DAY:
+            return f"You've passed on as much as you can for {client_name} today; it wasn't sent."
+        message = f"From {client_name}, via Cora:\n{text}"
+        await self.signal.client.send(account, person, message)
+        self.signal_relays[key] = self.signal_relays.get(key, 0) + 1
+        # In the person's own chat and conversation, so voice Cora knows too.
+        self.conversation.show_written_reply(message, label="Cora · Signal", channel="signal")
+        self.activity.write(f"Passed something on from {client_name} to you on Signal.", "Signal relay")
+        try:
+            await self.live.note_relay(client_name, text)
+        except Exception as error:
+            self.activity.write(f"Relay note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
+        return None
 
     async def send_to_signal_contact(self, contact: Client, text: str) -> None:
         """Send from Cora's number and save it in that person's conversation, so she sees it when they reply."""

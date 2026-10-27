@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
 import unittest
+
+from tools.tell_nick import CLIENT_ONLY
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai.types.live import ResponseEvent
@@ -242,11 +244,12 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     exit_app.assert_called_once()
                     connection.response.create.assert_not_called()
                     config = connection.session.start.call_args.kwargs["session"]
-                    self.assertEqual(config, build_session_config(app.tools.schemas()))
+                    # Live gets every tool but the client-only ones.
+                    self.assertEqual(config, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY)))
                     backend = config["delegation"]["responses"]
                     self.assertFalse(backend["parallel_tool_calls"])
                     self.assertEqual(backend["tools"][0], {"type": "web_search"})
-                    self.assertEqual(backend["tools"][1:], app.tools.schemas())
+                    self.assertEqual(backend["tools"][1:], app.tools.schemas(excluding=CLIENT_ONLY))
                     self.assertEqual(backend["tools"][-1]["name"], "example")
                     tool = backend["tools"][1]
                     self.assertEqual(tool["name"], "close_app")

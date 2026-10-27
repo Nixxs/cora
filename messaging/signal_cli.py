@@ -74,6 +74,13 @@ class SignalClient:
         status = await self.user_status(account, number)
         return status.get("uuid") if status.get("isRegistered") else None
 
+    async def update_profile(self, account: str, given_name: str, avatar_path: str | None = None) -> None:
+        """Her Signal name, and picture from a file inside the container (avatar_path), seen by everyone she messages."""
+        params = {"account": account, "givenName": given_name}
+        if avatar_path:
+            params["avatar"] = avatar_path
+        await self.rpc("updateProfile", params, timeout=60)
+
     async def accept_request(self, account: str, recipient: str) -> None:
         """Accept a message request, so they see her as a contact and her replies show normally."""
         await self.rpc("sendMessageRequestResponse", {"account": account, "recipient": [recipient], "type": "accept"})

@@ -121,6 +121,7 @@ async def running_app(persistence=None):
                 persistence.load_startup_interest_context.return_value = ""
                 persistence.load_startup_identity_context.return_value = ""
                 persistence.load_relationship_context.return_value = ""
+                persistence.load_self_image_context.return_value = ""
                 persistence.load_relationship_values.return_value = None
                 persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from openai import AsyncOpenAI
 
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
+from tools.tell_nick import CLIENT_ONLY
 
 # Tool calls one turn may make before giving up; each round is one backend request.
 MAX_ROUNDS = 8
@@ -18,7 +19,7 @@ MAX_ROUNDS = 8
 TOOL_RESULT_SECONDS = 180
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
-STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby"})
+STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY})
 # Signal, away from the desk: nothing that needs the screen either. Tools that change things are
 # offered: the person approves them in the chat.
 SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image"}

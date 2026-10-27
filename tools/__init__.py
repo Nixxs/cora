@@ -11,6 +11,7 @@ from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_
 from .show_web_image import ShowWebImageTool, SCHEMA as WEB_IMAGE_SCHEMA, validate_arguments as validate_web_image_arguments
 from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, validate_arguments as validate_random_number_arguments
 from .send_signal_message import SendSignalMessageTool, SCHEMA as SIGNAL_SCHEMA, validate_arguments as validate_signal_arguments
+from .tell_nick import TellNickTool, SCHEMA as TELL_NICK_SCHEMA, validate_arguments as validate_tell_nick_arguments
 
 
 async def _not_set_up(*args, **kwargs):
@@ -21,7 +22,7 @@ def create_tool_registry(
     *, get_connection, is_closing, shutdown, request_standby, write_debug, schedule,
     screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
-    signal_unreachable=None,
+    signal_unreachable=None, relay_to_person=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -46,4 +47,6 @@ def create_tool_registry(
         get_connection, is_closing, write_debug, find_signal_contact, confirm, send_signal, signal_unreachable,
     )
     registry.register(SIGNAL_SCHEMA, validate_signal_arguments, signal_message.handle)
+    tell_nick = TellNickTool(get_connection, is_closing, write_debug, relay_to_person)
+    registry.register(TELL_NICK_SCHEMA, validate_tell_nick_arguments, tell_nick.handle)
     return registry
