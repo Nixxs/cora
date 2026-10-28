@@ -50,7 +50,7 @@ from services.tools import validate_arguments as validate_service_arguments
 from services.credentials import forget_token, get_token, save_token
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
-from subconscious.attention import AttentionManager
+from subconscious.attention import AttentionManager, PersonMessage
 from backend_work import BackendWorkTracker
 from subconscious.event_bus import EventBus, FindingEvent, ObservationEvent
 from subconscious.identity.reflect_identity import run_identity_cycle
@@ -101,10 +101,18 @@ BACKGROUND_ROUND_SECONDS = 60 * 60
 SERVICE_STARTUP_WAIT_SECONDS = 10
 # The most things one client can pass on to the person in a day.
 SIGNAL_RELAYS_PER_DAY = 5
+# The most concerns she can raise at once about one client in a day; later chats still get a heads-up.
+SIGNAL_CONCERNS_PER_DAY = 3
 # At launch, the greeting waits up to this long for Signal messages that waited while Cora was
 # closed to be answered, counting them all in once nothing new has come for SIGNAL_QUIET_SECONDS.
 SIGNAL_GREETING_WAIT_SECONDS = 20
 SIGNAL_QUIET_SECONDS = 3
+
+
+def heads_up_text(heads_up) -> str:
+    """Who, when and what kind, then her note: her words, never theirs."""
+    when = heads_up.started_at.astimezone().strftime("%A %d %b").replace(" 0", " ")
+    return f"Heads up: {heads_up.name} was {heads_up.conduct} in our chat on {when}. {heads_up.note}"
 
 
 class CoraApp(App):
@@ -252,6 +260,7 @@ class CoraApp(App):
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
             relay_to_person=self.relay_to_person,
+            raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
         # Live never sees client-only tools such as tell_nick.
         self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)
@@ -281,6 +290,12 @@ class CoraApp(App):
         self.signal_approvals: dict[str, asyncio.Future] = {}
         # How many things each client passed on to the person today, by (client id, day).
         self.signal_relays: dict[tuple, int] = {}
+        self.signal_concerns: dict[tuple, int] = {}
+        # Client conversations she ended; their messages are saved but not answered. A restart
+        # starts new conversations, so this needn't outlive the app.
+        self.signal_stopped: set = set()
+        # Heads-ups on their way to the person, so a second round doesn't send them twice.
+        self.heads_ups_pending: set = set()
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
@@ -351,6 +366,7 @@ class CoraApp(App):
                 mention.interest_title, mention.finding, mention.found_at,
             ),
             release_finding=lambda mention: asyncio.to_thread(release_mention_now, mention),
+            send_message=lambda text: self.live.send_message_for_person(text),
         )
         self.event_bus = EventBus(on_error=self.handle_event_bus_error)
         self.event_bus.subscribe(
@@ -801,6 +817,7 @@ class CoraApp(App):
                 self.handle_mic_status(False)
                 self.set_connection_state("standby")
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
+                self.send_unsaid_messages()
                 self.conversation_end_timer = self.set_timer(
                     CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
                 )
@@ -1276,6 +1293,9 @@ class CoraApp(App):
             self.activity.write(f"Saving {client.name}'s Signal message failed ({type(error).__name__}).",
                                 "Signal reply failed")
             return
+        if conversation_id in self.signal_stopped:
+            self.activity.write(f"Not answering {client.name}: Cora ended this chat.", "Signal client")
+            return
         self.activity.write(f"Answering {client.name} on Signal.", "Signal client")
         text = await self.send_signal_reply(
             account, client.recipient, lambda: self.reply_to_client(client, batch, history),
@@ -1377,6 +1397,114 @@ class CoraApp(App):
             await self.live.note_relay(client_name, text)
         except Exception as error:
             self.activity.write(f"Relay note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
+        return None
+
+    def can_reach_by_voice(self) -> bool:
+        return not (self.closing or self.standby) and self.live.connection is not None and self.live.ready
+
+    async def tell_person(self, text: str, delivered=None, undelivered=None) -> None:
+        """Something of hers the person should know: said by voice with Live Active, otherwise on Signal.
+
+        delivered() runs once it has gone (to Live or on Signal); undelivered() if Live couldn't say it
+        and Signal failed too. Raises when neither way is open now.
+        """
+        async def done():
+            if delivered is not None:
+                await delivered()
+
+        async def instead():
+            try:
+                await self.tell_person_on_signal(text)
+            except Exception as error:
+                self.activity.write(f"Telling you on Signal failed ({signal_failure(error)}).", "Signal error")
+                if undelivered is not None:
+                    undelivered()
+                return
+            await done()
+
+        if self.can_reach_by_voice():
+            self.attention.submit_message(PersonMessage(text, done, instead))
+            return
+        await self.tell_person_on_signal(text)
+        await done()
+
+    async def tell_person_on_signal(self, text: str) -> None:
+        account, person = self.signal.status.account, self.signal_settings.person_recipient
+        if self.signal.status.state != SIGNAL_LINKED or not account or not person:
+            raise RuntimeError("Signal isn't set up to reach the person")
+        await self.signal.client.send(account, person, text)
+        # In the person's own chat and conversation, so voice Cora knows too.
+        self.conversation.show_written_reply(text, label="Cora · Signal", channel="signal")
+        self.activity.write("Told you something on Signal.", "Signal message")
+
+    def send_unsaid_messages(self) -> None:
+        """Live went to Standby: whatever she hadn't said yet goes on Signal instead."""
+        for message in self.attention.withdraw_messages():
+            self.run_worker(message.fallback(), group="tell-person", exit_on_error=False)
+
+    @work(group="heads-ups", exclusive=True, exit_on_error=False)
+    async def deliver_heads_ups(self) -> None:
+        """Tell the person about chats where someone treated her badly, once each, in her words."""
+        if self.closing:
+            return
+        try:
+            heads_ups = await self.conversation_persistence.call_database(self.persistence.load_heads_ups)
+        except Exception as error:
+            self.activity.write(f"Heads-ups didn't load ({type(error).__name__}).", "Heads-up")
+            return
+        for heads_up in heads_ups:
+            if self.closing:
+                return
+            if heads_up.conversation_id in self.heads_ups_pending:
+                continue
+            conversation_id = heads_up.conversation_id
+            self.heads_ups_pending.add(conversation_id)
+            try:
+                await self.tell_person(
+                    heads_up_text(heads_up),
+                    delivered=lambda conversation_id=conversation_id: self.heads_up_told(conversation_id),
+                    undelivered=lambda conversation_id=conversation_id: self.heads_ups_pending.discard(conversation_id),
+                )
+            except Exception as error:
+                self.heads_ups_pending.discard(conversation_id)
+                self.activity.write(f"A heads-up couldn't reach you yet ({type(error).__name__}); tried again next round.",
+                                    "Heads-up")
+                return
+
+    async def heads_up_told(self, conversation_id) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.mark_heads_up_reported, conversation_id)
+        except Exception as error:
+            # Kept as pending this session, so it isn't sent twice; it may come again after a restart.
+            self.activity.write(f"Saving that a heads-up went failed ({type(error).__name__}).", "Heads-up")
+            return
+        self.heads_ups_pending.discard(conversation_id)
+        self.activity.write("Gave you a heads-up about a client chat.", "Heads-up")
+
+    async def raise_client_concern(self, client_id, client_name: str, concern: str) -> str | None:
+        """From a client's chat, at once: her own concern about them, not their words."""
+        key = (client_id, datetime.now().date())
+        if self.signal_concerns.get(key, 0) >= SIGNAL_CONCERNS_PER_DAY:
+            return "You've already raised this with the person today; they'll also get your heads-up after the chat."
+        try:
+            await self.tell_person(f"Heads up about {client_name}, in our chat just now: {concern}")
+        except Exception:
+            return "The person can't be reached right now; they'll get your heads-up after the chat."
+        self.signal_concerns[key] = self.signal_concerns.get(key, 0) + 1
+        self.activity.write(f"Cora raised a concern about {client_name}.", "Heads-up")
+        return None
+
+    async def stop_replying_to_client(self, client_id, client_name: str) -> str | None:
+        """She ends this chat: their further messages are saved but not answered until a new chat starts."""
+        try:
+            conversation_id = await self.conversation_persistence.call_database(
+                self.persistence.client_conversation, client_id,
+            )
+        except Exception as error:
+            self.activity.write(f"Ending the chat with {client_name} failed ({type(error).__name__}).", "Signal client")
+            return "It couldn't be done just now."
+        self.signal_stopped.add(conversation_id)
+        self.activity.write(f"Cora stopped replying to {client_name} for the rest of this chat.", "Signal client")
         return None
 
     async def send_to_signal_contact(self, contact: Client, text: str) -> None:
@@ -1657,6 +1785,9 @@ class CoraApp(App):
                 self.activity.write, message, summary,
             ),
         )
+        # The pass rates how clients treated her; anything bad goes to the person now.
+        if not (self.closing or worker.is_cancelled):
+            self.call_from_thread(self.deliver_heads_ups)
 
     @work(group="background-round", exclusive=True, exit_on_error=False)
     async def background_round(self) -> None:
@@ -1671,6 +1802,9 @@ class CoraApp(App):
         if closed and not self.closing:
             self.activity.write(f"Closed {closed} quiet client chat(s) for the memory pass.", "Background round")
             self.process_finished_conversations()
+        # Retries any heads-up that couldn't reach the person before.
+        if not self.closing:
+            self.deliver_heads_ups()
 
     def check_interests(self) -> None:
         # Single flight: a slow model call simply delays the next check.

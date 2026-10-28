@@ -9,7 +9,7 @@ import json
 
 MESSAGE_MAX_CHARS = 3000
 # Not offered at the desk, in Live or in the person's own chat: only clients have someone to pass things to.
-CLIENT_ONLY = frozenset({"tell_nick"})
+CLIENT_ONLY = frozenset({"tell_nick", "raise_concern", "stop_replying"})
 
 SCHEMA = {
     "type": "function",

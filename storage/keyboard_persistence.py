@@ -16,7 +16,7 @@ from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
-from subconscious.impressions.impression_store import ImpressionStore
+from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
 from subconscious.interests.interest_store import InterestStore
 from subconscious.relationship.relationship_rules import RelationshipValues
 from subconscious.relationship.relationship_store import RelationshipStore
@@ -55,7 +55,13 @@ class KeyboardPersistence:
         return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
 
     def load_people_context(self) -> str:
-        return ImpressionStore(self._get_store().engine).people_context()
+        return ImpressionStore(self._get_store().engine).people_context(datetime.now(timezone.utc))
+
+    def load_heads_ups(self) -> list[HeadsUp]:
+        return ImpressionStore(self._get_store().engine).unreported_heads_ups()
+
+    def mark_heads_up_reported(self, conversation_id: UUID) -> None:
+        ImpressionStore(self._get_store().engine).mark_reported(conversation_id)
 
     def load_client_people_context(self, person_id: UUID) -> str:
         return ImpressionStore(self._get_store().engine).client_context(person_id)

@@ -22,7 +22,7 @@ from storage.database import build_engine
 from storage.models import ConversationRecord
 from subconscious.impressions.form_impression import IMPRESSION_INSTRUCTIONS, form_impression, update_waiting_impressions
 from subconscious.impressions.impression_store import (
-    IMPRESSION_MAX_CHARS, OPINION_MAX_CHARS, PEOPLE_CONTEXT_MAX_CHARS, Impression, ImpressionStore,
+    IMPRESSION_MAX_CHARS, OPINION_MAX_CHARS, PEOPLE_CONTEXT_MAX_CHARS, Conduct, Impression, ImpressionStore,
 )
 import test_keyboard_persistence as keyboard_tests
 
@@ -30,6 +30,7 @@ TRANSCRIPT = json.dumps({"conversation_status": "closed", "messages": [{"role": 
 
 
 def model_reply(output: dict, status="completed"):
+    output = {"conduct": "fine", "conduct_note": "", **output}
     return SimpleNamespace(
         status=status, output_text=json.dumps(output),
         output=[SimpleNamespace(type="message", content=[SimpleNamespace(type="output_text")])],
@@ -42,7 +43,7 @@ class FormImpressionTests(unittest.TestCase):
         client.responses.create.return_value = model_reply({"impression": "  Cheerful,  asks about lessons. ", "opinion": "Lovely"})
         previous = Impression("Polite and brief.", "Nice enough")
         self.assertEqual(form_impression(client, "model-x", previous, TRANSCRIPT),
-                         Impression("Cheerful, asks about lessons.", "Lovely"))
+                         (Impression("Cheerful, asks about lessons.", "Lovely"), Conduct("fine")))
         kwargs = client.responses.create.call_args.kwargs
         self.assertEqual((kwargs["model"], kwargs["instructions"], kwargs["store"]), ("model-x", IMPRESSION_INSTRUCTIONS, False))
         data = json.loads(kwargs["input"])
@@ -56,13 +57,28 @@ class FormImpressionTests(unittest.TestCase):
     def test_overlong_answers_are_cut_and_failures_raise(self):
         client = MagicMock()
         client.responses.create.return_value = model_reply({"impression": "x" * 5000, "opinion": "y" * 500})
-        impression = form_impression(client, "m", None, TRANSCRIPT)
+        impression, _ = form_impression(client, "m", None, TRANSCRIPT)
         self.assertEqual((len(impression.impression), len(impression.opinion)), (IMPRESSION_MAX_CHARS, OPINION_MAX_CHARS))
         for reply in (model_reply({"impression": "x", "opinion": "y"}, status="incomplete"),
                       model_reply({"impression": " ", "opinion": "y"})):
             client.responses.create.return_value = reply
             with self.assertRaises(ValueError):
                 form_impression(client, "m", None, TRANSCRIPT)
+
+
+    def test_bad_conduct_comes_with_her_note_and_a_rating_without_one_stands_as_fine(self):
+        client = MagicMock()
+        client.responses.create.return_value = model_reply(
+            {"impression": "Blunt.", "opinion": "Blunt", "conduct": "rude", "conduct_note": "  He swore at me  over a booking. "})
+        self.assertEqual(form_impression(client, "m", None, TRANSCRIPT)[1], Conduct("rude", "He swore at me over a booking."))
+        client.responses.create.return_value = model_reply(
+            {"impression": "Blunt.", "opinion": "Blunt", "conduct": "abusive", "conduct_note": " "})
+        self.assertEqual(form_impression(client, "m", None, TRANSCRIPT)[1], Conduct("fine"))
+        client.responses.create.return_value = model_reply(
+            {"impression": "Fine.", "opinion": "Fine", "conduct": "fine", "conduct_note": "Nothing to report"})
+        self.assertEqual(form_impression(client, "m", None, TRANSCRIPT)[1], Conduct("fine"))
+        self.assertIn("[image withheld]", IMPRESSION_INSTRUCTIONS)
+        self.assertIn("without quoting", IMPRESSION_INSTRUCTIONS)
 
 
 class PeopleSectionTests(unittest.TestCase):
@@ -151,7 +167,7 @@ class ImpressionStoreDatabaseTests(unittest.TestCase):
                                    (gone, Impression("Was here.", "Fine"))):
             self.impressions.save(self.chat(client, "Hi"), client.id, impression)
         self.clients.remove(gone.id)
-        self.assertEqual(json.loads(self.impressions.people_context()), [
+        self.assertEqual(json.loads(self.impressions.people_context(datetime.now(timezone.utc))), [
             {"name": "Royce", "impression": "Talks cars and work; blunt."},
             {"name": "Sarah", "impression": "Learning to drive; cheerful."},
             {"name": "Tom", "impression": None},
@@ -169,7 +185,30 @@ class ImpressionStoreDatabaseTests(unittest.TestCase):
         self.clients.remove(sarah.id)
         lone = self.clients.add("Lone", "+61400000007")
         self.assertEqual(self.impressions.client_context(lone.id), "")
-        self.assertEqual(self.impressions.people_context(), '[{"name": "Lone", "impression": null}]')
+        self.assertEqual(self.impressions.people_context(datetime.now(timezone.utc)), '[{"name": "Lone", "impression": null}]')
+
+    def test_bad_chats_wait_to_be_reported_once_and_stay_in_the_persons_view_a_month(self):
+        sarah = self.clients.add("Sarah", "+61400000003")
+        now = datetime.now(timezone.utc)
+        old = self.chat(sarah, "Old", started=now - timedelta(days=40))
+        fine = self.chat(sarah, "Fine", started=now - timedelta(days=3))
+        rude = self.chat(sarah, "Rude", started=now - timedelta(days=2))
+        self.impressions.save(old, sarah.id, Impression("Was grumpy.", "Fine"), Conduct("abusive", "Long ago"))
+        self.impressions.save(fine, sarah.id, Impression("Fine.", "Fine"), Conduct("fine"))
+        self.impressions.save(rude, sarah.id, Impression("Blunt lately.", "Blunt"), Conduct("rude", "Called me useless"))
+        heads_ups = self.impressions.unreported_heads_ups()
+        self.assertEqual([(h.conversation_id, h.name, h.conduct, h.note) for h in heads_ups],
+                         [(old, "Sarah", "abusive", "Long ago"), (rude, "Sarah", "rude", "Called me useless")])
+        self.impressions.mark_reported(old)
+        self.impressions.mark_reported(old)
+        self.assertEqual([h.conversation_id for h in self.impressions.unreported_heads_ups()], [rude])
+        [person] = json.loads(self.impressions.people_context(now))
+        self.assertEqual(person["recent_concern"], {
+            "when": (now - timedelta(days=2)).date().isoformat(), "conduct": "rude", "note": "Called me useless"})
+        # Never in a client's view, of themselves or anyone else.
+        self.assertNotIn("useless", self.impressions.client_context(sarah.id))
+        with self.assertRaises(ValueError):
+            self.impressions.save(self.chat(sarah, "x"), sarah.id, Impression("x", "y"), Conduct("rude", " "))
 
     def test_waiting_chats_are_folded_in_order_and_failures_say_only_the_type(self):
         sarah = self.clients.add("Sarah", "+61400000003")
@@ -180,7 +219,7 @@ class ImpressionStoreDatabaseTests(unittest.TestCase):
 
         def fake_form(client, model, previous, transcript):
             seen.append((previous, json.loads(transcript)["messages"][0]["text"], json.loads(transcript)["user_is"]))
-            return Impression(f"After {len(seen)}", "Fine")
+            return Impression(f"After {len(seen)}", "Fine"), Conduct("rude", "Short with me") if len(seen) == 2 else Conduct("fine")
 
         activity = []
         with patch("subconscious.impressions.form_impression.OpenAI"), \
@@ -190,8 +229,9 @@ class ImpressionStoreDatabaseTests(unittest.TestCase):
         self.assertEqual([(previous, text) for previous, text, _ in seen], [(None, "First"), (Impression("After 1", "Fine"), "Second")])
         self.assertTrue(seen[0][2].startswith("Sarah"))
         self.assertEqual(self.impressions.impression(sarah.id), Impression("After 2", "Fine"))
-        self.assertEqual(activity, [(f"Impression revised: conversation_id={first}", "Impression revised"),
-                                    (f"Impression revised: conversation_id={second}", "Impression revised")])
+        self.assertEqual(activity, [(f"Impression revised: conversation_id={first}, conduct=fine", "Impression revised"),
+                                    (f"Impression revised: conversation_id={second}, conduct=rude", "Impression revised")])
+        self.assertEqual([h.conversation_id for h in self.impressions.unreported_heads_ups()], [second])
 
         self.chat(sarah, "Third")
         activity.clear()

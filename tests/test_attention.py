@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock
 
-from subconscious.attention import FINDING_REQUEST, AttentionManager
+from subconscious.attention import FINDING_REQUEST, AttentionManager, PersonMessage
 
 MENTION = SimpleNamespace(finding="Private finding text")
 
@@ -20,17 +20,43 @@ class AttentionManagerTests(unittest.IsolatedAsyncioTestCase):
         self.claim = AsyncMock(return_value=MENTION)
         self.send_finding = AsyncMock()
         self.release = AsyncMock(return_value=True)
+        self.send_message = AsyncMock()
         self.manager = AttentionManager(
             can_deliver=self.ready, is_closing=self.closing,
             schedule_delivery=self.schedule, send_observation=self.send,
             record_activity=self.record_activity, delivery_finished=self.finished,
             write_activity=self.activity, claim_finding=self.claim,
-            send_finding=self.send_finding, release_finding=self.release,
+            send_finding=self.send_finding, release_finding=self.release, send_message=self.send_message,
         )
 
     async def deliver_scheduled(self):
         await self.manager.deliver_next()
         self.manager.worker.is_finished = True
+
+    async def test_a_message_for_the_person_is_said_or_goes_the_other_way(self):
+        self.ready.return_value = True
+        said = PersonMessage("Heads up", AsyncMock(), AsyncMock())
+        self.manager.submit_message(said)
+        await self.deliver_scheduled()
+        self.send_message.assert_awaited_once_with("Heads up")
+        said.delivered.assert_awaited_once()
+        said.fallback.assert_not_awaited()
+        self.send_message.side_effect = RuntimeError("private")
+        failed = PersonMessage("Another", AsyncMock(), AsyncMock())
+        self.manager.submit_message(failed)
+        await self.deliver_scheduled()
+        failed.fallback.assert_awaited_once()
+        failed.delivered.assert_not_awaited()
+
+    async def test_unsaid_messages_can_be_withdrawn_leaving_observations(self):
+        message = PersonMessage("Heads up", AsyncMock(), AsyncMock())
+        self.manager.submit("Observed")
+        self.manager.submit_message(message)
+        self.assertEqual(self.manager.withdraw_messages(), [message])
+        self.assertEqual(list(self.manager.pending), ["Observed"])
+        self.manager.stop()
+        with self.assertRaises(RuntimeError):
+            self.manager.submit_message(message)
 
     async def test_pending_worker_is_scheduled_only_once(self):
         self.ready.return_value = True

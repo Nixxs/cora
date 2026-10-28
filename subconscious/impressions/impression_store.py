@@ -6,9 +6,10 @@ the names and one-line opinions of the others.
 
 import json
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -17,12 +18,43 @@ from storage.models import ConversationRecord, ImpressionRecord, ImpressionUpdat
 IMPRESSION_MAX_CHARS = 1200
 OPINION_MAX_CHARS = 200
 PEOPLE_CONTEXT_MAX_CHARS = 6000
+CONDUCTS = ("fine", "rude", "abusive", "threatening")
+CONDUCT_NOTE_MAX_CHARS = 500
+# How long a concern about someone stays in the person's view of them.
+RECENT_CONCERN = timedelta(days=30)
 
 
 @dataclass(frozen=True)
 class Impression:
     impression: str
     opinion: str
+
+
+@dataclass(frozen=True)
+class Conduct:
+    """How a client treated her in one conversation; a note in her words for anything but fine."""
+    kind: str
+    note: str | None = None
+
+
+@dataclass(frozen=True)
+class HeadsUp:
+    conversation_id: UUID
+    name: str
+    started_at: datetime
+    conduct: str
+    note: str
+
+
+def clean_conduct(kind: str, note: str | None) -> Conduct:
+    if kind not in CONDUCTS:
+        raise ValueError("Unknown conduct")
+    if kind == "fine":
+        return Conduct("fine")
+    note = " ".join((note or "").split())
+    if not note or len(note) > CONDUCT_NOTE_MAX_CHARS:
+        raise ValueError(f"A conduct note needs 1 to {CONDUCT_NOTE_MAX_CHARS} characters")
+    return Conduct(kind, note)
 
 
 def clean_impression(impression: str, opinion: str) -> Impression:
@@ -73,12 +105,14 @@ class ImpressionStore:
             record = session.get(ImpressionRecord, person_id)
             return None if record is None else Impression(record.impression, record.opinion)
 
-    def save(self, conversation_id: UUID, person_id: UUID, impression: Impression) -> None:
-        """Her revised impression, and that this conversation is in it, together."""
+    def save(self, conversation_id: UUID, person_id: UUID, impression: Impression, conduct: Conduct | None = None) -> None:
+        """Her revised impression, and that this conversation is in it and how they behaved, together."""
         impression = clean_impression(impression.impression, impression.opinion)
+        conduct = None if conduct is None else clean_conduct(conduct.kind, conduct.note)
         with Session(self.engine) as session, session.begin():
             session.execute(insert(ImpressionUpdateRecord).values(
                 conversation_id=conversation_id, person_id=person_id,
+                conduct=None if conduct is None else conduct.kind, conduct_note=None if conduct is None else conduct.note,
             ).on_conflict_do_nothing())
             session.execute(insert(ImpressionRecord).values(
                 person_id=person_id, impression=impression.impression, opinion=impression.opinion,
@@ -86,6 +120,38 @@ class ImpressionStore:
                 "impression": impression.impression, "opinion": impression.opinion,
                 "updated_at": func.current_timestamp(),
             }))
+
+    def unreported_heads_ups(self) -> list[HeadsUp]:
+        """Conversations where someone treated her badly that the person hasn't been told about, oldest first."""
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(ImpressionUpdateRecord.conversation_id, PersonRecord.display_name, ConversationRecord.started_at,
+                       ImpressionUpdateRecord.conduct, ImpressionUpdateRecord.conduct_note)
+                .join(PersonRecord, PersonRecord.id == ImpressionUpdateRecord.person_id)
+                .join(ConversationRecord, ConversationRecord.id == ImpressionUpdateRecord.conversation_id)
+                .where(ImpressionUpdateRecord.conduct_note.is_not(None), ImpressionUpdateRecord.reported_at.is_(None))
+                .order_by(ConversationRecord.started_at, ConversationRecord.id)
+            ).all()
+        return [HeadsUp(*row) for row in rows]
+
+    def mark_reported(self, conversation_id: UUID) -> None:
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(ImpressionUpdateRecord).where(
+                ImpressionUpdateRecord.conversation_id == conversation_id,
+                ImpressionUpdateRecord.reported_at.is_(None),
+            ).values(reported_at=func.current_timestamp()))
+
+    def _recent_concerns(self, session: Session, now: datetime) -> dict[UUID, dict]:
+        """Each person's latest concern within RECENT_CONCERN, for the person's view of them."""
+        rows = session.execute(
+            select(ImpressionUpdateRecord.person_id, ConversationRecord.started_at,
+                   ImpressionUpdateRecord.conduct, ImpressionUpdateRecord.conduct_note)
+            .join(ConversationRecord, ConversationRecord.id == ImpressionUpdateRecord.conversation_id)
+            .where(ImpressionUpdateRecord.conduct_note.is_not(None), ConversationRecord.started_at >= now - RECENT_CONCERN)
+            .order_by(ConversationRecord.started_at)
+        ).all()
+        return {person_id: {"when": started_at.date().isoformat(), "conduct": conduct, "note": note}
+                for person_id, started_at, conduct, note in rows}
 
     def _contacts(self, session: Session):
         # Everyone she may currently talk with; removed people drop out of every context.
@@ -96,11 +162,15 @@ class ImpressionStore:
             .order_by(PersonRecord.display_name, PersonRecord.id)
         ).all()
 
-    def people_context(self) -> str:
-        """For the person she works with: everyone she talks with and her view of each."""
+    def people_context(self, now: datetime) -> str:
+        """For the person she works with: everyone she talks with, her view of each, and any recent concern."""
         with Session(self.engine) as session:
             rows = self._contacts(session)
-        return bounded([{"name": name, "impression": impression} for _, name, impression, _ in rows])
+            concerns = self._recent_concerns(session, now)
+        return bounded([
+            {"name": name, "impression": impression, **({"recent_concern": concerns[person_id]} if person_id in concerns else {})}
+            for person_id, name, impression, _ in rows
+        ])
 
     def client_context(self, person_id: UUID) -> str:
         """For one client's chat: her view of them, then only the others' names and one-line opinions."""

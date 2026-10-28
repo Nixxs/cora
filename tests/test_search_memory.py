@@ -578,7 +578,8 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([schema["name"] for schema in registry.schemas()
                           if schema["name"] != "random_number"],
                          ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                          "recall_self", "look_at_screen", "show_web_image", "send_signal_message", "tell_nick"])
+                          "recall_self", "look_at_screen", "show_web_image", "send_signal_message", "tell_nick",
+                          "raise_concern", "stop_replying"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
 

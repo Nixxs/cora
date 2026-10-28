@@ -691,6 +691,21 @@ the way a professional talks with a client:
   else only their name and her one-liner: asked for more, she says they'd have to
   ask that person. People you remove drop out of both. Run `python migrate.py`
   once for migration 0026.
+- **Heads-ups.** You don't see their chats, but you hear if one went badly. The
+  same pass rates how they treated her (fine, rude, abusive or threatening; an
+  explicit image counts as abusive, and being asked about you is never a
+  problem). Anything but fine reaches you once, in her words and never quoting
+  them: "Heads up: Royce was rude in our chat on Tuesday 27 Oct. …". With Live
+  Active she tells you by voice in a quiet moment; otherwise, or if Live goes to
+  Standby before she has, it comes on Signal and shows in your chat. If neither
+  way is open it waits for the next hourly round. For threats or sustained abuse
+  she doesn't wait for the chat to end: `raise_concern` tells you at once (up to
+  three times a day per person). She stays calm, sets a boundary once, and if
+  they keep on she can end the chat (`stop_replying`): their messages are still
+  saved but go unanswered until they've been quiet for the conversation gap.
+  Concerns from the last 30 days stay in her view of that person, so you can ask
+  how her chats with them have been. Run `python migrate.py` once for migration
+  0027.
 - **She remembers them.** Their finished conversations go through the usual
   memory pass, told who the user was, so memories are written with their name
   ("Sarah lives in Perth"; what they say about others is kept as "Sarah said
@@ -1138,8 +1153,10 @@ features it helps check, and package last.
    whose write-tool confirmation it reuses). S1–S4 are built: she answers you and
    the people you add on her own number, and you approve tools that change things
    by replying YES in your Signal chat. S5 is built: images sent to her on
-   Signal are read like pasted ones. Next, S6: her impression of each person
-   she talks with (see Details below).
+   Signal are read like pasted ones. S6 is mostly built: quiet client chats
+   close hourly, she has an impression of each person she talks with, and you
+   get a heads-up when one treats her badly. Next, the Pause option in Settings
+   (see Details below).
 10. Tasks T1–T3: errands she carries out with other people over Signal and her
     own email, reporting back to you (see Details below).
 
@@ -1153,7 +1170,7 @@ features it helps check, and package last.
       one-liner, no scores
     - [x] S6 who sees what: your contexts get her opinion and gist, each client
       gets their own, other clients only names and one-liners
-    - [ ] S6 conduct heads-up (rude, abusive, threatening), client-only
+    - [x] S6 conduct heads-up (rude, abusive, threatening), client-only
       `raise_concern`, calm boundary
     - [ ] S6 Pause option beside Remove in Settings
     - [ ] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
@@ -1386,7 +1403,7 @@ features it helps check, and package last.
        snapshot; only the names and her one-line view. So the line can't leak
        more than intended, each impression keeps her full view and a separate
        one-line opinion fit for anyone, and clients' chats only get the latter.
-     - *Conduct heads-up:* the person gets no more access to client chats than
+     - *Conduct heads-up (built):* the person gets no more access to client chats than
        people have to each other's, except a heads-up about how a chat went.
        The same call that revises an impression rates the conversation's
        conduct: fine, rude, abusive or threatening; questions she turns away
@@ -1397,10 +1414,18 @@ features it helps check, and package last.
        sustained abuse she doesn't wait for the chat to close: a client-only
        `raise_concern` tool tells the person at once, marked as from her, not as a
        relay from them. In the chat she may set a calm boundary and stop
-       replying for the rest of that conversation rather than argue. The person
-       can ask her how her chats with others have been, and remove a contact in
-       Settings, or pause them (she stops answering but keeps their history; a
-       new option beside Remove).
+       replying for the rest of that conversation rather than argue
+       (`stop_replying`, [tools/client_boundaries.py](tools/client_boundaries.py)).
+       The person can ask her how her chats with others have been (concerns
+       from the last 30 days are in their view of each person), and remove a
+       contact in Settings, or pause them (she stops answering but keeps their
+       history; a new option beside Remove, still to build). Ratings and notes
+       are saved on `impression_updates` (migration 0027) with when they were
+       reported, so each goes once; one not yet delivered is retried each
+       hourly round. Reaching the person goes through `tell_person` in
+       [app.py](app.py): a message queued with the attention manager when Live
+       is Active, withdrawn and sent on Signal if Live goes to Standby first,
+       or straight on Signal otherwise. Tasks (T2) will use the same route.
 
   Possible extras, not planned: passing a client's private question on to the person
   ("let the person know they asked"); searchable client chat summaries, so "what have
