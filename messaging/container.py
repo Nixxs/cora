@@ -1,6 +1,7 @@
 """Start and stop the signal-cli container from the project's compose file."""
 
 import asyncio
+import re
 import subprocess
 from pathlib import Path
 
@@ -9,6 +10,10 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = ROOT / ".env.database"
 DEFAULT_PORT = 8090
+# signal-cli keeps every received attachment here, in the signal-data volume that backups include.
+ATTACHMENTS = "/var/lib/signal-cli/attachments"
+# Its names are a random ID and an extension; anything else is never passed to the shell's rm.
+ATTACHMENT_ID = re.compile(r"[A-Za-z0-9_-]{1,128}(\.[A-Za-z0-9]{1,10})?")
 
 
 class ContainerError(Exception):
@@ -44,3 +49,15 @@ async def start_container() -> None:
 
 async def stop_container() -> None:
     await asyncio.to_thread(_compose, "stop", "signal")
+
+
+async def delete_attachments(ids) -> None:
+    """Delete signal-cli's stored copies once handled: signal-cli has no call for it, so rm in the container."""
+    paths = [f"{ATTACHMENTS}/{attachment_id}" for attachment_id in ids if ATTACHMENT_ID.fullmatch(attachment_id)]
+    if paths:
+        await asyncio.to_thread(_compose, "exec", "-T", "signal", "rm", "-f", "--", *paths)
+
+
+async def clear_attachments() -> None:
+    """Delete any left from an earlier run (or from before attachments were deleted), before listening starts."""
+    await asyncio.to_thread(_compose, "exec", "-T", "signal", "find", ATTACHMENTS, "-type", "f", "-delete")

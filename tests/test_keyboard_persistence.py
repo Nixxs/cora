@@ -111,6 +111,7 @@ async def running_app(persistence=None):
             patch("memory.background.update_relationships"), \
             patch("services.credentials.keyring"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
+            patch("app.delete_attachments", AsyncMock()), patch("app.clear_attachments", AsyncMock()), \
             patch.object(CoraApp, "daily_backup", return_value=None):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:

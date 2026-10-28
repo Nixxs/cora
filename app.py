@@ -26,7 +26,10 @@ from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
 from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalControls
 from backup import BackupError, daily_backup_due, run_backup
-from messaging.container import signal_port, start_container, stop_container
+from messaging.container import (
+    clear_attachments, delete_attachments, signal_port, start_container, stop_container,
+)
+from messaging.images import read_images
 from messaging.messages import (
     APPROVAL_SECONDS, SIGNAL_SORRY, approval_answer, approval_request_text, signal_content,
     signal_message_text,
@@ -1064,6 +1067,12 @@ class CoraApp(App):
     async def listen_on_signal(self) -> None:
         """Learn known people's Signal IDs first: messages that waited arrive the moment listening starts."""
         await self.learn_signal_ids()
+        if self.signal.status.state == SIGNAL_LINKED and (self.signal_receiver is None or self.signal_receiver.is_finished):
+            # Nothing is being answered yet, so any attachment still stored is left over: none are kept.
+            try:
+                await clear_attachments()
+            except Exception as error:
+                self.activity.write(f"Clearing stored Signal attachments failed ({type(error).__name__}).", "Signal error")
         self.sync_signal_receiver()
 
     def sync_signal_receiver(self) -> None:
@@ -1094,6 +1103,8 @@ class CoraApp(App):
         sender = message.sender or self.signal_ids.get(message.sender_id or "", "")
         known = sender and (sender == self.signal_settings.allowed_number or sender in self.signal_clients)
         if not known:
+            # A stranger's attachments are never opened, and not kept either.
+            self.discard_signal_attachments([message])
             self.answer_stranger(sender or message.sender_id)
             return
         if not message.sender:
@@ -1106,6 +1117,7 @@ class CoraApp(App):
             answer = approval_answer(message.text)
             pending.set_result(answer is True)
             if answer is not None:
+                self.discard_signal_attachments([message])
                 self.conversation.show_signal_message(signal_message_text(message))
                 return
             # Not a clear yes or no: the request is declined, and this is answered as a message.
@@ -1126,11 +1138,53 @@ class CoraApp(App):
             batch = self.signal_waiting.pop(sender)
             account = self.signal.status.account
             if not account:
+                self.discard_signal_attachments(batch)
                 return
+            client = self.signal_clients.get(sender)
             if sender == self.signal_settings.allowed_number:
+                batch = await self.read_signal_images(account, self.signal_settings.person_recipient, batch)
                 await self.answer_primary_on_signal(account, self.signal_settings.person_recipient, batch)
-            elif (client := self.signal_clients.get(sender)) is not None:
+            elif client is not None:
+                batch = await self.read_signal_images(account, client.recipient, batch)
                 await self.answer_client_on_signal(account, client, batch)
+            else:
+                self.discard_signal_attachments(batch)
+
+    async def read_signal_images(self, account: str, recipient: str, batch: list[IncomingMessage]) -> list[IncomingMessage]:
+        """Images from people she knows are read like pasted ones; then every attachment is deleted from signal-cli."""
+        if not any(message.attachments for message in batch):
+            return batch
+        try:
+            await self.signal.client.send_typing(account, recipient)
+        except Exception:
+            pass  # only a courtesy, while the images are read
+        read = []
+        try:
+            for message in batch:
+                seen, failed = await read_images(message, lambda attachment_id: self.signal.client.attachment(account, attachment_id))
+                if seen:
+                    self.activity.write(f"Read {len(seen)} Signal image(s) for Cora.", "Image read")
+                if failed:
+                    # Not why: errors may echo the request.
+                    self.activity.write(f"{failed} Signal image(s) couldn't be read; noted as not opened.", "Image look failed")
+                read.append(replace(message, images_seen=seen))
+        finally:
+            await self.delete_signal_attachments(batch)
+        return read
+
+    def discard_signal_attachments(self, messages: list[IncomingMessage]) -> None:
+        if any(message.attachments for message in messages):
+            self.run_worker(self.delete_signal_attachments(messages), group="signal-attachments", exit_on_error=False)
+
+    async def delete_signal_attachments(self, messages: list[IncomingMessage]) -> None:
+        ids = [attachment.id for message in messages for attachment in message.attachments]
+        if not ids:
+            return
+        try:
+            await delete_attachments(ids)
+        except Exception as error:
+            # Cleared at the next launch instead.
+            self.activity.write(f"Deleting Signal attachments failed ({type(error).__name__}).", "Signal error")
 
     async def send_signal_reply(self, account: str, recipient: str, write) -> str | None:
         """Show typing, write a reply and send it; on failure send a short apology and return None."""

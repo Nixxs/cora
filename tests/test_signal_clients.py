@@ -13,7 +13,8 @@ from sqlalchemy import text, update
 from sqlalchemy.orm import Session
 from textual.widgets import Button, Input, Static, TabbedContent
 
-from messaging.receiver import IncomingMessage
+from messaging.messages import image_seen_content
+from messaging.receiver import Attachment, IncomingMessage
 from messaging.setup import LINKED, SignalStatus
 from migrate import apply_migrations, database_settings
 from session_config import BACKEND_MODEL, MODEL_AREAS, client_chat_instructions, stranger_reply
@@ -116,6 +117,23 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             entries = "\n".join(app.activity.entries)
             self.assertIn("Answered Sarah on Signal.", entries)
             self.assertNotIn("Friday", entries)
+
+    async def test_a_clients_image_is_read_into_their_own_chat_only(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            conversation_id = await self.linked_app(app)
+            app.signal.client.attachment = AsyncMock(return_value=b"jpeg")
+            photo = Attachment("abc123.jpg", "image/jpeg", 4)
+            message = IncomingMessage(SARAH, "My new car!", datetime.now(timezone.utc), (photo,))
+            with patch("messaging.images.read_image", return_value="A red hatchback"):
+                app.on_signal_message(message)
+                await self.settle(app, pilot)
+            content = app.backend_chat.reply.await_args.kwargs["content"]
+            self.assertEqual(content, [{"type": "input_text", "text": "[image] My new car!"},
+                                       image_seen_content("A red hatchback")])
+            saves = [call.args for call in app.persistence.save_client_message.call_args_list]
+            self.assertEqual(saves[0], (conversation_id, "user", "[image] My new car!"))
+            self.assertFalse(any("car" in str(entry) for entry in app.conversation.log_entries))
+            app.signal.client.send_typing.assert_awaited_with(CORA, SARAH)
 
     async def test_different_people_are_answered_independently(self):
         async with keyboard_tests.running_app() as (app, pilot):

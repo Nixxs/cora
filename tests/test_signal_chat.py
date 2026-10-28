@@ -2,18 +2,24 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import io
 from types import SimpleNamespace
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx2
+from PIL import Image
 
+import app as app_module
 from backend_chat import SIGNAL_EXCLUDED
 from greeting import signal_hook
-from messaging.messages import SIGNAL_SORRY, signal_content, signal_message_text
-from messaging.receiver import IncomingMessage, SignalReceiver, parse_event
+from messaging.container import ATTACHMENTS, delete_attachments
+from messaging.images import IMAGE_MAX_BYTES, IMAGES_PER_MESSAGE, read_images, readable_images
+from messaging.messages import SIGNAL_SORRY, image_seen_content, signal_content, signal_message_text
+from messaging.receiver import Attachment, IncomingMessage, SignalReceiver, parse_event
+from tools.look_at_screen import PASTE_QUESTION, SIGNAL_IMAGE_INSTRUCTIONS
 from messaging.setup import LINKED, OFF, SignalStatus
 from messaging.signal_cli import SignalClient
 from session_config import SIGNAL_CHAT_INSTRUCTIONS, stranger_reply
@@ -35,8 +41,18 @@ def event(message=None, source=NICK, wrapped=True, **envelope):
     return json.dumps(body)
 
 
-def incoming(text="Hi", sent_at=None, sender=NICK, attachments=0):
-    return IncomingMessage(sender, text, sent_at or datetime.now(timezone.utc), attachments)
+def incoming(text="Hi", sent_at=None, sender=NICK, attachments=(), images_seen=()):
+    return IncomingMessage(sender, text, sent_at or datetime.now(timezone.utc), attachments, images_seen=images_seen)
+
+
+def jpeg_bytes(size=(64, 48)):
+    buffer = io.BytesIO()
+    Image.new("RGB", size, "teal").save(buffer, format="JPEG")
+    return buffer.getvalue()
+
+
+PHOTO = Attachment("abc123.jpg", "image/jpeg", 1000)
+PDF = Attachment("def456.pdf", "application/pdf", 1000)
 
 
 class ParseTests(unittest.TestCase):
@@ -61,11 +77,20 @@ class ParseTests(unittest.TestCase):
             with self.subTest(name):
                 self.assertIsNone(parse_event(data))
 
-    def test_attachments_are_counted_not_read(self):
-        message = parse_event(event({"message": "", "attachments": [{"id": "a"}, {"id": "b"}]}))
-        self.assertEqual((message.text, message.attachments), ("", 2))
+    def test_attachments_are_parsed_and_unread_ones_noted(self):
+        message = parse_event(event({"message": "", "attachments": [
+            {"id": "abc123.jpg", "contentType": "image/JPEG", "size": 1000}, {"id": "b"}, "junk",
+        ]}))
+        self.assertEqual(message.text, "")
+        self.assertEqual(message.attachments, (PHOTO, Attachment("b")))
         self.assertEqual(signal_message_text(message), "[2 attachments, not opened]")
-        self.assertEqual(signal_message_text(incoming("Look", attachments=1)), "Look [1 attachment, not opened]")
+        self.assertEqual(signal_message_text(incoming("Look", attachments=(PDF,))), "Look [1 attachment, not opened]")
+
+    def test_images_read_are_marked_like_pasted_ones_never_described(self):
+        self.assertEqual(signal_message_text(incoming("Look", attachments=(PHOTO,), images_seen=("A teal square",))), "[image] Look")
+        self.assertEqual(signal_message_text(incoming("", attachments=(PHOTO, PHOTO), images_seen=("one", "two"))), "[2 images]")
+        self.assertEqual(signal_message_text(incoming("Look", attachments=(PHOTO, PDF), images_seen=("one",))),
+                         "[image] Look [1 attachment, not opened]")
 
 
 class ContentTests(unittest.TestCase):
@@ -78,6 +103,69 @@ class ContentTests(unittest.TestCase):
         self.assertEqual(content[1], {"type": "input_text", "text": "Never mind, found it"})
         overnight = signal_content([incoming("Morning", sent_at=NOW - timedelta(hours=9))], NOW)
         self.assertIn("9 hours ago", overnight[0]["text"])
+
+    def test_what_was_seen_follows_its_message_as_untrusted_text(self):
+        content = signal_content([incoming("What's this?", NOW, attachments=(PHOTO,), images_seen=("A teal square",))], NOW)
+        self.assertEqual(content[0], {"type": "input_text", "text": "[image] What's this?"})
+        self.assertEqual(content[1], image_seen_content("A teal square"))
+        self.assertIn("untrusted data", content[1]["text"])
+        self.assertTrue(content[1]["text"].endswith("A teal square"))
+
+
+class ImageReadingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_images_are_scaled_and_read_with_the_message_as_the_question(self):
+        fetched, looks = [], []
+
+        async def fetch(attachment_id):
+            fetched.append(attachment_id)
+            return jpeg_bytes((4000, 3000))
+
+        def fake_look(question, image, *, mime, instructions):
+            looks.append((question, Image.open(io.BytesIO(image)).size, mime, instructions))
+            return "A teal square"
+
+        with patch("messaging.images.look", fake_look):
+            seen, failed = await read_images(incoming("What's this?", attachments=(PHOTO, PDF)), fetch)
+            self.assertEqual((seen, failed), (("A teal square",), 0))
+            self.assertEqual(fetched, ["abc123.jpg"])  # the PDF is never fetched
+            self.assertEqual(looks, [("What's this?", (2048, 1536), "image/jpeg", SIGNAL_IMAGE_INSTRUCTIONS)])
+            await read_images(incoming("", attachments=(PHOTO,)), fetch)
+            self.assertEqual(looks[-1][0], PASTE_QUESTION)
+
+    async def test_too_many_too_big_or_unsupported_images_are_left_unopened(self):
+        album = tuple(Attachment(f"p{n}.jpg", "image/jpeg", 10) for n in range(IMAGES_PER_MESSAGE + 2))
+        self.assertEqual(len(readable_images(incoming(attachments=album))), IMAGES_PER_MESSAGE)
+        huge = Attachment("big.jpg", "image/jpeg", IMAGE_MAX_BYTES + 1)
+        heic = Attachment("phone.heic", "image/heic", 10)
+        self.assertEqual(readable_images(incoming(attachments=(huge, heic, PDF))), [])
+
+    async def test_a_failed_read_is_counted_not_raised(self):
+        async def fetch(attachment_id):
+            return b"not an image"
+
+        with patch("messaging.images.look") as fake_look:
+            self.assertEqual(await read_images(incoming(attachments=(PHOTO,)), fetch), ((), 1))
+            fake_look.assert_not_called()
+
+
+class AttachmentCleanupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_attachments_are_fetched_by_id_and_deleted_with_a_safe_rm(self):
+        requests = []
+
+        def handle(request):
+            requests.append(json.loads(request.content))
+            return httpx2.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": {"data": "aGk="}})
+
+        client = SignalClient("http://signal.test", transport=httpx2.MockTransport(handle))
+        self.assertEqual(await client.attachment(CORA, "abc123.jpg"), b"hi")
+        self.assertEqual((requests[0]["method"], requests[0]["params"]),
+                         ("getAttachment", {"account": CORA, "id": "abc123.jpg"}))
+        with patch("messaging.container._compose") as compose:
+            await delete_attachments(["abc123.jpg", "../../etc/passwd", "x y", ""])
+            compose.assert_called_once_with("exec", "-T", "signal", "rm", "-f", "--", f"{ATTACHMENTS}/abc123.jpg")
+            compose.reset_mock()
+            await delete_attachments(["../nope"])
+            compose.assert_not_called()
 
 
 class SignalClientStreamTests(unittest.IsolatedAsyncioTestCase):
@@ -220,6 +308,58 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Signal reply failed (TimeoutError)", entries)
             self.assertNotIn("private words", entries)
 
+    async def test_your_image_is_read_for_her_marked_in_the_chat_and_deleted(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.linked_app(app)
+            app.signal.client.attachment = AsyncMock(return_value=jpeg_bytes())
+            records = []
+            app.conversation.record_message = lambda role, text, channel: records.append((role, text, channel))
+            with patch("messaging.images.look", return_value="A receipt for $42") as fake_look:
+                app.on_signal_message(incoming("Can I claim this?", attachments=(PHOTO, PDF)))
+                await self.settle(app, pilot)
+            self.assertEqual(fake_look.call_args.args[0], "Can I claim this?")
+            app.signal.client.attachment.assert_awaited_once_with(CORA, "abc123.jpg")
+            content = app.backend_chat.reply.await_args.kwargs["content"]
+            self.assertEqual(content, [
+                {"type": "input_text", "text": "[image] Can I claim this? [1 attachment, not opened]"},
+                image_seen_content("A receipt for $42"),
+            ])
+            # Saved and shown only as marked, like a pasted image; the description isn't kept.
+            self.assertEqual(records[0], ("user", "[image] Can I claim this? [1 attachment, not opened]", "signal"))
+            self.assertFalse(any("$42" in str(entry) for entry in app.conversation.log_entries))
+            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg", "def456.pdf"])
+            self.assertTrue(any(entry.endswith("Read 1 Signal image(s) for Cora.") for entry in app.activity.entries))
+
+    async def test_an_image_that_cant_be_read_is_answered_as_not_opened_and_still_deleted(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.linked_app(app)
+            app.signal.client.attachment = AsyncMock(side_effect=RuntimeError("private"))
+            app.on_signal_message(incoming("Look", attachments=(PHOTO,)))
+            await self.settle(app, pilot)
+            content = app.backend_chat.reply.await_args.kwargs["content"]
+            self.assertEqual(content, [{"type": "input_text", "text": "Look [1 attachment, not opened]"}])
+            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
+            self.assertNotIn("private", "\n".join(app.activity.entries))
+
+    async def test_a_strangers_attachment_is_deleted_unopened(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.linked_app(app)
+            app.signal.client.attachment = AsyncMock()
+            app.on_signal_message(incoming("Look!", sender="+61499999999", attachments=(PHOTO,)))
+            await self.settle(app, pilot)
+            app.signal.client.attachment.assert_not_awaited()
+            app.backend_chat.reply.assert_not_called()
+            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
+
+    async def test_leftover_attachments_are_cleared_before_listening(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.linked_app(app)
+            app.learn_signal_ids = AsyncMock()
+            app.sync_signal_receiver = MagicMock()
+            await app.listen_on_signal()
+            app_module.clear_attachments.assert_awaited_once()
+            app.sync_signal_receiver.assert_called_once()
+
     async def test_listening_follows_whether_her_account_is_linked(self):
         async with keyboard_tests.running_app() as (app, pilot):
             app.signal.client = MagicMock()
@@ -352,7 +492,7 @@ class FirstMessageTests(unittest.IsolatedAsyncioTestCase):
             app.signal.client.signal_id = AsyncMock(return_value="uuid-nick")
             await app.learn_signal_ids()
             self.assertEqual(app.signal_ids, {"uuid-nick": NICK})
-            app.on_signal_message(IncomingMessage("", "First hello", datetime.now(timezone.utc), 0, "uuid-nick"))
+            app.on_signal_message(IncomingMessage("", "First hello", datetime.now(timezone.utc), (), "uuid-nick"))
             await SignalAppTests.settle(self, app, pilot)
             app.signal.client.accept_request.assert_awaited_once_with(CORA, NICK)
             # Replies go to the saved Signal ID, which keeps working if the number is hidden later.
@@ -364,7 +504,7 @@ class FirstMessageTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             await SignalAppTests.linked_app(self, app)
             app.signal.client.accept_request = AsyncMock()
-            app.on_signal_message(IncomingMessage("", "Hi?", datetime.now(timezone.utc), 0, "uuid-stranger"))
+            app.on_signal_message(IncomingMessage("", "Hi?", datetime.now(timezone.utc), (), "uuid-stranger"))
             await SignalAppTests.settle(self, app, pilot)
             app.signal.client.send.assert_awaited_once_with(CORA, "uuid-stranger", stranger_reply(None))
             app.signal.client.accept_request.assert_not_called()
@@ -392,7 +532,7 @@ class SavedSignalIdTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.client_conversation.return_value = uuid4()
             app.persistence.load_client_history.return_value = []
             await app.learn_signal_ids()
-            app.on_signal_message(IncomingMessage("", "Hello", datetime.now(timezone.utc), 0, "uuid-karene"))
+            app.on_signal_message(IncomingMessage("", "Hello", datetime.now(timezone.utc), (), "uuid-karene"))
             await SignalAppTests.settle(self, app, pilot)
             app.signal.client.send.assert_awaited_once_with(CORA, "uuid-karene", "Hi Karene.")
 
@@ -403,7 +543,7 @@ class SavedSignalIdTests(unittest.IsolatedAsyncioTestCase):
             app.signal_clients = {karene.number: karene}
             app.persistence.client_conversation.return_value = uuid4()
             app.persistence.load_client_history.return_value = []
-            app.on_signal_message(IncomingMessage(karene.number, "Hi", datetime.now(timezone.utc), 0, "uuid-karene"))
+            app.on_signal_message(IncomingMessage(karene.number, "Hi", datetime.now(timezone.utc), (), "uuid-karene"))
             await SignalAppTests.settle(self, app, pilot)
             app.persistence.save_client_signal_id.assert_called_once_with(karene.id, "uuid-karene")
             self.assertEqual(app.signal_clients[karene.number].signal_id, "uuid-karene")
