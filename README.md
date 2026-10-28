@@ -723,15 +723,17 @@ the way a professional talks with a client:
     `said_by`, so you can ask "what did Sarah say about the meeting?".
 - They get no appraisals, and never affect your relationship, your greeting or
   "when you last talked".
-- **Passing things on to you.** In a client's chat she has `tell_nick`: when
+- **Passing things on to you.** In a client's chat she has `pass_on`: when
   they ask her to pass something on (a plan they worked out together, a
-  question, a message), or something clearly needs your attention, she sends it
-  to you on Signal, marked "From Royce, via Cora:", and tells them she's passed
-  it on without promising your reply. It reaches only you, so it needs no
-  approval; each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY`
-  in [app.py](app.py)). It also appears in your desktop chat and conversation,
-  and voice Cora gets a silent note. It's never offered at the desk, in Live or
-  in your own chat.
+  question, a message), something clearly needs your attention, or their part
+  of a task is settled (see Tasks below), she passes it to you marked "From
+  Royce, via Cora:", and tells them she's passed it on without promising your
+  reply. With Live Active she tells you by voice at a quiet moment; otherwise,
+  or if Live goes to Standby first, it comes on Signal and appears in your
+  desktop chat and conversation. It reaches only you, so it needs no approval;
+  each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY` in
+  [app.py](app.py)). It's never offered at the desk, in Live or in your own
+  chat.
 - **Passing things on to them.** A share check in the background memory pass (after the
   fade check, on the small-jobs model; migration 0024) asks of each of *your*
   memories one question: did you mean it to reach someone? ("tell Sarah I'll be
@@ -782,6 +784,22 @@ later). The message is saved in that person's conversation, so when they
 reply she sees her own introduction. From your own Signal chat she can do this
 too, asking you to reply YES in the chat instead of the pop-up; never from a
 client's chat.
+
+**Tasks: asking someone and reporting back.** Ask her something like "find out
+when Sarah's free for a driving lesson and let me know" and the message to
+Sarah becomes a task. She first asks you for anything she knows she'll need
+(times that suit you, an address, a budget). The approval shows the message, the
+task and a **brief** for Sarah: what to find out or agree and what she may share.
+Approving it approves the brief. From then on, Sarah's chat with her carries that
+brief, even across a new conversation after a quiet gap, so she can steer back to
+it; Sarah never sees your other tasks or anyone else involved. When Sarah's part
+is settled, Cora passes her answer to you (`pass_on`, naming the task, marked
+"for your task …") and records it; once everyone asked has answered, the task is
+done. Your chats with her (desk, voice and your Signal chat) know your open tasks
+and those finished in the last three days, so "what did Sarah say?" works later
+too. She can ask another contact for the same open task too, approved the same
+way. Nudging people who go quiet, coming back to you when stuck, and cancelling
+tasks come next (T2). Run `python migrate.py` once for migration 0028.
 
 ## How memory works
 
@@ -989,7 +1007,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `tell_nick`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1153,10 +1171,10 @@ features it helps check, and package last.
    whose write-tool confirmation it reuses). S1–S4 are built: she answers you and
    the people you add on her own number, and you approve tools that change things
    by replying YES in your Signal chat. S5 is built: images sent to her on
-   Signal are read like pasted ones. S6 is mostly built: quiet client chats
-   close hourly, she has an impression of each person she talks with, and you
-   get a heads-up when one treats her badly. Next, the Pause option in Settings
-   (see Details below).
+   Signal are read like pasted ones. S6 is built: quiet client chats close
+   hourly, she has an impression of each person she talks with, and you get a
+   heads-up when one treats her badly. T1 is built: tasks with Signal
+   contacts. Next, T2 (see Details below).
 10. Tasks T1–T3: errands she carries out with other people over Signal and her
     own email, reporting back to you (see Details below).
 
@@ -1172,13 +1190,13 @@ features it helps check, and package last.
       gets their own, other clients only names and one-liners
     - [x] S6 conduct heads-up (rude, abusive, threatening), client-only
       `raise_concern`, calm boundary
-    - [ ] S6 Pause option beside Remove in Settings
-    - [ ] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
+    - [x] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
       missing details first; first contact approved; `tell_nick` renamed
       `pass_on` with an optional task
     - [ ] T2 task checks in the hourly round: nudges (about a day on Signal),
       coming back to you, list and cancel tasks
-    - [ ] T2 reaching you by voice when Live is Active, otherwise on Signal
+    - [x] T2 reaching you by voice when Live is Active, otherwise on Signal (built
+      with the S6 heads-ups; `pass_on` uses it too)
     - [ ] T3 her own email address via MCP; strangers only within a task; nudges
       after two working days
     - [ ] T4 new-mail events through awareness (later, with item 14)
@@ -1418,8 +1436,9 @@ features it helps check, and package last.
        (`stop_replying`, [tools/client_boundaries.py](tools/client_boundaries.py)).
        The person can ask her how her chats with others have been (concerns
        from the last 30 days are in their view of each person), and remove a
-       contact in Settings, or pause them (she stops answering but keeps their
-       history; a new option beside Remove, still to build). Ratings and notes
+       contact in Settings (their history is kept). A separate Pause option
+       was dropped: `stop_replying` ends a bad chat, `raise_concern` reaches
+       the person at once, and they can remove anyone who keeps it up. Ratings and notes
        are saved on `impression_updates` (migration 0027) with when they were
        reported, so each goes once; one not yet delivered is retried each
        hourly round. Reaching the person goes through `tell_person` in
@@ -1450,12 +1469,12 @@ features it helps check, and package last.
 
 - **Tasks (errands with other people):** so the person can hand Cora a goal that needs
   other people, such as "find out what time suits Sarah for a driving lesson,
-  then find and book a local instructor for that time". Today the pieces exist
-  (`send_signal_message` out, the client chat for the back-and-forth,
-  `tell_nick` back) but nothing ties them into one job: the client chat sees
-  only her opening message, not that the person wants an answer reported back; a
-  reply after the conversation gap starts a new conversation without her
-  question; and the person's Cora doesn't know anything is waiting.
+  then find and book a local instructor for that time". Before tasks the pieces
+  existed (`send_signal_message` out, the client chat for the back-and-forth,
+  `tell_nick` back) but nothing tied them into one job: the client chat saw
+  only her opening message, not that the person wanted an answer reported back; a
+  reply after the conversation gap started a new conversation without her
+  question; and the person's Cora didn't know anything was waiting.
   - *Generic, never per person:* a task is the person's goal in their words, a status
     (open, waiting, needs the person, done, cancelled), the result and an optional
     deadline. Each **party** is a row: who (an added contact, or an email
@@ -1466,8 +1485,8 @@ features it helps check, and package last.
     any particular person: Sarah and an instructor are both just rows.
   - *Scoped party chats:* a party's chat gets only their brief, in its
     instructions for as long as the task is open, whichever conversation it's
-    in. When their part is settled she reports it with `pass_on` (today's
-    `tell_nick`, renamed), naming the task: one tool for both, so passing
+    in. When their part is settled she reports it with `pass_on` (formerly
+    `tell_nick`), naming the task: one tool for both, so passing
     something on without a task ("tell them I'll be late") works as now, and
     reporting a task's outcome also records it and moves the task on. The
     daily relay limit covers both. The instructor never learns about Sarah beyond
@@ -1509,11 +1528,15 @@ features it helps check, and package last.
     item is said, it goes on Signal instead rather than waiting. Either way it is
     saved in their one conversation, so the other side knows. Everything
     passed on from a contact's chat (`pass_on`, with or without a task) goes
-    the same way, replacing `tell_nick`'s always-Signal send.
-  - *Steps:* T1 tasks and Signal parties (tables, the brief on
-    `send_signal_message`, the brief in that contact's chat until done,
-    `tell_nick` renamed `pass_on` with an optional task), so "ask Sarah when she's free and tell me" works end to
-    end; T2 the coordinator, dependent steps, nudges and coming back to the person,
+    the same way, replacing `tell_nick`'s always-Signal send (built: `tell_person`
+    in [app.py](app.py)).
+  - *Steps:* T1 tasks and Signal parties (built: `tasks`, `task_parties` and
+    `task_steps` in migration 0028 and [storage/task_store.py](storage/task_store.py),
+    the optional `task` on `send_signal_message`, the brief in that contact's
+    chat until their part is done, `tell_nick` renamed `pass_on` with an
+    optional `task_id`), so "ask Sarah when she's free and tell me" works end to
+    end. In T1 a task is done once every party has reported; deciding the next
+    step is the coordinator's job in T2; T2 the coordinator, dependent steps, nudges and coming back to the person,
     and asking about or cancelling open tasks; T3 her own email via MCP, email
     parties, the hourly mail check and commitment approvals; T4 (with awareness)
     mail events wake waiting tasks instead of the hourly check.

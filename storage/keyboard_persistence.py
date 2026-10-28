@@ -14,6 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
+from .task_store import TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -65,6 +66,27 @@ class KeyboardPersistence:
 
     def load_client_people_context(self, person_id: UUID) -> str:
         return ImpressionStore(self._get_store().engine).client_context(person_id)
+
+    def start_task(self, goal: str, person_id: UUID, brief: str, step: str) -> UUID:
+        return TaskStore(self._get_store().engine).start(goal, person_id, brief, step)
+
+    def add_task_party(self, task_id: UUID, person_id: UUID, brief: str, step: str) -> None:
+        TaskStore(self._get_store().engine).add_party(task_id, person_id, brief, step)
+
+    def task_goal(self, task_id: UUID) -> str | None:
+        return TaskStore(self._get_store().engine).goal(task_id)
+
+    def report_task(self, task_id: UUID, person_id: UUID, outcome: str) -> tuple[str, bool]:
+        return TaskStore(self._get_store().engine).report(task_id, person_id, outcome)
+
+    def task_party_heard(self, person_id: UUID) -> None:
+        TaskStore(self._get_store().engine).heard_from(person_id)
+
+    def load_task_briefs(self, person_id: UUID) -> str:
+        return TaskStore(self._get_store().engine).briefs_for(person_id)
+
+    def load_tasks_context(self) -> str:
+        return TaskStore(self._get_store().engine).tasks_context(datetime.now(timezone.utc))
 
     def load_relationship_values(self) -> RelationshipValues | None:
         return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))

@@ -39,7 +39,7 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
 
     def test_schema_is_strict_and_arguments_are_checked(self):
         self.assertTrue(SCHEMA["strict"])
-        validate_arguments({"to": "Sarah", "message": "Hi"})
+        validate_arguments({"to": "Sarah", "message": "Hi", "task": None})
         for bad in ({"to": "Sarah"}, {"to": " ", "message": "Hi"}, {"to": "Sarah", "message": "x" * 2001},
                     {"to": "Sarah", "message": "Hi", "extra": 1}):
             with self.subTest(arguments=bad), self.assertRaises(ValueError):
@@ -47,7 +47,7 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_approved_messages_are_sent_exactly_as_shown(self):
         tool = self.tool()
-        await tool.handle("c1", {"to": "Sarah", "message": " Hi Sarah, I'm Cora. "})
+        await tool.handle("c1", {"to": "Sarah", "message": " Hi Sarah, I'm Cora. ", "task": None})
         self.confirm.assert_awaited_once_with(
             "signal", "send_signal_message", {"to": f"Sarah Jones ({SARAH.number})", "message": "Hi Sarah, I'm Cora."},
             title="Signal",
@@ -60,13 +60,13 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         for outcome in (DECLINED, TIMED_OUT):
             with self.subTest(outcome=outcome):
                 tool = self.tool(outcome)
-                await tool.handle("c1", {"to": "Sarah", "message": "Hi"})
+                await tool.handle("c1", {"to": "Sarah", "message": "Hi", "task": None})
                 self.send.assert_not_called()
                 self.assertEqual(self.output()["status"], "not_done")
 
     async def test_an_unknown_contact_is_explained_without_asking(self):
         tool = self.tool(contact=None, problem="There's no contact by that name. You can message: Sarah Jones.")
-        await tool.handle("c1", {"to": "Bob", "message": "Hi"})
+        await tool.handle("c1", {"to": "Bob", "message": "Hi", "task": None})
         self.confirm.assert_not_called()
         self.assertIn("You can message: Sarah Jones", self.output()["message"])
 
@@ -75,7 +75,7 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.send.side_effect = RuntimeError("private words")
         log = MagicMock()
         tool.write_debug = log
-        await tool.handle("c1", {"to": "Sarah", "message": "private words"})
+        await tool.handle("c1", {"to": "Sarah", "message": "private words", "task": None})
         self.assertEqual(self.output()["status"], "error")
         self.assertNotIn("private words", repr(log.call_args_list))
 
@@ -114,7 +114,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             app.live.send_approval_waiting = AsyncMock()
             app.tools.handle_function_call({
                 "name": "send_signal_message", "call_id": "c1", "status": "completed",
-                "arguments": json.dumps({"to": "Sarah", "message": "Hi Sarah, I'm Cora."}),
+                "arguments": json.dumps({"to": "Sarah", "message": "Hi Sarah, I'm Cora.", "task": None}),
             })
             for _ in range(30):
                 if isinstance(app.screen, ConfirmScreen):
@@ -156,7 +156,7 @@ class UnreachableTests(unittest.IsolatedAsyncioTestCase):
             lambda: connection, lambda: False, MagicMock(), lambda name: (SARAH, None), confirm, send,
             AsyncMock(return_value="Sarah Jones's number isn't on Signal"),
         )
-        await tool.handle("c1", {"to": "Sarah", "message": "Hi"})
+        await tool.handle("c1", {"to": "Sarah", "message": "Hi", "task": None})
         confirm.assert_not_called()
         send.assert_not_called()
         output = json.loads(connection.response.item.create.call_args.kwargs["item"]["output"])

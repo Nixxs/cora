@@ -63,7 +63,7 @@ from greeting import (
 )
 from live import CoraLive, typed_content
 from backend_chat import SIGNAL_EXCLUDED, STANDBY_EXCLUDED, BackendChat, BackendRoute
-from tools.tell_nick import CLIENT_ONLY
+from tools.pass_on import CLIENT_ONLY
 from session_config import (
     SIGNAL_CHAT_INSTRUCTIONS, client_chat_instructions, instruction_sections, stranger_reply,
 )
@@ -191,6 +191,7 @@ class CoraApp(App):
             set_self_image_context=lambda context: setattr(self.live, "self_image_context", context),
             set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
             set_people_context=lambda context: setattr(self.live, "people_context", context),
+            set_tasks_context=lambda context: setattr(self.live, "tasks_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             write_activity=self.activity.write,
@@ -259,10 +260,11 @@ class CoraApp(App):
             confirm=lambda *args, **options: self.confirmations.ask(*args, **options),
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
+            task_goal=self.task_goal, record_task=self.record_task,
             relay_to_person=self.relay_to_person,
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
-        # Live never sees client-only tools such as tell_nick.
+        # Live never sees client-only tools such as pass_on.
         self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
         self.service_tool_choices: dict[str, set[str]] = {}
@@ -1062,6 +1064,7 @@ class CoraApp(App):
             person_name=self.live.person_name, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context,
             relationship_context=self.live.relationship_context, people_context=self.live.people_context,
+            tasks_context=self.live.tasks_context,
         )
         return await self.backend_chat.reply(
             content=content, history=history, sections=sections, model=self.live.delegation_model,
@@ -1293,6 +1296,10 @@ class CoraApp(App):
             self.activity.write(f"Saving {client.name}'s Signal message failed ({type(error).__name__}).",
                                 "Signal reply failed")
             return
+        try:
+            await self.conversation_persistence.call_database(self.persistence.task_party_heard, client.id)
+        except Exception as error:
+            self.activity.write(f"Noting {client.name}'s reply on their tasks failed ({type(error).__name__}).", "Task")
         if conversation_id in self.signal_stopped:
             self.activity.write(f"Not answering {client.name}: Cora ended this chat.", "Signal client")
             return
@@ -1329,9 +1336,15 @@ class CoraApp(App):
         except Exception as error:
             self.activity.write(f"Who {client.name} is didn't load ({type(error).__name__}).", "Signal client")
             people = ""
+        try:
+            # Only what she's asking them about, from each task's brief for them.
+            briefs = await self.conversation_persistence.call_database(self.persistence.load_task_briefs, client.id)
+        except Exception as error:
+            self.activity.write(f"{client.name}'s task briefs didn't load ({type(error).__name__}).", "Signal client")
+            briefs = ""
         sections = instruction_sections(
             remembered, interest_context=self.live.interest_context, identity_context=self.live.identity_context,
-            self_image_context=self.live.self_image_context, client_people_context=people,
+            self_image_context=self.live.self_image_context, client_people_context=people, task_briefs=briefs,
         )
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history, sections=sections,
@@ -1378,26 +1391,50 @@ class CoraApp(App):
             f"{contact.name} to allow being found by number."
         )
 
-    async def relay_to_person(self, client_id, client_name: str, text: str) -> str | None:
-        """From a client's chat to the person, marked as theirs; None once sent, else why not."""
-        account, person = self.signal.status.account, self.signal_settings.person_recipient
-        if not account or not person:
-            return "Signal isn't set up to reach them right now."
-        today = datetime.now().date()
-        key = (client_id, today)
+    async def relay_to_person(self, client_id, client_name: str, text: str, task_id=None) -> str | None:
+        """From a client's chat to the person, marked as theirs; None once on its way, else why not.
+
+        Naming a task records their answer on it first, so it's kept even if the person can't be reached now.
+        """
+        key = (client_id, datetime.now().date())
         if self.signal_relays.get(key, 0) >= SIGNAL_RELAYS_PER_DAY:
             return f"You've passed on as much as you can for {client_name} today; it wasn't sent."
         message = f"From {client_name}, via Cora:\n{text}"
-        await self.signal.client.send(account, person, message)
-        self.signal_relays[key] = self.signal_relays.get(key, 0) + 1
-        # In the person's own chat and conversation, so voice Cora knows too.
-        self.conversation.show_written_reply(message, label="Cora · Signal", channel="signal")
-        self.activity.write(f"Passed something on from {client_name} to you on Signal.", "Signal relay")
+        if task_id is not None:
+            try:
+                goal, done = await self.conversation_persistence.call_database(
+                    self.persistence.report_task, task_id, client_id, text,
+                )
+            except LookupError:
+                return "That isn't an open task you're asking them about; pass it on without the task_id."
+            ending = " That's everything for this task." if done else ""
+            message = f"From {client_name}, via Cora, for your task \"{goal}\":\n{text}{ending}"
+            self.activity.write(f"Recorded {client_name}'s answer on a task{' (done)' if done else ''}.", "Task")
         try:
-            await self.live.note_relay(client_name, text)
-        except Exception as error:
-            self.activity.write(f"Relay note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
+            await self.tell_person(message)
+        except Exception:
+            if task_id is not None:
+                return "It's recorded on the task, but the person can't be reached right now; they'll see it there."
+            return "The person can't be reached right now; it wasn't sent."
+        self.signal_relays[key] = self.signal_relays.get(key, 0) + 1
+        self.activity.write(f"Passed something on from {client_name} to you.", "Signal relay")
         return None
+
+    async def task_goal(self, task_id) -> str | None:
+        return await self.conversation_persistence.call_database(self.persistence.task_goal, task_id)
+
+    async def record_task(self, contact: Client, goal: str | None, task_id, brief: str, message: str):
+        """After the approved message has gone: a new task with them as its first party, or them added to one."""
+        step = f"Asked {contact.name}: {message}"
+        if task_id is None:
+            task_id = await self.conversation_persistence.call_database(
+                self.persistence.start_task, goal, contact.id, brief, step,
+            )
+            self.activity.write(f"Started a task with {contact.name}.", "Task")
+            return task_id
+        await self.conversation_persistence.call_database(self.persistence.add_task_party, task_id, contact.id, brief, step)
+        self.activity.write(f"Added {contact.name} to a task.", "Task")
+        return task_id
 
     def can_reach_by_voice(self) -> bool:
         return not (self.closing or self.standby) and self.live.connection is not None and self.live.ready
