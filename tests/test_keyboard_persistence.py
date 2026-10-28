@@ -111,6 +111,7 @@ async def running_app(persistence=None):
             patch("memory.background.update_relationships"), \
             patch("services.credentials.keyring"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
+            patch("app.delete_attachments", AsyncMock()), patch("app.clear_attachments", AsyncMock()), \
             patch.object(CoraApp, "daily_backup", return_value=None):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
@@ -122,6 +123,8 @@ async def running_app(persistence=None):
                 persistence.load_startup_identity_context.return_value = ""
                 persistence.load_relationship_context.return_value = ""
                 persistence.load_self_image_context.return_value = ""
+                persistence.load_people_context.return_value = ""
+                persistence.load_client_people_context.return_value = ""
                 persistence.load_relationship_values.return_value = None
                 persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None

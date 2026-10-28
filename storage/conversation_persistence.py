@@ -14,7 +14,7 @@ SUMMARY_WAIT_SECONDS = 30
 class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
-                 set_self_image_context=lambda context: None,
+                 set_self_image_context=lambda context: None, set_people_context=lambda context: None,
                  set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
@@ -23,6 +23,7 @@ class ConversationPersistence:
         self.set_interest_context = set_interest_context
         self.set_identity_context = set_identity_context
         self.set_self_image_context = set_self_image_context
+        self.set_people_context = set_people_context
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
         self.set_delegation_model = set_delegation_model
@@ -192,6 +193,25 @@ class ConversationPersistence:
                     f"Startup relationship context loaded ({len(context)} characters).",
                     "Relationship context loaded",
                 )
+
+        # The people she talks with as clients, and her view of each; without it she just doesn't know them.
+        if self.is_closing():
+            return
+        self.set_people_context("")
+        try:
+            context = await self.call_database(self.storage.load_people_context)
+        except Exception as error:
+            self.write_activity(
+                f"People context load failed ({type(error).__name__}); connecting without it.",
+                "People context unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_people_context(context)
+                if context:
+                    self.write_activity(
+                        f"People context loaded ({len(context)} characters).", "People context loaded",
+                    )
 
         # The chosen delegation model loads last; if it fails Cora connects with the default.
         if self.is_closing():

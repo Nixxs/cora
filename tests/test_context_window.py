@@ -36,12 +36,12 @@ class ContextTrackerTests(unittest.TestCase):
     def test_voice_items_add_up_to_the_live_instructions_sent(self):
         tracker, config = started(
             memory_context="[1]", interest_context="[2]", person_name="Sam",
-            identity_context="me", relationship_context="close",
+            identity_context="me", relationship_context="close", people_context="[3]",
         )
         voice = tracker.items(VOICE)
         self.assertEqual(
             [item.name for item in voice],
-            ["instructions", "identity", "relationship", "memories", "interests"],
+            ["instructions", "identity", "relationship", "people", "memories", "interests"],
         )
         # The name joins the instructions rather than taking a line of its own.
         self.assertTrue(voice[0].text.startswith(LIVE_INSTRUCTIONS))

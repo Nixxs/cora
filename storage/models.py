@@ -643,6 +643,54 @@ class SelfImageRecord(Base):
     chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
+class ImpressionRecord(Base):
+    """Cora's own view of someone she talks with as a client, and a one-line opinion fit for anyone."""
+
+    __tablename__ = "impressions"
+    __table_args__ = (
+        CheckConstraint("btrim(impression) <> '' AND char_length(impression) <= 1200",
+                        name="impressions_impression_check"),
+        CheckConstraint("btrim(opinion) <> '' AND char_length(opinion) <= 200", name="impressions_opinion_check"),
+        {"schema": "public"},
+    )
+
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="impressions_person_id_fkey", ondelete="CASCADE"), primary_key=True,
+    )
+    impression: Mapped[str] = mapped_column(Text)
+    opinion: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ImpressionUpdateRecord(Base):
+    """A finished client conversation that has shaped their impression."""
+
+    __tablename__ = "impression_updates"
+    __table_args__ = (
+        CheckConstraint("conduct IS NULL OR conduct IN ('fine', 'rude', 'abusive', 'threatening')",
+                        name="impression_updates_conduct_check"),
+        CheckConstraint(
+            "(conduct_note IS NULL) = (conduct IS NULL OR conduct = 'fine') "
+            "AND (conduct_note IS NULL OR (btrim(conduct_note) <> '' AND char_length(conduct_note) <= 500))",
+            name="impression_updates_conduct_note_check",
+        ),
+        {"schema": "public"},
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.conversations.id", name="impression_updates_conversation_id_fkey", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="impression_updates_person_id_fkey", ondelete="CASCADE"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    # How they treated her; anything but 'fine' carries her note and is reported to the person.
+    conduct: Mapped[str | None] = mapped_column(Text)
+    conduct_note: Mapped[str | None] = mapped_column(Text)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class ServiceToolRecord(Base):
     """One service tool Cora may use; tools without a row are off."""
 

@@ -16,7 +16,7 @@ import sys
 from uuid import UUID
 
 from dotenv import load_dotenv
-from sqlalchemy import Engine, func, select, text
+from sqlalchemy import Engine, case, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,8 @@ from subconscious.identity.identity_rules import Change, Trait, check_reflection
 from subconscious.interests.interest_store import validate_now
 
 STATEMENT_MAX_CHARS = 300
+# Events stamped alike (the clock moved back) still read in order: formed first, retired last.
+EVENT_ORDER = case({"form": 0, "revise": 1, "retire": 2}, value=IdentityEventRecord.kind)
 SUBJECT_MAX_CHARS = 200
 REASON_MAX_CHARS = 1000
 # Fits all MAX_HELD statements; only whole statements are ever sent.
@@ -112,7 +114,7 @@ class IdentityStore:
                 raise LookupError("Trait does not exist")
             records = session.scalars(select(IdentityEventRecord).where(
                 IdentityEventRecord.trait_id == trait_id,
-            ).order_by(IdentityEventRecord.created_at, IdentityEventRecord.id))
+            ).order_by(IdentityEventRecord.created_at, EVENT_ORDER, IdentityEventRecord.id))
             return [Event(record.id, record.trait_id, record.kind, record.statement, record.confidence_before,
                           record.confidence_after, record.reason, record.created_at) for record in records]
 

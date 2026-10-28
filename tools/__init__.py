@@ -1,5 +1,9 @@
 """Wire custom tools once for both local execution and API schemas."""
 
+from .client_boundaries import (
+    RAISE_CONCERN_SCHEMA, STOP_REPLYING_SCHEMA, RaiseConcernTool, StopReplyingTool, validate_concern_arguments,
+    validate_stop_arguments,
+)
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
@@ -22,7 +26,7 @@ def create_tool_registry(
     *, get_connection, is_closing, shutdown, request_standby, write_debug, schedule,
     screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
-    signal_unreachable=None, relay_to_person=_not_set_up,
+    signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -49,4 +53,8 @@ def create_tool_registry(
     registry.register(SIGNAL_SCHEMA, validate_signal_arguments, signal_message.handle)
     tell_nick = TellNickTool(get_connection, is_closing, write_debug, relay_to_person)
     registry.register(TELL_NICK_SCHEMA, validate_tell_nick_arguments, tell_nick.handle)
+    concern = RaiseConcernTool(get_connection, is_closing, write_debug, raise_concern)
+    registry.register(RAISE_CONCERN_SCHEMA, validate_concern_arguments, concern.handle)
+    stop = StopReplyingTool(get_connection, is_closing, write_debug, stop_replying)
+    registry.register(STOP_REPLYING_SCHEMA, validate_stop_arguments, stop.handle)
     return registry
