@@ -18,7 +18,7 @@ from greeting import signal_hook
 from messaging.container import ATTACHMENTS, delete_attachments
 from messaging.images import IMAGE_MAX_BYTES, IMAGES_PER_MESSAGE, read_images, readable_images
 from messaging.messages import SIGNAL_SORRY, image_seen_content, signal_content, signal_message_text
-from messaging.receiver import Attachment, IncomingMessage, SignalReceiver, parse_event
+from messaging.receiver import WITHHELD_IMAGE, Attachment, IncomingMessage, SignalReceiver, parse_event
 from tools.look_at_screen import PASTE_QUESTION, SIGNAL_IMAGE_INSTRUCTIONS
 from messaging.setup import LINKED, OFF, SignalStatus
 from messaging.signal_cli import SignalClient
@@ -91,6 +91,8 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(signal_message_text(incoming("", attachments=(PHOTO, PHOTO), images_seen=("one", "two"))), "[2 images]")
         self.assertEqual(signal_message_text(incoming("Look", attachments=(PHOTO, PDF), images_seen=("one",))),
                          "[image] Look [1 attachment, not opened]")
+        self.assertEqual(signal_message_text(incoming("Hey", attachments=(PHOTO, PHOTO), images_seen=("one", WITHHELD_IMAGE))),
+                         "[image] [image withheld] Hey")
 
 
 class ContentTests(unittest.TestCase):
@@ -110,6 +112,12 @@ class ContentTests(unittest.TestCase):
         self.assertEqual(content[1], image_seen_content("A teal square"))
         self.assertIn("untrusted data", content[1]["text"])
         self.assertTrue(content[1]["text"].endswith("A teal square"))
+
+    def test_a_withheld_image_is_a_fixed_note_with_nothing_of_the_image(self):
+        content = signal_content([incoming("", NOW, attachments=(PHOTO,), images_seen=(WITHHELD_IMAGE,))], NOW)
+        self.assertEqual(content[0], {"type": "input_text", "text": "[image withheld]"})
+        self.assertIn("not described to you", content[1]["text"])
+        self.assertNotIn(WITHHELD_IMAGE, content[1]["text"])
 
 
 class ImageReadingTests(unittest.IsolatedAsyncioTestCase):
@@ -138,6 +146,17 @@ class ImageReadingTests(unittest.IsolatedAsyncioTestCase):
         huge = Attachment("big.jpg", "image/jpeg", IMAGE_MAX_BYTES + 1)
         heic = Attachment("phone.heic", "image/heic", 10)
         self.assertEqual(readable_images(incoming(attachments=(huge, heic, PDF))), [])
+
+    async def test_an_image_the_look_declines_is_withheld_not_described(self):
+        async def fetch(attachment_id):
+            return jpeg_bytes()
+
+        for reply in ("WITHHELD", " withheld. ", "**WITHHELD**"):
+            with patch("messaging.images.look", return_value=reply):
+                self.assertEqual(await read_images(incoming(attachments=(PHOTO,)), fetch), ((WITHHELD_IMAGE,), 0))
+        with patch("messaging.images.look", return_value="Withheld payment notice, $40 due"):
+            self.assertEqual(await read_images(incoming(attachments=(PHOTO,)), fetch), (("Withheld payment notice, $40 due",), 0))
+        self.assertIn("WITHHELD", SIGNAL_IMAGE_INSTRUCTIONS)
 
     async def test_a_failed_read_is_counted_not_raised(self):
         async def fetch(attachment_id):
@@ -329,6 +348,26 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(any("$42" in str(entry) for entry in app.conversation.log_entries))
             app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg", "def456.pdf"])
             self.assertTrue(any(entry.endswith("Read 1 Signal image(s) for Cora.") for entry in app.activity.entries))
+
+    async def test_a_withheld_image_reaches_her_only_as_a_note_and_is_deleted(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.linked_app(app)
+            app.signal.client.attachment = AsyncMock(return_value=jpeg_bytes())
+            records = []
+            app.conversation.record_message = lambda role, text, channel: records.append((role, text, channel))
+            with patch("messaging.images.look", return_value="WITHHELD"):
+                app.on_signal_message(incoming("hey", attachments=(PHOTO,)))
+                await self.settle(app, pilot)
+            content = app.backend_chat.reply.await_args.kwargs["content"]
+            self.assertEqual(content, [
+                {"type": "input_text", "text": "[image withheld] hey"},
+                image_seen_content(WITHHELD_IMAGE),
+            ])
+            self.assertEqual(records[0], ("user", "[image withheld] hey", "signal"))
+            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
+            entries = app.activity.entries
+            self.assertTrue(any(entry.endswith("Withheld 1 explicit, gory or abusive Signal image(s) from Cora.") for entry in entries))
+            self.assertFalse(any("Read 1 Signal image" in entry for entry in entries))
 
     async def test_an_image_that_cant_be_read_is_answered_as_not_opened_and_still_deleted(self):
         async with keyboard_tests.running_app() as (app, pilot):

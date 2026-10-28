@@ -636,7 +636,11 @@ description reaches her, so she can't look at it again later. She shows
 "[image]" in its place; the description isn't saved. Up to four images per message
 are read (JPEG, PNG, WebP or GIF, up to 20 MB); others, and any other attachment
 (documents, voice notes, iPhone HEIC photos), are noted as "[1 attachment, not
-opened]", as is an image that couldn't be read (Activity says so). **Nothing is
+opened]", as is an image that couldn't be read (Activity says so). **Explicit
+images are withheld:** if the image is sexually explicit, gory or abusive, the
+separate look describes nothing. She is only told an image was withheld, the chat
+shows "[image withheld]", and Activity notes it. Everyday injury or medical photos
+are still described. **Nothing is
 kept:** `signal-cli` saves every attachment it receives into its volume (which
 backups include), so Cora deletes each one once it's handled, including
 strangers', which are never opened. Any left over (for example from before this
@@ -1278,7 +1282,10 @@ features it helps check, and package last.
      the app removes each with `rm` in the container once handled (names
      checked against signal-cli's ID format first), and clears any left over
      before listening. Strangers still get only the one polite reply, and
-     other attachments (documents, voice notes) stay "not opened".
+     other attachments (documents, voice notes) stay "not opened". When an image
+     is sexually explicit, gory or abusive, the look replies only `WITHHELD`
+     (`IMAGE_WITHHELD_REPLY`). Her turn then gets a fixed note saying it was
+     withheld, never what it showed, and the chat shows "[image withheld]".
   6. **S6 knowing the people she talks with (planned):** her chats with clients
      already shape her identity (reflection reads every conversation summary),
      but she has no view of the clients themselves, so asked "what have you been
@@ -1331,7 +1338,8 @@ features it helps check, and package last.
        people have to each other's, except a heads-up about how a chat went.
        The same call that revises an impression rates the conversation's
        conduct: fine, rude, abusive or threatening; questions she turns away
-       ("that's one for …") are her job, not a conduct problem. Anything but fine reaches the person (by voice with Live Active,
+       ("that's one for …") are her job, not a conduct problem. A client
+       sending an image that was withheld (see S5) counts as abusive. Anything but fine reaches the person (by voice with Live Active,
        otherwise Signal) as who, when and what kind, in her words, never quotes:
        "Heads up: Royce was pretty rude to me in Tuesday's chat." For threats or
        sustained abuse she doesn't wait for the chat to close: a client-only

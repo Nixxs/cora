@@ -19,6 +19,10 @@ class Attachment:
     size: int = 0
 
 
+# Stands in for an explicit, gory or abusive image: she is told it was sent, never what it shows.
+WITHHELD_IMAGE = "<withheld image>"
+
+
 @dataclass(frozen=True)
 class IncomingMessage:
     # Their number, or '' when Signal hasn't shared it yet (an unaccepted first message).
@@ -29,6 +33,7 @@ class IncomingMessage:
     # Their Signal ID, which every message carries.
     sender_id: str | None = None
     # What a separate look saw in each image read for Cora; the images themselves are never kept.
+    # Each read image's description, or WITHHELD_IMAGE for one not described to her.
     images_seen: tuple[str, ...] = ()
 
 

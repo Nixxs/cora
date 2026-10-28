@@ -34,7 +34,7 @@ from messaging.messages import (
     APPROVAL_SECONDS, SIGNAL_SORRY, approval_answer, approval_request_text, signal_content,
     signal_message_text,
 )
-from messaging.receiver import IncomingMessage, SignalReceiver
+from messaging.receiver import WITHHELD_IMAGE, IncomingMessage, SignalReceiver
 from messaging.setup import (
     FAILED as SIGNAL_FAILED, LINKED as SIGNAL_LINKED, NOT_LINKED as SIGNAL_NOT_LINKED, OFF as SIGNAL_OFF, SignalSetup,
 )
@@ -1162,8 +1162,11 @@ class CoraApp(App):
         try:
             for message in batch:
                 seen, failed = await read_images(message, lambda attachment_id: self.signal.client.attachment(account, attachment_id))
-                if seen:
-                    self.activity.write(f"Read {len(seen)} Signal image(s) for Cora.", "Image read")
+                withheld = seen.count(WITHHELD_IMAGE)
+                if len(seen) > withheld:
+                    self.activity.write(f"Read {len(seen) - withheld} Signal image(s) for Cora.", "Image read")
+                if withheld:
+                    self.activity.write(f"Withheld {withheld} explicit, gory or abusive Signal image(s) from Cora.", "Image withheld")
                 if failed:
                     # Not why: errors may echo the request.
                     self.activity.write(f"{failed} Signal image(s) couldn't be read; noted as not opened.", "Image look failed")

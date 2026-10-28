@@ -6,8 +6,8 @@ import io
 
 from PIL import Image
 
-from tools.look_at_screen import PASTE_QUESTION, SIGNAL_IMAGE_INSTRUCTIONS, look
-from .receiver import Attachment, IncomingMessage
+from tools.look_at_screen import IMAGE_WITHHELD_REPLY, PASTE_QUESTION, SIGNAL_IMAGE_INSTRUCTIONS, look
+from .receiver import WITHHELD_IMAGE, Attachment, IncomingMessage
 
 # Types Pillow opens and the model reads; anything else (HEIC, video, documents) stays unopened.
 IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/gif"})
@@ -41,7 +41,9 @@ def scaled_jpeg(data: bytes) -> bytes:
 
 
 def read_image(question: str, data: bytes) -> str:
-    return look(question, scaled_jpeg(data), mime="image/jpeg", instructions=SIGNAL_IMAGE_INSTRUCTIONS)
+    """The image's description, or WITHHELD_IMAGE when the look declines to describe it."""
+    seen = look(question, scaled_jpeg(data), mime="image/jpeg", instructions=SIGNAL_IMAGE_INSTRUCTIONS)
+    return WITHHELD_IMAGE if seen.strip(" .*\"'").upper() == IMAGE_WITHHELD_REPLY else seen
 
 
 async def read_images(message: IncomingMessage, fetch) -> tuple[tuple[str, ...], int]:
