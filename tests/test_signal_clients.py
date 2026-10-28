@@ -18,7 +18,7 @@ from messaging.receiver import Attachment, IncomingMessage
 from messaging.setup import LINKED, SignalStatus
 from migrate import apply_migrations, database_settings
 from session_config import BACKEND_MODEL, MODEL_AREAS, client_chat_instructions, stranger_reply
-from storage.client_store import CONVERSATION_GAP, Client, ClientStore
+from storage.client_store import CONVERSATION_GAP, Client, ClientStore, read_conversation_gap
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.models import ConversationRecord, MessageRecord
@@ -56,6 +56,16 @@ class ClientPromptTests(unittest.TestCase):
         self.assertIn("people the person I work with has introduced me to", stranger_reply(None))
 
 
+class ConversationGapTests(unittest.TestCase):
+    def test_the_gap_is_an_hour_unless_set_and_bad_values_fall_back(self):
+        for value, minutes in ((None, 60), ("90", 90), ("1", 1), ("0", 60), ("-5", 60), ("soon", 60), ("inf", 60), ("nan", 60)):
+            env = {} if value is None else {"CORA_CONVERSATION_GAP_MINUTES": value}
+            with patch.dict(os.environ, env, clear=False):
+                if value is None:
+                    os.environ.pop("CORA_CONVERSATION_GAP_MINUTES", None)
+                self.assertEqual(read_conversation_gap(), timedelta(minutes=minutes), value)
+
+
 class ClientAppTests(unittest.IsolatedAsyncioTestCase):
     async def linked_app(self, app):
         app.signal.status = SignalStatus(LINKED, account=CORA)
@@ -83,10 +93,37 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
 
+    async def test_the_background_round_sends_closed_chats_to_the_memory_pass(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.process_finished_conversations = MagicMock()
+            app.persistence.close_quiet_client_conversations.return_value = 0
+            app.background_round()
+            await self.settle(app, pilot)
+            app.process_finished_conversations.assert_not_called()
+            app.persistence.close_quiet_client_conversations.return_value = 2
+            app.background_round()
+            await self.settle(app, pilot)
+            app.process_finished_conversations.assert_called_once_with()
+            self.assertTrue(any(entry.endswith("Closed 2 quiet client chat(s) for the memory pass.")
+                                for entry in app.activity.entries))
+
+    async def test_a_failed_background_round_is_noted_without_its_message(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.process_finished_conversations = MagicMock()
+            app.persistence.close_quiet_client_conversations.side_effect = RuntimeError("private")
+            app.background_round()
+            await self.settle(app, pilot)
+            app.process_finished_conversations.assert_not_called()
+            entries = "\n".join(app.activity.entries)
+            self.assertIn("Closing quiet chats failed (RuntimeError).", entries)
+            self.assertNotIn("private", entries)
+
     async def test_a_client_gets_their_own_conversation_in_professional_mode(self):
         async with keyboard_tests.running_app() as (app, pilot):
             conversation_id = await self.linked_app(app)
             app.persistence.load_client_memory_context.return_value = '[{"text": "Sarah lives in Perth"}]'
+            app.persistence.load_client_people_context.return_value = '{"them": "Cheerful", "others": []}'
+            app.persistence.load_people_context.return_value = '[{"name": "Royce", "impression": "Royce talks cars"}]'
             app.on_signal_message(incoming("Is Nick free on Friday?"))
             await self.settle(app, pilot)
             kwargs = app.backend_chat.reply.await_args.kwargs
@@ -102,6 +139,10 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             # What she remembers of Sarah, from Sarah's own chats.
             self.assertIn("Sarah lives in Perth", sections["memories"])
             app.persistence.load_client_memory_context.assert_called_with(app.signal_clients[SARAH].id, "Sarah")
+            # Her view of Sarah and the others' one-liners, never her view of everyone.
+            app.persistence.load_client_people_context.assert_called_with(app.signal_clients[SARAH].id)
+            self.assertIn('"them": "Cheerful"', sections["people"])
+            self.assertNotIn("Royce talks cars", "".join(sections.values()))
             self.assertEqual(kwargs["extra_instructions"], client_chat_instructions("Sarah", "Nick"))
             # Web search, and memory search limited to what Sarah may know; every other tool left out.
             self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()) - {"search_memory", "tell_nick"})
@@ -258,11 +299,27 @@ class ClientStoreDatabaseTests(unittest.TestCase):
         now = datetime.now(timezone.utc)
         first = self.clients.conversation_for(sarah.id, now)
         self.clients.save(first, "user", "Hi")
-        self.assertEqual(self.clients.conversation_for(sarah.id, now + timedelta(hours=1)), first)
+        self.assertEqual(self.clients.conversation_for(sarah.id, now + CONVERSATION_GAP / 2), first)
         later = self.clients.conversation_for(sarah.id, now + CONVERSATION_GAP + timedelta(minutes=1))
         self.assertNotEqual(later, first)
         self.assertEqual(self.conversations.get_conversation(first).status, "closed")
         self.assertEqual(self.conversations.get_conversation(later).person_id, sarah.id)
+
+    def test_quiet_client_chats_close_but_the_persons_never_does(self):
+        mine = uuid4()
+        self.conversations.create_conversation(mine)
+        sarah = self.clients.add("Sarah", SARAH)
+        tom = self.clients.add("Tom", "+61400000004")
+        now = datetime.now(timezone.utc)
+        hers, his = self.clients.conversation_for(sarah.id, now), self.clients.conversation_for(tom.id, now)
+        self.clients.save(hers, "user", "Hi")  # Tom's has no messages: its start counts instead
+        self.assertEqual(self.clients.close_quiet(now + CONVERSATION_GAP / 2), 0)
+        self.assertEqual(self.clients.close_quiet(now + CONVERSATION_GAP + timedelta(minutes=1)), 2)
+        self.assertEqual(self.conversations.get_conversation(hers).status, "closed")
+        self.assertEqual(self.conversations.get_conversation(his).status, "closed")
+        self.assertEqual(self.conversations.get_conversation(mine).status, "active")
+        # Writing again starts a fresh conversation.
+        self.assertNotEqual(self.clients.conversation_for(sarah.id, now + CONVERSATION_GAP * 2), hers)
 
     def test_history_is_this_conversation_only_oldest_first(self):
         sarah = self.clients.add("Sarah", SARAH)

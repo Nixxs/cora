@@ -6,6 +6,8 @@ person_id, never mixed into the conversation with the primary person.
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from math import isfinite
+from os import getenv
 from uuid import UUID, uuid4
 
 from sqlalchemy import Engine, func, select, update
@@ -17,8 +19,22 @@ from .models import ConversationRecord, MessageRecord, PersonRecord
 from .signal_settings_store import normalise_number
 
 NAME_MAX_CHARS = 100
-# A quieter gap than this starts a new conversation, as a long standby does with the primary person.
-CONVERSATION_GAP = timedelta(hours=3)
+
+
+DEFAULT_GAP_MINUTES = 60
+
+
+def read_conversation_gap() -> timedelta:
+    """How long a quiet ends a conversation, for clients' chats and the person's long standby alike."""
+    try:
+        minutes = float(getenv("CORA_CONVERSATION_GAP_MINUTES", DEFAULT_GAP_MINUTES))
+    except ValueError:
+        minutes = DEFAULT_GAP_MINUTES
+    # Anything unusable falls back rather than stopping the app at import.
+    return timedelta(minutes=minutes if isfinite(minutes) and minutes >= 1 else DEFAULT_GAP_MINUTES)
+
+
+CONVERSATION_GAP = read_conversation_gap()
 # History each reply carries, as with the primary person's chat.
 HISTORY_MESSAGES = 40
 HISTORY_BYTES = 6000
@@ -104,6 +120,28 @@ class ClientStore:
             session.add(conversation)
             session.flush()
             return conversation.id
+
+    def close_quiet(self, now: datetime) -> int:
+        """Close clients' conversations quiet for the gap, so they are summarized without waiting on them."""
+        last = (
+            select(func.max(MessageRecord.created_at))
+            .where(MessageRecord.conversation_id == ConversationRecord.id)
+            .correlate(ConversationRecord).scalar_subquery()
+        )
+        with Session(self.engine) as session, session.begin():
+            quiet = session.scalars(
+                select(ConversationRecord.id)
+                .join(PersonRecord, PersonRecord.id == ConversationRecord.person_id)
+                .where(
+                    PersonRecord.kind == "client", ConversationRecord.status == "active",
+                    func.coalesce(last, ConversationRecord.started_at) < now - CONVERSATION_GAP,
+                )
+            ).all()
+            if quiet:
+                session.execute(update(ConversationRecord).where(
+                    ConversationRecord.id.in_(quiet), ConversationRecord.status == "active",
+                ).values(status="closed", ended_at=func.current_timestamp()))
+        return len(quiet)
 
     def save(self, conversation_id: UUID, role: str, text: str) -> None:
         ConversationStore(self.engine).save_message(

@@ -16,6 +16,7 @@ from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
+from subconscious.impressions.impression_store import ImpressionStore
 from subconscious.interests.interest_store import InterestStore
 from subconscious.relationship.relationship_rules import RelationshipValues
 from subconscious.relationship.relationship_store import RelationshipStore
@@ -52,6 +53,12 @@ class KeyboardPersistence:
 
     def load_relationship_context(self) -> str:
         return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
+
+    def load_people_context(self) -> str:
+        return ImpressionStore(self._get_store().engine).people_context()
+
+    def load_client_people_context(self, person_id: UUID) -> str:
+        return ImpressionStore(self._get_store().engine).client_context(person_id)
 
     def load_relationship_values(self) -> RelationshipValues | None:
         return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))
@@ -92,6 +99,9 @@ class KeyboardPersistence:
 
     def client_conversation(self, person_id: UUID) -> UUID:
         return ClientStore(self._get_store().engine).conversation_for(person_id, datetime.now(timezone.utc))
+
+    def close_quiet_client_conversations(self) -> int:
+        return ClientStore(self._get_store().engine).close_quiet(datetime.now(timezone.utc))
 
     def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
         ClientStore(self._get_store().engine).save(conversation_id, role, text)

@@ -43,6 +43,7 @@ class CoraLive:
         self.interest_context = ""
         self.identity_context = ""
         self.self_image_context = ""
+        self.people_context = ""
         self.relationship_context = ""
         self.person_name = None
         self.delegation_model = BACKEND_MODEL
@@ -78,7 +79,7 @@ class CoraLive:
                         self.memory_context, interest_context=self.interest_context,
                         person_name=self.person_name, identity_context=self.identity_context,
                         self_image_context=self.self_image_context,
-                        relationship_context=self.relationship_context,
+                        relationship_context=self.relationship_context, people_context=self.people_context,
                     )
                     config = config_from_sections(
                         self.tool_schemas(), sections, self.conversation_history, self.delegation_model,

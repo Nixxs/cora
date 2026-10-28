@@ -39,7 +39,7 @@ from messaging.setup import (
     FAILED as SIGNAL_FAILED, LINKED as SIGNAL_LINKED, NOT_LINKED as SIGNAL_NOT_LINKED, OFF as SIGNAL_OFF, SignalSetup,
 )
 from messaging.signal_cli import SignalClient, signal_failure
-from storage.client_store import Client
+from storage.client_store import CONVERSATION_GAP, Client
 from storage.signal_settings_store import SignalSettings, normalise_number
 from services.catalogue import SERVICES
 from services.confirmation import Confirmations
@@ -94,7 +94,9 @@ FINDING_IDLE_SECONDS = 90
 # Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
 REQUESTED_STANDBY_TIMEOUT_SECONDS = 30
 # A shorter standby continues the same conversation; a longer one ends it so memories form.
-CONVERSATION_END_STANDBY_SECONDS = 3 * 60 * 60
+CONVERSATION_END_STANDBY_SECONDS = CONVERSATION_GAP.total_seconds()
+# Background housekeeping: closes clients' quiet chats so the memory pass picks them up.
+BACKGROUND_ROUND_SECONDS = 60 * 60
 # At launch, how long Live waits for services to connect so their tools are in the first session.
 SERVICE_STARTUP_WAIT_SECONDS = 10
 # The most things one client can pass on to the person in a day.
@@ -180,6 +182,7 @@ class CoraApp(App):
             set_identity_context=lambda context: setattr(self.live, "identity_context", context),
             set_self_image_context=lambda context: setattr(self.live, "self_image_context", context),
             set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
+            set_people_context=lambda context: setattr(self.live, "people_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             write_activity=self.activity.write,
@@ -368,6 +371,7 @@ class CoraApp(App):
         self.identity_timer = self.set_interval(IDENTITY_CHECK_SECONDS, self.check_identity)
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
         self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
+        self.background_round_timer = self.set_interval(BACKGROUND_ROUND_SECONDS, self.background_round)
         if self.inactivity.timeout_seconds > 0:
             self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
 
@@ -572,6 +576,7 @@ class CoraApp(App):
         self.identity_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
+        self.background_round_timer.stop()
         self.cancel_standby_alert()
         self.wake.stop_timers()
         await self.stop_wake_listener()
@@ -1039,7 +1044,7 @@ class CoraApp(App):
             self.live.memory_context, interest_context=self.live.interest_context,
             person_name=self.live.person_name, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context,
-            relationship_context=self.live.relationship_context,
+            relationship_context=self.live.relationship_context, people_context=self.live.people_context,
         )
         return await self.backend_chat.reply(
             content=content, history=history, sections=sections, model=self.live.delegation_model,
@@ -1296,9 +1301,17 @@ class CoraApp(App):
         except Exception as error:
             self.activity.write(f"{client.name}'s memories didn't load ({type(error).__name__}).", "Signal client")
             remembered = ""
+        try:
+            # Her view of them, and only the names and one-line opinions of everyone else.
+            people = await self.conversation_persistence.call_database(
+                self.persistence.load_client_people_context, client.id,
+            )
+        except Exception as error:
+            self.activity.write(f"Who {client.name} is didn't load ({type(error).__name__}).", "Signal client")
+            people = ""
         sections = instruction_sections(
             remembered, interest_context=self.live.interest_context, identity_context=self.live.identity_context,
-            self_image_context=self.live.self_image_context,
+            self_image_context=self.live.self_image_context, client_people_context=people,
         )
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history, sections=sections,
@@ -1645,6 +1658,20 @@ class CoraApp(App):
             ),
         )
 
+    @work(group="background-round", exclusive=True, exit_on_error=False)
+    async def background_round(self) -> None:
+        """Hourly: close clients' chats quiet for the conversation gap, then run the memory pass on them."""
+        if self.closing:
+            return
+        try:
+            closed = await self.conversation_persistence.call_database(self.persistence.close_quiet_client_conversations)
+        except Exception as error:
+            self.activity.write(f"Closing quiet chats failed ({type(error).__name__}).", "Background round")
+            return
+        if closed and not self.closing:
+            self.activity.write(f"Closed {closed} quiet client chat(s) for the memory pass.", "Background round")
+            self.process_finished_conversations()
+
     def check_interests(self) -> None:
         # Single flight: a slow model call simply delays the next check.
         if self.closing or (self.interest_worker is not None and not self.interest_worker.is_finished):
@@ -1922,6 +1949,7 @@ class CoraApp(App):
         self.identity_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
+        self.background_round_timer.stop()
         self.cancel_standby_alert()
         self.wake.response_deadline = None
         self.wake.stop_timers()

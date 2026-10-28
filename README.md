@@ -148,7 +148,7 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
   she has the same tools, except closing the app and going to standby. The chat
   is saved to the same conversation, so memories, summaries and the relationship
   come from it as from voice, and writing keeps the conversation open: it closes
-  only after three hours without any. Each message carries the recent visible chat (up to 40
+  only after an hour without any (`CORA_CONVERSATION_GAP_MINUTES`). Each message carries the recent visible chat (up to 40
   messages / 6,000 bytes) from Cora's own records with `store=False`, so nothing
   is kept on OpenAI's side. Click Standby or press Ctrl+R to talk again.
   Silent output audio does not count as speech or pending playback. If closing
@@ -368,6 +368,12 @@ standby and show a warning in Activity. The timer checks once per second and
 silently waits while Live is busy, including its existing recent-speech safety
 gap. Continuous silent audio does not reset the clock. Background memory work
 does not keep Live connected and can continue with its separate charges.
+
+**Conversation gap.** `CORA_CONVERSATION_GAP_MINUTES` (default `60`) is how long a
+quiet ends a conversation: a Standby longer than this starts a new one with you,
+and a client's Signal chat quiet this long is closed by the hourly background
+round so its memories form. Values below 1 or unreadable fall back to 60.
+Restart Cora to apply a change.
 
 The optional heads-up is off by default. Set `CORA_STANDBY_FAREWELL=1` before
 launching to enable it; `0` disables it. It uses Live commentary directly, not a
@@ -659,18 +665,32 @@ Cora's; run `python migrate.py` once for migration 0022). Cora talks with them
 the way a professional talks with a client:
 
 - Each person has their own conversations with her, saved with who they were
-  with; a new one starts after three quiet hours. They never appear in your
+  with. A chat quiet for an hour (`CORA_CONVERSATION_GAP_MINUTES`) is closed by
+  the hourly background round, so its summary and memories form without waiting
+  for them to write again; their next message starts a new one. They never appear in your
   chat or in voice Cora's history; Activity only notes "Answered Sarah on
   Signal", without contents.
 - She has her own identity and interests, but none of your memories, your
   relationship or your name as "the person", and no tools except web search.
   She is still herself with them (her views, humour, curiosity and interests);
   "professional" means discretion about you, not a flat tone. She keeps no
-  relationship with clients and doesn't warm to them over time, by design.
+  relationship with clients (no trust or warmth scores), by design, though her
+  impression of them (below) can grow fonder, as with a client you like.
 - She is friendly and helpful but never shares anything about your private life,
   even what she knows. Asked something private, she declines without confirming
   she knows anything ("that's one for the person"), suggests they ask you directly,
   and never makes up a cover story.
+- **She has an impression of each of them.** After each finished chat with
+  someone, the background memory pass revises her own view of them: how they
+  come across, roughly what they talk about, and what she thinks of them, never
+  a record of what they said. Alongside it she keeps a one-line opinion she could
+  say to anyone ("Sarah's lovely, always cheerful"). You get her view of everyone
+  in your chats with her, so "what do you think of Royce?" gets a real opinion
+  and "what have you two been talking about?" the gist; anything they told her
+  stays theirs. In a client's chat she knows her view of them, and of everyone
+  else only their name and her one-liner: asked for more, she says they'd have to
+  ask that person. People you remove drop out of both. Run `python migrate.py`
+  once for migration 0026.
 - **She remembers them.** Their finished conversations go through the usual
   memory pass, told who the user was, so memories are written with their name
   ("Sarah lives in Perth"; what they say about others is kept as "Sarah said
@@ -755,10 +775,11 @@ client's chat.
    events, and Activity entries are not saved as chat messages.
 2. **When you quit:** pending chat saves finish and the conversation is marked
    closed. No new memory-processing requests start during shutdown.
-   **A long standby also ends a conversation:** a standby shorter than three
-   hours continues the same conversation, so waking keeps its context. After
-   three hours in standby the conversation is closed, and whatever is said after
-   waking starts a new one.
+   **A long standby also ends a conversation:** a standby shorter than the
+   conversation gap (an hour by default, `CORA_CONVERSATION_GAP_MINUTES`)
+   continues the same conversation, so waking keeps its context. After that
+   long in standby the conversation is closed, and whatever is said after
+   waking starts a new one, carrying the recent chat as context.
 3. **In the background:** a pass extracts facts, preferences, decisions, and
    tasks from finished conversations, then saves separate summaries. It runs at
    startup for older conversations and again when a long standby ends a
@@ -952,7 +973,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
 | [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `tell_nick`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
@@ -1122,6 +1143,29 @@ features it helps check, and package last.
 10. Tasks T1–T3: errands she carries out with other people over Signal and her
     own email, reporting back to you (see Details below).
 
+    Checklist for items 9 and 10 (details in S5, S6 and Tasks below):
+
+    - [x] S5 Signal images: read like pasted ones, deleted after reading
+    - [x] S5 explicit, gory or abusive images withheld from her
+    - [x] S6 hourly background round; `CORA_CONVERSATION_GAP_MINUTES` (default
+      60) replaces both three-hour gaps; quiet client chats closed and processed
+    - [x] S6 impressions: one row per person, her full view plus a shareable
+      one-liner, no scores
+    - [x] S6 who sees what: your contexts get her opinion and gist, each client
+      gets their own, other clients only names and one-liners
+    - [ ] S6 conduct heads-up (rude, abusive, threatening), client-only
+      `raise_concern`, calm boundary
+    - [ ] S6 Pause option beside Remove in Settings
+    - [ ] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
+      missing details first; first contact approved; `tell_nick` renamed
+      `pass_on` with an optional task
+    - [ ] T2 task checks in the hourly round: nudges (about a day on Signal),
+      coming back to you, list and cancel tasks
+    - [ ] T2 reaching you by voice when Live is Active, otherwise on Signal
+    - [ ] T3 her own email address via MCP; strangers only within a task; nudges
+      after two working days
+    - [ ] T4 new-mail events through awareness (later, with item 14)
+
 *Phase 3 — noticing things*
 
 11. Awareness W1–W3, including quiet hours and the off switch.
@@ -1219,7 +1263,7 @@ features it helps check, and package last.
      with them, whichever way they reach her. They appear in the desktop chat
      labelled by channel (**You · Signal**, **Cora · Signal**), are saved with a
      `signal` channel, and feed the usual memory pass, summaries and
-     appraisals; the three-hour rule closes the conversation only after a real
+     appraisals; the conversation gap closes the conversation only after a real
      quiet. Waking Live carries them in the recent history. Replies are written
      by the backend through the chat without Live and go back over Signal, even
      while Live is active at the desk; then the voice session also gets a silent
@@ -1293,39 +1337,47 @@ features it helps check, and package last.
      nothing either, since a chat about a topic leaves no personal facts to
      remember. Like a person, she should know who her contacts are and have an
      opinion of them, while keeping what they tell her private.
-     - *Closing quiet client chats:* a client's conversation closes today only
-       when they write again after three quiet hours (or at restart), so the
-       latest chat, the one the person is most likely to ask about, waits unsummarized.
+     - *Closing quiet client chats (built):* a client's conversation used to close only
+       when they wrote again after three quiet hours (or at restart), so the
+       latest chat, the one the person is most likely to ask about, waited unsummarized.
        An hourly background round closes it once quiet instead, so it is
        summarized, its memories extracted, and it reaches her identity and
        impression without waiting on them. The quiet gap becomes one setting,
        `CORA_CONVERSATION_GAP_MINUTES` (default 60), replacing both three-hour
        constants: the person's conversation after Standby
        (`CONVERSATION_END_STANDBY_SECONDS`) and clients' (`CONVERSATION_GAP`).
-       Each round closes every conversation quiet that long, then runs the
-       memory pass on what closed (summaries, memories, impressions, conduct).
+       Each round closes every client conversation quiet that long
+       (`close_quiet` in [storage/client_store.py](storage/client_store.py)),
+       then runs the memory pass if any closed (summaries, memories, later
+       impressions and conduct). The person's own conversation keeps its
+       Standby timer, now set from the same gap.
        Later rounds also check tasks (see Tasks). It runs hourly even when
        nobody talks. Explorations, interests and identity keep their own
        rate-limited timing. With a one-hour gap, waking after more than an hour
        of Standby starts a new conversation, carrying the recent chat as context
        as a reconnect does.
-     - *Her impression of each person:* a short description in her own words
+     - *Her impression of each person (built):* a short description in her own words
        of how they come across, roughly what they talk about, and what she
        thinks of them: her opinion and the gist, never a record of what they
-       said. One row per person (`person_id`) in a generic table, never schema
-       for anyone in particular. Revised on the small-jobs model from each
-       finished conversation's summary, during the memory pass.
+       said. One row per person (`person_id`) in a generic table
+       (`impressions`, migration 0026), never schema for anyone in particular.
+       Revised at the end of each memory pass from each finished client
+       conversation, oldest first, on the subconscious model
+       ([subconscious/impressions/](subconscious/impressions/)). It reads the
+       conversation itself rather than its summary, since how someone comes
+       across (and, next, how they behaved) rarely survives a summary;
+       `impression_updates` records which conversations are already in it.
      - *Professional, not a companion:* no trust or warmth scores, no
        appraisals, nothing that changes how she treats the person. She can be friendly
        and come to like someone over time, the way you can with your
        physiotherapist, but they stay clients: they aren't invited to the
        barbecue.
-     - *Where she uses it:* The person's contexts (the desk and their Signal chat) get a
+     - *Where she uses it (built):* The person's contexts (the desk and their Signal chat) get a
        short list of the people she talks with and her take on each, so "what
        do you think of Royce?" gets a real opinion and "what have you two been
        up to?" the gist, without reading their chats. Each client's own chat
        gets her impression of them, so she knows who she's talking to.
-     - *Other contacts, in a client's chat:* she knows who the other contacts
+     - *Other contacts, in a client's chat (built):* she knows who the other contacts
        are and may say so with a brief, surface-level opinion ("yes, I know
        Sarah, she's lovely"), but nothing about them beyond that: not where they
        live, their plans, their hobbies or anything they told her. Asked for
@@ -1377,7 +1429,7 @@ features it helps check, and package last.
   (`send_signal_message` out, the client chat for the back-and-forth,
   `tell_nick` back) but nothing ties them into one job: the client chat sees
   only her opening message, not that the person wants an answer reported back; a
-  reply after the three-hour gap starts a new conversation without her
+  reply after the conversation gap starts a new conversation without her
   question; and the person's Cora doesn't know anything is waiting.
   - *Generic, never per person:* a task is the person's goal in their words, a status
     (open, waiting, needs the person, done, cancelled), the result and an optional

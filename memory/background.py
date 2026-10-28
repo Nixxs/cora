@@ -6,6 +6,7 @@ from uuid import UUID
 from storage.conversation_store import ConversationStore
 from storage.database import build_engine
 from storage.model_settings_store import ModelSettingsStore
+from subconscious.impressions.form_impression import update_waiting_impressions
 from subconscious.relationship.appraise_conversation import appraise_waiting_conversations
 from subconscious.relationship.relationship_store import update_relationships
 
@@ -109,6 +110,11 @@ def run_background_memory_pass(
         # Applies whatever appraisals are saved, even if appraising stopped early.
         if not should_stop():
             update_relationships(engine, write_activity=write_activity)
+        # Her view of each client, from their finished chats; the person's relationship is above.
+        if not should_stop():
+            update_waiting_impressions(
+                engine, model=models["subconscious"], should_stop=should_stop, write_activity=write_activity,
+            )
     except Exception as error:
         if not should_stop():
             write_activity(
