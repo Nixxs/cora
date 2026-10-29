@@ -14,7 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
-from .task_store import TaskStore
+from .task_store import QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -84,6 +84,19 @@ class KeyboardPersistence:
 
     def load_task_briefs(self, person_id: UUID) -> str:
         return TaskStore(self._get_store().engine).briefs_for(person_id)
+
+    def load_task_checks(self, now: datetime) -> tuple[list[QuietParty], list[tuple[UUID, str]]]:
+        store = TaskStore(self._get_store().engine)
+        return store.quiet_parties(now), store.stale_tasks(now)
+
+    def record_task_nudge(self, party_id: UUID, step: str) -> None:
+        TaskStore(self._get_store().engine).record_nudge(party_id, step)
+
+    def task_needs_person(self, task_id: UUID, reason: str) -> bool:
+        return TaskStore(self._get_store().engine).needs_person(task_id, reason)
+
+    def close_task(self, task_id: UUID, status: str, note: str) -> str:
+        return TaskStore(self._get_store().engine).close(task_id, status, note)
 
     def load_tasks_context(self) -> str:
         return TaskStore(self._get_store().engine).tasks_context(datetime.now(timezone.utc))

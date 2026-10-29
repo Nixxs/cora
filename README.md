@@ -798,8 +798,20 @@ is settled, Cora passes her answer to you (`pass_on`, naming the task, marked
 done. Your chats with her (desk, voice and your Signal chat) know your open tasks
 and those finished in the last three days, so "what did Sarah say?" works later
 too. She can ask another contact for the same open task too, approved the same
-way. Nudging people who go quiet, coming back to you when stuck, and cancelling
-tasks come next (T2). Run `python migrate.py` once for migration 0028.
+way. Run `python migrate.py` once for migrations 0028 and 0029.
+
+**Keeping tasks moving.** Each hourly background round checks open tasks. If
+someone she asked has been quiet for about a day (since she asked, they last
+wrote or she last nudged them), she sends one short, friendly follow-up in their
+chat, written in that chat's own context and within the brief, so it needs no
+approval. Nudges go out only between 9am and 7pm and never while a chat with
+them is going on (nothing either way for half an hour). After two unanswered
+nudges, if the person is no longer one of your contacts, or after a week
+without the task moving on, she comes back to you ("About your task …: …
+What would you like me to do?"), by voice or on Signal like a heads-up. The
+task then waits on you: asking someone again resumes it, and `close_task`
+closes it as done (sorted another way) or cancelled, so nobody is asked about
+it any more. Your view of each task shows its latest step.
 
 ## How memory works
 
@@ -1007,7 +1019,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1174,7 +1186,8 @@ features it helps check, and package last.
    Signal are read like pasted ones. S6 is built: quiet client chats close
    hourly, she has an impression of each person she talks with, and you get a
    heads-up when one treats her badly. T1 is built: tasks with Signal
-   contacts. Next, T2 (see Details below).
+   contacts. T2a is built: nudges, coming back to you and closing tasks. Next,
+   T2b, the coordinator (see Details below).
 10. Tasks T1–T3: errands she carries out with other people over Signal and her
     own email, reporting back to you (see Details below).
 
@@ -1193,8 +1206,10 @@ features it helps check, and package last.
     - [x] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
       missing details first; first contact approved; `tell_nick` renamed
       `pass_on` with an optional task
-    - [ ] T2 task checks in the hourly round: nudges (about a day on Signal),
-      coming back to you, list and cancel tasks
+    - [x] T2a task checks in the hourly round: nudges (about a day on Signal),
+      coming back to you, list and close tasks
+    - [ ] T2b coordinator: when a party reports, a turn in your context decides
+      the next step (ask someone else, search, or come back to you)
     - [x] T2 reaching you by voice when Live is Active, otherwise on Signal (built
       with the S6 heads-ups; `pass_on` uses it too)
     - [ ] T3 her own email address via MCP; strangers only within a task; nudges
@@ -1518,7 +1533,11 @@ features it helps check, and package last.
     failure): no reply after two nudges; a party declines or the brief can't be
     met; she needs a detail or decision the brief doesn't cover; an email
     bounces or a message can't be delivered; a deadline nears or passes; or the
-    task has been open about a week without one.
+    task has been open about a week without one. Built in T2a: two unanswered
+    nudges, a party no longer a contact, and a week without progress (counted
+    from the task's last change, so resuming it restarts the week). Declines and
+    missing details reach the person through `pass_on` for now and become the
+    coordinator's to judge in T2b; bounces and deadlines come with email (T3).
   - *Reaching the person, wherever they are:* task turns run in the background, not from
     any chat, so one rule decides how she reaches them, keeping the seamless
     switching between voice and Signal. With Live Active she raises it by voice
@@ -1536,8 +1555,11 @@ features it helps check, and package last.
     chat until their part is done, `tell_nick` renamed `pass_on` with an
     optional `task_id`), so "ask Sarah when she's free and tell me" works end to
     end. In T1 a task is done once every party has reported; deciding the next
-    step is the coordinator's job in T2; T2 the coordinator, dependent steps, nudges and coming back to the person,
-    and asking about or cancelling open tasks; T3 her own email via MCP, email
+    step is the coordinator's job in T2. T2a the hourly checks (built: nudges
+    written in the party's own chat context and counted in `nudged_at`,
+    migration 0029; coming back to the person; `close_task` in
+    [tools/close_task.py](tools/close_task.py); the latest step in the person's
+    view); T2b the coordinator and dependent steps; T3 her own email via MCP, email
     parties, the hourly mail check and commitment approvals; T4 (with awareness)
     mail events wake waiting tasks instead of the hourly check.
 

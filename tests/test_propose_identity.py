@@ -20,7 +20,7 @@ class ProposeIdentityTests(unittest.TestCase):
         self.gone = proposal_tests.trait("retired")
         self.found = proposal_tests.experience()
         self.client = MagicMock()
-        self.set_output({"changes": [proposal_tests.row(evidence_ids=[str(self.found.id)])]})
+        self.set_output({"changes": [proposal_tests.row(evidence_ids=["e1"])]})
 
     def set_output(self, payload, **changes):
         self.client.responses.create.return_value = response_fixture(json.dumps(payload), **changes)
@@ -45,19 +45,19 @@ class ProposeIdentityTests(unittest.TestCase):
         })
         data = json.loads(request["input"])
         self.assertEqual(data["traits"], [
-            {"id": str(self.held.id), "kind": "perspective", "statement": self.held.statement,
+            {"id": "t1", "kind": "perspective", "statement": self.held.statement,
              "polarity": None, "subject": None, "confidence": 0.6, "held": True},
-            {"id": str(self.forming.id), "kind": "preference", "statement": "I like carburettors.",
+            {"id": "t2", "kind": "preference", "statement": "I like carburettors.",
              "polarity": "like", "subject": "carburettors", "confidence": 0.34, "held": False},
         ])
         self.assertEqual(data["experiences"], [{
-            "id": str(self.found.id), "source": "exploration", "at": AT.isoformat(),
+            "id": "e1", "source": "exploration", "at": AT.isoformat(),
             "details": {"finding": "Carburettors were tuned by ear"},
         }])
 
     def test_retired_traits_cannot_be_changed(self):
         self.set_output({"changes": [proposal_tests.row(
-            action="retire", trait_id=str(self.gone.id), kind=None, statement=None, confidence=None,
+            action="retire", trait_id="t3", kind=None, statement=None, confidence=None,
         )]})
         with self.assertRaises(ValueError):
             self.propose()
@@ -86,7 +86,8 @@ class ProposeIdentityTests(unittest.TestCase):
         for payload, changes in (
             ({"changes": []}, {"status": "incomplete"}),
             ({"changes": []}, {"refusal": True}),
-            ({"changes": [proposal_tests.row(evidence_ids=[str(uuid4())])]}, {}),
+            ({"changes": [proposal_tests.row(evidence_ids=["e2"])]}, {}),
+            ({"changes": [proposal_tests.row(evidence_ids=[str(self.found.id)])]}, {}),
         ):
             with self.subTest(payload=payload, changes=changes):
                 self.set_output(payload, **changes)

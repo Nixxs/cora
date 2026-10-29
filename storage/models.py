@@ -744,6 +744,7 @@ class TaskPartyRecord(Base):
     contacted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     last_heard_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     nudges: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[str | None] = mapped_column(Text)
 
 

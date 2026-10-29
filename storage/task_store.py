@@ -6,6 +6,7 @@ just a party row. Parties see only their own brief; the person sees the whole ta
 """
 
 import json
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
@@ -13,7 +14,7 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from .models import PersonRecord, TaskPartyRecord, TaskRecord, TaskStepRecord
+from .models import ConversationRecord, MessageRecord, PersonRecord, TaskPartyRecord, TaskRecord, TaskStepRecord
 
 GOAL_MAX_CHARS = 1000
 BRIEF_MAX_CHARS = 2000
@@ -24,6 +25,24 @@ TASKS_CONTEXT_MAX_CHARS = 6000
 OPEN = ("open", "waiting", "needs_person")
 # Finished tasks stay in the person's view this long, so "what did Sarah say?" still has an answer.
 RECENTLY_CLOSED = timedelta(days=3)
+# A party quiet this long (since being asked, last writing or last nudged) is due a nudge.
+NUDGE_AFTER = timedelta(days=1)
+# A task this long without progress (an answer, someone asked, the person's word) goes back to the person.
+STALE_AFTER = timedelta(days=7)
+NOTE_MAX_CHARS = 1000
+
+
+@dataclass(frozen=True)
+class QuietParty:
+    task_id: UUID
+    party_id: UUID
+    person_id: UUID
+    name: str
+    goal: str
+    brief: str
+    nudges: int
+    # Their latest message in any chat with her, either way, so a nudge never lands mid-conversation.
+    last_message_at: datetime | None
 
 
 def clean(text: str, limit: int, what: str) -> str:
@@ -124,6 +143,70 @@ class TaskStore:
                 self._step(session, task_id, "Done.")
             return task.goal, done
 
+    def quiet_parties(self, now: datetime) -> list[QuietParty]:
+        """Parties of waiting tasks who haven't been heard from or nudged for NUDGE_AFTER, oldest task first."""
+        last_message = (
+            select(func.max(MessageRecord.created_at))
+            .join(ConversationRecord, ConversationRecord.id == MessageRecord.conversation_id)
+            .where(ConversationRecord.person_id == TaskPartyRecord.person_id)
+            .correlate(TaskPartyRecord).scalar_subquery()
+        )
+        # greatest() skips NULLs: whichever of asked, heard from and nudged came last.
+        since = func.greatest(TaskPartyRecord.contacted_at, TaskPartyRecord.last_heard_at, TaskPartyRecord.nudged_at)
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(TaskRecord.id, TaskPartyRecord.id, TaskPartyRecord.person_id, PersonRecord.display_name,
+                       TaskRecord.goal, TaskPartyRecord.brief, TaskPartyRecord.nudges, last_message)
+                .join(TaskPartyRecord, TaskPartyRecord.task_id == TaskRecord.id)
+                .join(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                .where(TaskRecord.status == "waiting", TaskPartyRecord.status == "waiting",
+                       TaskPartyRecord.channel == "signal", since <= now - NUDGE_AFTER)
+                .order_by(TaskRecord.created_at, TaskPartyRecord.contacted_at)
+            ).all()
+        return [QuietParty(*row) for row in rows]
+
+    def record_nudge(self, party_id: UUID, step: str) -> None:
+        with Session(self.engine) as session, session.begin():
+            party = session.get(TaskPartyRecord, party_id, with_for_update=True)
+            if party is None:
+                raise LookupError("No such party")
+            party.nudges, party.nudged_at = party.nudges + 1, func.current_timestamp()
+            self._step(session, party.task_id, step)
+
+    def stale_tasks(self, now: datetime) -> list[tuple[UUID, str]]:
+        """Waiting tasks without progress for STALE_AFTER, oldest first."""
+        with Session(self.engine) as session:
+            return [tuple(row) for row in session.execute(
+                select(TaskRecord.id, TaskRecord.goal)
+                .where(TaskRecord.status == "waiting", TaskRecord.updated_at <= now - STALE_AFTER)
+                .order_by(TaskRecord.created_at)
+            ).all()]
+
+    def needs_person(self, task_id: UUID, reason: str) -> bool:
+        """The task waits on the person now; False if it already did or isn't open."""
+        with Session(self.engine) as session, session.begin():
+            task = session.get(TaskRecord, task_id, with_for_update=True)
+            if task is None or task.status not in OPEN or task.status == "needs_person":
+                return False
+            task.status, task.updated_at = "needs_person", func.current_timestamp()
+            self._step(session, task_id, f"Back to the person: {reason}")
+            return True
+
+    def close(self, task_id: UUID, status: str, note: str) -> str:
+        """Done or cancelled at the person's word; returns the goal. LookupError if it isn't open."""
+        if status not in ("done", "cancelled"):
+            raise ValueError("A task closes as done or cancelled")
+        note = clean(note, NOTE_MAX_CHARS, "A note")
+        with Session(self.engine) as session, session.begin():
+            task = session.get(TaskRecord, task_id, with_for_update=True)
+            if task is None or task.status not in OPEN:
+                raise LookupError("No such open task")
+            task.status, task.closed_at, task.updated_at = status, func.current_timestamp(), func.current_timestamp()
+            if status == "done":
+                task.result = note[:RESULT_MAX_CHARS]
+            self._step(session, task_id, f"{status.capitalize()} at the person's word: {note}")
+            return task.goal
+
     def briefs_for(self, person_id: UUID) -> str:
         """For one party's own chat: their briefs in open tasks still waiting on them, nothing else."""
         with Session(self.engine) as session:
@@ -149,10 +232,18 @@ class TaskStore:
                 .where(TaskPartyRecord.task_id.in_([task.id for task in tasks]))
                 .order_by(TaskPartyRecord.contacted_at)
             ).all()
+            # Each task's latest step, so she can say where it's got to.
+            latest = dict(session.execute(
+                select(TaskStepRecord.task_id, TaskStepRecord.text)
+                .where(TaskStepRecord.task_id.in_([task.id for task in tasks]))
+                .distinct(TaskStepRecord.task_id)
+                .order_by(TaskStepRecord.task_id, TaskStepRecord.id.desc())
+            ).all())
         by_task: dict[UUID, list[dict]] = {}
         for task_id, name, status, outcome in parties:
             by_task.setdefault(task_id, []).append({"name": name, "status": status, "outcome": outcome})
         return bounded([{
             "task_id": str(task.id), "goal": task.goal, "status": task.status,
             "started": task.created_at.date().isoformat(), "parties": by_task.get(task.id, []),
+            "latest_step": latest.get(task.id),
         } for task in tasks])

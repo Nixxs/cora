@@ -1,6 +1,6 @@
 import asyncio
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from os import getenv
 import sys
 from pathlib import Path
@@ -103,6 +103,17 @@ SERVICE_STARTUP_WAIT_SECONDS = 10
 SIGNAL_RELAYS_PER_DAY = 5
 # The most concerns she can raise at once about one client in a day; later chats still get a heads-up.
 SIGNAL_CONCERNS_PER_DAY = 3
+# Nudges for a quiet party: at most this many, only in these local hours, and only once their chat
+# has been quiet this long, so one never lands mid-conversation.
+TASK_NUDGES_MAX = 2
+NUDGE_HOURS = range(9, 19)
+NUDGE_CHAT_QUIET = timedelta(minutes=30)
+NUDGE_NOTE = (
+    "Background note, not a message from them: they haven't answered about task {task_id} for a while. "
+    "Write one short, friendly follow-up to them about it, in the terms of its brief, as a natural next "
+    "message in this chat. Don't guilt-trip, and don't mention reminders or how long it's been in a way "
+    "that sounds automated. Write only the message."
+)
 # At launch, the greeting waits up to this long for Signal messages that waited while Cora was
 # closed to be answered, counting them all in once nothing new has come for SIGNAL_QUIET_SECONDS.
 SIGNAL_GREETING_WAIT_SECONDS = 20
@@ -260,7 +271,7 @@ class CoraApp(App):
             confirm=lambda *args, **options: self.confirmations.ask(*args, **options),
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
-            task_goal=self.task_goal, record_task=self.record_task,
+            task_goal=self.task_goal, record_task=self.record_task, close_task=self.close_task,
             relay_to_person=self.relay_to_person,
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
@@ -1319,6 +1330,20 @@ class CoraApp(App):
 
     async def reply_to_client(self, client: Client, batch: list[IncomingMessage], history: list[dict]) -> str:
         """Professional mode: her own identity and interests and what she remembers of them, none of the person's."""
+        return await self.backend_chat.reply(
+            content=signal_content(batch, datetime.now(timezone.utc)), history=history,
+            sections=await self.client_sections(client), model=self.live.delegation_model,
+            # Web search, memory search limited to what they may know, and passing things on to the
+            # person; no services, nothing at the desk.
+            route=BackendRoute(
+                excluded=frozenset(self.tools.names()) - {"search_memory", *CLIENT_ONLY},
+                memory_scope=(client.id, client.name),
+            ),
+            extra_instructions=client_chat_instructions(client.name, self.live.person_name),
+        )
+
+    async def client_sections(self, client: Client) -> dict[str, str]:
+        """A client's chat context: her own self, what she remembers of them, her view of them and their briefs."""
         await self.conversation_persistence.load_session_context()
         try:
             # What she remembers from their earlier chats: theirs only, never the person's.
@@ -1342,20 +1367,9 @@ class CoraApp(App):
         except Exception as error:
             self.activity.write(f"{client.name}'s task briefs didn't load ({type(error).__name__}).", "Signal client")
             briefs = ""
-        sections = instruction_sections(
+        return instruction_sections(
             remembered, interest_context=self.live.interest_context, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context, client_people_context=people, task_briefs=briefs,
-        )
-        return await self.backend_chat.reply(
-            content=signal_content(batch, datetime.now(timezone.utc)), history=history, sections=sections,
-            model=self.live.delegation_model,
-            # Web search, memory search limited to what they may know, and passing things on to the
-            # person; no services, nothing at the desk.
-            route=BackendRoute(
-                excluded=frozenset(self.tools.names()) - {"search_memory", *CLIENT_ONLY},
-                memory_scope=(client.id, client.name),
-            ),
-            extra_instructions=client_chat_instructions(client.name, self.live.person_name),
         )
 
     def find_signal_contact(self, name: str) -> tuple[Client | None, str | None]:
@@ -1419,6 +1433,92 @@ class CoraApp(App):
         self.signal_relays[key] = self.signal_relays.get(key, 0) + 1
         self.activity.write(f"Passed something on from {client_name} to you.", "Signal relay")
         return None
+
+    async def close_task(self, task_id, status: str, note: str) -> str | None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.close_task, task_id, status, note)
+        except LookupError:
+            return "There's no open task with that ID."
+        self.activity.write(f"A task was closed ({status}).", "Task")
+        return None
+
+    @work(group="task-checks", exclusive=True, exit_on_error=False)
+    async def check_tasks(self) -> None:
+        """Hourly: nudge parties who've gone quiet, and come back to the person when a task is stuck."""
+        if self.closing:
+            return
+        now = datetime.now(timezone.utc)
+        try:
+            quiet, stale = await self.conversation_persistence.call_database(self.persistence.load_task_checks, now)
+        except Exception as error:
+            self.activity.write(f"Checking tasks failed ({type(error).__name__}).", "Task")
+            return
+        clients = {client.id: client for client in self.signal_clients.values()}
+        daytime = now.astimezone().hour in NUDGE_HOURS
+        for party in quiet:
+            if self.closing:
+                return
+            client = clients.get(party.person_id)
+            if client is None:
+                await self.task_needs_person(party.task_id, party.goal,
+                                             f"{party.name} isn't one of my contacts any more, so I can't ask them.")
+            elif party.nudges >= TASK_NUDGES_MAX:
+                await self.task_needs_person(party.task_id, party.goal,
+                                             f"{party.name} hasn't answered, even after {TASK_NUDGES_MAX} reminders.")
+            elif daytime and (party.last_message_at is None or now - party.last_message_at >= NUDGE_CHAT_QUIET):
+                await self.nudge_party(client, party)
+        for task_id, goal in stale:
+            if self.closing:
+                return
+            await self.task_needs_person(task_id, goal, "it's been a week without it moving on.")
+
+    async def task_needs_person(self, task_id, goal: str, reason: str) -> None:
+        """Back to the person: told first, then marked, so a failed telling is tried again next round."""
+        try:
+            await self.tell_person(f"About your task \"{goal}\": {reason} What would you like me to do?")
+        except Exception as error:
+            self.activity.write(f"A stuck task couldn't reach you yet ({type(error).__name__}).", "Task")
+            return
+        try:
+            await self.conversation_persistence.call_database(self.persistence.task_needs_person, task_id, reason)
+        except Exception as error:
+            self.activity.write(f"Saving that a task needs you failed ({type(error).__name__}).", "Task")
+            return
+        self.activity.write("A task needs you.", "Task")
+
+    async def nudge_party(self, client: Client, party) -> None:
+        """One short follow-up in their own chat, written as she'd write any message to them; within the brief, so no approval."""
+        account = self.signal.status.account
+        if self.signal.status.state != SIGNAL_LINKED or not account:
+            return
+        try:
+            conversation_id = await self.conversation_persistence.call_database(
+                self.persistence.client_conversation, client.id,
+            )
+            history = await self.conversation_persistence.call_database(self.persistence.load_client_history, conversation_id)
+            text = await self.backend_chat.reply(
+                content=[{"type": "input_text", "text": NUDGE_NOTE.format(task_id=party.task_id)}], history=history,
+                sections=await self.client_sections(client), model=self.live.delegation_model,
+                route=BackendRoute(excluded=frozenset(self.tools.names())),
+                extra_instructions=client_chat_instructions(client.name, self.live.person_name),
+            )
+            if not text or self.closing:
+                return
+            await self.signal.client.send(account, client.recipient, text)
+        except Exception as error:
+            self.activity.write(f"Nudging {client.name} failed ({signal_failure(error)}).", "Task")
+            return
+        try:
+            await self.conversation_persistence.call_database(
+                self.persistence.save_client_message, conversation_id, "assistant", text,
+            )
+            await self.conversation_persistence.call_database(
+                self.persistence.record_task_nudge, party.party_id, f"Nudged {client.name}: {text}",
+            )
+        except Exception as error:
+            self.activity.write(f"Saving the nudge to {client.name} failed ({type(error).__name__}).", "Task")
+            return
+        self.activity.write(f"Nudged {client.name} about a task.", "Task")
 
     async def task_goal(self, task_id) -> str | None:
         return await self.conversation_persistence.call_database(self.persistence.task_goal, task_id)
@@ -1842,6 +1942,7 @@ class CoraApp(App):
         # Retries any heads-up that couldn't reach the person before.
         if not self.closing:
             self.deliver_heads_ups()
+            self.check_tasks()
 
     def check_interests(self) -> None:
         # Single flight: a slow model call simply delays the next check.
