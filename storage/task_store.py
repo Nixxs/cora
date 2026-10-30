@@ -82,6 +82,19 @@ class EmailParty:
     thread_id: str | None
 
 
+@dataclass(frozen=True)
+class EmailThread:
+    """An email party of an open task, for the mail check: mail in their thread after `since` is new."""
+    party_id: UUID
+    task_id: UUID
+    goal: str
+    address: str
+    name: str | None
+    brief: str
+    thread_id: str
+    since: datetime
+
+
 # A party as the person and Cora see them: a contact's name, else an email party's name or address.
 PARTY_NAME = func.coalesce(PersonRecord.display_name, TaskPartyRecord.name, TaskPartyRecord.address)
 
@@ -174,21 +187,62 @@ class TaskStore:
         Nothing closes here: the coordinator decides what it means. Returns the goal; LookupError
         if they aren't a party to an open task.
         """
+        return self._report(task_id, TaskPartyRecord.person_id == person_id, outcome, settled)
+
+    def report_email(self, task_id: UUID, party_id: UUID, outcome: str, settled: bool = True) -> str:
+        """The same for an email party, by their party row."""
+        return self._report(task_id, TaskPartyRecord.id == party_id, outcome, settled)
+
+    def _report(self, task_id: UUID, which, outcome: str, settled: bool) -> str:
         outcome = clean(outcome, OUTCOME_MAX_CHARS, "An outcome")
         with Session(self.engine) as session, session.begin():
             task = session.get(TaskRecord, task_id, with_for_update=True)
-            party = session.scalar(select(TaskPartyRecord).where(
-                TaskPartyRecord.task_id == task_id, TaskPartyRecord.person_id == person_id,
-            ))
+            party = session.scalar(select(TaskPartyRecord).where(TaskPartyRecord.task_id == task_id, which))
             if task is None or task.status not in OPEN or party is None:
                 raise LookupError("Not a party to an open task")
-            name = session.scalar(select(PersonRecord.display_name).where(PersonRecord.id == person_id))
-            party.last_heard_at = func.current_timestamp()
+            name = session.scalar(
+                select(PARTY_NAME).select_from(TaskPartyRecord)
+                .outerjoin(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                .where(TaskPartyRecord.id == party.id)
+            )
+            if party.channel == "signal":
+                # By email, the mail check notes what it has read, up to the latest message's time.
+                party.last_heard_at = func.current_timestamp()
             if settled:
                 party.status, party.outcome = "done", outcome
             self._step(session, task_id, f"{name} {'reported' if settled else 'asked'}: {outcome}")
             task.updated_at = func.current_timestamp()
             return task.goal
+
+    def email_threads(self) -> list[EmailThread]:
+        """Every email party of an open task with a thread, for the mail check, oldest task first."""
+        since = func.greatest(TaskPartyRecord.contacted_at, TaskPartyRecord.last_heard_at)
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(TaskPartyRecord.id, TaskRecord.id, TaskRecord.goal, TaskPartyRecord.address,
+                       TaskPartyRecord.name, TaskPartyRecord.brief, TaskPartyRecord.thread_id, since)
+                .join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
+                .where(TaskRecord.status.in_(OPEN), TaskPartyRecord.channel == "email",
+                       TaskPartyRecord.thread_id.is_not(None))
+                .order_by(TaskRecord.created_at, TaskPartyRecord.contacted_at)
+            ).all()
+        return [EmailThread(*row) for row in rows]
+
+    def email_heard(self, party_id: UUID, at: datetime) -> None:
+        """Mail in their thread up to `at` (Microsoft's received time) has been read; never moves back."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(TaskPartyRecord).where(TaskPartyRecord.id == party_id).values(
+                last_heard_at=func.greatest(TaskPartyRecord.last_heard_at, at),
+            ))
+
+    def email_thread(self, task_id: UUID, address: str) -> str | None:
+        """Her thread with that address for an open task, or None."""
+        with Session(self.engine) as session:
+            return session.scalar(
+                select(TaskPartyRecord.thread_id).join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
+                .where(TaskPartyRecord.task_id == task_id, TaskPartyRecord.address == address.strip().lower(),
+                       TaskRecord.status.in_(OPEN))
+            )
 
     def coordination(self, task_id: UUID) -> dict | None:
         """The whole of an open task for the coordinator: goal, every party's brief and word, recent steps."""

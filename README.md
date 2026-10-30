@@ -836,9 +836,22 @@ address, signed as Cora. You approve every email first, by pop-up or YES on Sign
 seeing exactly who it's to, the subject and the message. Like a Signal message, an
 email can start a task or join an open one, with a brief you approve alongside it;
 the recipient becomes an email party, shown by name (or address) in your view of
-the task, and her thread with them is saved for their reply. Replies aren't read
-on their own yet (E3, the hourly mail check): ask her to check her email. Run
-`python migrate.py` once for migration 0030.
+the task, and her thread with them is saved for their reply. Run `python migrate.py`
+once for migration 0030.
+
+She reads replies herself. Every 10 minutes while her email is ready (and as soon
+as it's ready at launch), she checks each open task's email thread for anything new
+from their end and answers it in the thread, within that recipient's brief, with no
+approval: the same as a Signal contact's chat. That turn knows only her own self and
+that one brief, never your memories, and its only tools are web search and
+`pass_on`, so their word on the task goes to the coordinator, who tells you, and
+anything outside the brief comes to you. She answers whoever wrote last at their
+end, never reply-all; mail needing nothing back (an out-of-office, a thank-you) is
+read but not answered; and she writes at most 5 replies a thread a day, so two
+mailboxes can't keep answering each other. If she can't answer one, the task comes
+back to you. To pass your answer back ("tell them Tuesday's fine"), she uses
+`send_email` without a subject: you approve it, and it goes as a reply in her
+thread with them.
 
 To set it up once:
 
@@ -1279,10 +1292,15 @@ features it helps check, and package last.
       signed in from Settings > Services > Email, `check_email` (read-only)
     - [x] T3 E2 `send_email` with approval and email parties on tasks (a brief,
       the thread saved for replies)
-    - [ ] T3 E3 the hourly mail check: replies in task threads go to that party's
-      chat flow; strangers only within a task
+    - [x] T3 E3a the mail check (every 10 minutes): replies in task threads are
+      answered within the brief and reach the coordinator through `pass_on`;
+      `send_email` without a subject replies in the thread; strangers only within a task
+    - [ ] T3 E3b background approvals on Signal: work Cora starts herself (the
+      coordinator) asks you on Signal, so she can email or message someone new mid-task
     - [ ] T3 E4 email nudges after two working days, and bounces back to you
-    - [ ] T4 new-mail events through awareness (later, with item 14)
+    - [ ] T4 new-mail events through awareness (later, with item 14): a webhook
+      listener at https://cora.intelligis.io (port 8000 on Cora's PC) receives
+      Microsoft Graph change notifications and starts the same mail check at once
 
 *Phase 3 — noticing things*
 
@@ -1290,7 +1308,9 @@ features it helps check, and package last.
 12. Relevance and awareness triggers (interests step 8 below).
 13. Home Assistant, starting with its demo devices.
 14. Awareness W4: expectations from memory tasks; Tasks T4 (mail events wake
-    waiting tasks).
+    waiting tasks). Webhooks arrive at https://cora.intelligis.io, which points to
+    port 8000 on the PC Cora runs on: a small FastAPI process (or container) beside
+    her takes webhook calls and turns them into events for her, starting with new mail.
 15. Camera and screen awareness.
 16. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
@@ -1602,7 +1622,9 @@ features it helps check, and package last.
     threads, nudges and bounces, as with Signal (E1 built: [mail/](mail/),
     `check_email`; E2 built: `send_email` in [tools/send_email.py](tools/send_email.py),
     each email approved in full, and email parties in migration 0030 with their
-    name and thread). Email strangers (such as an instructor) are
+    name and thread; E3a built: the mail check in `read_task_mail` ([app.py](app.py)),
+    `Mailbox.thread` and `Mailbox.reply`, each thread read up to its latest message
+    in `last_heard_at`). Email strangers (such as an instructor) are
     only allowed within a task: their mail is untrusted data, can't start
     anything new, gets only the brief's scope, and once the task closes their
     mail is just mail. If she doesn't know what to do with one, she asks the person.
@@ -1645,8 +1667,14 @@ features it helps check, and package last.
     [tools/close_task.py](tools/close_task.py); the latest step in the person's
     view); T2b the coordinator (built); T3 her own email through Microsoft Graph
     in four steps (E1 sign-in and reading, built; E2 sending and email parties, built;
-    E3 the hourly mail check; E4 email nudges and bounces) and commitment approvals; T4 (with awareness)
-    mail events wake waiting tasks instead of the hourly check.
+    E3a the mail check, built; E3b background approvals on Signal; E4 email nudges and
+    bounces) and commitment approvals; T4 (with awareness)
+    mail events wake waiting tasks instead of waiting for the next check. The mail check
+    (`check_task_mail`) is written to be started from anywhere: a Graph change
+    notification on her inbox, through the webhook listener, only needs to call it.
+    Graph notifications only say that something changed, and mail subscriptions expire
+    within about three days, so they're renewed regularly and the 10-minute check stays
+    as the fallback for any notification that's missed.
 
 - **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)
   is command-line only today. A "Her picture" section in Settings would make it a

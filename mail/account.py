@@ -35,6 +35,9 @@ SCOPES = ["User.Read", "Mail.ReadWrite", "Mail.Send"]
 GRAPH = "https://graph.microsoft.com/v1.0"
 REQUEST_SECONDS = 20
 PREVIEW_MAX_CHARS = 300
+# A thread as she reads it: its latest messages, each cut to this much of its own new text.
+THREAD_MESSAGES_MAX = 20
+MESSAGE_TEXT_MAX_CHARS = 4000
 SIGN_IN_HINT = "sign her in again in Settings > Services > Email"
 
 # EmailStatus.state
@@ -209,6 +212,27 @@ def summary(message: dict) -> MailSummary:
 
 
 @dataclass(frozen=True)
+class MailMessage:
+    """One message of a thread: only its own new text (Microsoft's uniqueBody), without quoted replies."""
+    id: str
+    sender_name: str
+    sender_address: str
+    subject: str
+    received_at: datetime
+    text: str
+
+
+def thread_message(message: dict) -> MailMessage:
+    sender = (message.get("from") or {}).get("emailAddress") or {}
+    text = ((message.get("uniqueBody") or {}).get("content") or "").strip()
+    return MailMessage(
+        message["id"], sender.get("name") or "", (sender.get("address") or "").lower(),
+        message.get("subject") or "", datetime.fromisoformat(message["receivedDateTime"].replace("Z", "+00:00")),
+        text[:MESSAGE_TEXT_MAX_CHARS],
+    )
+
+
+@dataclass(frozen=True)
 class SentMail:
     id: str
     # Microsoft's conversationId: replies in the same thread share it.
@@ -223,18 +247,19 @@ class Mailbox:
         self.get_token = get_token
         self.client_factory = client_factory
 
-    async def _request(self, method: str, path: str, params: dict | None = None, body: dict | None = None) -> dict:
+    async def _request(self, method: str, path: str, params: dict | None = None, body: dict | None = None,
+                       headers: dict | None = None) -> dict:
         token = await asyncio.to_thread(self.get_token)
         async with self.client_factory(timeout=REQUEST_SECONDS) as client:
             response = await client.request(method, f"{GRAPH}{path}", params=params, json=body,
-                                            headers={"Authorization": f"Bearer {token}"})
+                                            headers={"Authorization": f"Bearer {token}", **(headers or {})})
         if response.status_code >= 400:
             code = graph_error_code(response)
             if response.status_code == 401:
                 raise EmailNotReady(f"Microsoft refused Cora's email sign-in ({code}); {SIGN_IN_HINT}.")
             raise GraphError(f"Microsoft said HTTP {response.status_code} ({code}).")
         # Sending answers 202 with no body.
-        return response.json() if response.status_code != 202 else {}
+        return response.json() if response.status_code not in (202, 204) else {}
 
     async def _get(self, path: str, params: dict | None = None) -> dict:
         return await self._request("GET", path, params)
@@ -248,6 +273,37 @@ class Mailbox:
         })
         await self._request("POST", f"/me/messages/{draft['id']}/send")
         return SentMail(draft["id"], draft["conversationId"])
+
+    async def reply(self, message_id: str, address: str, name: str | None, text: str) -> SentMail:
+        """A plain-text reply in that message's thread, to the one address given (never reply-all)."""
+        draft = await self._request("POST", f"/me/messages/{message_id}/createReply")
+        recipient = {"address": address} | ({"name": name} if name else {})
+        await self._request("PATCH", f"/me/messages/{draft['id']}", body={
+            "body": {"contentType": "Text", "content": text}, "toRecipients": [{"emailAddress": recipient}],
+            "ccRecipients": [], "bccRecipients": [],
+        })
+        await self._request("POST", f"/me/messages/{draft['id']}/send")
+        return SentMail(draft["id"], draft["conversationId"])
+
+    async def thread(self, thread_id: str) -> list[MailMessage]:
+        """A thread's latest messages, either way, oldest first; drafts left out. Nothing is marked read."""
+        quoted = thread_id.replace("'", "''")
+        page = await self._request("GET", "/me/messages", params={
+            "$filter": f"conversationId eq '{quoted}'", "$top": "50",
+            "$select": "id,from,subject,receivedDateTime,uniqueBody,isDraft",
+        }, headers={"Prefer": 'outlook.body-content-type="text"'})
+        messages = [message for message in page.get("value", []) if not message.get("isDraft")]
+        return sorted(map(thread_message, messages), key=lambda message: message.received_at)[-THREAD_MESSAGES_MAX:]
+
+    async def reply_in_thread(self, thread_id: str, address: str, name: str | None, text: str) -> SentMail:
+        """A reply to them in an existing thread, after its latest message; LookupError if it's gone."""
+        messages = await self.thread(thread_id)
+        if not messages:
+            raise LookupError("That email thread is gone")
+        return await self.reply(messages[-1].id, address, name, text)
+
+    async def mark_read(self, message_id: str) -> None:
+        await self._request("PATCH", f"/me/messages/{message_id}", body={"isRead": True})
 
     async def address(self) -> str:
         me = await self._get("/me", {"$select": "mail,userPrincipalName"})

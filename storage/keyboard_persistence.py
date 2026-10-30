@@ -14,7 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
-from .task_store import EmailParty, QuietParty, TaskStore
+from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -78,6 +78,18 @@ class KeyboardPersistence:
 
     def report_task(self, task_id: UUID, person_id: UUID, outcome: str, settled: bool) -> str:
         return TaskStore(self._get_store().engine).report(task_id, person_id, outcome, settled)
+
+    def report_email_task(self, task_id: UUID, party_id: UUID, outcome: str, settled: bool) -> str:
+        return TaskStore(self._get_store().engine).report_email(task_id, party_id, outcome, settled)
+
+    def load_email_threads(self) -> list[EmailThread]:
+        return TaskStore(self._get_store().engine).email_threads()
+
+    def email_party_heard(self, party_id: UUID, at: datetime) -> None:
+        TaskStore(self._get_store().engine).email_heard(party_id, at)
+
+    def task_email_thread(self, task_id: UUID, address: str) -> str | None:
+        return TaskStore(self._get_store().engine).email_thread(task_id, address)
 
     def task_coordination(self, task_id: UUID) -> dict | None:
         return TaskStore(self._get_store().engine).coordination(task_id)

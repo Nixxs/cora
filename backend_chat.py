@@ -34,11 +34,14 @@ class BackendRoute:
     def __init__(
         self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None,
         ask_approval=None, approval_seconds: float = 0, tool_seconds: float | None = None,
+        email_party: tuple | None = None,
     ) -> None:
         # Tools not offered in this kind of conversation, and refused if called anyway.
         self.excluded = frozenset(excluded)
         # In a client's chat, (their id, their name): memory search only finds what they may know.
         self.memory_scope = memory_scope
+        # Answering an email thread for a task, (party id, task id, who they are): pass_on reports from them.
+        self.email_party = email_party
         # In the person's own Signal chat: asks them to approve in the chat (returns their answer),
         # instead of the pop-up on the desk, waiting at most approval_seconds.
         self.ask_approval = ask_approval

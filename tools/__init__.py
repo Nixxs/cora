@@ -31,6 +31,7 @@ def create_tool_registry(
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
     signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
     task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
+    relay_from_email=None, find_email_thread=None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -56,7 +57,7 @@ def create_tool_registry(
         task_goal, record_task,
     )
     registry.register(SIGNAL_SCHEMA, validate_signal_arguments, signal_message.handle)
-    pass_on = PassOnTool(get_connection, is_closing, write_debug, relay_to_person)
+    pass_on = PassOnTool(get_connection, is_closing, write_debug, relay_to_person, relay_from_email)
     registry.register(PASS_ON_SCHEMA, validate_pass_on_arguments, pass_on.handle)
     concern = RaiseConcernTool(get_connection, is_closing, write_debug, raise_concern)
     registry.register(RAISE_CONCERN_SCHEMA, validate_concern_arguments, concern.handle)
@@ -66,6 +67,8 @@ def create_tool_registry(
     registry.register(CLOSE_TASK_SCHEMA, validate_close_task_arguments, close_task_tool.handle)
     check_email = CheckEmailTool(get_connection, is_closing, write_debug, get_mailbox)
     registry.register(CHECK_EMAIL_SCHEMA, validate_check_email_arguments, check_email.handle)
-    send_email = SendEmailTool(get_connection, is_closing, write_debug, get_mailbox, confirm, task_goal, record_email_task)
+    send_email = SendEmailTool(
+        get_connection, is_closing, write_debug, get_mailbox, confirm, task_goal, record_email_task, find_email_thread,
+    )
     registry.register(SEND_EMAIL_SCHEMA, validate_send_email_arguments, send_email.handle)
     return registry

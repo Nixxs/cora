@@ -485,6 +485,30 @@ class TaskStoreDatabaseTests(unittest.TestCase):
         self.age(task_id, contacted_at=datetime.now(timezone.utc) - timedelta(days=2))
         self.assertEqual([party.name for party in self.tasks.quiet_parties(datetime.now(timezone.utc))], ["Sarah"])
 
+    def test_the_mail_check_reads_each_email_thread_once_and_their_word_reaches_the_task(self):
+        task_id = self.tasks.start("Book a lesson", EmailParty("info@school.example", "Bright School", "thread-1"),
+                                   "Times and price", "Emailed Bright School: Hi")
+        self.tasks.add_party(task_id, self.sarah.id, "When suits her", "Asked Sarah")
+        self.tasks.add_party(task_id, EmailParty("no-thread@x.example", None, None), "b", "s")
+        [thread] = self.tasks.email_threads()
+        self.assertEqual((thread.task_id, thread.goal, thread.address, thread.name, thread.brief, thread.thread_id),
+                         (task_id, "Book a lesson", "info@school.example", "Bright School", "Times and price", "thread-1"))
+        self.assertEqual(self.tasks.email_thread(task_id, "Info@School.example "), "thread-1")
+        # Read up to Microsoft's time for their latest; it never moves back.
+        later = thread.since + timedelta(hours=2)
+        self.tasks.email_heard(thread.party_id, later)
+        self.tasks.email_heard(thread.party_id, later - timedelta(hours=1))
+        [thread] = self.tasks.email_threads()
+        self.assertEqual(thread.since, later)
+        # Their word, through pass_on, is the task's; it leaves what the mail check has read alone.
+        self.assertEqual(self.tasks.report_email(task_id, thread.party_id, "Tuesdays, $70"), "Book a lesson")
+        self.assertEqual(self.tasks.email_threads()[0].since, later)
+        self.assertEqual(self.steps(task_id)[-1], "Bright School reported: Tuesdays, $70")
+        with self.assertRaises(LookupError):
+            self.tasks.report_email(uuid4(), thread.party_id, "x")
+        self.tasks.close(task_id, "done", "Booked")
+        self.assertEqual((self.tasks.email_threads(), self.tasks.email_thread(task_id, "info@school.example")), ([], None))
+
     def test_a_task_waits_on_the_person_unless_someone_is_still_to_answer(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")
         self.assertFalse(self.tasks.needs_person(task_id, "Told them", unless_waiting=True))
