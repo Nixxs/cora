@@ -29,11 +29,16 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
     def test_schema_is_strict_with_a_message_and_an_optional_task(self):
         self.assertTrue(SCHEMA["strict"])
         self.assertEqual(SCHEMA["name"], "pass_on")
-        validate_arguments({"message": "The plan", "task_id": None})
-        validate_arguments({"message": "Friday at 10", "task_id": str(uuid4())})
-        for bad in ({}, {"message": "hi"}, {"message": " ", "task_id": None}, {"message": "x" * 3001, "task_id": None},
-                    {"message": "hi", "task_id": None, "to": "Bob"}, {"message": "hi", "task_id": "not-an-id"},
-                    {"message": "hi", "task_id": 3}):
+        validate_arguments({"message": "The plan", "task_id": None, "settled": None})
+        validate_arguments({"message": "Friday at 10", "task_id": str(uuid4()), "settled": True})
+        validate_arguments({"message": "What's the address?", "task_id": str(uuid4()), "settled": False})
+        for bad in ({}, {"message": "hi"}, {"message": " ", "task_id": None, "settled": None},
+                    {"message": "x" * 3001, "task_id": None, "settled": None},
+                    {"message": "hi", "task_id": None, "settled": None, "to": "Bob"},
+                    {"message": "hi", "task_id": "not-an-id", "settled": True},
+                    {"message": "hi", "task_id": 3, "settled": True}, {"message": "hi", "task_id": None},
+                    {"message": "hi", "task_id": None, "settled": True},
+                    {"message": "hi", "task_id": str(uuid4()), "settled": None}):
             with self.subTest(arguments=bad), self.assertRaises(ValueError):
                 validate_arguments(bad)
 
@@ -41,25 +46,25 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         client_id = uuid4()
         route = BackendRoute(memory_scope=(client_id, "Royce"))
         tool = self.tool(route)
-        await tool.handle("c1", {"message": " Here's the plan we worked out. ", "task_id": None})
-        self.relay.assert_awaited_once_with(client_id, "Royce", "Here's the plan we worked out.", None)
+        await tool.handle("c1", {"message": " Here's the plan we worked out. ", "task_id": None, "settled": None})
+        self.relay.assert_awaited_once_with(client_id, "Royce", "Here's the plan we worked out.", None, None)
         self.assertEqual(self.output(route)["status"], "ok")
         task_id = uuid4()
-        await tool.handle("c2", {"message": "Friday at 10", "task_id": str(task_id)})
-        self.relay.assert_awaited_with(client_id, "Royce", "Friday at 10", task_id)
+        await tool.handle("c2", {"message": "Friday at 10", "task_id": str(task_id), "settled": False})
+        self.relay.assert_awaited_with(client_id, "Royce", "Friday at 10", task_id, False)
 
     async def test_anywhere_else_it_refuses(self):
         for connection in (BackendRoute(), MagicMock()):
             with self.subTest(connection=type(connection).__name__):
                 tool = self.tool(connection)
-                await tool.handle("c1", {"message": "hi", "task_id": None})
+                await tool.handle("c1", {"message": "hi", "task_id": None, "settled": None})
                 self.relay.assert_not_called()
                 self.assertEqual(self.output(connection)["status"], "error")
 
     async def test_a_limit_or_problem_is_reported_not_hidden(self):
         route = BackendRoute(memory_scope=(uuid4(), "Royce"))
         tool = self.tool(route, problem="You've passed on as much as you can for Royce today; it wasn't sent.")
-        await tool.handle("c1", {"message": "hi", "task_id": None})
+        await tool.handle("c1", {"message": "hi", "task_id": None, "settled": None})
         self.assertEqual(self.output(route)["status"], "not_done")
 
     def test_only_clients_chats_are_offered_it(self):
@@ -94,27 +99,20 @@ class RelayAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(message.text, "From Royce, via Cora:\nRunning late.")
             app.signal.client.send.assert_not_awaited()
 
-    async def test_a_task_answer_is_recorded_then_passed_on_naming_the_task(self):
+    async def test_a_task_answer_is_recorded_for_the_coordinator_and_an_unknown_task_refused(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            await self.linked(app)
             client_id, task_id = uuid4(), uuid4()
-            app.persistence.report_task.return_value = ("Find a lesson time for Sarah", True)
-            self.assertIsNone(await app.relay_to_person(client_id, "Sarah", "Tuesdays after 4.", task_id))
-            app.persistence.report_task.assert_called_once_with(task_id, client_id, "Tuesdays after 4.")
-            app.signal.client.send.assert_awaited_once_with(CORA, "uuid-nick", (
-                'From Sarah, via Cora, for your task "Find a lesson time for Sarah":\n'
-                "Tuesdays after 4. That's everything for this task."
-            ))
+            app.persistence.report_task.return_value = "Find a lesson time for Sarah"
+            app.coordinate_task = MagicMock()
+            self.assertIsNone(await app.relay_to_person(client_id, "Sarah", "Tuesdays after 4.", task_id, True))
+            app.persistence.report_task.assert_called_once_with(task_id, client_id, "Tuesdays after 4.", True)
+            app.coordinate_task.assert_called_once_with(
+                task_id, "Sarah answered: Tuesdays after 4.",
+                'From Sarah, via Cora, for your task "Find a lesson time for Sarah":\nTuesdays after 4.', True,
+            )
             app.persistence.report_task.side_effect = LookupError("no")
-            self.assertIn("isn't an open task", await app.relay_to_person(client_id, "Sarah", "Hi", task_id))
-            self.assertEqual(app.signal.client.send.await_count, 1)
-
-    async def test_a_task_answer_is_kept_even_when_the_person_cant_be_reached(self):
-        async with keyboard_tests.running_app() as (app, pilot):
-            app.persistence.report_task.return_value = ("Goal", False)
-            problem = await app.relay_to_person(uuid4(), "Sarah", "Tuesdays.", uuid4())
-            self.assertIn("recorded on the task", problem)
-            app.persistence.report_task.assert_called_once()
+            self.assertIn("isn't an open task", await app.relay_to_person(client_id, "Sarah", "Hi", task_id, True))
+            self.assertEqual(app.coordinate_task.call_count, 1)
 
     async def test_each_client_can_pass_on_only_a_few_a_day(self):
         async with keyboard_tests.running_app() as (app, pilot):

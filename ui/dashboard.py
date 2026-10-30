@@ -11,6 +11,7 @@ from context_window import BACKEND, VOICE, short_tokens
 from devices.audio_bands import BAND_COUNT
 from memory.store import fade_weight
 from session_config import BACKEND_CONTEXT_TOKENS
+from storage.task_store import TASK_NUDGES_MAX
 from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
@@ -27,6 +28,11 @@ REFRESH_SECONDS = 30
 
 RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 
+# A task's dot: blue while it waits on others, amber once it waits on the person.
+TASK_STATUS_STYLES = {"open": "#7fb8d8", "waiting": "#7fb8d8", "needs_person": "#e0b45c"}
+# A task's latest step is cut to this, so one long message doesn't fill the box.
+STEP_PREVIEW_CHARS = 120
+
 
 # Box id -> border title, in the btop-style layout: a wide voice band with the chat beside
 # it, then the database panels below.
@@ -37,6 +43,7 @@ BOX_TITLES = {
     "interests-box": "interests",
     "identity-box": "identity",
     "conversations-box": "conversations",
+    "tasks-box": "tasks",
     "context-box": "context",
     "background-box": "background",
 }
@@ -64,6 +71,44 @@ def until(when, now) -> str:
         return "due"
     span = whole_unit((when - now).total_seconds())
     return f"in {span}" if span else "soon"
+
+
+def next_check(when, now) -> str:
+    """When the hourly check acts on something: 'in 6h', or 'next check' once due (nudges wait for daytime)."""
+    return "next check" if when <= now else until(when, now)
+
+
+def party_state(party, now) -> tuple[str, str]:
+    """What's next for one person on a task, and its style."""
+    if party.status == "done":
+        return "answered", LABEL_STYLE
+    if party.due_at is None:
+        # The task waits on the person, so nobody is nudged.
+        return "asked", LABEL_STYLE
+    if party.nudges >= TASK_NUDGES_MAX:
+        return f"no answer · back to you {next_check(party.due_at, now)}", ""
+    return f"nudge {party.nudges + 1}/{TASK_NUDGES_MAX} {next_check(party.due_at, now)}", ""
+
+
+def task_lines(tasks, now) -> Text:
+    """Each open task: its goal, where it stands, each person's next check and its latest step."""
+    lines = Text()
+    for index, task in enumerate(tasks):
+        lines.append(("\n\n" if index else "") + "● ", style=TASK_STATUS_STYLES.get(task.status, LABEL_STYLE))
+        lines.append(task.goal)
+        state = "needs you" if task.status == "needs_person" else "waiting"
+        stale = f" · back to you {next_check(task.stale_at, now)}" if task.stale_at else ""
+        lines.append(f"\n  {state} · started {ago(task.created_at, now)}{stale}", style=LABEL_STYLE)
+        width = max((len(party.name) for party in task.parties), default=0)
+        for party in task.parties:
+            lines.append(f"\n  {party.name:<{width}}  ", style=LABEL_STYLE)
+            lines.append(*party_state(party, now))
+        if task.latest_step:
+            step = " ".join(task.latest_step.split())
+            if len(step) > STEP_PREVIEW_CHARS:
+                step = step[:STEP_PREVIEW_CHARS - 1] + "…"
+            lines.append(f"\n  ↳ {step}", style=TRACK_STYLE)
+    return lines or Text("no open tasks", style=TRACK_STYLE)
 
 
 class DashboardScreen(Screen):
@@ -157,6 +202,10 @@ class DashboardScreen(Screen):
                 with Vertical(id="conversations-box", classes="dashboard-box"):
                     yield Static("your messages per day", classes="dashboard-label")
                     yield CalendarHeatmap(id="conversation-days")
+                with Vertical(id="tasks-box", classes="dashboard-box"):
+                    # Scrolls, so every open task can be read.
+                    with VerticalScroll(id="tasks-scroll"):
+                        yield Static(id="task-list")
                 with Vertical(id="context-box", classes="dashboard-box"):
                     yield Static("connect to measure", id="context-placeholder")
                     # Each item's share of its model's startup context; scrolls if the box is short.
@@ -244,6 +293,9 @@ class DashboardScreen(Screen):
         heatmap = self.query_one("#conversation-days", CalendarHeatmap)
         heatmap.today_row = now.astimezone().weekday()
         heatmap.days = self.snapshot.message_days
+        # Text, so brackets in a goal or a step are not read as markup.
+        self.query_one("#task-list", Static).update(task_lines(self.snapshot.tasks, now))
+        self.query_one("#tasks-box").border_subtitle = f"{len(self.snapshot.tasks)} open" if self.snapshot.tasks else ""
         width = max(map(len, self.snapshot.last_runs), default=0)
         runs = Text()
         for index, (job, then) in enumerate(self.snapshot.last_runs.items()):

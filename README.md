@@ -232,6 +232,7 @@ Its top right shows **○ standby** while Live is in standby.
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
+| tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. |
 | context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
 | background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
 
@@ -792,10 +793,18 @@ Sarah becomes a task. She first asks you for anything she knows she'll need
 task and a **brief** for Sarah: what to find out or agree and what she may share.
 Approving it approves the brief. From then on, Sarah's chat with her carries that
 brief, even across a new conversation after a quiet gap, so she can steer back to
-it; Sarah never sees your other tasks or anyone else involved. When Sarah's part
-is settled, Cora passes her answer to you (`pass_on`, naming the task, marked
-"for your task …") and records it; once everyone asked has answered, the task is
-done. Your chats with her (desk, voice and your Signal chat) know your open tasks
+it; Sarah never sees your other tasks or anyone else involved. When Sarah
+answers, or needs something from you first (a question, a missing detail), Cora
+records it on the task (`pass_on`, naming the task) and a background turn in
+your own context, the **coordinator**, decides what it means: if the goal is
+met she closes the task and tells you the outcome; if someone declined or needs
+something from you, she says plainly what happened, suggests a next step
+(searching if it helps) and asks what you'd like, and the task waits on you; if
+others are still to answer, she just tells you what came in. It reaches you by
+voice or on Signal like a heads-up, in her own words. She never contacts anyone
+new on her own: she suggests it, and your yes goes through the usual approval.
+If the coordinator fails, the answer reaches you as it came; if you can't be
+reached, the hourly round tries again. Your chats with her (desk, voice and your Signal chat) know your open tasks
 and those finished in the last three days, so "what did Sarah say?" works later
 too. She can ask another contact for the same open task too, approved the same
 way. Run `python migrate.py` once for migrations 0028 and 0029.
@@ -1186,8 +1195,8 @@ features it helps check, and package last.
    Signal are read like pasted ones. S6 is built: quiet client chats close
    hourly, she has an impression of each person she talks with, and you get a
    heads-up when one treats her badly. T1 is built: tasks with Signal
-   contacts. T2a is built: nudges, coming back to you and closing tasks. Next,
-   T2b, the coordinator (see Details below).
+   contacts. T2a is built: nudges, coming back to you and closing tasks. T2b
+   is built: the coordinator. Next, T3, her own email (see Details below).
 10. Tasks T1–T3: errands she carries out with other people over Signal and her
     own email, reporting back to you (see Details below).
 
@@ -1208,8 +1217,8 @@ features it helps check, and package last.
       `pass_on` with an optional task
     - [x] T2a task checks in the hourly round: nudges (about a day on Signal),
       coming back to you, list and close tasks
-    - [ ] T2b coordinator: when a party reports, a turn in your context decides
-      the next step (ask someone else, search, or come back to you)
+    - [x] T2b coordinator: when a party reports, a turn in your context decides
+      the next step (close it, search and suggest, or come back to you)
     - [x] T2 reaching you by voice when Live is Active, otherwise on Signal (built
       with the S6 heads-ups; `pass_on` uses it too)
     - [ ] T3 her own email address via MCP; strangers only within a task; nudges
@@ -1503,12 +1512,23 @@ features it helps check, and package last.
     in. When their part is settled she reports it with `pass_on` (formerly
     `tell_nick`), naming the task: one tool for both, so passing
     something on without a task ("tell them I'll be late") works as now, and
-    reporting a task's outcome also records it and moves the task on. The
+    reporting a task's outcome also records it and moves the task on.
+    `settled` says whether their part is done (an answer or a no) or they need
+    something from the person first (a question), which keeps them waiting. The
     daily relay limit covers both. The instructor never learns about Sarah beyond
     what the brief allows, and Sarah never sees the instructor's thread.
   - *Coordinator:* a report starts a turn in the person's context with the whole task,
     which decides the next step (web search for instructors, draft the email,
     add them as a party) or tells the person. Only it starts new contact.
+    Built in T2b (`coordinate_task` in [app.py](app.py)): the turn sees the
+    task's goal, every party's brief and word, and its latest steps, and may
+    search the web and memory and use `close_task`, nothing else. A report never
+    closes a task by itself. Once the person is told, the task waits on them
+    unless someone is still to answer (a question always waits on them). For
+    now it suggests new contact rather than starting it, so the person's yes goes
+    through the normal approval; background approvals can come later. If the turn
+    fails, the report reaches the person as it came; if they can't be reached, a
+    task nobody is left to answer is retried in the hourly round.
   - *Before creating a task* she asks the person for details she knows she'll need
     (an address for an instructor coming to Sarah, a budget), since they may not
     realise. What she may share goes in the brief; approving the brief approves
@@ -1535,9 +1555,9 @@ features it helps check, and package last.
     bounces or a message can't be delivered; a deadline nears or passes; or the
     task has been open about a week without one. Built in T2a: two unanswered
     nudges, a party no longer a contact, and a week without progress (counted
-    from the task's last change, so resuming it restarts the week). Declines and
-    missing details reach the person through `pass_on` for now and become the
-    coordinator's to judge in T2b; bounces and deadlines come with email (T3).
+    from the task's last change, so resuming it restarts the week). Built in
+    T2b: declines and missing details, judged by the coordinator. Bounces and
+    deadlines come with email (T3).
   - *Reaching the person, wherever they are:* task turns run in the background, not from
     any chat, so one rule decides how she reaches them, keeping the seamless
     switching between voice and Signal. With Live Active she raises it by voice
@@ -1554,12 +1574,12 @@ features it helps check, and package last.
     the optional `task` on `send_signal_message`, the brief in that contact's
     chat until their part is done, `tell_nick` renamed `pass_on` with an
     optional `task_id`), so "ask Sarah when she's free and tell me" works end to
-    end. In T1 a task is done once every party has reported; deciding the next
-    step is the coordinator's job in T2. T2a the hourly checks (built: nudges
+    end. In T1 a task was done once every party had reported; since T2b the
+    coordinator decides. T2a the hourly checks (built: nudges
     written in the party's own chat context and counted in `nudged_at`,
     migration 0029; coming back to the person; `close_task` in
     [tools/close_task.py](tools/close_task.py); the latest step in the person's
-    view); T2b the coordinator and dependent steps; T3 her own email via MCP, email
+    view); T2b the coordinator (built); T3 her own email via MCP, email
     parties, the hourly mail check and commitment approvals; T4 (with awareness)
     mail events wake waiting tasks instead of the hourly check.
 

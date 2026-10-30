@@ -22,7 +22,7 @@ from storage.client_store import Client, ClientStore
 from storage.database import build_engine
 from storage.models import TaskPartyRecord, TaskRecord
 from storage.signal_settings_store import SignalSettings
-from storage.task_store import QuietParty, TaskStore
+from storage.task_store import QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS
 from tools.close_task import validate_arguments as validate_close_arguments
 from tools.send_signal_message import SendSignalMessageTool, validate_arguments
 import test_keyboard_persistence as keyboard_tests
@@ -101,7 +101,8 @@ class TaskSectionTests(unittest.TestCase):
         mine = instruction_sections(tasks_context='[{"goal": "g"}]')["tasks"]
         self.assertIn("Your tasks with other people", mine)
         theirs = instruction_sections(task_briefs='[{"task_id": "t", "brief": "b"}]')["tasks"]
-        self.assertIn("pass_on with that task_id", theirs)
+        self.assertIn("pass_on with that task_id, settled true", theirs)
+        self.assertIn("settled false", theirs)
         self.assertIn("never mention other tasks", theirs)
         self.assertIn("untrusted", theirs)
 
@@ -120,8 +121,8 @@ class TaskCheckAppTests(unittest.IsolatedAsyncioTestCase):
     def party(self, nudges=0, last_message_at=None, person_id=SARAH.id, name="Sarah"):
         return QuietParty(uuid4(), uuid4(), person_id, name, "Lesson for Sarah", "When suits her", nudges, last_message_at)
 
-    async def check(self, app, pilot, quiet=(), stale=(), hours=range(0, 24)):
-        app.persistence.load_task_checks.return_value = (list(quiet), list(stale))
+    async def check(self, app, pilot, quiet=(), stale=(), hours=range(0, 24), unsettled=()):
+        app.persistence.load_task_checks.return_value = (list(quiet), list(stale), list(unsettled))
         with patch.object(app_module, "NUDGE_HOURS", hours):
             app.check_tasks()
             for _ in range(3):
@@ -187,6 +188,85 @@ class TaskCheckAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("no open task", await app.close_task(task_id, "done", "x"))
 
 
+class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
+    TASK = {"task_id": "t", "goal": "Lesson for Sarah", "status": "waiting", "started": "2026-10-30",
+            "parties": [{"name": "Sarah", "status": "done", "brief": "When suits her", "outcome": "Tuesdays"}],
+            "steps": ["Asked Sarah", "Sarah reported: Tuesdays"]}
+
+    def linked(self, app, reply="Sarah can do Tuesdays after 4, so that's sorted."):
+        app.signal.status = SignalStatus(LINKED, account=CORA)
+        app.signal_settings = SignalSettings(True, CORA, NICK)
+        app.signal.client = MagicMock()
+        app.signal.client.send = AsyncMock()
+        app.persistence.task_coordination.return_value = self.TASK
+        app.persistence.task_needs_person.return_value = True
+        app.backend_chat.reply = AsyncMock(return_value=reply) if isinstance(reply, str) else reply
+
+    async def settle(self, app, pilot):
+        for _ in range(3):
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+
+    async def test_an_answer_goes_through_a_turn_in_your_context_that_can_only_search_and_close(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            app.persistence.load_tasks_context.return_value = '[{"goal": "Lesson for Sarah"}]'
+            task_id = uuid4()
+            app.coordinate_task(task_id, "Sarah answered: Tuesdays", "From Sarah: Tuesdays")
+            await self.settle(app, pilot)
+            kwargs = app.backend_chat.reply.await_args.kwargs
+            note = kwargs["content"][0]["text"]
+            self.assertIn("Never message anyone yourself", note)
+            self.assertEqual(json.loads(note[note.index("{"):]), {"news": "Sarah answered: Tuesdays", "task": self.TASK})
+            self.assertIn("Lesson for Sarah", kwargs["sections"]["tasks"])
+            self.assertEqual(frozenset(app.tools.names()) - kwargs["route"].excluded, {"search_memory", "close_task"})
+            app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
+            # Once told, it waits on the person unless someone is still to answer.
+            app.persistence.task_needs_person.assert_called_once_with(
+                task_id, "Told them the news and asked what next.", True)
+            self.assertEqual(app.tasks_coordinating, set())
+
+    async def test_a_question_always_waits_on_you(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app, reply="Sarah needs the address before she can say.")
+            task_id = uuid4()
+            app.coordinate_task(task_id, "Sarah needs something from the person: address?", "From Sarah: address?", False)
+            await self.settle(app, pilot)
+            self.assertFalse(app.persistence.task_needs_person.call_args.args[2])
+
+    async def test_if_the_turn_fails_the_answer_is_passed_on_as_it_came(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app, reply=AsyncMock(side_effect=RuntimeError("private")))
+            app.coordinate_task(uuid4(), "Sarah answered: Tuesdays", "From Sarah, via Cora:\nTuesdays")
+            await self.settle(app, pilot)
+            app.signal.client.send.assert_awaited_once_with(CORA, NICK, "From Sarah, via Cora:\nTuesdays")
+            app.persistence.task_needs_person.assert_called_once()
+
+    async def test_a_closed_task_or_one_that_cant_reach_you_is_left_alone(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            app.persistence.task_coordination.return_value = None
+            app.coordinate_task(uuid4(), "news", "fallback")
+            await self.settle(app, pilot)
+            app.backend_chat.reply.assert_not_awaited()
+            app.persistence.task_coordination.return_value = self.TASK
+            app.signal_settings = SignalSettings(True, CORA, "")
+            app.coordinate_task(uuid4(), "news", "fallback")
+            await self.settle(app, pilot)
+            app.persistence.task_needs_person.assert_not_called()
+
+    async def test_the_hourly_round_retries_answers_that_never_reached_you(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            busy, waiting = uuid4(), uuid4()
+            app.tasks_coordinating.add(busy)
+            app.persistence.load_task_checks.return_value = ([], [], [(busy, "Busy"), (waiting, "Lesson for Sarah")])
+            app.check_tasks()
+            await self.settle(app, pilot)
+            self.assertEqual(app.persistence.task_coordination.call_args_list, [((waiting,),)])
+            self.assertEqual(app.tasks_coordinating, {busy})
+
+
 class TaskAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_new_task_or_a_further_party_is_saved_with_what_she_sent(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -235,20 +315,27 @@ class TaskStoreDatabaseTests(unittest.TestCase):
             return [row[0] for row in connection.execute(
                 text("SELECT text FROM public.task_steps WHERE task_id = :t ORDER BY id"), {"t": task_id})]
 
-    def test_a_task_runs_from_first_contact_to_done_once_everyone_has_answered(self):
+    def test_a_task_runs_from_first_contact_to_done_at_the_coordinators_word(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah: when?")
         self.assertEqual(self.tasks.goal(task_id), "Lesson for Sarah")
         self.tasks.add_party(task_id, self.royce.id, "Can he drive her", "Asked Royce: can you?")
-        self.assertEqual(self.tasks.report(task_id, self.sarah.id, "Tuesdays after 4"), ("Lesson for Sarah", False))
-        self.assertEqual(self.tasks.report(task_id, self.royce.id, "Yes, Tuesdays"), ("Lesson for Sarah", True))
+        self.assertEqual(self.tasks.report(task_id, self.sarah.id, "What time of day?", settled=False), "Lesson for Sarah")
+        self.assertEqual(self.tasks.unsettled_tasks(), [])
+        self.assertEqual(self.tasks.report(task_id, self.sarah.id, "Tuesdays after 4"), "Lesson for Sarah")
+        self.assertEqual(self.tasks.unsettled_tasks(), [])  # Royce is still to answer
+        self.tasks.report(task_id, self.royce.id, "Yes, Tuesdays")
+        # Everyone has answered, but only the coordinator decides it's done.
+        self.assertEqual(self.tasks.unsettled_tasks(), [(task_id, "Lesson for Sarah")])
+        self.tasks.close(task_id, "done", "Tuesdays after 4, Royce driving")
         with Session(self.engine) as session:
             task = session.get(TaskRecord, task_id)
-            self.assertEqual((task.status, task.result), ("done", "Sarah: Tuesdays after 4\nRoyce: Yes, Tuesdays"))
+            self.assertEqual((task.status, task.result), ("done", "Tuesdays after 4, Royce driving"))
             self.assertIsNotNone(task.closed_at)
         self.assertEqual(self.steps(task_id), [
-            "Asked Sarah: when?", "Asked Royce: can you?", "Sarah reported: Tuesdays after 4",
-            "Royce reported: Yes, Tuesdays", "Done.",
+            "Asked Sarah: when?", "Asked Royce: can you?", "Sarah asked: What time of day?",
+            "Sarah reported: Tuesdays after 4", "Royce reported: Yes, Tuesdays", "Done: Tuesdays after 4, Royce driving",
         ])
+        self.assertEqual(self.tasks.unsettled_tasks(), [])
         # Closed: no more answers, no goal for new contacts, no briefs in their chats.
         self.assertIsNone(self.tasks.goal(task_id))
         with self.assertRaises(LookupError):
@@ -271,11 +358,13 @@ class TaskStoreDatabaseTests(unittest.TestCase):
     def test_the_person_sees_open_and_lately_finished_tasks_with_each_party(self):
         old = self.tasks.start("Old errand", self.sarah.id, "b", "s")
         self.tasks.report(old, self.sarah.id, "Done long ago")
+        self.tasks.close(old, "done", "Done long ago")
         with Session(self.engine) as session, session.begin():
             session.execute(update(TaskRecord).where(TaskRecord.id == old).values(
                 closed_at=datetime.now(timezone.utc) - timedelta(days=10)))
         recent = self.tasks.start("Lesson for Sarah", self.sarah.id, "b", "s")
         self.tasks.report(recent, self.sarah.id, "Tuesdays")
+        self.tasks.close(recent, "done", "Tuesdays")
         waiting = self.tasks.start("Car service", self.royce.id, "b", "s")
         context = json.loads(self.tasks.tasks_context(datetime.now(timezone.utc)))
         self.assertEqual([(task["goal"], task["status"]) for task in context],
@@ -324,13 +413,56 @@ class TaskStoreDatabaseTests(unittest.TestCase):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")
         self.assertEqual(self.tasks.close(task_id, "cancelled", "Not needed now"), "Lesson for Sarah")
         self.assertEqual(self.tasks.briefs_for(self.sarah.id), "")
-        self.assertEqual(self.steps(task_id)[-1], "Cancelled at the person's word: Not needed now")
+        self.assertEqual(self.steps(task_id)[-1], "Cancelled: Not needed now")
         with self.assertRaises(LookupError):
             self.tasks.close(task_id, "done", "x")
         other = self.tasks.start("Car service", self.royce.id, "b", "s")
         self.tasks.close(other, "done", "Booked it myself")
         with Session(self.engine) as session:
             self.assertEqual(session.get(TaskRecord, other).result, "Booked it myself")
+
+    def test_the_coordinator_sees_the_whole_open_task_with_its_latest_steps(self):
+        task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")
+        self.tasks.add_party(task_id, self.royce.id, "Can he drive her", "Asked Royce")
+        self.tasks.report(task_id, self.sarah.id, "Tuesdays")
+        view = self.tasks.coordination(task_id)
+        self.assertEqual((view["task_id"], view["goal"], view["status"]), (str(task_id), "Lesson for Sarah", "waiting"))
+        self.assertEqual(view["parties"], [
+            {"name": "Sarah", "status": "done", "brief": "When suits her", "outcome": "Tuesdays"},
+            {"name": "Royce", "status": "waiting", "brief": "Can he drive her", "outcome": None},
+        ])
+        self.assertEqual(view["steps"], ["Asked Sarah", "Asked Royce", "Sarah reported: Tuesdays"])
+        for n in range(20):
+            self.tasks.report(task_id, self.royce.id, f"Thinking {n} " + "x" * 2000, settled=False)
+        view = self.tasks.coordination(task_id)
+        self.assertLessEqual(len(json.dumps(view, ensure_ascii=False)), TASKS_CONTEXT_MAX_CHARS)
+        self.assertTrue(view["steps"][-1].startswith("Royce asked: Thinking 19"))
+        self.tasks.close(task_id, "cancelled", "Not now")
+        self.assertIsNone(self.tasks.coordination(task_id))
+
+    def test_the_dashboard_sees_open_tasks_with_each_partys_next_check(self):
+        now = datetime.now(timezone.utc)
+        task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")
+        self.tasks.add_party(task_id, self.royce.id, "Can he drive her", "Asked Royce")
+        self.age(task_id, contacted_at=now - timedelta(hours=20))
+        self.tasks.report(task_id, self.royce.id, "Yes")
+        stuck = self.tasks.start("Car service", self.royce.id, "Which garage", "Asked Royce")
+        self.tasks.needs_person(stuck, "No answer")
+        closed = self.tasks.start("Old", self.sarah.id, "b", "s")
+        self.tasks.close(closed, "done", "x")
+        lesson, car = self.tasks.open_tasks()
+        self.assertEqual((lesson.goal, lesson.status, lesson.latest_step), ("Lesson for Sarah", "waiting", "Royce reported: Yes"))
+        sarah, royce = lesson.parties
+        self.assertEqual((sarah.name, sarah.status, sarah.nudges), ("Sarah", "waiting", 0))
+        self.assertAlmostEqual(sarah.due_at, now + timedelta(hours=4), delta=timedelta(minutes=1))
+        self.assertEqual((royce.status, royce.due_at), ("done", None))
+        self.assertGreater(lesson.stale_at, now + timedelta(days=6))
+        self.assertEqual((car.status, car.stale_at, car.parties[0].due_at), ("needs_person", None, None))
+
+    def test_a_task_waits_on_the_person_unless_someone_is_still_to_answer(self):
+        task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")
+        self.assertFalse(self.tasks.needs_person(task_id, "Told them", unless_waiting=True))
+        self.assertTrue(self.tasks.needs_person(task_id, "Told them"))
 
     def test_hearing_from_a_party_is_noted_only_while_their_part_is_open(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "b", "s")

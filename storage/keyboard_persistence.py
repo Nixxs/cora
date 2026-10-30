@@ -76,8 +76,11 @@ class KeyboardPersistence:
     def task_goal(self, task_id: UUID) -> str | None:
         return TaskStore(self._get_store().engine).goal(task_id)
 
-    def report_task(self, task_id: UUID, person_id: UUID, outcome: str) -> tuple[str, bool]:
-        return TaskStore(self._get_store().engine).report(task_id, person_id, outcome)
+    def report_task(self, task_id: UUID, person_id: UUID, outcome: str, settled: bool) -> str:
+        return TaskStore(self._get_store().engine).report(task_id, person_id, outcome, settled)
+
+    def task_coordination(self, task_id: UUID) -> dict | None:
+        return TaskStore(self._get_store().engine).coordination(task_id)
 
     def task_party_heard(self, person_id: UUID) -> None:
         TaskStore(self._get_store().engine).heard_from(person_id)
@@ -85,15 +88,17 @@ class KeyboardPersistence:
     def load_task_briefs(self, person_id: UUID) -> str:
         return TaskStore(self._get_store().engine).briefs_for(person_id)
 
-    def load_task_checks(self, now: datetime) -> tuple[list[QuietParty], list[tuple[UUID, str]]]:
+    def load_task_checks(
+        self, now: datetime,
+    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]]]:
         store = TaskStore(self._get_store().engine)
-        return store.quiet_parties(now), store.stale_tasks(now)
+        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks()
 
     def record_task_nudge(self, party_id: UUID, step: str) -> None:
         TaskStore(self._get_store().engine).record_nudge(party_id, step)
 
-    def task_needs_person(self, task_id: UUID, reason: str) -> bool:
-        return TaskStore(self._get_store().engine).needs_person(task_id, reason)
+    def task_needs_person(self, task_id: UUID, reason: str, unless_waiting: bool = False) -> bool:
+        return TaskStore(self._get_store().engine).needs_person(task_id, reason, unless_waiting)
 
     def close_task(self, task_id: UUID, status: str, note: str) -> str:
         return TaskStore(self._get_store().engine).close(task_id, status, note)

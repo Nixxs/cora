@@ -127,6 +127,7 @@ async def running_app(persistence=None):
                 persistence.load_client_people_context.return_value = ""
                 persistence.load_tasks_context.return_value = ""
                 persistence.load_task_briefs.return_value = ""
+                persistence.task_coordination.return_value = None
                 persistence.load_relationship_values.return_value = None
                 persistence.load_recent_plan.return_value = None
                 persistence.load_person_name.return_value = None

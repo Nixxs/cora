@@ -25,11 +25,15 @@ TASKS_CONTEXT_MAX_CHARS = 6000
 OPEN = ("open", "waiting", "needs_person")
 # Finished tasks stay in the person's view this long, so "what did Sarah say?" still has an answer.
 RECENTLY_CLOSED = timedelta(days=3)
-# A party quiet this long (since being asked, last writing or last nudged) is due a nudge.
+# A party quiet this long (since being asked, last writing or last nudged) is due a nudge; after
+# this many unanswered nudges, the task goes back to the person instead.
 NUDGE_AFTER = timedelta(days=1)
+TASK_NUDGES_MAX = 2
 # A task this long without progress (an answer, someone asked, the person's word) goes back to the person.
 STALE_AFTER = timedelta(days=7)
 NOTE_MAX_CHARS = 1000
+# The coordinator sees this many of a task's latest steps.
+COORDINATION_STEPS = 12
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,28 @@ class QuietParty:
     nudges: int
     # Their latest message in any chat with her, either way, so a nudge never lands mid-conversation.
     last_message_at: datetime | None
+
+
+@dataclass(frozen=True)
+class PartyView:
+    name: str
+    status: str
+    nudges: int
+    # When the hourly check next acts on them (a nudge, or after the last one, back to the person);
+    # None once they've answered or while the task waits on the person.
+    due_at: datetime | None
+
+
+@dataclass(frozen=True)
+class TaskView:
+    """An open task as the dashboard shows it: the same shape for any errand."""
+    goal: str
+    status: str
+    created_at: datetime
+    # When a waiting task without progress goes back to the person; None if it already waits on them.
+    stale_at: datetime | None
+    parties: tuple[PartyView, ...]
+    latest_step: str | None
 
 
 def clean(text: str, limit: int, what: str) -> str:
@@ -113,10 +139,11 @@ class TaskStore:
                 TaskPartyRecord.task_id.in_(select(TaskRecord.id).where(TaskRecord.status.in_(OPEN))),
             ).values(last_heard_at=func.current_timestamp()))
 
-    def report(self, task_id: UUID, person_id: UUID, outcome: str) -> tuple[str, bool]:
-        """A party's part is settled: record it, and finish the task once nobody is left waiting.
+    def report(self, task_id: UUID, person_id: UUID, outcome: str, settled: bool = True) -> str:
+        """A party's word on a task: their part settled (an answer or a no), or a question for the person.
 
-        Returns the goal and whether the task is now done; LookupError if they aren't a party to it.
+        Nothing closes here: the coordinator decides what it means. Returns the goal; LookupError
+        if they aren't a party to an open task.
         """
         outcome = clean(outcome, OUTCOME_MAX_CHARS, "An outcome")
         with Session(self.engine) as session, session.begin():
@@ -127,21 +154,39 @@ class TaskStore:
             if task is None or task.status not in OPEN or party is None:
                 raise LookupError("Not a party to an open task")
             name = session.scalar(select(PersonRecord.display_name).where(PersonRecord.id == person_id))
-            party.status, party.outcome, party.last_heard_at = "done", outcome, func.current_timestamp()
-            self._step(session, task_id, f"{name} reported: {outcome}")
-            session.flush()
+            party.last_heard_at = func.current_timestamp()
+            if settled:
+                party.status, party.outcome = "done", outcome
+            self._step(session, task_id, f"{name} {'reported' if settled else 'asked'}: {outcome}")
+            task.updated_at = func.current_timestamp()
+            return task.goal
+
+    def coordination(self, task_id: UUID) -> dict | None:
+        """The whole of an open task for the coordinator: goal, every party's brief and word, recent steps."""
+        with Session(self.engine) as session:
+            task = session.get(TaskRecord, task_id)
+            if task is None or task.status not in OPEN:
+                return None
             parties = session.execute(
-                select(PersonRecord.display_name, TaskPartyRecord.status, TaskPartyRecord.outcome)
+                select(PersonRecord.display_name, TaskPartyRecord.status, TaskPartyRecord.brief, TaskPartyRecord.outcome)
                 .join(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
                 .where(TaskPartyRecord.task_id == task_id).order_by(TaskPartyRecord.contacted_at)
             ).all()
-            done = all(status == "done" for _, status, _ in parties)
-            task.updated_at = func.current_timestamp()
-            if done:
-                task.status, task.closed_at = "done", func.current_timestamp()
-                task.result = "\n".join(f"{who}: {said}" for who, _, said in parties)[:RESULT_MAX_CHARS]
-                self._step(session, task_id, "Done.")
-            return task.goal, done
+            steps = list(reversed(session.scalars(
+                select(TaskStepRecord.text).where(TaskStepRecord.task_id == task_id)
+                .order_by(TaskStepRecord.id.desc()).limit(COORDINATION_STEPS)
+            ).all()))
+        view = {
+            "task_id": str(task.id), "goal": task.goal, "status": task.status,
+            "started": task.created_at.date().isoformat(),
+            "parties": [{"name": name, "status": status, "brief": brief, "outcome": outcome}
+                        for name, status, brief, outcome in parties],
+            "steps": steps,
+        }
+        # The oldest steps give way first if a long task doesn't fit.
+        while view["steps"] and len(json.dumps(view, ensure_ascii=False)) > TASKS_CONTEXT_MAX_CHARS:
+            view["steps"].pop(0)
+        return view
 
     def quiet_parties(self, now: datetime) -> list[QuietParty]:
         """Parties of waiting tasks who haven't been heard from or nudged for NUDGE_AFTER, oldest task first."""
@@ -182,18 +227,37 @@ class TaskStore:
                 .order_by(TaskRecord.created_at)
             ).all()]
 
-    def needs_person(self, task_id: UUID, reason: str) -> bool:
-        """The task waits on the person now; False if it already did or isn't open."""
+    def unsettled_tasks(self) -> list[tuple[UUID, str]]:
+        """Waiting tasks nobody is left to answer: their last report never reached the person, oldest first."""
+        still_waiting = select(TaskPartyRecord.id).where(
+            TaskPartyRecord.task_id == TaskRecord.id, TaskPartyRecord.status == "waiting",
+        ).exists()
+        with Session(self.engine) as session:
+            return [tuple(row) for row in session.execute(
+                select(TaskRecord.id, TaskRecord.goal)
+                .where(TaskRecord.status == "waiting", ~still_waiting)
+                .order_by(TaskRecord.created_at)
+            ).all()]
+
+    def needs_person(self, task_id: UUID, reason: str, unless_waiting: bool = False) -> bool:
+        """The task waits on the person now; False if it already did or isn't open.
+
+        unless_waiting leaves it waiting while a party is still to answer.
+        """
         with Session(self.engine) as session, session.begin():
             task = session.get(TaskRecord, task_id, with_for_update=True)
             if task is None or task.status not in OPEN or task.status == "needs_person":
+                return False
+            if unless_waiting and session.scalar(select(TaskPartyRecord.id).where(
+                TaskPartyRecord.task_id == task_id, TaskPartyRecord.status == "waiting",
+            ).limit(1)) is not None:
                 return False
             task.status, task.updated_at = "needs_person", func.current_timestamp()
             self._step(session, task_id, f"Back to the person: {reason}")
             return True
 
     def close(self, task_id: UUID, status: str, note: str) -> str:
-        """Done or cancelled at the person's word; returns the goal. LookupError if it isn't open."""
+        """Done or cancelled, at the person's word or the coordinator's; returns the goal. LookupError if it isn't open."""
         if status not in ("done", "cancelled"):
             raise ValueError("A task closes as done or cancelled")
         note = clean(note, NOTE_MAX_CHARS, "A note")
@@ -204,7 +268,7 @@ class TaskStore:
             task.status, task.closed_at, task.updated_at = status, func.current_timestamp(), func.current_timestamp()
             if status == "done":
                 task.result = note[:RESULT_MAX_CHARS]
-            self._step(session, task_id, f"{status.capitalize()} at the person's word: {note}")
+            self._step(session, task_id, f"{status.capitalize()}: {note}")
             return task.goal
 
     def briefs_for(self, person_id: UUID) -> str:
@@ -219,6 +283,45 @@ class TaskStore:
             ).all()
         return bounded([{"task_id": str(task_id), "brief": brief} for task_id, brief in rows])
 
+    def open_tasks(self) -> list[TaskView]:
+        """For the dashboard: every open task, oldest first, with each party's next check."""
+        with Session(self.engine) as session:
+            tasks = session.scalars(
+                select(TaskRecord).where(TaskRecord.status.in_(OPEN)).order_by(TaskRecord.created_at)
+            ).all()
+            ids = [task.id for task in tasks]
+            parties = session.execute(
+                select(TaskPartyRecord, PersonRecord.display_name)
+                .join(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                .where(TaskPartyRecord.task_id.in_(ids)).order_by(TaskPartyRecord.contacted_at)
+            ).all()
+            latest = self._latest_steps(session, ids)
+        by_task: dict[UUID, list[PartyView]] = {}
+        statuses = {task.id: task.status for task in tasks}
+        for party, name in parties:
+            due = None
+            if party.status == "waiting" and statuses[party.task_id] == "waiting":
+                # As quiet_parties counts it: from whichever came last of asked, heard from and nudged.
+                since = max((time for time in (party.contacted_at, party.last_heard_at, party.nudged_at) if time),
+                            default=None)
+                due = since and since + NUDGE_AFTER
+            by_task.setdefault(party.task_id, []).append(PartyView(name, party.status, party.nudges, due))
+        return [TaskView(
+            task.goal, task.status, task.created_at,
+            task.updated_at + STALE_AFTER if task.status == "waiting" else None,
+            tuple(by_task.get(task.id, ())), latest.get(task.id),
+        ) for task in tasks]
+
+    @staticmethod
+    def _latest_steps(session: Session, task_ids: list[UUID]) -> dict[UUID, str]:
+        """Each task's latest step, so she can say where it's got to."""
+        return dict(session.execute(
+            select(TaskStepRecord.task_id, TaskStepRecord.text)
+            .where(TaskStepRecord.task_id.in_(task_ids))
+            .distinct(TaskStepRecord.task_id)
+            .order_by(TaskStepRecord.task_id, TaskStepRecord.id.desc())
+        ).all())
+
     def tasks_context(self, now: datetime) -> str:
         """For the person: open tasks and those finished lately, with how each party stands."""
         with Session(self.engine) as session:
@@ -232,13 +335,7 @@ class TaskStore:
                 .where(TaskPartyRecord.task_id.in_([task.id for task in tasks]))
                 .order_by(TaskPartyRecord.contacted_at)
             ).all()
-            # Each task's latest step, so she can say where it's got to.
-            latest = dict(session.execute(
-                select(TaskStepRecord.task_id, TaskStepRecord.text)
-                .where(TaskStepRecord.task_id.in_([task.id for task in tasks]))
-                .distinct(TaskStepRecord.task_id)
-                .order_by(TaskStepRecord.task_id, TaskStepRecord.id.desc())
-            ).all())
+            latest = self._latest_steps(session, [task.id for task in tasks])
         by_task: dict[UUID, list[dict]] = {}
         for task_id, name, status, outcome in parties:
             by_task.setdefault(task_id, []).append({"name": name, "status": status, "outcome": outcome})
