@@ -40,6 +40,7 @@ class FakeClient:
     def __init__(self, responses):
         self.responses = responses
         self.calls = []
+        self.sent = []
 
     def __call__(self, **options):
         return self
@@ -50,8 +51,9 @@ class FakeClient:
     async def __aexit__(self, *exc):
         return False
 
-    async def get(self, url, params=None, headers=None):
+    async def request(self, method, url, params=None, json=None, headers=None):
         self.calls.append((url, params, headers))
+        self.sent.append((method, url, json))
         return self.responses.pop(0)
 
 

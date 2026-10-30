@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import psycopg
 from psycopg import sql
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 import app as app_module
@@ -22,7 +22,7 @@ from storage.client_store import Client, ClientStore
 from storage.database import build_engine
 from storage.models import TaskPartyRecord, TaskRecord
 from storage.signal_settings_store import SignalSettings
-from storage.task_store import QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS
+from storage.task_store import EmailParty, QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS
 from tools.close_task import validate_arguments as validate_close_arguments
 from tools.send_signal_message import SendSignalMessageTool, validate_arguments
 import test_keyboard_persistence as keyboard_tests
@@ -458,6 +458,32 @@ class TaskStoreDatabaseTests(unittest.TestCase):
         self.assertEqual((royce.status, royce.due_at), ("done", None))
         self.assertGreater(lesson.stale_at, now + timedelta(days=6))
         self.assertEqual((car.status, car.stale_at, car.parties[0].due_at), ("needs_person", None, None))
+
+    def test_an_email_party_is_named_by_who_they_are_or_their_address_with_its_thread(self):
+        task_id = self.tasks.start("Book a lesson", EmailParty("Info@School.example", "Bright School", "thread-1"),
+                                   "Times and price", "Emailed Bright School: Hi")
+        self.tasks.add_party(task_id, EmailParty("bob@garage.example", None, "thread-2"), "Can he drive", "Emailed bob")
+        self.tasks.add_party(task_id, self.sarah.id, "When suits her", "Asked Sarah")
+        # Emailing the same address again for this task asks them again, in the new thread.
+        self.tasks.add_party(task_id, EmailParty("info@school.example", "Bright School", "thread-3"), "Just times", "Again")
+        with Session(self.engine) as session:
+            school = session.scalar(select(TaskPartyRecord).where(TaskPartyRecord.address == "info@school.example"))
+            self.assertEqual((school.channel, school.name, school.thread_id, school.brief, school.person_id),
+                             ("email", "Bright School", "thread-3", "Just times", None))
+        [context] = json.loads(self.tasks.tasks_context(datetime.now(timezone.utc)))
+        # In the order they were (last) asked.
+        self.assertEqual(context["parties"], [
+            {"name": "bob@garage.example", "status": "waiting", "outcome": None, "email": "bob@garage.example"},
+            {"name": "Sarah", "status": "waiting", "outcome": None},
+            {"name": "Bright School", "status": "waiting", "outcome": None, "email": "info@school.example"},
+        ])
+        self.assertEqual([party["name"] for party in self.tasks.coordination(task_id)["parties"]],
+                         ["bob@garage.example", "Sarah", "Bright School"])
+        [view] = self.tasks.open_tasks()
+        self.assertEqual([party.name for party in view.parties], ["bob@garage.example", "Sarah", "Bright School"])
+        # Email parties wait for E3's mail check, not for Signal nudges.
+        self.age(task_id, contacted_at=datetime.now(timezone.utc) - timedelta(days=2))
+        self.assertEqual([party.name for party in self.tasks.quiet_parties(datetime.now(timezone.utc))], ["Sarah"])
 
     def test_a_task_waits_on_the_person_unless_someone_is_still_to_answer(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")

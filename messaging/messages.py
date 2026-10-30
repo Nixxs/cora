@@ -13,7 +13,8 @@ SIGNAL_SORRY = "Sorry, I couldn't answer that just now. Try again in a little wh
 
 # How long a request asked in the person's Signal chat waits for their answer.
 APPROVAL_SECONDS = 10 * 60
-APPROVAL_ARGUMENTS_MAX_CHARS = 1500
+# Enough for a whole email with its task and brief, so the person approves everything they're shown.
+APPROVAL_ARGUMENTS_MAX_CHARS = 8000
 # A clear yes approves and a clear no declines; anything else declines and is answered as a message.
 YES_WORDS = {"yes", "y", "yep", "yeah", "yup", "approve", "approved", "yes please"}
 NO_WORDS = {"no", "n", "nope", "nah", "decline", "cancel", "don't", "dont", "no thanks"}

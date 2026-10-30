@@ -208,25 +208,46 @@ def summary(message: dict) -> MailSummary:
     )
 
 
+@dataclass(frozen=True)
+class SentMail:
+    id: str
+    # Microsoft's conversationId: replies in the same thread share it.
+    thread_id: str
+
+
 class Mailbox:
-    """Read-only for now (E1): her address and her latest inbox mail."""
+    """Her address, her latest inbox mail, and sending as her (the caller has the person approve first)."""
 
     def __init__(self, get_token, client_factory=httpx.AsyncClient) -> None:
         # get_token() -> an access token, blocking; raises EmailNotReady.
         self.get_token = get_token
         self.client_factory = client_factory
 
-    async def _get(self, path: str, params: dict | None = None) -> dict:
+    async def _request(self, method: str, path: str, params: dict | None = None, body: dict | None = None) -> dict:
         token = await asyncio.to_thread(self.get_token)
         async with self.client_factory(timeout=REQUEST_SECONDS) as client:
-            response = await client.get(f"{GRAPH}{path}", params=params,
-                                        headers={"Authorization": f"Bearer {token}"})
+            response = await client.request(method, f"{GRAPH}{path}", params=params, json=body,
+                                            headers={"Authorization": f"Bearer {token}"})
         if response.status_code >= 400:
             code = graph_error_code(response)
             if response.status_code == 401:
                 raise EmailNotReady(f"Microsoft refused Cora's email sign-in ({code}); {SIGN_IN_HINT}.")
             raise GraphError(f"Microsoft said HTTP {response.status_code} ({code}).")
-        return response.json()
+        # Sending answers 202 with no body.
+        return response.json() if response.status_code != 202 else {}
+
+    async def _get(self, path: str, params: dict | None = None) -> dict:
+        return await self._request("GET", path, params)
+
+    async def send(self, address: str, name: str | None, subject: str, text: str) -> SentMail:
+        """A new plain-text email from her: saved as a draft first, so its thread is known, then sent."""
+        recipient = {"address": address} | ({"name": name} if name else {})
+        draft = await self._request("POST", "/me/messages", body={
+            "subject": subject, "body": {"contentType": "Text", "content": text},
+            "toRecipients": [{"emailAddress": recipient}],
+        })
+        await self._request("POST", f"/me/messages/{draft['id']}/send")
+        return SentMail(draft["id"], draft["conversationId"])
 
     async def address(self) -> str:
         me = await self._get("/me", {"$select": "mail,userPrincipalName"})

@@ -42,7 +42,7 @@ from messaging.setup import (
 from messaging.signal_cli import SignalClient, signal_failure
 from storage.client_store import CONVERSATION_GAP, Client
 from storage.signal_settings_store import SignalSettings, normalise_number
-from storage.task_store import TASK_NUDGES_MAX
+from storage.task_store import TASK_NUDGES_MAX, EmailParty
 from mail.account import (
     FAILED as EMAIL_FAILED, NO_APP as EMAIL_NO_APP, READY as EMAIL_READY, SIGNED_OUT as EMAIL_SIGNED_OUT,
     SIGNING_IN as EMAIL_SIGNING_IN, EmailAccount, EmailNotReady, EmailStatus, GraphError, Mailbox,
@@ -297,7 +297,7 @@ class CoraApp(App):
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
             task_goal=self.task_goal, record_task=self.record_task, close_task=self.close_task,
-            get_mailbox=lambda: self.mailbox,
+            get_mailbox=lambda: self.mailbox, record_email_task=self.record_email_task,
             relay_to_person=self.relay_to_person,
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
@@ -1720,15 +1720,25 @@ class CoraApp(App):
 
     async def record_task(self, contact: Client, goal: str | None, task_id, brief: str, message: str):
         """After the approved message has gone: a new task with them as its first party, or them added to one."""
-        step = f"Asked {contact.name}: {message}"
+        return await self.save_task_party(contact.id, contact.name, goal, task_id, brief, f"Asked {contact.name}: {message}")
+
+    async def record_email_task(self, address: str, name: str | None, goal: str | None, task_id, brief: str,
+                                message: str, thread_id: str):
+        """After an approved email has gone: the same, with them as an email party in that thread."""
+        who = name or address
+        return await self.save_task_party(
+            EmailParty(address, name, thread_id), who, goal, task_id, brief, f"Emailed {who}: {message}",
+        )
+
+    async def save_task_party(self, party, who: str, goal: str | None, task_id, brief: str, step: str):
         if task_id is None:
             task_id = await self.conversation_persistence.call_database(
-                self.persistence.start_task, goal, contact.id, brief, step,
+                self.persistence.start_task, goal, party, brief, step,
             )
-            self.activity.write(f"Started a task with {contact.name}.", "Task")
+            self.activity.write(f"Started a task with {who}.", "Task")
             return task_id
-        await self.conversation_persistence.call_database(self.persistence.add_task_party, task_id, contact.id, brief, step)
-        self.activity.write(f"Added {contact.name} to a task.", "Task")
+        await self.conversation_persistence.call_database(self.persistence.add_task_party, task_id, party, brief, step)
+        self.activity.write(f"Added {who} to a task.", "Task")
         return task_id
 
     def can_reach_by_voice(self) -> bool:

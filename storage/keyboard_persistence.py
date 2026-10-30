@@ -14,7 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
-from .task_store import QuietParty, TaskStore
+from .task_store import EmailParty, QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -67,11 +67,11 @@ class KeyboardPersistence:
     def load_client_people_context(self, person_id: UUID) -> str:
         return ImpressionStore(self._get_store().engine).client_context(person_id)
 
-    def start_task(self, goal: str, person_id: UUID, brief: str, step: str) -> UUID:
-        return TaskStore(self._get_store().engine).start(goal, person_id, brief, step)
+    def start_task(self, goal: str, who: UUID | EmailParty, brief: str, step: str) -> UUID:
+        return TaskStore(self._get_store().engine).start(goal, who, brief, step)
 
-    def add_task_party(self, task_id: UUID, person_id: UUID, brief: str, step: str) -> None:
-        TaskStore(self._get_store().engine).add_party(task_id, person_id, brief, step)
+    def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str) -> None:
+        TaskStore(self._get_store().engine).add_party(task_id, who, brief, step)
 
     def task_goal(self, task_id: UUID) -> str | None:
         return TaskStore(self._get_store().engine).goal(task_id)

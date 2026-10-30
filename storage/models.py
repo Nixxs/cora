@@ -729,7 +729,10 @@ class TaskPartyRecord(Base):
         CheckConstraint("status IN ('waiting', 'done')", name="task_parties_status_check"),
         CheckConstraint("nudges >= 0", name="task_parties_nudges_check"),
         CheckConstraint("outcome IS NULL OR char_length(outcome) <= 3000", name="task_parties_outcome_check"),
+        CheckConstraint("name IS NULL OR (btrim(name) <> '' AND char_length(name) <= 100)", name="task_parties_name_check"),
+        CheckConstraint("thread_id IS NULL OR char_length(thread_id) <= 500", name="task_parties_thread_check"),
         UniqueConstraint("task_id", "person_id", name="task_parties_person_key"),
+        UniqueConstraint("task_id", "address", name="task_parties_address_key"),
         Index("task_parties_person_id_idx", "person_id", postgresql_where=sql_text("person_id IS NOT NULL")),
         {"schema": "public"},
     )
@@ -746,6 +749,9 @@ class TaskPartyRecord(Base):
     nudges: Mapped[int] = mapped_column(SmallInteger, server_default="0")
     nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[str | None] = mapped_column(Text)
+    # Email parties only: who they are, as she knows them, and her email thread with them.
+    name: Mapped[str | None] = mapped_column(Text)
+    thread_id: Mapped[str | None] = mapped_column(Text)
 
 
 class TaskStepRecord(Base):
