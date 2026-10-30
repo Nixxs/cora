@@ -1,11 +1,11 @@
 """In a client's Signal chat: telling the person at once about a serious concern, and ending a chat.
 
-Like tell_nick, only offered in clients' chats, where the route says which client it is. A
+Like pass_on, only offered in clients' chats, where the route says which client it is. A
 concern is her own heads-up, not a relay of their words; a daily limit per client keeps a
 hostile one from flooding the person with them.
 """
 
-from .tell_nick import TellNickTool
+from .pass_on import PassOnTool
 
 CONCERN_MAX_CHARS = 500
 
@@ -55,7 +55,7 @@ def validate_stop_arguments(arguments: dict) -> None:
         raise ValueError("stop_replying takes no arguments")
 
 
-class RaiseConcernTool(TellNickTool):
+class RaiseConcernTool(PassOnTool):
     """relay(client_id, client_name, concern) -> None once on its way, else why not."""
 
     async def result(self, connection, arguments: dict) -> dict:
@@ -68,7 +68,7 @@ class RaiseConcernTool(TellNickTool):
         return {"status": "ok", "message": "The person will hear about it. You needn't tell this contact."}
 
 
-class StopReplyingTool(TellNickTool):
+class StopReplyingTool(PassOnTool):
     """relay(client_id, client_name) -> None once she has stopped, else why not."""
 
     async def result(self, connection, arguments: dict) -> dict:

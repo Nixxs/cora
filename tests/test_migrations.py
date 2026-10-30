@@ -107,6 +107,8 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0025_create_self_image.sql",
             "0026_create_impressions.sql",
             "0027_add_conduct.sql",
+            "0028_create_tasks.sql",
+            "0029_add_task_nudges.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

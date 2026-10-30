@@ -5,6 +5,7 @@ from .client_boundaries import (
     validate_stop_arguments,
 )
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
+from .close_task import CloseTaskTool, SCHEMA as CLOSE_TASK_SCHEMA, validate_arguments as validate_close_task_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
@@ -15,7 +16,7 @@ from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_
 from .show_web_image import ShowWebImageTool, SCHEMA as WEB_IMAGE_SCHEMA, validate_arguments as validate_web_image_arguments
 from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, validate_arguments as validate_random_number_arguments
 from .send_signal_message import SendSignalMessageTool, SCHEMA as SIGNAL_SCHEMA, validate_arguments as validate_signal_arguments
-from .tell_nick import TellNickTool, SCHEMA as TELL_NICK_SCHEMA, validate_arguments as validate_tell_nick_arguments
+from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
 
 
 async def _not_set_up(*args, **kwargs):
@@ -27,6 +28,7 @@ def create_tool_registry(
     screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
     signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
+    task_goal=None, record_task=None, close_task=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -49,12 +51,15 @@ def create_tool_registry(
     registry.register(WEB_IMAGE_SCHEMA, validate_web_image_arguments, web_image.handle)
     signal_message = SendSignalMessageTool(
         get_connection, is_closing, write_debug, find_signal_contact, confirm, send_signal, signal_unreachable,
+        task_goal, record_task,
     )
     registry.register(SIGNAL_SCHEMA, validate_signal_arguments, signal_message.handle)
-    tell_nick = TellNickTool(get_connection, is_closing, write_debug, relay_to_person)
-    registry.register(TELL_NICK_SCHEMA, validate_tell_nick_arguments, tell_nick.handle)
+    pass_on = PassOnTool(get_connection, is_closing, write_debug, relay_to_person)
+    registry.register(PASS_ON_SCHEMA, validate_pass_on_arguments, pass_on.handle)
     concern = RaiseConcernTool(get_connection, is_closing, write_debug, raise_concern)
     registry.register(RAISE_CONCERN_SCHEMA, validate_concern_arguments, concern.handle)
     stop = StopReplyingTool(get_connection, is_closing, write_debug, stop_replying)
     registry.register(STOP_REPLYING_SCHEMA, validate_stop_arguments, stop.handle)
+    close_task_tool = CloseTaskTool(get_connection, is_closing, write_debug, close_task)
+    registry.register(CLOSE_TASK_SCHEMA, validate_close_task_arguments, close_task_tool.handle)
     return registry

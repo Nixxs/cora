@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from openai import AsyncOpenAI
 
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
-from tools.tell_nick import CLIENT_ONLY
+from tools.pass_on import CLIENT_ONLY
 
 # Tool calls one turn may make before giving up; each round is one backend request.
 MAX_ROUNDS = 8

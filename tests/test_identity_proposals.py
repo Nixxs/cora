@@ -40,11 +40,9 @@ class ValidateReflectionTests(unittest.TestCase):
         self.assertEqual(self.validate(), [])
         changes = self.validate(
             row(statement="  Old machines show their reasoning. ", confidence=0,
-                cited_trait_ids=[str(self.held.id), str(self.held.id).upper()],
-                evidence_ids=[str(self.found.id), str(self.talk.id), str(self.found.id)]),
-            row(action="revise", trait_id=str(self.held.id), kind=None, confidence=0.7,
-                evidence_ids=[str(self.found.id)]),
-            row(action="retire", trait_id=str(self.other.id), kind=None, statement=None, confidence=None,
+                cited_trait_ids=["t1", " T1"], evidence_ids=["e1", "e2", "e1"]),
+            row(action="revise", trait_id="t1", kind=None, confidence=0.7, evidence_ids=["e1"]),
+            row(action="retire", trait_id="t2", kind=None, statement=None, confidence=None,
                 reason=" Faded "),
         )
         self.assertEqual(changes, [
@@ -63,23 +61,23 @@ class ValidateReflectionTests(unittest.TestCase):
         self.assertEqual((change.kind, change.confidence, change.polarity), ("belief", 5.0, "love"))
 
     def test_malformed_replies_are_rejected_whole(self):
-        unknown = str(uuid4())
+        unknown = "t9"
         for payload in (None, [], {}, {"changes": None}, {"changes": [], "extra": 1},
                         {"changes": [row()] * (MAX_CHANGES + 1)}, {"changes": ["form"]}):
             with self.subTest(payload=payload), self.assertRaises(ValueError):
                 validate_reflection(payload, self.traits, self.experiences)
         retire = {"action": "retire", "kind": None, "statement": None, "confidence": None}
         for changes in (
-            {"action": "grow"}, {"trait_id": str(self.held.id)}, {"action": "revise"},
-            {"action": "revise", "trait_id": unknown}, {"action": "revise", "trait_id": str(self.gone.id)},
-            {"action": "revise", "trait_id": "not-an-id"},
-            {**retire, "trait_id": str(self.held.id), "statement": "Still here"},
-            {**retire, "trait_id": str(self.held.id), "confidence": 0.1},
+            {"action": "grow"}, {"trait_id": "t1"}, {"action": "revise"},
+            {"action": "revise", "trait_id": unknown}, {"action": "revise", "trait_id": "t3"},
+            {"action": "revise", "trait_id": str(self.held.id)}, {"action": "revise", "trait_id": "e1"},
+            {**retire, "trait_id": "t1", "statement": "Still here"},
+            {**retire, "trait_id": "t1", "confidence": 0.1},
             {"confidence": True}, {"confidence": "0.3"}, {"statement": 3}, {"kind": ["value"]},
             {"reason": None}, {"reason": " "}, {"statement": ""}, {"statement": "x" * 301},
-            {"cited_trait_ids": str(self.held.id)}, {"cited_trait_ids": [unknown]},
-            {"cited_trait_ids": [str(self.gone.id)]}, {"cited_trait_ids": [5]},
-            {"evidence_ids": [unknown]}, {"evidence_ids": None},
+            {"cited_trait_ids": "t1"}, {"cited_trait_ids": [unknown]},
+            {"cited_trait_ids": ["t3"]}, {"cited_trait_ids": [5]},
+            {"evidence_ids": ["e3"]}, {"evidence_ids": [str(self.found.id)]}, {"evidence_ids": None},
         ):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 self.validate(row(**changes))

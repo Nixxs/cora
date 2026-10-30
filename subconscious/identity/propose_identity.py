@@ -6,7 +6,9 @@ import json
 from openai import OpenAI
 
 from subconscious.identity.identity_evidence import Experience
-from subconscious.identity.identity_proposals import CHANGE_FIELDS, validate_reflection
+from subconscious.identity.identity_proposals import (
+    CHANGE_FIELDS, experience_refs, trait_refs, validate_reflection,
+)
 from subconscious.identity.identity_rules import (
     ACTIONS, FORM_MAX_CONFIDENCE, KINDS, MAX_CONFIDENCE_STEP, MIN_VALUE_CITATIONS, POLARITIES, Change, Trait,
     is_held,
@@ -70,9 +72,9 @@ IDENTITY_SCHEMA = {
 }
 
 
-def describe(trait: Trait) -> dict:
+def describe(ref: str, trait: Trait) -> dict:
     return {
-        "id": str(trait.id), "kind": trait.kind, "statement": trait.statement, "polarity": trait.polarity,
+        "id": ref, "kind": trait.kind, "statement": trait.statement, "polarity": trait.polarity,
         "subject": trait.subject, "confidence": round(trait.confidence, 2), "held": is_held(trait),
     }
 
@@ -85,10 +87,10 @@ def propose_identity(
         raise ValueError("Identity reflection needs at least one experience")
     active = [trait for trait in traits if trait.status == "active"]
     data = json.dumps({
-        "traits": [describe(trait) for trait in active],
+        "traits": [describe(ref, trait) for ref, trait in trait_refs(active).items()],
         "experiences": [{
-            "id": str(item.id), "source": item.source, "at": item.at.isoformat(), "details": dict(item.details),
-        } for item in experiences],
+            "id": ref, "source": item.source, "at": item.at.isoformat(), "details": dict(item.details),
+        } for ref, item in experience_refs(experiences).items()],
     }, ensure_ascii=False)
     response = client.responses.create(
         model=model, instructions=IDENTITY_INSTRUCTIONS, input=data,

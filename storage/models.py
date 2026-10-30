@@ -7,7 +7,8 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, LargeBinary, SmallInteger, Text, UniqueConstraint,
+    BigInteger, Boolean, CheckConstraint, DateTime, Double, ForeignKey, Identity, Index, LargeBinary, SmallInteger, Text,
+    UniqueConstraint,
     Uuid,
 )
 from sqlalchemy import text as sql_text
@@ -689,6 +690,78 @@ class ImpressionUpdateRecord(Base):
     conduct: Mapped[str | None] = mapped_column(Text)
     conduct_note: Mapped[str | None] = mapped_column(Text)
     reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TaskRecord(Base):
+    """An errand for the person that needs other people: their goal in their words, and how it stands."""
+
+    __tablename__ = "tasks"
+    __table_args__ = (
+        CheckConstraint("btrim(goal) <> '' AND char_length(goal) <= 1000", name="tasks_goal_check"),
+        CheckConstraint("status IN ('open', 'waiting', 'needs_person', 'done', 'cancelled')", name="tasks_status_check"),
+        CheckConstraint("result IS NULL OR char_length(result) <= 4000", name="tasks_result_check"),
+        CheckConstraint("(closed_at IS NOT NULL) = (status IN ('done', 'cancelled'))", name="tasks_closed_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    goal: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default="waiting")
+    result: Mapped[str | None] = mapped_column(Text)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TaskPartyRecord(Base):
+    """Someone a task needs, with their brief: what to find out or agree, and what she may share."""
+
+    __tablename__ = "task_parties"
+    __table_args__ = (
+        CheckConstraint("channel IN ('signal', 'email')", name="task_parties_channel_check"),
+        CheckConstraint(
+            "(channel = 'signal' AND person_id IS NOT NULL AND address IS NULL) "
+            "OR (channel = 'email' AND person_id IS NULL AND btrim(address) <> '' AND char_length(address) <= 320)",
+            name="task_parties_who_check",
+        ),
+        CheckConstraint("btrim(brief) <> '' AND char_length(brief) <= 2000", name="task_parties_brief_check"),
+        CheckConstraint("status IN ('waiting', 'done')", name="task_parties_status_check"),
+        CheckConstraint("nudges >= 0", name="task_parties_nudges_check"),
+        CheckConstraint("outcome IS NULL OR char_length(outcome) <= 3000", name="task_parties_outcome_check"),
+        UniqueConstraint("task_id", "person_id", name="task_parties_person_key"),
+        Index("task_parties_person_id_idx", "person_id", postgresql_where=sql_text("person_id IS NOT NULL")),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("public.tasks.id", ondelete="CASCADE"))
+    channel: Mapped[str] = mapped_column(Text)
+    person_id: Mapped[UUID | None] = mapped_column(ForeignKey("public.people.id", ondelete="CASCADE"))
+    address: Mapped[str | None] = mapped_column(Text)
+    brief: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default="waiting")
+    contacted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    last_heard_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    nudges: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str | None] = mapped_column(Text)
+
+
+class TaskStepRecord(Base):
+    """One thing that happened in a task, in order."""
+
+    __tablename__ = "task_steps"
+    __table_args__ = (
+        CheckConstraint("btrim(text) <> '' AND char_length(text) <= 4000", name="task_steps_text_check"),
+        Index("task_steps_task_id_idx", "task_id", "id"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("public.tasks.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    text: Mapped[str] = mapped_column(Text)
 
 
 class ServiceToolRecord(Base):

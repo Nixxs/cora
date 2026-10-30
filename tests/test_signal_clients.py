@@ -203,6 +203,8 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.load_client_memory_context.return_value = '[{"text": "Sarah lives in Perth"}]'
             app.persistence.load_client_people_context.return_value = '{"them": "Cheerful", "others": []}'
             app.persistence.load_people_context.return_value = '[{"name": "Royce", "impression": "Royce talks cars"}]'
+            app.persistence.load_task_briefs.return_value = '[{"task_id": "t1", "brief": "When suits her for a lesson"}]'
+            app.persistence.load_tasks_context.return_value = '[{"goal": "Book Royce a car service"}]'
             app.on_signal_message(incoming("Is Nick free on Friday?"))
             await self.settle(app, pilot)
             kwargs = app.backend_chat.reply.await_args.kwargs
@@ -222,9 +224,14 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.load_client_people_context.assert_called_with(app.signal_clients[SARAH].id)
             self.assertIn('"them": "Cheerful"', sections["people"])
             self.assertNotIn("Royce talks cars", "".join(sections.values()))
+            # Her brief for this task, and nothing of the person's other tasks; and her reply is noted on it.
+            app.persistence.load_task_briefs.assert_called_with(app.signal_clients[SARAH].id)
+            self.assertIn("When suits her for a lesson", sections["tasks"])
+            self.assertNotIn("car service", "".join(sections.values()))
+            app.persistence.task_party_heard.assert_called_with(app.signal_clients[SARAH].id)
             self.assertEqual(kwargs["extra_instructions"], client_chat_instructions("Sarah", "Nick"))
             # Web search, and memory search limited to what Sarah may know; every other tool left out.
-            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()) - {"search_memory", "tell_nick", "raise_concern", "stop_replying"})
+            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()) - {"search_memory", "pass_on", "raise_concern", "stop_replying"})
             self.assertEqual(kwargs["route"].memory_scope, (app.signal_clients[SARAH].id, "Sarah"))
             app.signal.client.send.assert_awaited_once_with(CORA, SARAH, "Happy to help.")
             saves = [call.args for call in app.persistence.save_client_message.call_args_list]

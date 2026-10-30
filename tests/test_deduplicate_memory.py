@@ -371,7 +371,7 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             prior_rows = {table: connection.execute(text(f"SELECT * FROM public.{table}")).all()
                           for table in tables}
         before = {row.id: snapshot(row) for row in self.memories.get_memories(self.conversation_id)}
-        # Roll back migrations 0006 and the later 0007-0027 (history must stay a prefix of the
+        # Roll back migrations 0006 and the later 0007-0029 (history must stay a prefix of the
         # files) in this uniquely named fixture, then apply the actual live migrations
         # to populated pre-0006 rows (no synthetic SQL).
         later = ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql",
@@ -387,9 +387,12 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                  "0024_add_memory_sharing.sql",
                  "0025_create_self_image.sql",
                  "0026_create_impressions.sql",
-                 "0027_add_conduct.sql"]
+                 "0027_add_conduct.sql",
+                 "0028_create_tasks.sql",
+                 "0029_add_task_nudges.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
-            connection.execute("DROP TABLE public.impression_updates, public.impressions")
+            connection.execute("DROP TABLE public.task_steps, public.task_parties, public.tasks, "
+                               "public.impression_updates, public.impressions")
             connection.execute("ALTER TABLE public.conversations DROP COLUMN person_id")
             connection.execute("DROP TABLE public.self_image,public.signal_settings, public.service_tools, public.service_settings, "
                                "public.model_settings, public.relationship_events, public.relationships, "

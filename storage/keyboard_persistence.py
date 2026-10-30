@@ -14,6 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
+from .task_store import QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -65,6 +66,45 @@ class KeyboardPersistence:
 
     def load_client_people_context(self, person_id: UUID) -> str:
         return ImpressionStore(self._get_store().engine).client_context(person_id)
+
+    def start_task(self, goal: str, person_id: UUID, brief: str, step: str) -> UUID:
+        return TaskStore(self._get_store().engine).start(goal, person_id, brief, step)
+
+    def add_task_party(self, task_id: UUID, person_id: UUID, brief: str, step: str) -> None:
+        TaskStore(self._get_store().engine).add_party(task_id, person_id, brief, step)
+
+    def task_goal(self, task_id: UUID) -> str | None:
+        return TaskStore(self._get_store().engine).goal(task_id)
+
+    def report_task(self, task_id: UUID, person_id: UUID, outcome: str, settled: bool) -> str:
+        return TaskStore(self._get_store().engine).report(task_id, person_id, outcome, settled)
+
+    def task_coordination(self, task_id: UUID) -> dict | None:
+        return TaskStore(self._get_store().engine).coordination(task_id)
+
+    def task_party_heard(self, person_id: UUID) -> None:
+        TaskStore(self._get_store().engine).heard_from(person_id)
+
+    def load_task_briefs(self, person_id: UUID) -> str:
+        return TaskStore(self._get_store().engine).briefs_for(person_id)
+
+    def load_task_checks(
+        self, now: datetime,
+    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]]]:
+        store = TaskStore(self._get_store().engine)
+        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks()
+
+    def record_task_nudge(self, party_id: UUID, step: str) -> None:
+        TaskStore(self._get_store().engine).record_nudge(party_id, step)
+
+    def task_needs_person(self, task_id: UUID, reason: str, unless_waiting: bool = False) -> bool:
+        return TaskStore(self._get_store().engine).needs_person(task_id, reason, unless_waiting)
+
+    def close_task(self, task_id: UUID, status: str, note: str) -> str:
+        return TaskStore(self._get_store().engine).close(task_id, status, note)
+
+    def load_tasks_context(self) -> str:
+        return TaskStore(self._get_store().engine).tasks_context(datetime.now(timezone.utc))
 
     def load_relationship_values(self) -> RelationshipValues | None:
         return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))

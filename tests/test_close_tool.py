@@ -4,7 +4,7 @@ import json
 from types import SimpleNamespace
 import unittest
 
-from tools.tell_nick import CLIENT_ONLY
+from tools.pass_on import CLIENT_ONLY
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from openai.types.live import ResponseEvent
@@ -120,7 +120,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                         [schema["name"] for schema in app.live.tool_schemas()
                          if schema["name"] != "random_number"],
                         ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                         "recall_self", "look_at_screen", "show_web_image", "send_signal_message", "echo", "other_tool"],
+                         "recall_self", "look_at_screen", "show_web_image", "send_signal_message", "close_task", "echo", "other_tool"],
                     )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):

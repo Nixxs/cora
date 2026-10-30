@@ -41,7 +41,8 @@ class ModelDefinitionTests(unittest.TestCase):
                 "public.identity_worker_state", "public.interaction_appraisals",
                 "public.relationships", "public.relationship_events", "public.model_settings",
         "public.service_settings", "public.service_tools", "public.signal_settings", "public.self_image",
-        "public.impressions", "public.impression_updates",
+        "public.impressions", "public.impression_updates", "public.tasks", "public.task_parties",
+        "public.task_steps",
             })
             connect.assert_not_called()
 
@@ -96,9 +97,12 @@ class ModelDatabaseTests(unittest.TestCase):
                     str(reflected["type"].compile(dialect=self.engine.dialect)),
                     str(column.type.compile(dialect=self.engine.dialect)),
                 )
-                expected_default = str(column.server_default.arg) if column.server_default is not None else None
+                # An identity column has no default of its own.
+                expected_default = (
+                    str(column.server_default.arg) if column.server_default is not None and column.identity is None else None
+                )
                 actual_default = reflected["default"]
-                if expected_default in ("active", "incomplete", "not_applicable", "primary"):
+                if expected_default in ("active", "incomplete", "not_applicable", "primary", "waiting"):
                     self.assertEqual(actual_default, f"'{expected_default}'::text")
                 else:
                     self.assertEqual(actual_default, expected_default)
@@ -195,7 +199,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 27)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 29)
 
     def interest(self, **changes):
         values = {

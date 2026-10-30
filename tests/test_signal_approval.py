@@ -158,7 +158,7 @@ class AppApprovalTests(unittest.IsolatedAsyncioTestCase):
             route = BackendRoute(ask_approval=ask, approval_seconds=5)
             self.assertTrue(app.tools.handle_function_call({
                 "name": "send_signal_message", "call_id": "c1", "status": "completed",
-                "arguments": json.dumps({"to": "Sarah", "message": "Hi Sarah, I'm Cora."}),
+                "arguments": json.dumps({"to": "Sarah", "message": "Hi Sarah, I'm Cora.", "task": None}),
             }, route=route))
             output = json.loads(await route.wait_for("c1", 5))
             self.assertEqual(output["status"], "ok")
