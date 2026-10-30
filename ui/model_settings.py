@@ -8,6 +8,8 @@ from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane
 
+from mail import account as email_setup
+from mail.account import EmailStatus
 from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
@@ -55,6 +57,33 @@ class SignalControls:
     remove_client: Callable[[str], None] = lambda number: None
 
 
+@dataclass
+class EmailControls:
+    """What the Email row reads and does; the app owns her sign-in and the credential store."""
+
+    status: Callable[[], EmailStatus]
+    # save_app(client_id, tenant): a blank app ID keeps the saved one; a blank tenant means a personal account.
+    save_app: Callable[[str, str], None]
+    sign_in: Callable[[], None]
+    sign_out: Callable[[], None]
+    has_client_id: bool = False
+    tenant: str = ""
+
+
+EMAIL_INTRO = (
+    "This is Cora's own Outlook account, not yours. Sign in as her account, never your own: "
+    "she would be reading your mail."
+)
+EMAIL_APP_HELP = (
+    "The Application (client) ID of the app registered for her in the Azure portal (Entra ID › "
+    "App registrations, public client flows on). See the README."
+)
+EMAIL_TENANT_HELP = (
+    "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
+    "such as example.com, or the Directory (tenant) ID. Leave empty for a personal outlook.com account."
+)
+
+
 SIGNAL_INTRO = (
     "This is Cora's own Signal account, on her own phone and number, not yours. Put Signal on a "
     "spare phone or second SIM with Cora's number, then link that phone here. Never scan the code "
@@ -82,6 +111,27 @@ def signal_line(status: SignalStatus, enabled: bool) -> Text:
     if status.state == signal_setup.FAILED:
         return Text("× failed", style="#e07a7a")
     return Text("○ on, not started" if enabled else "○ off", style="#8f98a8")
+
+
+def email_line(status: EmailStatus) -> Text:
+    if status.state == email_setup.READY:
+        return Text(f"● Cora's address · {status.address}", style="#8fcf8f")
+    if status.state == email_setup.SIGNING_IN:
+        return Text("◌ waiting for her sign-in…", style="#d7c27a")
+    if status.state == email_setup.SIGNED_OUT:
+        return Text("○ not signed in", style="#d7a06a")
+    if status.state == email_setup.FAILED:
+        return Text("× failed", style="#e07a7a")
+    return Text("○ not set up", style="#8f98a8")
+
+
+def email_code_text(status: EmailStatus) -> Text:
+    text = Text("Go to ", style="#8f98a8")
+    text.append(status.link or "", style="bold #e0e6ef")
+    text.append(" and enter ", style="#8f98a8")
+    text.append(status.code or "", style="bold #e0e6ef")
+    text.append(", then sign in as Cora's own account. The code lasts 15 minutes.", style="#8f98a8")
+    return text
 
 
 def status_line(status: ServiceStatus, enabled: bool) -> Text:
@@ -123,7 +173,7 @@ class ModelSettingsScreen(ModalScreen):
 
     def __init__(
         self, models: dict, save, screen_looking: bool, set_screen_looking, services: ServiceControls | None = None,
-        signal: SignalControls | None = None,
+        signal: SignalControls | None = None, email: EmailControls | None = None,
     ) -> None:
         super().__init__()
         self.models = dict(models)
@@ -132,6 +182,7 @@ class ModelSettingsScreen(ModalScreen):
         self.set_screen_looking = set_screen_looking
         self.services = services
         self.signal = signal
+        self.email = email
         self.shown_link_uri: str | None = None
         self.shown_clients: list[tuple[str, str]] | None = None
         self.shown_tools: dict[str, tuple] = {}
@@ -158,6 +209,8 @@ class ModelSettingsScreen(ModalScreen):
                                 yield from self.compose_service(service)
                             if self.signal is not None:
                                 yield from self.compose_signal()
+                            if self.email is not None:
+                                yield from self.compose_email()
             yield Button("Close", id="model-settings-close")
 
     def compose_signal(self) -> ComposeResult:
@@ -185,6 +238,26 @@ class ModelSettingsScreen(ModalScreen):
                 yield Input(placeholder="name", id="signal-client-name")
                 yield Input(placeholder="+61400000000", id="signal-client-number")
             yield Button("Add person", id="signal-add-client")
+
+    def compose_email(self) -> ComposeResult:
+        with Horizontal(classes="service-heading", id="service-heading-email"):
+            yield Label("▸ Email", classes="service-title", id="service-title-email")
+            yield Static(id="email-status", classes="service-status")
+        with Vertical(classes="service-details", id="service-details-email"):
+            yield Static(Text(EMAIL_INTRO, style="#d7a06a"), classes="service-help")
+            yield Static(id="email-reason", classes="service-reason")
+            yield Label(EMAIL_APP_HELP, classes="model-settings-label service-help")
+            yield Input(
+                id="email-client-id",
+                placeholder="app ID saved · paste to replace" if self.email.has_client_id else "paste the app ID",
+            )
+            yield Label(EMAIL_TENANT_HELP, classes="model-settings-label service-help")
+            yield Input(value=self.email.tenant, id="email-tenant", placeholder="example.com · empty for personal")
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save", id="email-save-id")
+                yield Button("Sign Cora in", id="email-sign-in")
+                yield Button("Sign out", id="email-sign-out")
+            yield Static(id="email-code", classes="service-reason")
 
     def compose_service(self, service) -> ComposeResult:
         # One row per service; clicking it (anywhere but the switch) opens or closes its details.
@@ -218,7 +291,7 @@ class ModelSettingsScreen(ModalScreen):
         details = self.query_one(f"#service-details-{service_id}")
         details.display = not details.display
         arrow = "▾" if details.display else "▸"
-        title = "Signal" if service_id == "signal" else SERVICES[service_id].title
+        title = {"signal": "Signal", "email": "Email"}.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
     async def on_mount(self) -> None:
@@ -262,9 +335,30 @@ class ModelSettingsScreen(ModalScreen):
             self.shown_link_uri = status.link_uri
             qr.update(qr_text(status.link_uri))
 
+    def show_email(self) -> None:
+        status = self.email.status()
+        self.query_one("#email-status", Static).update(email_line(status))
+        self.query_one("#email-client-id", Input).placeholder = (
+            "app ID saved · paste to replace" if self.email.has_client_id else "paste the app ID"
+        )
+        reason = self.query_one("#email-reason", Static)
+        reason.display = bool(status.reason)
+        reason.update(Text(status.reason or "", style="#e07a7a"))
+        signing_in = status.state == email_setup.SIGNING_IN
+        code = self.query_one("#email-code", Static)
+        code.display = signing_in
+        if signing_in:
+            code.update(email_code_text(status))
+        self.query_one("#email-sign-in", Button).disabled = not self.email.has_client_id or signing_in \
+            or status.state == email_setup.READY
+        self.query_one("#email-sign-out", Button).disabled = status.state not in (
+            email_setup.READY, email_setup.SIGNING_IN, email_setup.FAILED)
+
     async def show_services(self) -> None:
         if self.signal is not None:
             await self.show_signal()
+        if self.email is not None:
+            self.show_email()
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -351,6 +445,8 @@ class ModelSettingsScreen(ModalScreen):
         event.stop()
         if event.input.id == "signal-person":
             self.save_person_number()
+        elif event.input.id in ("email-client-id", "email-tenant"):
+            self.save_email_app()
         elif event.input.id in ("signal-client-name", "signal-client-number"):
             self.add_client()
         else:
@@ -385,6 +481,15 @@ class ModelSettingsScreen(ModalScreen):
         self.signal.person_number = number
         self.signal.save_number(number)
 
+    def save_email_app(self) -> None:
+        field_ = self.query_one("#email-client-id", Input)
+        if not field_.value.strip() and not self.email.has_client_id:
+            self.notify("Paste the app ID first.", severity="warning")
+            return
+        # The app checks both and saves them, or says why not.
+        self.email.save_app(field_.value, self.query_one("#email-tenant", Input).value)
+        field_.value = ""
+
     def save_service_token(self, service_id: str) -> None:
         field_ = self.query_one(f"#service-token-{service_id}", Input)
         token = field_.value.strip()
@@ -404,6 +509,12 @@ class ModelSettingsScreen(ModalScreen):
             self.save_person_number()
         elif button == "signal-link":
             self.signal.link()
+        elif button == "email-save-id":
+            self.save_email_app()
+        elif button == "email-sign-in":
+            self.email.sign_in()
+        elif button == "email-sign-out":
+            self.email.sign_out()
         elif button == "signal-add-client":
             self.add_client()
         elif button.startswith("signal-remove-"):

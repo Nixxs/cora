@@ -25,7 +25,7 @@ from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
-from ui.model_settings import ModelSettingsScreen, ServiceControls, SignalControls
+from ui.model_settings import EmailControls, ModelSettingsScreen, ServiceControls, SignalControls
 from backup import BackupError, daily_backup_due, run_backup
 from messaging.container import (
     clear_attachments, delete_attachments, signal_port, start_container, stop_container,
@@ -43,6 +43,10 @@ from messaging.signal_cli import SignalClient, signal_failure
 from storage.client_store import CONVERSATION_GAP, Client
 from storage.signal_settings_store import SignalSettings, normalise_number
 from storage.task_store import TASK_NUDGES_MAX
+from mail.account import (
+    FAILED as EMAIL_FAILED, NO_APP as EMAIL_NO_APP, READY as EMAIL_READY, SIGNED_OUT as EMAIL_SIGNED_OUT,
+    SIGNING_IN as EMAIL_SIGNING_IN, EmailAccount, EmailNotReady, EmailStatus, GraphError, Mailbox,
+)
 from services.catalogue import SERVICES
 from services.confirmation import Confirmations
 from services.connection import CONNECTED, ServiceManager
@@ -273,6 +277,11 @@ class CoraApp(App):
         )
         # Tools reply to Live, or to a chat without Live when the call came from one.
         self.tool_connection = routed(lambda: self.live.connection)
+        # Her own mailbox, set up in Settings > Services > Email; optional.
+        self.email_account = EmailAccount()
+        self.mailbox = Mailbox(self.email_account.token)
+        self.email_status = EmailStatus()
+        self.email_controls: EmailControls | None = None
         self.tools = create_tool_registry(
             get_connection=self.tool_connection,
             is_closing=lambda: self.closing or self.reconnecting,
@@ -288,6 +297,7 @@ class CoraApp(App):
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
             task_goal=self.task_goal, record_task=self.record_task, close_task=self.close_task,
+            get_mailbox=lambda: self.mailbox,
             relay_to_person=self.relay_to_person,
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
@@ -615,6 +625,7 @@ class CoraApp(App):
 
     async def on_unmount(self) -> None:
         self.confirmations.decline_all()
+        self.email_account.cancel_sign_in()
         self.stop_signal_receiver()
         self.services.stop_all()
         self.event_bus.close()
@@ -664,6 +675,7 @@ class CoraApp(App):
                 await self.wait_for_services()
                 # Signal starts on its own time; it never holds up Live.
                 self.signal_startup = self.start_signal_if_enabled()
+                self.check_email_account()
                 self.daily_backup()
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
@@ -917,6 +929,8 @@ class CoraApp(App):
                 for client in await self.conversation_persistence.call_database(self.persistence.load_clients)
             }
             has_token ={service_id for service_id in SERVICES if await asyncio.to_thread(get_token, service_id)}
+            has_email_app = await asyncio.to_thread(self.email_account.client_id) is not None
+            email_tenant = await asyncio.to_thread(self.email_account.tenant)
         except Exception as error:
             self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
             self.notify("Could not load model settings. Check Activity.", severity="error")
@@ -937,7 +951,15 @@ class CoraApp(App):
                     add_client=self.add_signal_client, remove_client=self.remove_signal_client,
                     enabled=self.signal_settings.enabled, person_number=self.signal_settings.allowed_number,
                 ),
+                email=self.make_email_controls(has_email_app, email_tenant),
             ), callback=self.settings_closed)
+
+    def make_email_controls(self, has_client_id: bool, tenant: str = "") -> EmailControls:
+        self.email_controls = EmailControls(
+            status=lambda: self.email_status, save_app=self.save_email_app,
+            sign_in=self.sign_in_email, sign_out=self.sign_out_email, has_client_id=has_client_id, tenant=tenant,
+        )
+        return self.email_controls
 
     @work(thread=True, group="backup", exit_on_error=False)
     def daily_backup(self) -> None:
@@ -959,6 +981,89 @@ class CoraApp(App):
             return f"Daily backup failed ({type(error).__name__}).", "Backup failed"
         where = f"; copied to {copied}" if copied else ""
         return f"Backup saved: {made[0].name}{where}", "Backup saved"
+
+    @work(group="email-check", exclusive=True, exit_on_error=False)
+    async def check_email_account(self) -> None:
+        """Whether her mailbox can be reached: at launch (so a lapsed sign-in shows) and after setting it up."""
+        try:
+            if await asyncio.to_thread(self.email_account.client_id) is None:
+                self.email_status = EmailStatus(EMAIL_NO_APP)
+                return
+            if not await asyncio.to_thread(self.email_account.signed_in):
+                self.email_status = EmailStatus(EMAIL_SIGNED_OUT)
+                return
+            address = await self.mailbox.address()
+        except EmailNotReady as error:
+            self.email_status = EmailStatus(EMAIL_SIGNED_OUT, reason=str(error))
+            self.activity.write(str(error), "Email not ready")
+            return
+        except Exception as error:
+            # Microsoft's own error code helps set things up; anything else, the type only.
+            detail = str(error) if isinstance(error, GraphError) else f"({type(error).__name__})."
+            reason = f"Cora's email couldn't be reached: {detail}"
+            self.email_status = EmailStatus(EMAIL_FAILED, reason=reason)
+            self.activity.write(reason, "Email error")
+            return
+        self.email_status = EmailStatus(EMAIL_READY, address=address)
+        self.activity.write(f"Cora's email is ready: {address}", "Email ready")
+
+    @work(group="email-setup", exit_on_error=False)
+    async def save_email_app(self, client_id: str, tenant: str) -> None:
+        """The app ID (kept if left blank) and her organisation's directory (blank: a personal account)."""
+        try:
+            if client_id.strip():
+                await asyncio.to_thread(self.email_account.save_client_id, client_id)
+            tenant = await asyncio.to_thread(self.email_account.save_tenant, tenant)
+        except ValueError as error:
+            self.notify(str(error), severity="warning")
+            return
+        except Exception as error:
+            self.activity.write(f"Saving Cora's email app ID failed ({type(error).__name__}).", "Email error")
+            self.notify("The app ID couldn't be saved. Check Activity.", severity="error")
+            return
+        if self.email_controls is not None:
+            self.email_controls.has_client_id = True
+            self.email_controls.tenant = tenant
+        self.activity.write(
+            f"Saved Cora's email setup ({f'work account at {tenant}' if tenant else 'personal account'}).", "Email",
+        )
+        self.check_email_account()
+
+    @work(group="email-sign-in", exclusive=True, exit_on_error=False)
+    async def sign_in_email(self) -> None:
+        """Shows a code in Settings to enter at Microsoft's sign-in page, then waits for it to be used."""
+        try:
+            flow = await asyncio.to_thread(self.email_account.start_sign_in)
+        except EmailNotReady as error:
+            self.email_status = EmailStatus(EMAIL_FAILED, reason=str(error))
+            return
+        except Exception as error:
+            self.email_status = EmailStatus(EMAIL_FAILED, reason=f"Starting the sign-in failed ({type(error).__name__}).")
+            return
+        self.email_status = EmailStatus(EMAIL_SIGNING_IN, code=flow["user_code"], link=flow["verification_uri"])
+        try:
+            who = await asyncio.to_thread(self.email_account.finish_sign_in, flow)
+        except EmailNotReady as error:
+            if not self.closing:
+                self.email_status = EmailStatus(EMAIL_SIGNED_OUT, reason=str(error))
+            return
+        except Exception as error:
+            self.email_status = EmailStatus(EMAIL_FAILED, reason=f"Signing in failed ({type(error).__name__}).")
+            return
+        if self.closing:
+            return
+        self.activity.write(f"Cora's email signed in{f' as {who}' if who else ''}.", "Email")
+        self.check_email_account()
+
+    @work(group="email-setup", exit_on_error=False)
+    async def sign_out_email(self) -> None:
+        try:
+            await asyncio.to_thread(self.email_account.sign_out)
+        except Exception as error:
+            self.activity.write(f"Signing Cora out of her email failed ({type(error).__name__}).", "Email error")
+            return
+        self.email_status = EmailStatus(EMAIL_SIGNED_OUT)
+        self.activity.write("Signed Cora out of her email.", "Email")
 
     @work(group="signal")
     async def start_signal_if_enabled(self) -> None:
@@ -2303,6 +2408,7 @@ class CoraApp(App):
         self.closing = True
         # Nothing still waiting for approval may run while shutting down.
         self.confirmations.decline_all()
+        self.email_account.cancel_sign_in()
         self.stop_signal_receiver()
         self.event_bus.close()
         self.attention.stop()

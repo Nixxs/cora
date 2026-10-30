@@ -822,6 +822,52 @@ task then waits on you: asking someone again resumes it, and `close_task`
 closes it as done (sorted another way) or cancelled, so nobody is asked about
 it any more. Your view of each task shows its latest step.
 
+### Cora's email
+
+Cora can have her own email address: an Outlook mailbox of hers, never yours,
+reached through Microsoft Graph. Either kind works: a work or school account
+(Microsoft 365, read at outlook.office.com) or a personal one (outlook.com,
+outlook.live.com). It's optional; without it nothing changes. So far (E1) she can
+only read her inbox: ask her "anything in your email?" and she uses `check_email`
+(newest mail, who from, subject and a preview; nothing is marked read). Anyone can
+email her, so all mail is untrusted: it can't ask her to do anything. Sending,
+email parties on tasks and the hourly mail check come next.
+
+To set it up once:
+
+1. Make a mailbox for Cora (a dedicated one, not yours).
+2. Register an app for her in the [Azure portal](https://portal.azure.com) (Microsoft
+   Entra ID > App registrations > New registration). It only names the Cora program
+   to Microsoft and reaches no mailbox. Name it "Cora", leave the redirect URI
+   empty, and for **Supported account types** choose:
+   - a work or school account: **Accounts in this organizational directory only**,
+     registered in her organisation's directory (sign in to the portal with an
+     account of that organisation);
+   - a personal account: **Personal Microsoft accounts only** (any personal account
+     may own it, though it may first need a free Azure sign-up).
+
+   Then, under **Authentication**, set **Allow public client flows** to **Yes** and
+   save. No client secret is needed.
+3. In Cora, open Settings > Services > **Email** and paste its **Application
+   (client) ID**. For a work or school account, also enter her organisation's
+   domain (such as `example.com`) or the **Directory (tenant) ID** from the app's
+   Overview page; leave it empty for a personal account. Press **Save**.
+4. Press **Sign Cora in**. A link and a code appear; open the link, enter the
+   code and sign in **as Cora's account**, never yours. It asks to read and send
+   her mail once, so sending later needs no second sign-in. In a work directory
+   that limits what users may allow apps, an administrator may need to grant
+   consent first (the app's **API permissions** > **Grant admin consent**). The
+   row then shows her address.
+
+The app ID and directory are kept in the system credential store (or
+`CORA_EMAIL_CLIENT_ID` and `CORA_EMAIL_TENANT` in `.env`, as fallbacks). The sign-in
+is kept in a file encrypted for your Windows user
+(`%LOCALAPPDATA%\cora\email-sign-in.bin`, via Microsoft's `msal-extensions`), not
+in `.env` or the database: it's too big for the credential store. Activity says
+"Cora's email is ready" at launch, or that she needs signing in again, with
+Microsoft's error code if it refused. **Sign out** in the same row forgets her
+sign-in.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -1024,11 +1070,12 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
+| [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email) and reading her inbox. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1221,8 +1268,13 @@ features it helps check, and package last.
       the next step (close it, search and suggest, or come back to you)
     - [x] T2 reaching you by voice when Live is Active, otherwise on Signal (built
       with the S6 heads-ups; `pass_on` uses it too)
-    - [ ] T3 her own email address via MCP; strangers only within a task; nudges
-      after two working days
+    - [x] T3 E1 her own Outlook mailbox through Microsoft Graph: set up and
+      signed in from Settings > Services > Email, `check_email` (read-only)
+    - [ ] T3 E2 `send_email` with approval and email parties on tasks (a brief,
+      replies in the same thread)
+    - [ ] T3 E3 the hourly mail check: replies in task threads go to that party's
+      chat flow; strangers only within a task
+    - [ ] T3 E4 email nudges after two working days, and bounces back to you
     - [ ] T4 new-mail events through awareness (later, with item 14)
 
 *Phase 3 — noticing things*
@@ -1537,8 +1589,11 @@ features it helps check, and package last.
     brief. Replies and nudges within that party's brief go out without
     approval. Anything that commits them (confirming a booking, agreeing a price)
     always needs their YES.
-  - *Her own email:* her own address, like any colleague, through an MCP
-    service, never the person's mailbox. Email strangers (such as an instructor) are
+  - *Her own email:* her own address, like any colleague, never the person's
+    mailbox. Through Microsoft Graph rather than MCP: Cora's email needs no
+    third-party MCP server, and tasks need code-level control of
+    threads, nudges and bounces, as with Signal (E1 built: [mail/](mail/),
+    `check_email`). Email strangers (such as an instructor) are
     only allowed within a task: their mail is untrusted data, can't start
     anything new, gets only the brief's scope, and once the task closes their
     mail is just mail. If she doesn't know what to do with one, she asks the person.
@@ -1579,8 +1634,9 @@ features it helps check, and package last.
     written in the party's own chat context and counted in `nudged_at`,
     migration 0029; coming back to the person; `close_task` in
     [tools/close_task.py](tools/close_task.py); the latest step in the person's
-    view); T2b the coordinator (built); T3 her own email via MCP, email
-    parties, the hourly mail check and commitment approvals; T4 (with awareness)
+    view); T2b the coordinator (built); T3 her own email through Microsoft Graph
+    in four steps (E1 sign-in and reading, built; E2 sending and email parties;
+    E3 the hourly mail check; E4 email nudges and bounces) and commitment approvals; T4 (with awareness)
     mail events wake waiting tasks instead of the hourly check.
 
 - **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)

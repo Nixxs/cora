@@ -110,11 +110,15 @@ async def running_app(persistence=None):
             patch("memory.background.appraise_waiting_conversations"), \
             patch("memory.background.update_relationships"), \
             patch("services.credentials.keyring"), \
+            patch("app.EmailAccount"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
             patch("app.delete_attachments", AsyncMock()), patch("app.clear_attachments", AsyncMock()), \
             patch.object(CoraApp, "daily_backup", return_value=None):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
+            # Email not set up, so launch checks nothing; tests that need it say otherwise.
+            app.email_account.client_id.return_value = None
+            app.email_account.tenant.return_value = ""
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
