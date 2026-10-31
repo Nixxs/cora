@@ -43,6 +43,8 @@ INTEREST_CONTEXT_MAX_CHARS = 3000
 # Her sparks are weighed once each, while recent, a few at a time.
 SPARKS_FRESH_FOR = timedelta(days=14)
 SPARK_BATCH_LIMIT = 10
+# What a wander spark was found while doing, for the interest cycle.
+WANDERING = "wandering"
 PULL_REASON = "Her own pull after exploring it"
 
 Cursor = tuple[datetime, UUID]
@@ -248,21 +250,26 @@ class InterestStore:
                                parent_interest_id, memory_ids, origin)
 
     def read_sparks(self, *, now: datetime, limit: int = SPARK_BATCH_LIMIT) -> tuple[Spark, ...]:
-        """Tangents from recent explorations not yet weighed, newest first."""
+        """Tangents from recent explorations, and her wanders themselves, not yet weighed, newest first."""
         validate_now(now)
         exploration = InterestExplorationRecord
         with Session(self.engine) as session:
-            rows = session.execute(select(exploration, InterestRecord.title).join(
+            rows = session.execute(select(exploration, InterestRecord.title).outerjoin(
                 InterestRecord, InterestRecord.id == exploration.interest_id,
             ).where(
                 exploration.status == "found", exploration.sparks_used_at.is_(None),
                 exploration.finished_at > now - SPARKS_FRESH_FOR,
-                func.jsonb_array_length(exploration.tangents) > 0,
+                or_(func.jsonb_array_length(exploration.tangents) > 0, exploration.kind == "wander"),
             ).order_by(exploration.finished_at.desc(), exploration.id.desc()).limit(limit)).all()
-        return tuple(
-            Spark(record.id, tangent["title"], tangent["why"], title)
-            for record, title in rows for tangent in record.tangents
-        )
+        sparks = []
+        for record, title in rows:
+            if record.kind == "wander":
+                # What she wandered into is a spark too, with her take on it (or the finding) as why.
+                why = record.reaction or record.finding[:TEXT_MAX_CHARS]
+                sparks.append(Spark(record.id, record.topic, why, WANDERING))
+                title = f"{WANDERING}: {record.topic}"
+            sparks += [Spark(record.id, tangent["title"], tangent["why"], title) for tangent in record.tangents]
+        return tuple(sparks)
 
     def pull(self, interest_id: UUID, pull: str, *, now: datetime) -> Interest | None:
         """Her own pull after exploring: a little strength, up to the ceiling; None when it adds nothing.

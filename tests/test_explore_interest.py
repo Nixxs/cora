@@ -6,15 +6,16 @@ import asyncio
 import json
 import os
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from openai.types.responses import Response
 
 import app as app_module
-from subconscious.interests.exploration_store import Exploration, ExplorationStore, Start
+from subconscious.interests.exploration_store import Exploration, ExplorationStore, ReachOut, Start, Wander
 from subconscious.interests.explore_interest import (
-    EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, Discovery, explore, explore_next, run_exploration_cycle,
+    EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, WANDER_INSTRUCTIONS, WANDER_SCHEMA, Discovery, explore, explore_next,
+    run_exploration_cycle, wander,
 )
 from subconscious.interests.interest_store import Interest
 import test_exploration_store as exploration_tests
@@ -32,8 +33,9 @@ FINDING = {"finding": "Carburettors were tuned by ear and feel.",
            "reaction": "I love that mechanics trusted their ears; it feels oddly musical.",
            "pull": "some", "next_questions": ["Why did fuel injection replace them?"],
            "tangents": [{"title": "Tuning forks and piano tuners", "why": "Tuning by ear sounds like music."}],
-           "sources": [SEARCHED]}
-NOTHING = {"finding": None, "reaction": None, "pull": "none", "next_questions": [], "tangents": [], "sources": []}
+           "reach_out": None, "sources": [SEARCHED]}
+NOTHING = {"finding": None, "reaction": None, "pull": "none", "next_questions": [], "tangents": [],
+           "reach_out": None, "sources": []}
 
 
 def explore_response(payload, *, status="completed", refusal=False):
@@ -129,11 +131,69 @@ class ExploreTests(unittest.TestCase):
             ({**FINDING, "tangents": [{"title": " ", "why": "x"}]}, {}),
             ({**FINDING, "tangents": [{"title": f"T{n}", "why": "x"} for n in range(3)]}, {}),
             ({key: value for key, value in FINDING.items() if key != "pull"}, {}),
+            ({key: value for key, value in FINDING.items() if key != "reach_out"}, {}),
+            ({**FINDING, "reach_out": "Look!"}, {}),
+            ({**FINDING, "reach_out": {"message": "Look!"}}, {}),
+            ({**FINDING, "reach_out": {"message": " ", "why": "Thrilled"}}, {}),
+            ({**FINDING, "reach_out": {"message": "x" * 601, "why": "Thrilled"}}, {}),
+            ({**FINDING, "topic": "Not for an interest"}, {}),
         ):
             with self.subTest(payload=payload, changes=changes):
                 self.set_output(payload, **changes)
                 with self.assertRaises(ValueError):
                     explore(self.client, "m", INTEREST, [])
+
+    def test_a_rare_reach_out_is_kept_cleaned(self):
+        self.set_output({**FINDING, "reach_out": {"message": "  Mechanics tuned engines by ear!  ", "why": "Delighted"}})
+        self.assertEqual(explore(self.client, "m", INTEREST, []).reach_out,
+                         ("Mechanics tuned engines by ear!", "Delighted"))
+        for phrase in ("reach_out: almost always null", "human perspective", "never a task for them"):
+            self.assertIn(phrase, EXPLORE_INSTRUCTIONS)
+            self.assertIn(phrase, WANDER_INSTRUCTIONS)
+
+
+WANDERED = {**FINDING, "topic": "Lighthouse keepers"}
+RANDOM = Wander(("Old mechanical design",), ("Tuning forks",), area="architecture and buildings")
+TANGENT = Wander(("Old mechanical design",), (), ("Tuning forks", "Tuned by ear"), "Old mechanical design")
+
+
+class WanderTests(unittest.TestCase):
+    def setUp(self):
+        self.client = MagicMock()
+        self.client.responses.create.return_value = explore_response(WANDERED)
+
+    def sent(self):
+        return json.loads(self.client.responses.create.call_args.kwargs["input"])
+
+    def test_a_random_wander_starts_from_an_area_away_from_her_interests(self):
+        found = wander(self.client, "m", RANDOM)
+        self.assertEqual((found.topic, found.finding), ("Lighthouse keepers", FINDING["finding"]))
+        request = self.client.responses.create.call_args.kwargs
+        self.assertEqual(request["instructions"], WANDER_INSTRUCTIONS)
+        self.assertEqual(request["max_tool_calls"], 3)
+        self.assertEqual(request["text"]["format"], {
+            "type": "json_schema", "name": "cora_wander", "strict": True, "schema": WANDER_SCHEMA,
+        })
+        self.assertEqual(self.sent(), {"your_interests": ["Old mechanical design"], "recent_wanders": ["Tuning forks"],
+                                       "area": "architecture and buildings"})
+        for schema in objects(WANDER_SCHEMA):
+            self.assertIs(schema["additionalProperties"], False)
+            self.assertEqual(set(schema["required"]), set(schema["properties"]))
+        for phrase in ("not exploring any of your interests", "far from your current interests and recent wanders",
+                       "avoid the obvious", "do not turn it into a lesson for AI", "never put names, places"):
+            self.assertIn(phrase, WANDER_INSTRUCTIONS)
+
+    def test_a_tangent_wander_says_where_she_noticed_it(self):
+        wander(self.client, "m", TANGENT)
+        self.assertEqual(self.sent()["tangent"], {
+            "title": "Tuning forks", "why": "Tuned by ear", "noticed_while": "Old mechanical design",
+        })
+        self.assertNotIn("area", self.sent())
+
+    def test_a_wander_without_a_topic_is_rejected(self):
+        self.client.responses.create.return_value = explore_response(FINDING)
+        with self.assertRaises(ValueError):
+            wander(self.client, "m", RANDOM)
 
 
 class ExploreNextTests(unittest.TestCase):
@@ -170,6 +230,7 @@ class ExploreNextTests(unittest.TestCase):
             self.attempt.id, FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,), now=ENDED,
             reaction=FINDING["reaction"],
             tangents=(("Tuning forks and piano tuners", "Tuning by ear sounds like music."),), pull="some",
+            topic=None, reach_out=None,
         )
         self.store.fail.assert_not_called()
         # Her pull goes to the interest she explored, once the finding is saved.
@@ -190,6 +251,25 @@ class ExploreNextTests(unittest.TestCase):
         self.store.finish.return_value = None
         self.assertIn("finding discarded", self.explore_next(now=NOW))
         self.interests.pull.assert_not_called()
+
+    def test_a_wander_saves_its_topic_and_strengthens_no_interest(self):
+        attempt = Exploration(uuid4(), None, "running", NOW, None, None, (), (), kind="wander")
+        self.store.start_next.return_value = Start("started", attempt, wander=RANDOM)
+        self.client.responses.create.return_value = explore_response(
+            {**WANDERED, "reach_out": {"message": "Keepers!", "why": "Thrilled"}},
+        )
+        self.store.finish.return_value = replace(earlier(), interest_id=None, kind="wander",
+                                                 topic="Lighthouse keepers", reach_out=("Keepers!", "Thrilled"))
+        outcome = self.explore_next(now=NOW, clock=lambda: ENDED)
+        self.assertEqual(outcome, "Wandered into Lighthouse keepers: saved a finding "
+                                  "(1 sources, wants to tell you about it).")
+        self.assertEqual(self.store.finish.call_args.kwargs["topic"], "Lighthouse keepers")
+        self.assertEqual(self.store.finish.call_args.kwargs["reach_out"], ("Keepers!", "Thrilled"))
+        self.store.list_recent.assert_not_called()
+        self.interests.pull.assert_not_called()
+        self.client.responses.create.return_value = explore_response({**NOTHING, "topic": ""})
+        self.assertEqual(self.explore_next(now=NOW, clock=lambda: ENDED),
+                         "Wandered into somewhere in architecture and buildings: nothing new found.")
 
     def test_errors_fail_the_attempt_and_propagate_even_if_failing_fails(self):
         for fail_error in (None, RuntimeError("database down")):
@@ -317,6 +397,71 @@ class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
             entries = "\n".join(app.activity.entries)
             self.assertEqual(entries.count("Not exploring: too soon."), 1)
             self.assertIn("Explored Sailing: nothing new found.", entries)
+
+
+REACH_OUT = ReachOut(uuid4(), "Lighthouse keepers", "Keepers trimmed wicks all night!", "I'm thrilled", NOW)
+
+
+class AppReachOutTests(unittest.IsolatedAsyncioTestCase):
+    async def test_she_reaches_out_only_in_daytime_when_she_can_reach_you_and_one_at_a_time(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            running = MagicMock(is_finished=False)
+            with patch.object(app, "reach_out", return_value=running) as start, \
+                    patch.object(app, "can_explore", return_value=False):
+                with patch.object(app_module, "NUDGE_HOURS", range(0, 24)):
+                    app.check_exploration()
+                    start.assert_not_called()  # neither by voice nor on Signal
+                    with patch.object(app, "signal_reaches_person", return_value=True):
+                        app.check_exploration()
+                        app.check_exploration()
+                    start.assert_called_once_with()
+                    running.is_finished = True
+                    with patch.object(app, "can_reach_by_voice", return_value=True):
+                        app.check_exploration()
+                    self.assertEqual(start.call_count, 2)
+                running.is_finished = True
+                with patch.object(app_module, "NUDGE_HOURS", range(0)), \
+                        patch.object(app, "signal_reaches_person", return_value=True):
+                    app.check_exploration()  # at night it waits
+                self.assertEqual(start.call_count, 2)
+
+    async def run_reach_out(self, app, claimed=REACH_OUT):
+        with patch("app.claim_reach_out_now", return_value=claimed), \
+                patch("app.release_reach_out_now") as release:
+            await asyncio.wait_for(app.reach_out().wait(), 5)
+            await app.workers.wait_for_complete()
+        return release
+
+    async def test_her_message_goes_as_she_wrote_it_and_is_logged_once_delivered(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.tell_person = AsyncMock()
+            release = await self.run_reach_out(app)
+            app.tell_person.assert_awaited_once()
+            self.assertEqual(app.tell_person.await_args.args, ("Keepers trimmed wicks all night!",))
+            release.assert_not_called()
+            await app.tell_person.await_args.kwargs["delivered"]()
+            await pilot.pause()
+            self.assertIn("Cora reached out to you about Lighthouse keepers: I'm thrilled",
+                          "\n".join(app.activity.entries))
+
+    async def test_a_message_that_couldnt_go_is_released_to_try_again(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.tell_person = AsyncMock(side_effect=RuntimeError("no way"))
+            release = await self.run_reach_out(app)
+            release.assert_called_once_with(REACH_OUT)
+            app.tell_person = AsyncMock()
+            with patch("app.release_reach_out_now") as release:
+                with patch("app.claim_reach_out_now", return_value=REACH_OUT):
+                    await asyncio.wait_for(app.reach_out().wait(), 5)
+                app.tell_person.await_args.kwargs["undelivered"]()  # Live couldn't say it and Signal failed
+                await app.workers.wait_for_complete()
+            release.assert_called_once_with(REACH_OUT)
+
+    async def test_nothing_to_say_sends_nothing(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.tell_person = AsyncMock()
+            await self.run_reach_out(app, claimed=None)
+            app.tell_person.assert_not_awaited()
 
 
 if __name__ == "__main__":

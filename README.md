@@ -1220,12 +1220,13 @@ looking into something else). Both steps below are background processes with the
 own API calls. The prompts ask for breadth (nature, history, places, people, art,
 food, craft, science…): being an AI is not a lens for everything, and topics are
 not to be recast as lessons for AI or assistants. (Run `python migrate.py` once
-after updating, for migration 0034.)
+after updating, for migrations 0034 and 0035.)
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
    cycle is due. A cycle reads new memories from the person's messages that have finished
    embedding and duplicate checks, and her **sparks**: the tangents from her recent
-   explorations (last 14 days) not yet weighed. With no sparks it waits for at least
+   explorations, and what she wandered into (step 3), from the last 14 days and not
+   yet weighed. With no sparks it waits for at least
    three memories; with any, it runs on whatever memories there are, so her own
    curiosity doesn't wait for the person. A separate model call proposes
    reinforcing existing interests or spawning one new interest. Reinforcements
@@ -1263,6 +1264,28 @@ after updating, for migration 0034.)
    0.6 and never reviving a dormant one, so something she cares about can stay
    alive a while on its own but only the person's conversations make an interest
    strong. Later explorations build on her three most recent findings.
+
+   **Wandering.** Every third attempt (and any attempt when no interest is due)
+   is a wander, tied to no interest, alternating between two starts: one of her
+   unused tangents (the newest she hasn't wandered into and that isn't already an
+   interest), and an area picked at random from a broad list (animals, crafts,
+   places, history, food, music… deliberately nothing about computing or AI), in
+   which she chooses something specific, far from her current interests and her
+   last ten wanders. Same search limit and the same answer as an exploration, plus a
+   topic title. A wander strengthens nothing; it becomes a spark, so the next
+   evolution cycle can turn it into an interest of her own. Activity shows
+   "Wandered into …".
+
+   **Reaching out.** Rarely, when something truly thrilled her or she'd value your
+   human perspective, an exploration or wander can carry a short message for you
+   (up to 600 characters, a share or a question, never a task) and why. It comes
+   by voice when Live is Active, otherwise on Signal, in her own words, and is
+   saved in your conversation like her other Signal messages, so your reply
+   carries on from it. Limits: at most one a day, only between 9:00 and 19:00, and
+   only while fresh (two days). It is only taken when she can reach you then; if
+   Signal isn't linked and Live isn't Active it waits, and if it goes stale the
+   finding can still come up in conversation as usual (step 5). One she has sent
+   isn't raised again in conversation. Activity logs each under **Reach out**.
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
    to mention only when they fit naturally. Each includes its latest finding and
@@ -1276,11 +1299,12 @@ after updating, for migration 0034.)
    apart, scaled by how warm she feels toward the person (see Relationship step
    5); only
    each interest's latest finding, from the last three days, for an interest that
-   is not dormant. Each finding is offered at most once (recorded as
+   is not dormant, or a wander's. Each finding is offered at most once (recorded as
    `mentioned_at`); if the send fails, the record is cleared so it can be offered
    later. Being offered does not guarantee she said it.
 
-**Privacy:** exploration sends only an interest's title and description. Why it
+**Privacy:** exploration sends only an interest's title and description (a wander,
+its tangent or area and her interest and wander titles). Why it
 emerged, which describes the person, never leaves for a search, and Cora is instructed
 not to put names, places, or personal details into search queries. Web pages,
 interests, and earlier findings are treated as untrusted data, never instructions.
@@ -1294,7 +1318,7 @@ manual commands respect the same limits and can make billable requests:
 python -m subconscious.interests.interest_store              # list interests (no API calls)
 python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
 python -m subconscious.interests.evolve_interests
-python -m subconscious.interests.explore_interest
+python -m subconscious.interests.explore_interest            # explores, or wanders when it's due
 ```
 
 ## How the opening greeting works
@@ -1455,8 +1479,10 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Opt-in standby heads-up through Live, with a cancellable response window.
 - Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
-- Cora's own interests: daily evolution from memories, idle web exploration with
-  saved findings, and occasional findings she raises herself during a lull.
+- Cora's own interests: daily evolution from memories and her own sparks, idle web
+  exploration with saved findings and tangents, wandering somewhere new every third
+  attempt, occasional findings she raises herself during a lull, and, rarely, a
+  message to you when something really excites her.
 - Cora's own developing identity: a daily reflection forms and gradually revises
   first-person traits from her experiences within fixed rules; the traits she holds
   reach her at each connect, and she can recall why she sees herself that way.

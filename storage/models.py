@@ -321,13 +321,32 @@ class InterestExplorationRecord(Base):
             "pull IS NULL OR (status = 'found' AND pull IN ('none', 'some', 'strong'))",
             name="interest_explorations_pull_check",
         ),
+        CheckConstraint(
+            "kind IN ('interest', 'wander') AND (kind = 'interest') = (interest_id IS NOT NULL)",
+            name="interest_explorations_kind_check",
+        ),
+        CheckConstraint(
+            "(kind = 'wander' OR (topic IS NULL AND wandered_from IS NULL)) "
+            "AND (topic IS NULL OR (btrim(topic) <> '' AND char_length(topic) <= 200)) "
+            "AND (kind = 'interest' OR status <> 'found' OR topic IS NOT NULL)",
+            name="interest_explorations_topic_check",
+        ),
+        CheckConstraint(
+            "(reach_out IS NULL) = (reach_out_why IS NULL) "
+            "AND (reach_out IS NULL OR (status = 'found' AND btrim(reach_out) <> '' "
+            "AND char_length(reach_out) <= 600 AND btrim(reach_out_why) <> '' "
+            "AND char_length(reach_out_why) <= 500)) "
+            "AND (reached_out_at IS NULL OR reach_out IS NOT NULL)",
+            name="interest_explorations_reach_out_check",
+        ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
         {"schema": "public"},
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
-    interest_id: Mapped[UUID] = mapped_column(
+    # None for a wander, which isn't tied to any interest.
+    interest_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("public.interests.id", name="interest_explorations_interest_id_fkey", ondelete="RESTRICT"),
     )
     status: Mapped[str] = mapped_column(Text)
@@ -342,6 +361,17 @@ class InterestExplorationRecord(Base):
     tangents: Mapped[list[dict]] = mapped_column(JSONB, default=list, server_default=sql_text("'[]'::jsonb"))
     pull: Mapped[str | None] = mapped_column(Text)  # none, some or strong: how much she wants to keep going
     sparks_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(Text, default="interest", server_default="interest")  # or 'wander'
+    topic: Mapped[str | None] = mapped_column(Text)  # what a wander was about
+    # The exploration whose tangent a wander followed.
+    wandered_from: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.interest_explorations.id", name="interest_explorations_wandered_from_fkey",
+                   ondelete="RESTRICT"),
+    )
+    # A message for the person when something really excited her, and why; sent at reached_out_at.
+    reach_out: Mapped[str | None] = mapped_column(Text)
+    reach_out_why: Mapped[str | None] = mapped_column(Text)
+    reached_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityTraitRecord(Base):

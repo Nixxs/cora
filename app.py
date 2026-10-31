@@ -68,7 +68,9 @@ from backend_work import BackendWorkTracker
 from subconscious.event_bus import CalendarChangedEvent, EventBus, FindingEvent, MailArrivedEvent, ObservationEvent
 from subconscious.identity.reflect_identity import run_identity_cycle
 from subconscious.interests.evolve_interests import run_interest_cycle
-from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
+from subconscious.interests.exploration_store import (
+    claim_mention_now, claim_reach_out_now, release_mention_now, release_reach_out_now,
+)
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from greeting import (
@@ -316,6 +318,7 @@ class CoraApp(App):
         self.identity_outcome = None
         self.exploration_worker = None
         self.exploration_outcome = None
+        self.reach_out_worker = None
         self.closing = False
         self.reconnecting = False
         self.standby = False
@@ -2795,9 +2798,15 @@ class CoraApp(App):
         await self.tell_person_on_signal(text)
         await done()
 
+    def signal_reaches_person(self) -> bool:
+        return bool(
+            self.signal.status.state == SIGNAL_LINKED and self.signal.status.account
+            and self.signal_settings.person_recipient
+        )
+
     async def tell_person_on_signal(self, text: str) -> None:
         account, person = self.signal.status.account, self.signal_settings.person_recipient
-        if self.signal.status.state != SIGNAL_LINKED or not account or not person:
+        if not self.signal_reaches_person():
             raise RuntimeError("Signal isn't set up to reach the person")
         await self.signal.client.send(account, person, text)
         # In the person's own chat and conversation, so voice Cora knows too.
@@ -3224,11 +3233,53 @@ class CoraApp(App):
         )
 
     def check_exploration(self) -> None:
+        self.check_reach_out()
         if not self.can_explore() or (
             self.exploration_worker is not None and not self.exploration_worker.is_finished
         ):
             return
         self.exploration_worker = self.explore_interest()
+
+    def check_reach_out(self) -> None:
+        """Something from her exploring she really wants to tell the person: daytime only, and only
+        claimed when she can reach them now (by voice, or on Signal); otherwise it waits, while fresh."""
+        if self.closing or (self.reach_out_worker is not None and not self.reach_out_worker.is_finished):
+            return
+        if datetime.now().hour not in NUDGE_HOURS or not (self.can_reach_by_voice() or self.signal_reaches_person()):
+            return
+        self.reach_out_worker = self.reach_out()
+
+    @work(group="reach-out", exit_on_error=False)
+    async def reach_out(self) -> None:
+        try:
+            # Claiming counts towards the daily limit, so it can never go twice.
+            claimed = await asyncio.to_thread(claim_reach_out_now)
+        except Exception as error:
+            self.activity.write(f"Checking for something to tell you failed ({type(error).__name__}).", "Reach out")
+            return
+        if claimed is None:
+            return
+        if self.closing:
+            await self.release_reach_out(claimed)
+            return
+
+        async def delivered():
+            self.activity.write(f"Cora reached out to you about {claimed.topic}: {claimed.why}", "Reach out")
+
+        def undelivered():
+            self.run_worker(self.release_reach_out(claimed), group="reach-out-release", exit_on_error=False)
+
+        try:
+            await self.tell_person(claimed.message, delivered=delivered, undelivered=undelivered)
+        except Exception as error:
+            self.activity.write(f"Reaching out to you failed ({type(error).__name__}); she'll try again.", "Reach out")
+            await self.release_reach_out(claimed)
+
+    async def release_reach_out(self, claimed) -> None:
+        try:
+            await asyncio.to_thread(release_reach_out_now, claimed)
+        except Exception as error:
+            self.activity.write(f"Releasing a message for you failed ({type(error).__name__}).", "Reach out")
 
     @work(thread=True, group="exploration", exit_on_error=False)
     def explore_interest(self) -> None:
