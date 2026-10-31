@@ -814,6 +814,23 @@ and those finished in the last three days, so "what did Sarah say?" works later
 too. She can ask another contact for the same open task too, approved the same
 way. Run `python migrate.py` once for migrations 0028 and 0029.
 
+**Nothing that commits you without your YES.** Her replies to a contact in a
+task (on Signal or in an email thread) go out without asking you, and she's told
+never to commit you herself. On top of that, every reply to a contact gets one
+cheap check before it's sent (`check_commitment` in
+[messaging/commitment.py](messaging/commitment.py), utility model, no tools). A
+reply commits you if it would:
+- confirm or accept a booking, time or arrangement;
+- agree to a price or payment;
+- promise you'll do something.
+
+Such a reply waits for your YES, on Signal when it's linked, otherwise in the
+desk pop-up. You see who it's to, what it commits you to and the exact reply.
+YES sends it as written. NO, or no answer within 10 minutes, sends a holding
+line instead ("Let me check with <your name> and come back to you"). An email task
+then waits on you with a note, and a Signal contact's lapsed reply is raised with
+you once. If the check itself fails, the reply is held, to be safe.
+
 **Keeping tasks moving.** Each hourly background round checks open tasks. If
 someone she asked has been quiet for about a day (since she asked, they last
 wrote or she last nudged them), she sends one short, friendly follow-up in their
@@ -1395,8 +1412,11 @@ features it helps check, and package last.
       ([mail/triage.py](mail/triage.py)); urgent reaches you at any hour,
       worth mentioning waits for one digest the next time you talk with her, the
       rest is marked read; she never answers it herself
-    - [ ] T5 task approvals before she commits you (confirming a booking, agreeing
-      a price) and task deadlines
+    - [x] T5a commitment approvals: every reply to a contact is checked, and one
+      that commits you (confirms a booking, agrees a price, promises you'll do
+      something) waits for your YES; otherwise a holding line goes instead
+    - [ ] T5b task deadlines: taken from your request; she tells you a day before
+      if it's still open, and the task comes back to you when it passes
     - [ ] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
       sign-in (one sign-in again), `check_calendar` for a day or range, and her
       upcoming events in your context so she knows what's coming
@@ -1723,7 +1743,8 @@ features it helps check, and package last.
   - *Approval:* the person approves the first contact with each new party, seeing the
     brief. Replies and nudges within that party's brief go out without
     approval. Anything that commits them (confirming a booking, agreeing a price)
-    always needs their YES.
+    always needs their YES (built in T5a: a cheap check on every reply to a
+    contact, and the exact reply held for their YES).
   - *Her own email:* her own address, like any colleague, never the person's
     mailbox. Through Microsoft Graph rather than MCP: Cora's email needs no
     third-party MCP server, and tasks need code-level control of

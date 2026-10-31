@@ -6,6 +6,7 @@ from os import getenv
 import sys
 from pathlib import Path
 from time import monotonic
+from types import SimpleNamespace
 from uuid import UUID
 
 import pyperclip
@@ -52,7 +53,8 @@ from mail.triage import IGNORE, URGENT, digest_text, triage_mail
 from mail.webhook import WebhookServer, mail_urls, webhook_app, webhook_secrets
 from storage.webhook_settings_store import WebhookSettings
 from services.catalogue import SERVICES
-from services.confirmation import Confirmations
+from services.confirmation import APPROVED, DECLINED, TIMED_OUT, Confirmations
+from messaging.commitment import check_commitment
 from services.connection import CONNECTED, ServiceManager
 from ui.confirm_view import ConfirmScreen
 from services.tools import PAGE_ARGUMENT, ResultCache, ServiceToolHandler, tool_name, tool_schema
@@ -75,7 +77,7 @@ from live import CoraLive, typed_content
 from backend_chat import SIGNAL_EXCLUDED, STANDBY_EXCLUDED, BackendChat, BackendRoute
 from tools.pass_on import CLIENT_ONLY
 from session_config import (
-    EMAIL_CHAT_INSTRUCTIONS, NO_REPLY, SIGNAL_CHAT_INSTRUCTIONS, client_chat_instructions, email_party_instructions, instruction_sections,
+    BACKEND_MODEL, EMAIL_CHAT_INSTRUCTIONS, NO_REPLY, SIGNAL_CHAT_INSTRUCTIONS, client_chat_instructions, email_party_instructions, instruction_sections,
     stranger_reply,
 )
 from live_events import LiveEventHandler
@@ -1492,8 +1494,11 @@ class CoraApp(App):
             # Cleared at the next launch instead.
             self.activity.write(f"Deleting Signal attachments failed ({type(error).__name__}).", "Signal error")
 
-    async def send_signal_reply(self, account: str, recipient: str, write) -> str | None:
-        """Show typing, write a reply and send it; on failure send a short apology and return None."""
+    async def send_signal_reply(self, account: str, recipient: str, write, review=None) -> str | None:
+        """Show typing, write a reply and send it; on failure send a short apology and return None.
+
+        review(text) -> what to send instead, such as a holding line for a reply the person didn't approve.
+        """
         try:
             await self.signal.client.send_typing(account, recipient)
         except Exception:
@@ -1502,6 +1507,8 @@ class CoraApp(App):
             text = await write()
             if not text:
                 raise ValueError("empty reply")
+            if review is not None:
+                text = await review(text)
             await self.signal.client.send(account, recipient, text)
             return text
         except Exception as error:
@@ -1595,6 +1602,7 @@ class CoraApp(App):
         self.activity.write(f"Answering {client.name} on Signal.", "Signal client")
         text = await self.send_signal_reply(
             account, client.recipient, lambda: self.reply_to_client(client, batch, history),
+            review=lambda text: self.review_client_reply(client, batch, text),
         )
         if text is None or self.closing:
             return
@@ -1605,6 +1613,63 @@ class CoraApp(App):
         except Exception as error:
             self.activity.write(f"Saving the reply to {client.name} failed ({type(error).__name__}).", "Signal error")
         self.activity.write(f"Answered {client.name} on Signal.", "Signal client")
+
+    async def review_client_reply(self, client: Client, batch: list[IncomingMessage], text: str) -> str:
+        """A reply to a contact that would commit the person waits for their YES (T5)."""
+        try:
+            briefs = await self.conversation_persistence.call_database(self.persistence.load_task_briefs, client.id)
+        except Exception:
+            briefs = ""
+        said = "\n".join(signal_message_text(message) for message in batch)
+        reply, outcome, what = await self.hold_commitment(client.name, text, briefs, said)
+        if outcome == TIMED_OUT:
+            try:
+                await self.tell_person(
+                    f"I didn't hear back, so I didn't send {client.name} my reply that {what}; I told them "
+                    "I'd check with you. What would you like me to tell them?"
+                )
+            except Exception:
+                pass  # Activity has it
+        return reply
+
+    async def hold_commitment(self, who: str, text: str, brief: str, their_message: str,
+                              sign_off: str = "") -> tuple[str, str | None, str]:
+        """(what to send, the person's answer or None if nothing needed asking, what it commits them to).
+
+        As written unless it commits the person; then only their YES sends it, and otherwise the
+        contact gets a holding line.
+        """
+        try:
+            models = await self.conversation_persistence.call_database(self.persistence.load_models)
+            model = models["utility"]
+        except Exception:
+            model = BACKEND_MODEL
+        check = await asyncio.to_thread(check_commitment, text, brief=brief, their_message=their_message, model=model)
+        if not check.commits:
+            return text, None, ""
+        self.activity.write(f"A reply to {who} would commit you; asking you first.", "Commitment")
+        outcome = await self.ask_person_approval(
+            f"a reply to {who}", "that commits you", {"to": who, "commits you": check.what, "reply": text},
+        )
+        if outcome == APPROVED:
+            return text, outcome, check.what
+        name = self.live.person_name
+        holding = f"Let me check with {name} and come back to you." if name else "Let me check and come back to you."
+        self.activity.write(f"Held back a reply to {who} ({outcome}); sent a holding line.", "Commitment")
+        return holding + sign_off, outcome, check.what
+
+    async def ask_person_approval(self, title: str, tool: str, shown: dict) -> str:
+        """The person's YES for something in the background: on Signal when it's linked, else the pop-up."""
+        account, person = self.signal.status.account, self.signal_settings.person_recipient
+        if self.signal.status.state != SIGNAL_LINKED or not account or not person:
+            return await self.confirmations.ask("tasks", tool, shown, title=title)
+        ask = self.signal_approval_asker(account, person, self.signal_settings.allowed_number)
+        try:
+            approved = await asyncio.wait_for(ask(SimpleNamespace(title=title, tool=tool, arguments=shown)),
+                                              APPROVAL_SECONDS)
+        except TimeoutError:
+            return TIMED_OUT
+        return APPROVED if approved else DECLINED
 
     async def reply_to_client(self, client: Client, batch: list[IncomingMessage], history: list[dict]) -> str:
         """Professional mode: her own identity and interests and what she remembers of them, none of the person's."""
@@ -2403,6 +2468,11 @@ class CoraApp(App):
             try:
                 text = (await self.reply_to_email_party(thread, who, own, messages, new)).strip()
                 if text and NO_REPLY not in text and not self.closing:
+                    text, outcome, what = await self.hold_commitment(
+                        who, text, thread.brief, "\n\n".join(message.text for message in new), sign_off="\n\nCora",
+                    )
+                    if outcome in (DECLINED, TIMED_OUT):
+                        problem = f"I held back my reply to {who} that {what}, and told them I'd check with you."
                     await self.mailbox.reply(latest.id, latest.sender_address, latest.sender_name or None, text)
                     self.email_replies[key] = self.email_replies.get(key, 0) + 1
                     self.activity.write(f"Answered {who} by email.", "Task email")

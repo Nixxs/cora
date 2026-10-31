@@ -360,7 +360,8 @@ class ModelSettingsScreen(ModalScreen):
         details = self.query_one(f"#service-details-{service_id}")
         details.display = not details.display
         arrow = "▾" if details.display else "▸"
-        title = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks"}.get(service_id)             or SERVICES[service_id].title
+        titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks"}
+        title = titles.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
     async def on_mount(self) -> None:

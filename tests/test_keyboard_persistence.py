@@ -1,5 +1,5 @@
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 import os
 from threading import Event
 import unittest
@@ -19,6 +19,7 @@ from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.signal_settings_store import SignalSettings
 from storage.webhook_settings_store import WebhookSettings
+from messaging.commitment import Commitment
 from migrate import apply_migrations, database_settings
 
 
@@ -97,6 +98,19 @@ class KeyboardPersistenceTests(unittest.TestCase):
             engine.dispose.assert_called_once()
 
 
+@contextmanager
+def background_models_stubbed():
+    """No model is called in the background: memory upkeep, commitment checks and mail sorting."""
+    with patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
+            patch("memory.background.deduplicate_memory"), patch("memory.background.correct_memory"), \
+            patch("memory.background.fade_memory"), \
+            patch("memory.background.appraise_waiting_conversations"), \
+            patch("memory.background.update_relationships"), \
+            patch("app.check_commitment", return_value=Commitment(False, "")), \
+            patch("app.triage_mail", return_value=[]):
+        yield
+
+
 @asynccontextmanager
 async def running_app(persistence=None):
     # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
@@ -105,11 +119,7 @@ async def running_app(persistence=None):
             patch("app.run_interest_cycle", return_value=None), \
             patch("app.run_identity_cycle", return_value=None), \
             patch("app.run_exploration_cycle", return_value=None), \
-            patch("memory.background.MemoryStore"), patch("memory.background.embed_memory"), \
-            patch("memory.background.deduplicate_memory"), patch("memory.background.correct_memory"), \
-            patch("memory.background.fade_memory"), \
-            patch("memory.background.appraise_waiting_conversations"), \
-            patch("memory.background.update_relationships"), \
+            background_models_stubbed(), \
             patch("services.credentials.keyring"), \
             patch("app.EmailAccount"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
