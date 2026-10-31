@@ -390,7 +390,7 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                  "0027_add_conduct.sql",
                  "0028_create_tasks.sql",
                  "0029_add_task_nudges.sql", "0030_add_email_parties.sql",
-                 "0031_create_webhook_settings.sql"]
+                 "0031_create_webhook_settings.sql", "0032_add_email_channel.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             connection.execute("DROP TABLE public.task_steps, public.task_parties, public.tasks, "
                                "public.impression_updates, public.impressions")

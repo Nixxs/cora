@@ -7,10 +7,9 @@ with them for that task, so their answers stay together.
 """
 
 import json
-import re
 from uuid import UUID
 
-from mail.account import EmailNotReady, GraphError
+from mail.account import ADDRESS, EmailNotReady, GraphError
 from services.confirmation import APPROVED
 from .send_signal_message import BRIEF_MAX_CHARS, GOAL_MAX_CHARS, NOT_DONE, check_text
 
@@ -18,8 +17,6 @@ ADDRESS_MAX_CHARS = 320
 NAME_MAX_CHARS = 100
 SUBJECT_MAX_CHARS = 200
 MESSAGE_MAX_CHARS = 4000
-# One plain address: no display names, lists or line breaks.
-ADDRESS = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
 
 SCHEMA = {
     "type": "function",

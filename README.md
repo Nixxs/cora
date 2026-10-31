@@ -935,6 +935,36 @@ How it's kept safe:
 - Requests are capped in size, and only Microsoft's handshake token is ever
   echoed back, as plain text.
 
+**Emailing Cora yourself.** Enter your own address under Settings > Services >
+**Email** (**Save your address**). Email from it then works like your Signal chat:
+it joins your one conversation, she does what you ask, and she replies by email,
+in the same thread. Anything that changes things still asks first: YES on Signal
+when it's linked, otherwise the pop-up at your desk. Email from you that's part of
+a task thread stays with that task. Only unread mail from the last day is
+answered, so a backlog from while she was closed isn't suddenly acted on.
+
+The "From" line of an email is easy to fake, so she acts on an email only when
+it's from your address **and** Microsoft's own checks confirm your mail provider
+really sent it: the DMARC result in Microsoft's Authentication-Results header must
+pass for your address's domain. One that only claims to be from you is marked
+read and never acted on, and she tells you about it once. Run `python migrate.py`
+once for migration 0032 (emails in your conversation's history).
+
+**The rest of her mail.** Anything else that lands in her inbox is sorted by one
+cheap call with the utility model. That covers mail that isn't from you, isn't part
+of a task and isn't a bounce. The call has no tools and treats every email as
+untrusted data:
+- **Urgent** mail reaches you straight away, at any hour: by voice when Live is
+  Active, otherwise on Signal. Examples are a cancellation, someone waiting on an
+  answer today, or a security alert about her account.
+- **Worth mentioning** mail waits for one digest, a line per email, the next time
+  you talk with her: when you speak, message her on Signal or email her.
+- **The rest** (newsletters, receipts, spam) is marked read.
+
+She never answers this mail herself. If one needs a reply, she tells you and you
+decide. Mail waiting for the digest stays unread until she's told you, so after a
+restart it's sorted again rather than lost.
+
 New mail arrives as a `MailArrivedEvent` on Cora's event bus
 ([subconscious/event_bus.py](subconscious/event_bus.py)). Whatever cares about it
 subscribes: for now that's the task mail check, and later her awareness of the rest
@@ -1357,8 +1387,25 @@ features it helps check, and package last.
       takes Microsoft Graph's new-mail notifications under a secret path and
       clientState, publishes `MailArrivedEvent` on the event bus, and the task mail
       check subscribes to it; the 10-minute check stays as the fallback
-    - [ ] T4b the rest of her new mail through awareness: triage of other new mail
-      in her inbox into observations she mentions at a lull (with item 11)
+    - [x] T4b-1 email from you (your address, and Microsoft's DMARC check passing
+      for its domain) treated like your Signal chat: she acts on it and replies in
+      the thread, with the usual approvals; mail only claiming to be yours is
+      never acted on
+    - [x] T4b-2 the rest of her new mail: one cheap triage call per batch
+      ([mail/triage.py](mail/triage.py)); urgent reaches you at any hour,
+      worth mentioning waits for one digest the next time you talk with her, the
+      rest is marked read; she never answers it herself
+    - [ ] T5 task approvals before she commits you (confirming a booking, agreeing
+      a price) and task deadlines
+    - [ ] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
+      sign-in (one sign-in again), `check_calendar` for a day or range, and her
+      upcoming events in your context so she knows what's coming
+    - [ ] C2 changing it, each approved: create events (with attendees, which
+      sends the invites), update them and cancel them (the cancellation goes to
+      attendees)
+    - [ ] C3 forwarding invites to you or others (Graph's event forward), and
+      calendar changes through the webhook listener (a second Graph subscription,
+      to her events) so new invites and changes reach her as events
 
 *Phase 3 — noticing things*
 

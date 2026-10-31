@@ -422,14 +422,14 @@ class CoraLive:
             "mention this note, standby or the app."
         ))
 
-    async def note_signal_exchange(self, message: str, reply: str) -> None:
-        """Let voice Cora know about a Signal exchange that happened while she was connected."""
+    async def note_signal_exchange(self, message: str, reply: str, where: str = "messaged you on Signal") -> None:
+        """Let voice Cora know about a written exchange (Signal, or email) that happened while she was connected."""
         connection = self.connection
         if connection is None or not self.ready:
             return
         event_id = f"signal_{uuid4().hex}"
         note = (
-            "Silent context, not a request: the person just messaged you on Signal and you replied "
+            f"Silent context, not a request: the person just {where} and you replied "
             "there already. Don't answer it again or mention this note; keep it in mind. "
             f"Their message: {json.dumps(message, ensure_ascii=False)}. "
             f"Your reply: {json.dumps(reply, ensure_ascii=False)}"

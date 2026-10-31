@@ -120,6 +120,7 @@ async def running_app(persistence=None):
             # Email not set up, so launch checks nothing; tests that need it say otherwise.
             app.email_account.client_id.return_value = None
             app.email_account.tenant.return_value = ""
+            app.email_account.person_address.return_value = ""
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()

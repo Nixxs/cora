@@ -9,6 +9,8 @@ from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 
 # How the person's own Signal messages appear in the chat.
 SIGNAL_PREFIX = "You · Signal: "
+# And the emails they send her own address.
+EMAIL_PREFIX = "You · Email: "
 
 
 class Conversation:
@@ -44,6 +46,8 @@ class Conversation:
                 role, text = "user", entry[5:]
             elif isinstance(entry, str) and entry.startswith(SIGNAL_PREFIX):
                 role, text = "user", entry[len(SIGNAL_PREFIX):]
+            elif isinstance(entry, str) and entry.startswith(EMAIL_PREFIX):
+                role, text = "user", entry[len(EMAIL_PREFIX):]
             elif isinstance(entry, str) and entry.startswith("Cora: "):
                 role, text = "assistant", entry[6:]
             else:
@@ -150,6 +154,13 @@ class Conversation:
         self.write_log(f"{SIGNAL_PREFIX}{text}")
         if self.record_message is not None:
             self.record_message("user", text, "signal")
+
+    def show_email_message(self, text: str) -> None:
+        """The person's own email to her address, in the same chat as the desktop's."""
+        self.flush_transcript()
+        self.write_log(f"{EMAIL_PREFIX}{text}")
+        if self.record_message is not None:
+            self.record_message("user", text, "email")
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

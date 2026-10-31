@@ -166,6 +166,7 @@ class MailCheckAppTests(unittest.IsolatedAsyncioTestCase):
         app.mailbox.reply = AsyncMock(return_value=SentMail("r1", "c1"))
         app.mailbox.mark_read = AsyncMock()
         app.mailbox.bounces = AsyncMock(return_value=[])
+        app.mailbox.unread = AsyncMock(return_value=[])
         app.backend_chat.reply = AsyncMock(return_value=reply) if isinstance(reply, str) else reply
         app.task_needs_person = AsyncMock()
 

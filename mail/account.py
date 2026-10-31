@@ -26,6 +26,10 @@ KEYRING_SERVICE = "cora"
 CLIENT_ID_ACCOUNT = "email:client-id"
 TENANT_SETTING = "CORA_EMAIL_TENANT"
 TENANT_ACCOUNT = "email:tenant"
+# The person's own address: mail from it that Microsoft verifies is treated like their Signal chat.
+PERSON_ACCOUNT = "email:person"
+# One plain address: no display names, lists or line breaks.
+ADDRESS = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
 # A work or school account signs in through its organisation's directory (a domain such as
 # example.com, or the Directory (tenant) ID); without one, personal accounts (outlook.com).
 LOGIN = "https://login.microsoftonline.com"
@@ -137,6 +141,24 @@ class EmailAccount:
     def authority(self) -> str:
         return f"{LOGIN}/{self.tenant() or PERSONAL}"
 
+    def person_address(self) -> str:
+        """The person's own address, or "" when they haven't given one."""
+        return keyring.get_password(KEYRING_SERVICE, PERSON_ACCOUNT) or ""
+
+    def save_person_address(self, value: str) -> str:
+        """Their own address, lowercased; empty forgets it. ValueError for anything that isn't one address."""
+        value = value.strip().lower()
+        if not value:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, PERSON_ACCOUNT)
+            except PasswordDeleteError:
+                pass  # nothing was saved
+            return ""
+        if len(value) > 320 or not ADDRESS.match(value):
+            raise ValueError("That isn't one email address.")
+        keyring.set_password(KEYRING_SERVICE, PERSON_ACCOUNT, value)
+        return value
+
     def app(self):
         """The sign-in client for the current app ID and directory, with its cache in the encrypted file."""
         app_client_id = self.client_id()
@@ -238,6 +260,46 @@ def thread_message(message: dict) -> MailMessage:
         message.get("subject") or "", datetime.fromisoformat(message["receivedDateTime"].replace("Z", "+00:00")),
         text[:MESSAGE_TEXT_MAX_CHARS],
     )
+
+
+@dataclass(frozen=True)
+class InboxMail:
+    """An unread message in her inbox, with Microsoft's verdict on who really sent it."""
+    id: str
+    thread_id: str
+    sender_name: str
+    sender_address: str
+    subject: str
+    received_at: datetime
+    text: str
+    has_attachments: bool
+    # Microsoft's own Authentication-Results header (the first, added on arrival), or "".
+    authentication: str
+
+
+def inbox_mail(message: dict) -> InboxMail:
+    sender = (message.get("from") or {}).get("emailAddress") or {}
+    headers = message.get("internetMessageHeaders") or []
+    authentication = next((header.get("value") or "" for header in headers
+                           if (header.get("name") or "").lower() == "authentication-results"), "")
+    return InboxMail(
+        message["id"], message.get("conversationId") or "", sender.get("name") or "",
+        (sender.get("address") or "").lower(), message.get("subject") or "",
+        parse_graph_time(message["receivedDateTime"]),
+        ((message.get("uniqueBody") or {}).get("content") or "").strip()[:MESSAGE_TEXT_MAX_CHARS],
+        bool(message.get("hasAttachments")), authentication,
+    )
+
+
+def verified_from(mail: InboxMail, address: str) -> bool:
+    """From that address, and Microsoft found DMARC passing for its domain: the From line wasn't forged."""
+    address = address.strip().lower()
+    if not address or mail.sender_address != address:
+        return False
+    results = mail.authentication.lower()
+    domain = re.search(r"header\.from=([^\s;]+)", results)
+    return re.search(r"\bdmarc=pass\b", results) is not None and domain is not None \
+        and domain.group(1) == address.rsplit("@", 1)[1]
 
 
 def is_bounce(message) -> bool:
@@ -379,6 +441,16 @@ class Mailbox:
                    (message.get("body") or {}).get("content") or "")
             for message in page.get("value", []) if BOUNCE_SUBJECT.match(message.get("subject") or "")
         ]
+
+    async def unread(self, since: datetime) -> list[InboxMail]:
+        """Unread inbox mail received since then, oldest first, with each one's authentication results."""
+        page = await self._request("GET", "/me/mailFolders/inbox/messages", params={
+            "$filter": f"receivedDateTime ge {graph_time(since)} and isRead eq false",
+            "$orderby": "receivedDateTime asc", "$top": str(BOUNCES_MAX),
+            "$select": "id,conversationId,from,subject,receivedDateTime,uniqueBody,hasAttachments,"
+                       "internetMessageHeaders",
+        }, headers=PLAIN_TEXT)
+        return [inbox_mail(message) for message in page.get("value", [])]
 
     async def subscribe(self, url: str, lifecycle_url: str, client_state: str, expires: datetime) -> MailSubscription:
         """Graph calls `url` when mail lands in her inbox; any earlier subscription to it goes first.

@@ -152,7 +152,7 @@ class ModelDatabaseTests(unittest.TestCase):
             ({"conversation_id": uuid4()}, "messages_conversation_id_fkey"),
             ({"sequence_number": 0}, "messages_sequence_check"),
             ({"role": "system"}, "messages_role_check"),
-            ({"channel": "email"}, "messages_channel_check"),
+            ({"channel": "fax"}, "messages_channel_check"),
             ({"status": "unknown"}, "messages_status_check"),
             ({"delivery_status": "unknown"}, "messages_delivery_status_check"),
             ({"text": " "}, "messages_text_check"),
@@ -200,7 +200,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 31)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 32)
 
     def interest(self, **changes):
         values = {

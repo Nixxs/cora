@@ -98,6 +98,16 @@ class WebhookSetupTests(unittest.TestCase):
         self.assertTrue(rotated[0] != first[0] and rotated[1] != first[1])
         self.assertGreaterEqual(len(first[0]), 40)
 
+    def test_the_heading_shows_off_listening_subscribed_or_failed(self):
+        from ui.model_settings import webhook_line
+        self.assertEqual(webhook_line("", "", False).plain, "○ off")
+        self.assertEqual(webhook_line("Listening on 127.0.0.1:8000", "", False).plain, "● Listening on 127.0.0.1:8000")
+        subscribed = webhook_line("Listening on 127.0.0.1:8000", "New mail: …", True)
+        self.assertEqual((subscribed.plain, str(subscribed.style)),
+                         ("● Listening · Microsoft tells her straight away", "#8fcf8f"))
+        failed = webhook_line("Listening on 127.0.0.1:8000", "New mail: not subscribed (x)", False)
+        self.assertEqual((failed.plain, str(failed.style)), ("● Listening · new mail not subscribed", "#e07a7a"))
+
     def test_her_urls_carry_the_path_secret(self):
         self.assertEqual(mail_urls("https://cora.example.com", "s"),
                          ("https://cora.example.com/webhooks/s/mail", "https://cora.example.com/webhooks/s/mail/lifecycle"))

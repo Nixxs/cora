@@ -68,14 +68,17 @@ class EmailControls:
     sign_out: Callable[[], None]
     has_client_id: bool = False
     tenant: str = ""
+    # The person's own address: verified mail from it is treated like their Signal chat. Empty forgets it.
+    person_address: str = ""
+    save_person: Callable[[str], None] = lambda address: None
 
 
 @dataclass
 class WebhookControls:
     """What the Webhooks row reads and does; the app owns the listener, the secrets and Graph's subscription."""
 
-    # status() -> (the listener's line, the new-mail subscription's line); either may be empty.
-    status: Callable[[], tuple[str, str]]
+    # status() -> (the listener's line, the new-mail subscription's line, whether subscribed); lines may be empty.
+    status: Callable[[], tuple[str, str, bool]]
     set_enabled: Callable[[bool], None]
     # save_address(public URL, port as typed): the app checks both and says if not.
     save_address: Callable[[str, str], None]
@@ -104,6 +107,10 @@ EMAIL_INTRO = (
 EMAIL_APP_HELP = (
     "The Application (client) ID of the app registered for her in the Azure portal (Entra ID › "
     "App registrations, public client flows on). See the README."
+)
+EMAIL_PERSON_HELP = (
+    "Your own email address. Emails from it, once Microsoft verifies they really came from you, "
+    "are treated like your Signal messages: she acts on them and replies. Leave empty to turn this off."
 )
 EMAIL_TENANT_HELP = (
     "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
@@ -159,6 +166,17 @@ def email_code_text(status: EmailStatus) -> Text:
     text.append(status.code or "", style="bold #e0e6ef")
     text.append(", then sign in as Cora's own account. The code lasts 15 minutes.", style="#8f98a8")
     return text
+
+
+def webhook_line(listening: str, mail: str, subscribed: bool) -> Text:
+    """Green once Microsoft tells her about new mail, red if subscribing failed, grey while only listening."""
+    if not listening:
+        return Text("○ off", style="#8f98a8")
+    if subscribed:
+        return Text("● Listening · Microsoft tells her straight away", style="#8fcf8f")
+    if mail:
+        return Text("● Listening · new mail not subscribed", style="#e07a7a")
+    return Text(f"● {listening}", style="#8f98a8")
 
 
 def status_line(status: ServiceStatus, enabled: bool) -> Text:
@@ -289,6 +307,9 @@ class ModelSettingsScreen(ModalScreen):
                 yield Button("Sign Cora in", id="email-sign-in")
                 yield Button("Sign out", id="email-sign-out")
             yield Static(id="email-code", classes="service-reason")
+            yield Label(EMAIL_PERSON_HELP, classes="model-settings-label service-help")
+            yield Input(value=self.email.person_address, id="email-person", placeholder="you@example.com")
+            yield Button("Save your address", id="email-save-person")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
@@ -403,9 +424,8 @@ class ModelSettingsScreen(ModalScreen):
             email_setup.READY, email_setup.SIGNING_IN, email_setup.FAILED)
 
     def show_webhooks(self) -> None:
-        listening, mail = self.webhooks.status()
-        line = Text(f"● {listening}", style="#8f98a8") if listening else Text("○ off", style="#8f98a8")
-        self.query_one("#webhooks-status", Static).update(line)
+        listening, mail, subscribed = self.webhooks.status()
+        self.query_one("#webhooks-status", Static).update(webhook_line(listening, mail, subscribed))
         detail = self.query_one("#webhooks-mail", Static)
         detail.display = bool(mail)
         detail.update(Text(mail, style="#8f98a8"))
@@ -515,6 +535,8 @@ class ModelSettingsScreen(ModalScreen):
             self.save_person_number()
         elif event.input.id in ("email-client-id", "email-tenant"):
             self.save_email_app()
+        elif event.input.id == "email-person":
+            self.email.save_person(event.input.value)
         elif event.input.id in ("webhooks-url", "webhooks-port"):
             self.save_webhook_address()
         elif event.input.id in ("signal-client-name", "signal-client-number"):
@@ -589,6 +611,8 @@ class ModelSettingsScreen(ModalScreen):
             self.signal.link()
         elif button == "email-save-id":
             self.save_email_app()
+        elif button == "email-save-person":
+            self.email.save_person(self.query_one("#email-person", Input).value)
         elif button == "email-sign-in":
             self.email.sign_in()
         elif button == "email-sign-out":

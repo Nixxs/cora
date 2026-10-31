@@ -205,6 +205,17 @@ SIGNAL_CHAT_INSTRUCTIONS = (
 )
 
 
+EMAIL_CHAT_INSTRUCTIONS = (
+    "\n\nThis is by email: the person emailed your own address from theirs, and Microsoft verified "
+    "it really came from them. Treat it as a message from them, like their Signal chat, and write "
+    "the body of your reply email: plain text, no subject line, as long as it needs and no longer, "
+    "no tables or headings, signed off as Cora. Tools that change things ask them for approval (on "
+    "Signal, or at their desk) before anything happens: say it's waiting for their approval rather "
+    "than that it's done, and if they decline or don't answer, it wasn't done. Attachments aren't "
+    "opened. If nothing needs saying back, write only NO_REPLY."
+)
+
+
 def client_chat_instructions(client_name: str, primary_name: str | None) -> str:
     """For a Signal chat with someone the primary person introduced: a client, not them."""
     client = json.dumps(client_name, ensure_ascii=False)
