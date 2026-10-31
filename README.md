@@ -1220,7 +1220,7 @@ looking into something else). Both steps below are background processes with the
 own API calls. The prompts ask for breadth (nature, history, places, people, art,
 food, craft, science…): being an AI is not a lens for everything, and topics are
 not to be recast as lessons for AI or assistants. (Run `python migrate.py` once
-after updating, for migrations 0034 and 0035.)
+after updating, for migrations 0034 to 0036.)
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
    cycle is due. A cycle reads new memories from the person's messages that have finished
@@ -1286,6 +1286,24 @@ after updating, for migrations 0034 and 0035.)
    Signal isn't linked and Live isn't Active it waits, and if it goes stale the
    finding can still come up in conversation as usual (step 5). One she has sent
    isn't raised again in conversation. Activity logs each under **Reach out**.
+
+   **Browsing.** While the Browser service is connected (see
+   [Connecting services](#connecting-services)), up to two attempts a day browse
+   real pages instead of using web search; the rest search as above. She gets
+   three tools only: `search` (a Bing results page; DuckDuckGo, Brave, Startpage
+   and Mojeek all challenge a headless browser), `open_page` and `go_back`. No
+   clicking, typing, forms, logins or downloads: she follows a link by opening its
+   address. Each page reaches her as plain text with its links (from its main
+   heading on, at most 8,000 characters, only the latest three kept in view), and
+   every address, before and after any redirect, passes the same check as
+   browsing in conversation. Limits per session: 12 pages, 25 tool calls and five
+   minutes; at any of them, or as soon as you're back (she only explores while
+   idle), she writes up what she found in the same answer as above. Her sources are
+   only pages she actually opened. A random wander starts from Wikipedia's random
+   article and follows whatever links pull her. Activity shows each page as
+   "Browsing …" and the outcome as "browsed N pages". The browser tab is closed
+   at the end of each session. She shares the one browser with your conversations,
+   so asking her to browse while she's exploring makes her stop and write up.
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
    to mention only when they fit naturally. Each includes its latest finding and
@@ -1480,8 +1498,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
 - Cora's own interests: daily evolution from memories and her own sparks, idle web
-  exploration with saved findings and tangents, wandering somewhere new every third
-  attempt, occasional findings she raises herself during a lull, and, rarely, a
+  exploration with saved findings and tangents (browsing real pages, within limits,
+  when the Browser service is on), wandering somewhere new every third attempt, occasional findings she raises herself during a lull, and, rarely, a
   message to you when something really excites her.
 - Cora's own developing identity: a daily reflection forms and gradually revises
   first-person traits from her experiences within fixed rules; the traits she holds

@@ -372,6 +372,8 @@ class InterestExplorationRecord(Base):
     reach_out: Mapped[str | None] = mapped_column(Text)
     reach_out_why: Mapped[str | None] = mapped_column(Text)
     reached_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Explored with her own browser rather than web search.
+    browsed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_text("false"))
 
 
 class IdentityTraitRecord(Base):

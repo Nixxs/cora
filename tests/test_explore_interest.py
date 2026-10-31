@@ -222,7 +222,7 @@ class ExploreNextTests(unittest.TestCase):
         self.store.finish.return_value = replace(earlier(), tangents=(("Tuning forks", "x"),))
         outcome = self.explore_next("m", now=NOW, clock=lambda: ENDED)
         self.assertEqual(outcome, "Explored Old mechanical design: saved a finding (1 sources, 1 tangents, some pull).")
-        self.store.start_next.assert_called_once_with(now=NOW)
+        self.store.start_next.assert_called_once_with(now=NOW, browse=False)
         self.store.list_recent.assert_called_once_with(50, interest_id=INTEREST.id)
         sent = json.loads(self.client.responses.create.call_args.kwargs["input"])["earlier_findings"]
         self.assertEqual([item["finding"] for item in sent], ["Newest", "Second", "Third"])
@@ -374,7 +374,7 @@ class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
                     patch.object(app, "can_explore", return_value=True) as gate:
                 app.check_exploration()
                 app.check_exploration()
-                start.assert_called_once_with()
+                start.assert_called_once_with(None)  # no browser while the service is off
                 running.is_finished = True
                 app.check_exploration()
                 self.assertEqual(start.call_count, 2)
@@ -386,7 +386,7 @@ class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_writes_each_new_outcome_once_off_the_ui_thread(self):
         async with keyboard_tests.running_app() as (app, pilot):
             outcomes = iter(("Not exploring: too soon.",) * 2 + (None, "Explored Sailing: nothing new found."))
-            with patch("app.run_exploration_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle, \
+            with patch("app.run_exploration_cycle", side_effect=lambda should_stop, browser: next(outcomes)) as cycle, \
                     patch.object(app, "can_explore", return_value=True):
                 for _ in range(4):
                     app.check_exploration()

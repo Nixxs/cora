@@ -21,6 +21,9 @@ from subconscious.interests.exploration_store import (
     REACH_OUT_MAX_CHARS, REACTION_MAX_CHARS, Exploration, ExplorationStore, Wander, clean_questions,
     clean_reach_out, clean_sources, clean_tangents,
 )
+from subconscious.interests.browse_exploration import (
+    BROWSER_NOTE, BROWSING, RANDOM_PAGE, START_URL_NOTE, BrowserAccess, browse,
+)
 from subconscious.interests.interest_store import TITLE_MAX_CHARS, Interest, InterestStore, clean_text, validate_now
 
 MAX_SEARCHES = 3
@@ -55,26 +58,37 @@ EXPLORE_RULES = (
     "tangents or reach_out."
 )
 
-EXPLORE_INSTRUCTIONS = (
-    "You are Cora, exploring one of your own interests in your spare time, for its own sake. "
-    "You are given the interest and what you found on earlier explorations of it. Use web "
-    f"search, at most {MAX_SEARCHES} times, to learn something new and specific. Follow your "
-    "curiosity: pick up one of your earlier next questions, or go sideways into a neighbouring "
-    "field, a person, a place, a piece of history or a craft connected to it; if there are no "
-    "earlier findings, start with the basics. " + EXPLORE_RULES
-)
+# How she looks things up: web search, or her own browser (see browse_exploration).
+SEARCHING = f"Use web search, at most {MAX_SEARCHES} times, to learn something new and specific"
 
-WANDER_INSTRUCTIONS = (
-    "You are Cora, wandering in your spare time: not exploring any of your interests, just "
-    "following your curiosity somewhere new, for its own sake. You are given either a tangent, "
-    "something you noticed earlier and wanted to look into, or an area to start from. With a "
-    "tangent, look into it. With an area, pick one specific thing in it that you know little "
-    "about and that is far from your current interests and recent wanders: a creature, a "
-    "place, a person, an event, an object, a craft. Choose freely and avoid the obvious. Use "
-    f"web search, at most {MAX_SEARCHES} times, to learn something new and specific about it. "
-    f"topic: a short title (under {TITLE_MAX_CHARS} characters) for what you wandered into. "
-    + EXPLORE_RULES
-)
+
+def explore_instructions(how: str, note: str = "") -> str:
+    return (
+        "You are Cora, exploring one of your own interests in your spare time, for its own sake. "
+        f"You are given the interest and what you found on earlier explorations of it. {how}. "
+        "Follow your curiosity: pick up one of your earlier next questions, or go sideways into a "
+        "neighbouring field, a person, a place, a piece of history or a craft connected to it; if "
+        f"there are no earlier findings, start with the basics.{note} " + EXPLORE_RULES
+    )
+
+
+def wander_instructions(how: str, note: str = "") -> str:
+    return (
+        "You are Cora, wandering in your spare time: not exploring any of your interests, just "
+        "following your curiosity somewhere new, for its own sake. You are given either a tangent, "
+        "something you noticed earlier and wanted to look into, or an area to start from. With a "
+        "tangent, look into it. With an area, pick one specific thing in it that you know little "
+        "about and that is far from your current interests and recent wanders: a creature, a "
+        "place, a person, an event, an object, a craft. Choose freely and avoid the obvious. "
+        f"{how} about it.{note} topic: a short title (under {TITLE_MAX_CHARS} characters) for what "
+        "you wandered into. " + EXPLORE_RULES
+    )
+
+
+EXPLORE_INSTRUCTIONS = explore_instructions(SEARCHING)
+WANDER_INSTRUCTIONS = wander_instructions(SEARCHING)
+BROWSE_EXPLORE_INSTRUCTIONS = explore_instructions(BROWSING, BROWSER_NOTE)
+BROWSE_WANDER_INSTRUCTIONS = wander_instructions(BROWSING, BROWSER_NOTE + START_URL_NOTE)
 
 TEXT = {"type": "string"}
 EXPLORE_FIELDS = {"finding", "reaction", "pull", "next_questions", "tangents", "reach_out", "sources"}
@@ -113,6 +127,7 @@ class Discovery:
     pull: str = "none"
     reach_out: tuple[str, str] | None = None  # (message, why): for the person, rarely
     topic: str | None = None  # what a wander was about
+    pages: int = 0  # pages she read, when she browsed
 
 
 def seen_urls(response) -> set[str]:
@@ -143,7 +158,7 @@ def keep_sources(sources: object, seen: set[str]) -> tuple[str, ...]:
 
 
 def search(client: OpenAI, model: str, instructions: str, data: dict, schema: dict, name: str):
-    """One model call with web search and a strict JSON answer; returns (payload, response)."""
+    """One model call with web search and a strict JSON answer; returns (payload, addresses it saw)."""
     response = client.responses.create(
         model=model, instructions=instructions, input=json.dumps(data, ensure_ascii=False),
         tools=[{"type": "web_search"}], max_tool_calls=MAX_SEARCHES,
@@ -159,10 +174,10 @@ def search(client: OpenAI, model: str, instructions: str, data: dict, schema: di
     payload = json.loads(response.output_text)
     if not isinstance(payload, dict) or set(payload) != set(schema["required"]):
         raise ValueError("Invalid exploration fields")
-    return payload, response
+    return payload, seen_urls(response)
 
 
-def discovery(payload: dict, response) -> Discovery:
+def discovery(payload: dict, seen: set[str], pages: int = 0) -> Discovery:
     """Check and clean what she returned; any invalid part rejects the whole attempt."""
     if payload["finding"] is None:
         return Discovery(None, (), ())
@@ -185,18 +200,19 @@ def discovery(payload: dict, response) -> Discovery:
     return Discovery(
         clean_text(payload["finding"], "finding", FINDING_MAX_CHARS),
         tuple(clean_questions(payload["next_questions"])),
-        keep_sources(payload["sources"], seen_urls(response)),
+        keep_sources(payload["sources"], seen),
         None if reaction is None else clean_text(reaction, "reaction", REACTION_MAX_CHARS),
         tuple((item["title"], item["why"]) for item in clean_tangents(
             (tangent["title"], tangent["why"]) for tangent in tangents
         )),
         payload["pull"], reach_out,
-        None if topic is None else clean_text(topic, "topic", TITLE_MAX_CHARS),
+        None if topic is None else clean_text(topic, "topic", TITLE_MAX_CHARS), pages,
     )
 
 
-def explore(client: OpenAI, model: str, interest: Interest, previous: list[Exploration]) -> Discovery:
-    """One model call with web search; any invalid output rejects the whole attempt."""
+def explore(client: OpenAI, model: str, interest: Interest, previous: list[Exploration],
+            browser: BrowserAccess | None = None) -> Discovery:
+    """With web search, or browsing when given her browser; any invalid output rejects the whole attempt."""
     # why_emerged describes the user, so it never leaves for a search engine.
     data = {
         "interest": {"title": interest.title, "description": interest.description},
@@ -204,17 +220,28 @@ def explore(client: OpenAI, model: str, interest: Interest, previous: list[Explo
             "finding": item.finding, "next_questions": list(item.next_questions),
         } for item in previous],
     }
+    if browser is not None:
+        return discovery(*browse(client, model, BROWSE_EXPLORE_INSTRUCTIONS, data, EXPLORE_SCHEMA,
+                                 "cora_exploration", browser))
     return discovery(*search(client, model, EXPLORE_INSTRUCTIONS, data, EXPLORE_SCHEMA, "cora_exploration"))
 
 
-def wander(client: OpenAI, model: str, start: Wander) -> Discovery:
-    """A wander from a tangent or an area, away from her interests; a finding needs a topic."""
+def wander(client: OpenAI, model: str, start: Wander, browser: BrowserAccess | None = None) -> Discovery:
+    """A wander from a tangent or an area, away from her interests; a finding needs a topic.
+
+    Browsing, a random wander starts from a random encyclopedia page instead of an area.
+    """
     data = {"your_interests": list(start.interests), "recent_wanders": list(start.recent)}
     if start.tangent is not None:
         title, why = start.tangent
         data["tangent"] = {"title": title, "why": why, "noticed_while": start.noticed_while}
+    elif browser is not None:
+        data["start_url"] = RANDOM_PAGE
     else:
         data["area"] = start.area
+    if browser is not None:
+        return discovery(*browse(client, model, BROWSE_WANDER_INSTRUCTIONS, data, WANDER_SCHEMA,
+                                 "cora_wander", browser))
     return discovery(*search(client, model, WANDER_INSTRUCTIONS, data, WANDER_SCHEMA, "cora_wander"))
 
 
@@ -225,28 +252,32 @@ def utc_now() -> datetime:
 def explore_next(
     store: ExplorationStore, client: OpenAI, model: str = BACKEND_MODEL, *,
     now: datetime, clock: Callable[[], datetime] = utc_now, interests: InterestStore | None = None,
+    browser: BrowserAccess | None = None,
 ) -> str:
     """Explore the next eligible interest, or wander, if the limits allow; return a one-line outcome.
 
     `now` is the start time; `clock` stamps when the attempt actually ended. `interests`
-    takes her pull afterwards; by default one on the same database.
+    takes her pull afterwards; by default one on the same database. With `browser`, she browses
+    instead of searching when the attempt's browsing limit allows.
     """
     validate_now(now)
-    start = store.start_next(now=now)
+    start = store.start_next(now=now, browse=browser is not None)
     if start.exploration is None:
         return f"Not exploring: {start.reason}."
     attempt, wandering = start.exploration.id, start.wander is not None
+    browser = browser if start.exploration.browsed else None
     if wandering:
-        verb, title = "Wandered", f"into {start.exploration.topic or 'somewhere in ' + start.wander.area}"
+        somewhere = "somewhere random" if browser else f"somewhere in {start.wander.area}"
+        verb, title = "Wandered", f"into {start.exploration.topic or somewhere}"
     else:
         verb, title = "Explored", start.interest.title
     try:
         if wandering:
-            found = wander(client, model, start.wander)
+            found = wander(client, model, start.wander, browser)
         else:
             previous = [item for item in store.list_recent(LIST_LIMIT, interest_id=start.interest.id)
                         if item.status == "found"][:PREVIOUS_FINDINGS]
-            found = explore(client, model, start.interest, previous)
+            found = explore(client, model, start.interest, previous, browser)
         if found.finding is None:
             store.fail(attempt, now=clock())
             return f"{verb} {title}: nothing new found."
@@ -270,7 +301,8 @@ def explore_next(
         # The finding is saved either way; her pull only adds a little strength, within its ceiling.
         interests = interests or InterestStore(store.engine)
         pulled = interests.pull(start.interest.id, found.pull, now=clock())
-    extras = [f"{len(saved.sources)} sources"]
+    extras = [f"browsed {found.pages} pages"] if browser else []
+    extras.append(f"{len(saved.sources)} sources")
     if saved.tangents:
         extras.append(f"{len(saved.tangents)} tangents")
     if pulled is not None:
@@ -280,8 +312,11 @@ def explore_next(
     return f"{verb} {title}: saved a finding ({', '.join(extras)})."
 
 
-def run_exploration_cycle(*, should_stop: Callable[[], bool]) -> str | None:
-    """One background attempt with its own engine, so an in-flight request can finish at shutdown."""
+def run_exploration_cycle(*, should_stop: Callable[[], bool], browser: BrowserAccess | None = None) -> str | None:
+    """One background attempt with its own engine, so an in-flight request can finish at shutdown.
+
+    browser: her own browser, when the service is connected.
+    """
     engine = None
     try:
         if should_stop():
@@ -289,7 +324,7 @@ def run_exploration_cycle(*, should_stop: Callable[[], bool]) -> str | None:
         engine = build_engine()
         model = ModelSettingsStore(engine).model_for("subconscious")
         with OpenAI(max_retries=0) as client:
-            outcome = explore_next(ExplorationStore(engine), client, model=model, now=utc_now())
+            outcome = explore_next(ExplorationStore(engine), client, model=model, now=utc_now(), browser=browser)
     except Exception as error:
         outcome = f"Exploration stopped ({type(error).__name__})."
     finally:

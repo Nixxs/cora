@@ -115,6 +115,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0033_add_deadline_notes.sql",
             "0034_interest_tangents_and_origin.sql",
             "0035_wandering_and_reach_outs.sql",
+            "0036_add_browsed_explorations.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

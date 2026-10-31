@@ -70,6 +70,8 @@ WANDER_AREAS = (
 REACH_OUT_MAX_CHARS = 600
 REACH_OUT_DAILY_LIMIT = 1
 REACH_OUT_FRESH_FOR = timedelta(days=2)
+# Of the daily attempts, at most this many browse real pages; the rest use web search.
+BROWSE_DAILY_LIMIT = 2
 
 
 def mention_limits(warmth: float) -> tuple[timedelta, int]:
@@ -99,6 +101,7 @@ class Exploration:
     kind: str = "interest"  # or 'wander'
     topic: str | None = None  # what a wander was about
     reach_out: tuple[str, str] | None = None  # (message, why): for the person, if it excited her
+    browsed: bool = False  # with her own browser rather than web search
 
 
 @dataclass(frozen=True)
@@ -143,7 +146,7 @@ def snapshot(record: InterestExplorationRecord) -> Exploration:
         record.finding, tuple(record.next_questions), tuple(record.sources), record.reaction,
         tuple((tangent["title"], tangent["why"]) for tangent in record.tangents or ()), record.pull,
         record.kind or "interest", record.topic,
-        None if record.reach_out is None else (record.reach_out, record.reach_out_why),
+        None if record.reach_out is None else (record.reach_out, record.reach_out_why), bool(record.browsed),
     )
 
 
@@ -198,10 +201,11 @@ class ExplorationStore:
         # Picks among explored interests, weighted by strength, and random wander areas; seeded in tests.
         self.rng = rng or Random()
 
-    def start_next(self, *, now: datetime) -> Start:
+    def start_next(self, *, now: datetime, browse: bool = False) -> Start:
         """Start exploring the next eligible interest, or wandering, if the limits allow one now.
 
-        She wanders every WANDER_EVERY-th attempt, and whenever no interest is eligible.
+        She wanders every WANDER_EVERY-th attempt, and whenever no interest is eligible. With
+        browse (her browser is available), the attempt browses if today's browsing limit allows.
         """
         validate_now(now)
         attempts = InterestExplorationRecord
@@ -220,6 +224,11 @@ class ExplorationStore:
                 return Start("too soon")
             if len(recent) >= DAILY_LIMIT:
                 return Start("daily limit")
+            if browse:
+                browsed = session.scalar(select(func.count()).where(
+                    attempts.browsed, attempts.started_at > now - timedelta(hours=24),
+                ))
+                browse = browsed < BROWSE_DAILY_LIMIT
 
             last_explored = dict(session.execute(
                 select(attempts.interest_id, func.max(attempts.started_at)).where(
@@ -247,7 +256,7 @@ class ExplorationStore:
                 wander, wandered_from = self._wander(session, now, live)
                 record = attempts(
                     kind="wander", status="running", started_at=now, wandered_from=wandered_from,
-                    topic=wander.tangent[0] if wander.tangent else None,
+                    topic=wander.tangent[0] if wander.tangent else None, browsed=browse,
                 )
                 session.add(record)
                 session.flush()
@@ -262,7 +271,7 @@ class ExplorationStore:
                     weights=[strength for strength, _ in explored_before],
                 )[0]
 
-            record = attempts(interest_id=interest.id, status="running", started_at=now)
+            record = attempts(interest_id=interest.id, status="running", started_at=now, browsed=browse)
             session.add(record)
             session.flush()
             return Start("started", snapshot(record), interest_snapshot(interest))

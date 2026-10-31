@@ -58,7 +58,8 @@ from services.confirmation import APPROVED, DECLINED, TIMED_OUT, Confirmations
 from messaging.commitment import check_commitment
 from services.connection import CONNECTED, ServiceManager
 from ui.confirm_view import ConfirmScreen
-from services.tools import PAGE_ARGUMENT, ResultCache, ServiceToolHandler, tool_name, tool_schema
+from services.tools import PAGE_ARGUMENT, ResultCache, ServiceToolHandler, result_text, tool_name, tool_schema
+from services.web_guard import refused_address
 from services.tools import validate_arguments as validate_service_arguments
 from services.credentials import forget_token, get_token, save_token
 from storage.keyboard_persistence import KeyboardPersistence
@@ -71,6 +72,7 @@ from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import (
     claim_mention_now, claim_reach_out_now, release_mention_now, release_reach_out_now,
 )
+from subconscious.interests.browse_exploration import BROWSER_TOOLS, BrowserAccess
 from subconscious.interests.explore_interest import run_exploration_cycle
 from inactivity import InactivityController, StandbyAlert, read_idle_timeout
 from greeting import (
@@ -103,6 +105,8 @@ IDENTITY_CHECK_SECONDS = 10 * 60
 EXPLORE_CHECK_SECONDS = 10 * 60
 # Explore only in standby or after this long without conversation.
 EXPLORE_IDLE_SECONDS = 10 * 60
+# One browser action while she explores, from the exploration thread (the service has its own limit).
+BROWSER_CALL_SECONDS = 70
 # Offer a finding only into a lull this long, well before the default 5-minute standby.
 # The store's limits (4h gap, 2 a day, fresh findings) decide how often she really does.
 FINDING_CHECK_SECONDS = 2 * 60
@@ -3238,7 +3242,33 @@ class CoraApp(App):
             self.exploration_worker is not None and not self.exploration_worker.is_finished
         ):
             return
-        self.exploration_worker = self.explore_interest()
+        self.exploration_worker = self.explore_interest(self.exploration_browser(asyncio.get_running_loop()))
+
+    def exploration_browser(self, loop) -> BrowserAccess | None:
+        """Her own browser for exploring, while the Browser service is connected with the tools it needs.
+
+        Its calls come from the exploration thread and run here on the app's loop. She stops
+        browsing (and writes up) as soon as you're back or the app closes.
+        """
+        status = self.services.status("playwright")
+        if status.state != CONNECTED or not BROWSER_TOOLS <= {tool.name for tool in status.tools}:
+            return None
+
+        def on_loop(coroutine, timeout):
+            return asyncio.run_coroutine_threadsafe(coroutine, loop).result(timeout)
+
+        def call(tool, arguments):
+            reply = on_loop(self.services.call_tool("playwright", tool, arguments), BROWSER_CALL_SECONDS)
+            return result_text(reply), bool(reply.is_error)
+
+        def on_page(url):
+            if not self.closing:
+                self.call_from_thread(self.activity.write, f"Browsing {url}", "Exploration")
+
+        return BrowserAccess(
+            call, refuse=lambda url: on_loop(refused_address(url), 30), on_page=on_page,
+            keep_going=lambda: self.can_explore(),
+        )
 
     def check_reach_out(self) -> None:
         """Something from her exploring she really wants to tell the person: daytime only, and only
@@ -3282,9 +3312,9 @@ class CoraApp(App):
             self.activity.write(f"Releasing a message for you failed ({type(error).__name__}).", "Reach out")
 
     @work(thread=True, group="exploration", exit_on_error=False)
-    def explore_interest(self) -> None:
+    def explore_interest(self, browser: BrowserAccess | None = None) -> None:
         worker = get_current_worker()
-        outcome = run_exploration_cycle(should_stop=lambda: self.closing or worker.is_cancelled)
+        outcome = run_exploration_cycle(should_stop=lambda: self.closing or worker.is_cancelled, browser=browser)
         if outcome is not None and outcome != self.exploration_outcome:
             self.exploration_outcome = outcome
             self.call_from_thread(self.activity.write, outcome, "Exploration")
