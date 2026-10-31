@@ -12,6 +12,7 @@ from backend_chat import (
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
 from tools.registry import ToolRegistry
 from tools.route import routed
+from ui.chat_widgets import ChatMarkdown
 from ui.composer import ChatComposer
 import test_keyboard_persistence as keyboard_tests
 
@@ -58,15 +59,47 @@ class FakeClient:
         self.requests = []
         self.responses = SimpleNamespace(create=self.create)
 
-    async def create(self, **request):
+    async def create(self, stream=False, **request):
         self.requests.append(json.loads(json.dumps(request, default=str)))
-        return SimpleNamespace(output=self.outputs.pop(0))
+        output = self.outputs.pop(0)
+        return FakeStream(output) if stream else SimpleNamespace(output=output)
 
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, *exc):
         return False
+
+
+def text_delta(delta, item_id="msg_1", content_index=0):
+    return SimpleNamespace(type="response.output_text.delta", delta=delta, item_id=item_id, content_index=content_index)
+
+
+class FakeStream:
+    """A streamed response: given events, or each message's text as deltas, then completed."""
+
+    def __init__(self, output):
+        if output and isinstance(output[0], SimpleNamespace) and output[0].type.startswith("response."):
+            self.events = output
+        else:
+            self.events = [
+                text_delta(part.text, item_id=f"msg_{index}")
+                for index, item in enumerate(output) if item.type == "message" for part in item.content
+            ] + [SimpleNamespace(type="response.completed", response=SimpleNamespace(output=output))]
+        self.seen = []
+        self.closed = False
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        self.closed = True
+        return False
+
+    async def __aiter__(self):
+        for event in self.events:
+            self.seen.append(event)
+            yield event
 
 
 class RoutingTests(unittest.IsolatedAsyncioTestCase):
@@ -99,7 +132,7 @@ class RoutingTests(unittest.IsolatedAsyncioTestCase):
 
 
 class BackendChatTests(unittest.IsolatedAsyncioTestCase):
-    async def reply(self, outputs, registry=None, route=None):
+    async def reply(self, outputs, registry=None, route=None, on_text=None):
         self.client = FakeClient(outputs)
         chat = BackendChat(registry or registry_with_echo(), MagicMock(), client_factory=lambda: self.client,
                            tool_seconds=1)
@@ -107,8 +140,40 @@ class BackendChatTests(unittest.IsolatedAsyncioTestCase):
             content=[{"type": "input_text", "text": "hello"}],
             history=[{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "earlier"}]}],
             sections={"name": "\n\nThe person's name is \"Nick\"."}, model="gpt-6.1-sol",
-            route=route or BackendRoute(excluded=STANDBY_EXCLUDED),
+            route=route or BackendRoute(excluded=STANDBY_EXCLUDED), on_text=on_text,
         )
+
+    async def test_streamed_text_arrives_part_by_part_and_the_reply_is_the_final_text(self):
+        shown = []
+        final = SimpleNamespace(output=[message("Hi Nick, all good.")])
+        text = await self.reply([[
+            text_delta("Hi Nick"), text_delta(", all"), text_delta(" good."),
+            SimpleNamespace(type="response.completed", response=final),
+        ]], on_text=shown.append)
+        self.assertEqual(shown, ["Hi Nick", "Hi Nick, all", "Hi Nick, all good."])
+        self.assertEqual(text, "Hi Nick, all good.")
+        self.assertEqual(self.client.requests[0]["model"], "gpt-6.1-sol")
+
+    async def test_separate_messages_stream_as_one_text_like_the_final_reply(self):
+        shown = []
+        text = await self.reply([[message("First."), message("Second.")]], on_text=shown.append)
+        self.assertEqual(shown[-1], "First.\n\nSecond.")
+        self.assertEqual(text, "First.\n\nSecond.")
+
+    async def test_a_streamed_tool_round_continues_into_the_streamed_answer(self):
+        shown = []
+        text = await self.reply([[call()], [message("You said hi.")]], on_text=shown.append)
+        self.assertEqual(text, "You said hi.")
+        self.assertEqual(shown, ["You said hi."])
+        self.assertEqual(self.client.requests[1]["input"][-1]["call_id"], "call_1")
+
+    async def test_a_failed_stream_raises_after_showing_what_arrived(self):
+        shown = []
+        with self.assertRaises(RuntimeError):
+            await self.reply([[text_delta("Partly"), SimpleNamespace(type="response.failed")]], on_text=shown.append)
+        self.assertEqual(shown, ["Partly"])
+        with self.assertRaises(RuntimeError):
+            await self.reply([[text_delta("Cut off")]], on_text=shown.append)
 
     async def test_a_plain_answer_is_one_request_without_storage(self):
         text = await self.reply([[message("Hi Nick!")]])
@@ -185,6 +250,58 @@ class StandbyTypingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNotNone(app.conversation_end_timer)
             self.assertIsNot(app.conversation_end_timer, old_timer)
             app.stop_conversation_end_timer()
+
+    async def test_a_written_reply_shows_as_it_streams_then_ends_as_one_message(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.standby = True
+            app.conversation.record_message = MagicMock()
+            release = asyncio.Event()
+
+            async def reply(**kwargs):
+                kwargs["on_text"]("Here's the")
+                kwargs["on_text"]("Here's the **plan**")
+                await release.wait()
+                return "Here's the **plan**."
+
+            app.backend_chat.reply = reply
+            app.query_one("#chat-input", ChatComposer).load_text("Plan?")
+            await pilot.press("enter")
+            await pilot.pause(0.2)
+            entries = app.conversation.log_entries
+            # Before it finishes: one message, labelled as still being written.
+            self.assertIn("Cora · writing…:", entries)
+            self.assertNotIn("Cora · written:", entries)
+            chat = "\n".join(line.text for line in app.query_one("#chat-output").lines)
+            self.assertIn("Here's the plan", chat)
+            release.set()
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            await pilot.pause()
+            self.assertNotIn("Cora · writing…:", entries)
+            self.assertEqual(entries.count("Cora · written:"), 1)
+            bodies = [entry for entry in entries if isinstance(entry, ChatMarkdown)]
+            self.assertEqual([body.markup for body in bodies], ["Here's the **plan**."])
+            # Saved once, as the finished reply.
+            app.conversation.record_message.assert_called_once_with("assistant", "Here's the **plan**.", "screen")
+
+    async def test_a_written_reply_that_fails_midway_keeps_what_was_shown(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.standby = True
+
+            async def reply(**kwargs):
+                kwargs["on_text"]("Half an ans")
+                raise TimeoutError("private")
+
+            app.backend_chat.reply = reply
+            app.query_one("#chat-input", ChatComposer).load_text("Hello?")
+            with patch.object(app, "notify") as notify:
+                await pilot.press("enter")
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            await pilot.pause()
+            entries = app.conversation.log_entries
+            self.assertIn("Cora · written · incomplete:", entries)
+            self.assertNotIn("Cora · writing…:", entries)
+            self.assertEqual([e.markup for e in entries if isinstance(e, ChatMarkdown)], ["Half an ans"])
+            self.assertIn("couldn't reply in writing", notify.call_args.args[0])
 
     async def test_a_failed_written_reply_says_so(self):
         async with keyboard_tests.running_app() as (app, pilot):

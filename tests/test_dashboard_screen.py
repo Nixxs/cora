@@ -369,24 +369,43 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(summary.render()), "Activity · Dashboard load failed [x]")
             self.assertTrue(summary.has_class("activity-error"))
 
-    async def test_voice_box_shows_standby_at_its_top_right(self):
+    async def test_voice_box_standby_toggle_at_its_top_right(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await pilot.click("#view-button")
             await pilot.pause()
-            indicator = app.screen.query_one("#dashboard-standby", Static)
-            self.assertFalse(indicator.display)
-            app.standby = True
+            toggle = app.screen.query_one("#dashboard-standby", Button)
+            app.set_connection_state("active")
             await pilot.pause(0.3)
-            self.assertTrue(indicator.display)
             header = app.screen.query_one("#voice-header")
             # Just before the top right corner, on the same line as the box's title.
-            self.assertEqual(str(indicator.render()), "○ standby")
-            self.assertEqual(indicator.region.y, header.region.y)
-            self.assertEqual(indicator.region.right, header.region.right - 2)
+            self.assertEqual(str(toggle.label), "● active")
+            self.assertTrue(toggle.has_class("state-active"))
+            self.assertFalse(toggle.disabled)
+            self.assertEqual(toggle.tooltip, "Click to close Live and enter standby.")
+            self.assertEqual(toggle.region.y, header.region.y)
+            self.assertEqual(toggle.region.right, header.region.right - 2)
             self.assertEqual(app.screen.query_one("#voice-title", Static).region.x, header.region.x + 2)
-            app.standby = False
+            with patch.object(app, "action_standby") as standby:
+                await pilot.click("#dashboard-standby")
+                await pilot.pause()
+            standby.assert_called_once()
+            # The dashboard stays open.
+            self.assertIsInstance(app.screen, DashboardScreen)
+            app.standby = True
+            app.set_connection_state("standby")
             await pilot.pause(0.3)
-            self.assertFalse(indicator.display)
+            self.assertEqual(str(toggle.label), "○ standby")
+            self.assertTrue(toggle.has_class("state-standby"))
+            self.assertFalse(toggle.has_class("state-active"))
+            self.assertEqual(toggle.region.right, header.region.right - 2)
+            with patch.object(app, "action_reconnect") as reconnect:
+                await pilot.click("#dashboard-standby")
+                await pilot.pause()
+            reconnect.assert_called_once()
+            app.set_connection_state("disconnected")
+            await pilot.pause(0.3)
+            self.assertEqual(str(toggle.label), "○ disconnected")
+            self.assertTrue(toggle.disabled)
 
     async def test_snapshot_loads_on_open_and_a_failed_refresh_keeps_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
