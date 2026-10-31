@@ -8,6 +8,7 @@ from uuid import uuid4
 
 from backend_chat import BackendRoute
 from mail.account import READY, Bounce, EmailNotReady, EmailStatus, MailMessage, Mailbox, SentMail
+from mail.formatting import email_fragment, email_html
 from session_config import NO_REPLY, email_party_instructions
 from storage.task_store import EmailThread
 from tools.pass_on import PassOnTool
@@ -45,7 +46,7 @@ class MailboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("uniqueBody", params["$select"])
         self.assertEqual(headers["Prefer"], 'outlook.body-content-type="text"')
 
-    async def test_a_reply_goes_to_one_address_in_plain_text_in_the_thread(self):
+    async def test_a_reply_goes_to_one_address_formatted_in_the_thread(self):
         client = FakeClient([FakeResponse(201, {"id": "r1", "conversationId": "c1"}), FakeResponse(200, {}),
                              FakeResponse(202, None)])
         sent = await Mailbox(lambda: "tok", client).reply("m1", SCHOOL, "School", "Tuesday works")
@@ -55,7 +56,7 @@ class MailboxTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(create_url.endswith("/me/messages/m1/createReply"))
         self.assertTrue(patch_url.endswith("/me/messages/r1") and send_url.endswith("/me/messages/r1/send"))
         self.assertEqual(body, {
-            "body": {"contentType": "Text", "content": "Tuesday works"},
+            "body": {"contentType": "HTML", "content": email_html("Tuesday works")},
             "toRecipients": [{"emailAddress": {"address": SCHOOL, "name": "School"}}],
             "ccRecipients": [], "bccRecipients": [],
         })
@@ -67,10 +68,19 @@ class MailboxTests(unittest.IsolatedAsyncioTestCase):
                              FakeResponse(200, {}), FakeResponse(202, None)])
         await Mailbox(lambda: "tok", client).reply("m1", SCHOOL, None, "Hi Nick,\n\nTuesday <b>works</b>.\nCora")
         body = client.sent[1][2]["body"]
+        mine = email_fragment("Hi Nick,\n\nTuesday <b>works</b>.\nCora")
+        self.assertIn("Tuesday &lt;b&gt;works&lt;/b&gt;.<br />\nCora", mine)
         self.assertEqual(body, {"contentType": "HTML", "content": (
-            '<html><head></head><body dir="ltr"><div>Hi Nick,<br><br>Tuesday &lt;b&gt;works&lt;/b&gt;.<br>Cora</div>'
-            '<br><div id="quote">From: Nick</div></body></html>'
+            f'<html><head></head><body dir="ltr">{mine}<br><div id="quote">From: Nick</div></body></html>'
         )})
+
+    async def test_a_plain_text_quote_is_escaped_below_her_formatted_reply(self):
+        client = FakeClient([FakeResponse(201, {"id": "r1", "conversationId": "c1",
+                                                "body": {"contentType": "text", "content": "From: <b>Nick</b>\nHi"}}),
+                             FakeResponse(200, {}), FakeResponse(202, None)])
+        await Mailbox(lambda: "tok", client).reply("m1", SCHOOL, None, "Yes")
+        self.assertEqual(client.sent[1][2]["body"], {"contentType": "HTML", "content": (
+            email_fragment("Yes") + "<br><div>From: &lt;b&gt;Nick&lt;/b&gt;<br>Hi</div>")})
 
     async def test_bounces_are_inbox_failure_reports_since_she_wrote(self):
         def report(id, subject):

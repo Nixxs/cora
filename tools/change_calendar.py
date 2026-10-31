@@ -1,4 +1,4 @@
-"""Change Cora's own calendar (C2): make, change and cancel events, each approved by the person first.
+"""Change Cora's own calendar (C2, C3): make, change, cancel and forward events, each approved first.
 
 Her calendar, never the person's. Invitations, updates and cancellations go to whoever is invited,
 so the person sees exactly what goes and to whom before anything changes. Only when the person
@@ -6,7 +6,7 @@ asks: never because an email, an invitation or a client asks. Only events she or
 changed or cancelled; one she was invited to belongs to whoever sent it.
 """
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import json
 
 from mail.account import ADDRESS, EmailNotReady, GraphError
@@ -22,6 +22,8 @@ ADDRESS_MAX_CHARS = 320
 ATTENDEES_MAX = 20
 EVENT_ID_MAX_CHARS = 512
 EVENT_LONGEST = timedelta(days=14)
+# A trip or a holiday: from its first day to its last.
+ALL_DAY_LONGEST = timedelta(days=31)
 
 NOT_DONE = {
     DECLINED: "The person declined, so nothing was changed. Don't try again unless they ask.",
@@ -29,7 +31,10 @@ NOT_DONE = {
 }
 TIME = {
     "type": "string",
-    "description": "In the person's local time, YYYY-MM-DDTHH:MM.",
+    "description": (
+        "In the person's local time: YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event (then "
+        "start and end are both days, end being the last day: the same day for a one-day event)."
+    ),
 }
 ATTENDEES = {
     "type": "array", "maxItems": ATTENDEES_MAX,
@@ -55,8 +60,9 @@ CREATE_SCHEMA = {
     "description": (
         f"Put an event in your calendar. {WHOSE} Anyone in attendees gets an invitation from your "
         "address; invite people only when the person wants them invited. Times are the person's "
-        "local time; all-day events aren't supported yet, so give a start and end time. Check your "
-        "calendar first if a clash matters."
+        "local time. For something all day or over several days (a trip, a holiday), give days "
+        "instead of times: one event from the first day to the last, never one per day. Check "
+        "your calendar first if a clash matters."
     ),
     "parameters": {
         "type": "object",
@@ -122,15 +128,29 @@ CANCEL_SCHEMA = {
 }
 
 
-def parse_time(value: str, key: str) -> datetime:
-    """A time in the person's local time zone; ValueError if it isn't YYYY-MM-DDTHH:MM."""
+def parse_when(value: str, key: str) -> date:
+    """A time in the person's local time zone (YYYY-MM-DDTHH:MM), or a day (YYYY-MM-DD) for an
+    all-day event; ValueError for anything else."""
+    value = value.strip()
     try:
+        if len(value) == 10:
+            return date.fromisoformat(value)
         if "T" not in value:
             raise ValueError
-        moment = datetime.fromisoformat(value.strip())
+        moment = datetime.fromisoformat(value)
     except ValueError:
-        raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM") from None
+        raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event") from None
     return moment.astimezone() if moment.tzinfo is None else moment
+
+
+def all_day(at: date) -> bool:
+    # datetime is a kind of date, so a plain date means a day.
+    return not isinstance(at, datetime)
+
+
+def check_same_kind(start: date, end: date) -> None:
+    if all_day(start) != all_day(end):
+        raise ValueError("start and end must both be times, or both days for an all-day event")
 
 
 def check_optional(value, key: str, limit: int) -> None:
@@ -160,8 +180,8 @@ def validate_create_arguments(arguments: dict) -> None:
     check_text(arguments["subject"], "subject", SUBJECT_MAX_CHARS)
     for key in ("start", "end"):
         if not isinstance(arguments[key], str):
-            raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM")
-        parse_time(arguments[key], key)
+            raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM or YYYY-MM-DD")
+    check_same_kind(parse_when(arguments["start"], "start"), parse_when(arguments["end"], "end"))
     check_optional(arguments["location"], "location", LOCATION_MAX_CHARS)
     check_optional(arguments["notes"], "notes", NOTES_MAX_CHARS)
     check_attendees(arguments["attendees"])
@@ -175,8 +195,10 @@ def validate_update_arguments(arguments: dict) -> None:
     for key in ("start", "end"):
         if arguments[key] is not None:
             if not isinstance(arguments[key], str):
-                raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM or null")
-            parse_time(arguments[key], key)
+                raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM, YYYY-MM-DD or null")
+            parse_when(arguments[key], key)
+    if arguments["start"] is not None and arguments["end"] is not None:
+        check_same_kind(parse_when(arguments["start"], "start"), parse_when(arguments["end"], "end"))
     check_optional(arguments["location"], "location", LOCATION_MAX_CHARS)
     check_optional(arguments["notes"], "notes", NOTES_MAX_CHARS)
     if arguments["attendees"] is not None:
@@ -192,14 +214,28 @@ def validate_cancel_arguments(arguments: dict) -> None:
     check_optional(arguments["message"], "message", MESSAGE_MAX_CHARS)
 
 
-def times_problem(start: datetime, end: datetime, now: datetime) -> str | None:
+def times_problem(start: date, end: date, now: datetime) -> str | None:
+    """Why these can't be an event's times, or None. Days are its first and last (all-day)."""
+    if all_day(start):
+        if end < start:
+            return "The last day can't be before the first."
+        if end - start >= ALL_DAY_LONGEST:
+            return "An all-day event can be at most 31 days long."
+        if start < now.date():
+            return "That day has already passed; check the date with the person."
+        return None
     if end <= start:
         return "The end must be after the start."
     if end - start > EVENT_LONGEST:
-        return "An event can be at most 14 days long."
+        return "An event can be at most 14 days long; for longer, make it all-day with days."
     if start <= now:
         return "That time has already passed; check the date with the person."
     return None
+
+
+def graph_end(end: date) -> date:
+    # Outlook ends an all-day event at the start of the day after its last.
+    return end + timedelta(days=1) if all_day(end) else end
 
 
 def people(attendees: list[dict]) -> list[tuple[str, str | None]]:
@@ -210,7 +246,9 @@ def shown_people(attendees: list[tuple[str, str | None]]) -> list[str]:
     return [f"{name} <{address}>" if name else address for address, name in attendees]
 
 
-def span(start: datetime, end: datetime) -> str:
+def span(start: date, end: date) -> str:
+    if all_day(start):
+        return f"{start:%a %d %b %Y}, all day" if end == start else f"{start:%a %d %b %Y} to {end:%a %d %b %Y}, all day"
     start, end = start.astimezone(), end.astimezone()
     if start.date() == end.date():
         return f"{start:%a %d %b %Y %H:%M}-{end:%H:%M}"
@@ -305,7 +343,7 @@ class CreateEventTool(CalendarChangeTool):
     tool_name = "create_event"
 
     async def change(self, calendar, arguments: dict) -> dict:
-        start, end = parse_time(arguments["start"], "start"), parse_time(arguments["end"], "end")
+        start, end = parse_when(arguments["start"], "start"), parse_when(arguments["end"], "end")
         if problem := times_problem(start, end, datetime.now().astimezone()):
             return {"status": "error", "message": problem}
         attendees = people(arguments["attendees"])
@@ -321,7 +359,7 @@ class CreateEventTool(CalendarChangeTool):
             shown["invitations go to"] = shown_people(attendees)
         if (refusal := await self.approved(shown)) is not None:
             return {"status": "not_done", "message": refusal}
-        event = await calendar.create_event(subject, start, end, location, notes, attendees)
+        event = await calendar.create_event(subject, start, graph_end(end), location, notes, attendees)
         self._log(f"Calendar event made ({len(attendees)} invited).", "Calendar changed")
         invited = f" Invitations went to {len(attendees)}." if attendees else ""
         return {"status": "ok", "event_id": event.id, "message": f"\"{subject}\" is in your calendar for {event.when()}.{invited}"}
@@ -334,17 +372,23 @@ class UpdateEventTool(CalendarChangeTool):
         event, problem = await self.own_event(calendar, arguments["event_id"])
         if problem:
             return {"status": "error", "message": problem}
-        start = event.start if arguments["start"] is None else parse_time(arguments["start"], "start")
-        # Moving only the start keeps its length.
-        end = (start + (event.end - event.start) if arguments["end"] is None
-               else parse_time(arguments["end"], "end"))
+        # As it is: its times, or its first and last days when it's all-day.
+        first, last = (event.start.date(), (event.end - timedelta(days=1)).date()) if event.all_day else (event.start, event.end)
+        start = first if arguments["start"] is None else parse_when(arguments["start"], "start")
+        if arguments["end"] is not None:
+            end = parse_when(arguments["end"], "end")
+        elif all_day(start) == event.all_day:
+            # Moving only the start keeps its length.
+            end = start + (last - first)
+        else:
+            end = start if all_day(start) else start + timedelta(hours=1)
         changes, shown = {}, {"event": event.subject, "was": event.when()}
         if arguments["start"] is not None or arguments["end"] is not None:
-            if event.all_day:
-                return {"status": "error", "message": "All-day events can't be moved yet; the person can move it in Outlook."}
+            if all_day(start) != all_day(end):
+                return {"status": "error", "message": "Give the start and end both as times, or both as days."}
             if problem := times_problem(start, end, datetime.now().astimezone()):
                 return {"status": "error", "message": problem}
-            changes.update(start=start, end=end)
+            changes.update(start=start, end=graph_end(end))
             shown["now"] = span(start, end)
         if arguments["subject"] is not None:
             changes["subject"] = shown["new subject"] = arguments["subject"].strip()
@@ -384,3 +428,57 @@ class CancelEventTool(CalendarChangeTool):
         self._log("Calendar event cancelled.", "Calendar changed")
         told = " Those invited were sent the cancellation." if event.attendees else ""
         return {"status": "ok", "message": f"\"{event.subject}\" on {event.when()} is cancelled.{told}"}
+
+
+FORWARD_SCHEMA = {
+    "type": "function",
+    "name": "forward_event",
+    "description": (
+        "Forward an event in your calendar, by its id from check_calendar, to people as an "
+        "invitation from you: one you organised or one you were invited to, such as passing an "
+        f"invitation on to the person. {WHOSE} 'comment' is a short note with it, or null."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string", "description": "The event's id from check_calendar."},
+            "to": {**ATTENDEES, "minItems": 1, "description": "Who to send it to."},
+            "comment": {"type": ["string", "null"], "maxLength": MESSAGE_MAX_CHARS},
+        },
+        "required": ["event_id", "to", "comment"],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+
+def validate_forward_arguments(arguments: dict) -> None:
+    if not isinstance(arguments, dict) or set(arguments) != {"event_id", "to", "comment"}:
+        raise ValueError("Invalid forward arguments")
+    check_event_id(arguments["event_id"])
+    check_attendees(arguments["to"])
+    if not arguments["to"]:
+        raise ValueError("Forward it to at least one person")
+    check_optional(arguments["comment"], "comment", MESSAGE_MAX_CHARS)
+
+
+class ForwardEventTool(CalendarChangeTool):
+    tool_name = "forward_event"
+
+    async def change(self, calendar, arguments: dict) -> dict:
+        try:
+            event = await calendar.event(arguments["event_id"].strip())
+        except LookupError:
+            return {"status": "error", "message": "There's no event with that id in your calendar; check it with check_calendar."}
+        recipients = people(arguments["to"])
+        comment = (arguments["comment"] or "").strip() or None
+        shown = {"event": event.subject, "when": event.when(), "forwarded to": shown_people(recipients)}
+        if event.organizer and not event.organised:
+            shown["organised by"] = event.organizer
+        if comment:
+            shown["comment"] = comment
+        if (refusal := await self.approved(shown)) is not None:
+            return {"status": "not_done", "message": refusal}
+        await calendar.forward_event(event.id, recipients, comment)
+        self._log(f"Calendar event forwarded ({len(recipients)}).", "Calendar changed")
+        return {"status": "ok", "message": f"\"{event.subject}\" was forwarded to {', '.join(shown['forwarded to'])}."}

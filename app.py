@@ -51,7 +51,7 @@ from mail.account import (
 )
 from mail.calendar_events import Calendar
 from mail.triage import IGNORE, URGENT, digest_text, triage_mail
-from mail.webhook import WebhookServer, mail_urls, webhook_app, webhook_secrets
+from mail.webhook import WebhookServer, calendar_urls, mail_urls, webhook_app, webhook_secrets
 from storage.webhook_settings_store import WebhookSettings
 from services.catalogue import SERVICES
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT, Confirmations
@@ -65,7 +65,7 @@ from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
 from subconscious.attention import AttentionManager, PersonMessage
 from backend_work import BackendWorkTracker
-from subconscious.event_bus import EventBus, FindingEvent, MailArrivedEvent, ObservationEvent
+from subconscious.event_bus import CalendarChangedEvent, EventBus, FindingEvent, MailArrivedEvent, ObservationEvent
 from subconscious.identity.reflect_identity import run_identity_cycle
 from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
@@ -445,6 +445,11 @@ class CoraApp(App):
         self.mail_subscription = None
         self.mail_subscription_worker = None
         self.mail_subscription_status = ""
+        # Graph's subscription to changes in her calendar, kept like the mail one.
+        self.calendar_subscription = None
+        self.calendar_subscription_worker = None
+        self.calendar_subscription_status = ""
+        self.calendar_notify_timer = None
         self.mail_notify_timer = None
         self.webhook_controls = None
         self.signal_listener: SignalReceiver | None = None
@@ -525,6 +530,7 @@ class CoraApp(App):
         )
         self.event_bus.subscribe(FindingEvent, lambda event: self.attention.submit_finding())
         self.event_bus.subscribe(MailArrivedEvent, lambda event: self.on_mail_arrived())
+        self.event_bus.subscribe(CalendarChangedEvent, lambda event: self.on_calendar_changed())
         if self.live_trace is not None:
             self.trace_live("app.started")
             if not self.live_trace.failed:
@@ -1073,7 +1079,11 @@ class CoraApp(App):
 
     def make_webhook_controls(self) -> WebhookControls:
         self.webhook_controls = WebhookControls(
-            status=lambda: (self.webhook_status, self.mail_subscription_status, self.mail_subscription is not None),
+            status=lambda: (
+                self.webhook_status,
+                "\n".join(filter(None, (self.mail_subscription_status, self.calendar_subscription_status))),
+                self.mail_subscription is not None,
+            ),
             set_enabled=self.set_webhooks_enabled, save_address=self.save_webhook_address,
             rotate=lambda: self.restart_webhooks(rotate=True), enabled=self.webhook_settings.enabled,
             public_url=self.webhook_settings.public_url or "", port=self.webhook_settings.port,
@@ -1139,6 +1149,7 @@ class CoraApp(App):
         self.refresh_calendar()
         self.check_task_mail()
         self.ensure_mail_subscription()
+        self.ensure_calendar_subscription()
 
     @work(group="email-setup", exit_on_error=False)
     async def save_email_app(self, client_id: str, tenant: str) -> None:
@@ -1228,6 +1239,7 @@ class CoraApp(App):
     async def sign_out_email(self) -> None:
         # While she can still reach Microsoft: nothing should call her listener for a mailbox she's left.
         await self.drop_mail_subscription()
+        await self.drop_calendar_subscription()
         try:
             await asyncio.to_thread(self.email_account.sign_out)
         except Exception as error:
@@ -2102,6 +2114,7 @@ class CoraApp(App):
         and Graph's subscription to new mail renewed when it's due."""
         self.check_task_mail()
         self.ensure_mail_subscription()
+        self.ensure_calendar_subscription()
 
     def check_task_mail(self) -> None:
         """Replies in her task email threads, while her email is ready; one check at a time, and asked
@@ -2211,7 +2224,8 @@ class CoraApp(App):
             if rotate:
                 self.activity.write("New webhook secrets made.", "Webhooks")
             server = WebhookServer(
-                webhook_app(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle),
+                webhook_app(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle,
+                            self.on_calendar_webhook, self.on_calendar_lifecycle),
                 settings.port,
             )
             try:
@@ -2226,10 +2240,12 @@ class CoraApp(App):
             self.webhook_status = f"Listening on 127.0.0.1:{settings.port}"
             self.activity.write(f"Listening for webhooks on 127.0.0.1:{settings.port}.", "Webhooks")
         self.ensure_mail_subscription()
+        self.ensure_calendar_subscription()
 
     async def stop_webhooks(self) -> None:
         """Microsoft told to stop first, then the listener closed."""
         await self.drop_mail_subscription()
+        await self.drop_calendar_subscription()
         server, worker = self.webhook_server, self.webhook_worker
         self.webhook_server = self.webhook_worker = None
         self.webhook_status = ""
@@ -2314,6 +2330,94 @@ class CoraApp(App):
             self.activity.write(f"Ending the mail subscription failed ({type(error).__name__}).", "Webhooks")
             return
         self.activity.write("Mail subscription ended.", "Webhooks")
+
+    def on_calendar_webhook(self) -> None:
+        """Microsoft says her calendar changed: an event for whoever cares, carrying nothing from the request."""
+        self.event_bus.publish(CalendarChangedEvent(source="graph"))
+
+    def on_calendar_lifecycle(self, event: str) -> None:
+        self.activity.write(f"Microsoft's calendar subscription: {event}.", "Webhooks")
+        if event == "missed":
+            self.event_bus.publish(CalendarChangedEvent(source="graph"))
+        elif event == "subscriptionRemoved":
+            self.calendar_subscription = None
+            self.ensure_calendar_subscription()
+        elif event == "reauthorizationRequired":
+            self.ensure_calendar_subscription(renew=True)
+
+    def on_calendar_changed(self) -> None:
+        """A CalendarChangedEvent: her coming week read again, once, a moment after the first of a burst."""
+        if self.closing or self.calendar_notify_timer is not None:
+            return
+        self.calendar_notify_timer = self.set_timer(MAIL_NOTIFY_SECONDS, self.calendar_notified)
+
+    def calendar_notified(self) -> None:
+        self.calendar_notify_timer = None
+        self.refresh_calendar()
+
+    def ensure_calendar_subscription(self, renew: bool = False) -> None:
+        """Graph's subscription to changes in her calendar, made or renewed when due, as with mail."""
+        if self.closing or self.webhook_server is None or self.email_status.state != EMAIL_READY:
+            return
+        if self.calendar_subscription_worker is not None and not self.calendar_subscription_worker.is_finished:
+            return
+        subscription = self.calendar_subscription
+        if subscription is not None and not renew \
+                and subscription.expires - datetime.now(timezone.utc) > MAIL_SUBSCRIPTION_RENEW:
+            return
+        self.calendar_subscription_worker = self.run_worker(
+            self.subscribe_to_calendar(), group="calendar-subscription", exit_on_error=False,
+        )
+
+    async def subscribe_to_calendar(self) -> None:
+        for _ in range(WEBHOOK_STARTUP_SECONDS * 10):
+            if self.webhook_listening() or self.webhook_server is None:
+                break
+            await asyncio.sleep(0.1)
+        server, settings, secrets_now = self.webhook_server, self.webhook_settings, self.webhook_secrets
+        if server is None or not self.webhook_listening() or secrets_now is None or not settings.public_url:
+            return
+        expires = datetime.now(timezone.utc) + MAIL_SUBSCRIPTION_LIFETIME
+        try:
+            if self.calendar_subscription is not None:
+                try:
+                    self.calendar_subscription = await self.calendar.renew(self.calendar_subscription.id, expires)
+                    self.calendar_subscription_shown("renewed")
+                    return
+                except GraphError:
+                    self.calendar_subscription = None
+            url, lifecycle = calendar_urls(settings.public_url, secrets_now[0])
+            subscription = await self.calendar.subscribe_to_changes(url, lifecycle, secrets_now[1], expires)
+        except Exception as error:
+            detail = str(error) if isinstance(error, (GraphError, EmailNotReady)) else type(error).__name__
+            self.calendar_subscription_status = f"Calendar: not subscribed ({detail}). Tried again in 10 minutes."
+            self.activity.write(f"Subscribing to calendar changes failed ({detail}).", "Webhooks")
+            return
+        if self.webhook_server is not server or self.closing:
+            try:
+                await self.calendar.unsubscribe(subscription.id)
+            except Exception:
+                pass
+            return
+        self.calendar_subscription = subscription
+        self.calendar_subscription_shown("made")
+
+    def calendar_subscription_shown(self, what: str) -> None:
+        until = self.calendar_subscription.expires.astimezone().strftime("%a %d %b %H:%M")
+        self.calendar_subscription_status = f"Calendar: Microsoft tells Cora of changes straight away (until {until})."
+        self.activity.write(f"Calendar subscription {what}, until {until}.", "Webhooks")
+
+    async def drop_calendar_subscription(self) -> None:
+        subscription, self.calendar_subscription = self.calendar_subscription, None
+        self.calendar_subscription_status = ""
+        if subscription is None:
+            return
+        try:
+            await self.calendar.unsubscribe(subscription.id)
+        except Exception as error:
+            self.activity.write(f"Ending the calendar subscription failed ({type(error).__name__}).", "Webhooks")
+            return
+        self.activity.write("Calendar subscription ended.", "Webhooks")
 
     async def read_task_mail(self) -> None:
         """Each open task's email thread: anything new from their end is answered, in order of the tasks."""

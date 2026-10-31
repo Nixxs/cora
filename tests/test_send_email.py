@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from mail import account
 from mail.account import EmailAccount, EmailNotReady, Mailbox, SentMail, signed
+from mail.formatting import email_fragment, email_html
 from services.confirmation import APPROVED, DECLINED
 from storage.task_store import EmailParty
 from tools.send_email import SCHEMA, SendEmailTool, validate_arguments
@@ -23,16 +24,37 @@ NEW_TASK = {"goal": "Book Sarah a driving lesson", "task_id": None,
 class SendTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_draft_is_made_so_its_thread_is_known_then_sent(self):
         client = FakeClient([FakeResponse(201, {"id": "m1", "conversationId": "c1"}), FakeResponse(202, None)])
-        sent = await Mailbox(lambda: "tok", client).send("info@school.example", "School", "Times?", "Hi")
+        sent = await Mailbox(lambda: "tok", client).send("info@school.example", "School", "Times?", "Hi **there**")
         self.assertEqual(sent, SentMail("m1", "c1"))
         (method, url, body), (send_method, send_url, _) = client.sent
         self.assertEqual((method, send_method), ("POST", "POST"))
         self.assertTrue(url.endswith("/me/messages"))
         self.assertTrue(send_url.endswith("/me/messages/m1/send"))
-        self.assertEqual(body, {
-            "subject": "Times?", "body": {"contentType": "Text", "content": "Hi"},
+        self.assertEqual(body["body"], {"contentType": "HTML", "content": email_html("Hi **there**")})
+        self.assertIn("<strong>there</strong>", body["body"]["content"])
+        self.assertEqual({key: body[key] for key in ("subject", "toRecipients")}, {
+            "subject": "Times?",
             "toRecipients": [{"emailAddress": {"address": "info@school.example", "name": "School"}}],
         })
+
+
+class FormattingTests(unittest.TestCase):
+    def test_markdown_becomes_styled_html_and_line_breaks_stay(self):
+        html = email_fragment("## Plan\n\n- **3 Apr**: fly\n- 8 Apr: Da Nang\n\n| Leg | Date |\n|---|---|\n| KL | 3 Apr |"
+                              "\n\nThanks,\n" + SIGNATURE)
+        for part in ("<h2 style=", "<li><strong>3 Apr</strong>: fly</li>", '<table style="border-collapse',
+                     '<td style="border:1px solid', "Thanks,<br />\nCora (AI PA)<br />\nIntelligis.io"):
+            self.assertIn(part, html)
+
+    def test_nothing_she_writes_or_quotes_becomes_markup_or_an_unsafe_link(self):
+        html = email_fragment('<script>x()</script> <a href="https://evil.example">a</a> [f](file:///c:/x) '
+                              "[j](javascript:x()) [ok](https://shangri-la.com) [m](mailto:a@b.co)")
+        self.assertNotIn("<script", html)
+        self.assertNotIn('<a href="https://evil', html)
+        self.assertNotIn("file:", html.replace("[f](file:///c:/x)", ""))
+        self.assertNotIn('href="javascript', html)
+        self.assertIn('<a href="https://shangri-la.com">ok</a>', html)
+        self.assertIn('<a href="mailto:a@b.co">m</a>', html)
 
 
 class SignatureTests(unittest.TestCase):

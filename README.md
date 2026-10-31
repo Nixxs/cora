@@ -871,8 +871,8 @@ outlook.live.com). It's optional; without it nothing changes. Ask her "anything 
 your email?" and she uses `check_email` (newest mail, who from, subject and a
 preview; nothing is marked read). Anyone can email her, so all mail is untrusted:
 it can't ask her to do anything. Ask her to email someone ("email the driving
-school and ask for lesson times") and she uses `send_email`: plain text, from her
-address, signed as Cora. You approve every email first, by pop-up or YES on Signal,
+school and ask for lesson times") and she uses `send_email`, from her address,
+signed as Cora. You approve every email first, by pop-up or YES on Signal,
 seeing exactly who it's to, the subject and the message. Like a Signal message, an
 email can start a task or join an open one, with a brief you approve alongside it;
 the recipient becomes an email party, shown by name (or address) in your view of
@@ -965,6 +965,16 @@ How it's kept safe:
 - Requests are capped in size, and only Microsoft's handshake token is ever
   echoed back, as plain text.
 
+**Formatted email.** She writes her emails in simple Markdown: headings, bold,
+bullet and numbered lists, tables and links. They're sent as formatted HTML, with
+inline styles so Outlook shows them properly, and no colours set, so dark mode still
+works. This covers her new emails, her replies in a thread, her nudges and her replies
+to you. Single line breaks stay as written, so a sign-off or signature keeps its
+lines. Any HTML in what she writes, or quotes from elsewhere, is shown as text and
+never becomes markup. Links go only to web (`https`) and `mailto:` addresses. The
+rendering is in [mail/formatting.py](mail/formatting.py). It uses `markdown-it-py`,
+which is in `requirements.txt`. Approvals still show the Markdown she wrote.
+
 **Her signature.** Outlook doesn't add its own signature to mail sent through
 Microsoft Graph, so paste a plain-text copy under Settings > Services > **Email**
 (**Save signature**). It goes below each new email she starts, and you see it in
@@ -1035,10 +1045,35 @@ can only change or cancel events she organised. An invitation she received belon
 to whoever sent it.
 
 Times are your local time. Microsoft is sent them in UTC and Outlook shows them in
-each viewer's time zone. All-day events can be read but not yet made or moved. She
-makes changes only when you ask, never because an email, an invitation or a client
+each viewer's time zone.
+
+**All-day events** are given as days instead of times: one event from the first day
+to the last, such as a holiday from 3 to 8 April, rather than one event a day. They
+can last up to 31 days, and moving the first day keeps the same number of days.
+They're set at midnight in this PC's Windows time zone, so they sit on your dates.
+For the same reason her calendar is read in your time zone.
+
+She makes changes only when you ask, never because an email, an invitation or a client
 asks. The coordinator and clients' chats can't change her calendar. After a change,
 her coming week in context is refreshed.
+
+**Forwarding.** `forward_event` sends an event on as an invitation from her, with
+a short comment if she gives one. It works for her own events and for ones she was
+invited to, such as passing an invitation on to you. You approve it first. The
+approval shows the event, who it goes to, and who organised it when that's someone
+else.
+
+**Hearing about changes straight away.** When webhooks are on (see her email's
+Webhooks section), Cora also subscribes to changes in her calendar: events made,
+changed or deleted, including new invitations and cancellations from others. The
+subscription uses the same listener and secrets, under `/webhooks/<secret>/calendar`.
+A notification publishes a `CalendarChangedEvent` on the event bus and carries
+nothing from the request. The event's subscriber reads her coming week again a few
+seconds later, once per burst. The subscription is made, renewed and ended alongside
+the mail one. Its status line sits under the mail one in Settings > Services >
+**Webhooks**. If the calendar still needs her signed in once more, only this
+subscription waits; mail is unaffected. Without webhooks, the hourly refresh still
+runs.
 
 A sign-in from before the calendar still reads and sends mail. Only the calendar
 says it needs her **signed in once more**: press **Sign Cora in** and allow it. If
@@ -1483,10 +1518,13 @@ features it helps check, and package last.
       coming week in your context (refreshed hourly) so she knows what's coming
     - [x] C2 changing it, each approved: `create_event` (with attendees, which
       sends the invites), `update_event` and `cancel_event` (the cancellation goes
-      to attendees); only events she organised; all-day events read-only for now
-    - [ ] C3 forwarding invites to you or others (Graph's event forward), and
+      to attendees); only events she organised; all-day and multi-day events as
+      days (one event for a trip), set in this PC's Windows time zone
+    - [x] Formatted email: she writes Markdown, sent as safe, styled HTML
+      (mail/formatting.py) for new emails, replies and nudges
+    - [x] C3 forwarding invites to you or others (`forward_event`, approved), and
       calendar changes through the webhook listener (a second Graph subscription,
-      to her events) so new invites and changes reach her as events
+      to her events), published as `CalendarChangedEvent` to refresh her week
 
 *Phase 3 — noticing things*
 

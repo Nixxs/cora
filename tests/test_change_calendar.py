@@ -6,11 +6,11 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock
 
 from mail.account import GraphError
-from mail.calendar_events import Calendar, calendar_event, event_body
+from mail.calendar_events import Calendar, calendar_event, event_body, local_zone
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
 from tools.change_calendar import (
-    CANCEL_SCHEMA, CREATE_SCHEMA, UPDATE_SCHEMA, CancelEventTool, CreateEventTool, UpdateEventTool,
-    validate_cancel_arguments, validate_create_arguments, validate_update_arguments,
+    CANCEL_SCHEMA, CREATE_SCHEMA, UPDATE_SCHEMA, CancelEventTool, CreateEventTool, ForwardEventTool, UpdateEventTool,
+    validate_cancel_arguments, validate_create_arguments, validate_forward_arguments, validate_update_arguments,
 )
 import test_keyboard_persistence as keyboard_tests
 from test_email import FakeClient, FakeResponse
@@ -65,6 +65,56 @@ class GraphTests(unittest.IsolatedAsyncioTestCase):
         client = FakeClient([FakeResponse(404, {"error": {"code": "ErrorItemNotFound"}})])
         with self.assertRaises(LookupError):
             await Calendar(lambda: "tok", client).event("gone")
+
+
+FIRST_DAY = (datetime.now() + timedelta(days=30)).date()
+LAST_DAY = FIRST_DAY + timedelta(days=5)
+TRIP = {**NEW, "subject": "Family holiday", "start": FIRST_DAY.isoformat(), "end": LAST_DAY.isoformat(),
+        "location": "Kuala Lumpur", "attendees": []}
+
+
+def all_day_event(first=FIRST_DAY, days=6, organised=True):
+    def midnight(day):
+        return {"dateTime": f"{day.isoformat()}T00:00:00.0000000", "timeZone": local_zone()}
+    return {**graph_event(organised=organised, attendees=()), "subject": "Family holiday", "isAllDay": True,
+            "start": midnight(first), "end": midnight(first + timedelta(days=days))}
+
+
+class AllDayTests(unittest.IsolatedAsyncioTestCase):
+    def test_days_go_to_microsoft_as_midnights_in_your_zone_ending_the_day_after(self):
+        body = event_body(start=FIRST_DAY, end=LAST_DAY + timedelta(days=1))
+        self.assertEqual(body["start"], {"dateTime": f"{FIRST_DAY.isoformat()}T00:00:00", "timeZone": local_zone()})
+        self.assertEqual(body["end"]["dateTime"], f"{(LAST_DAY + timedelta(days=1)).isoformat()}T00:00:00")
+        self.assertTrue(body["isAllDay"])
+        self.assertFalse(event_body(start=SOON.astimezone(), end=LATER.astimezone())["isAllDay"])
+
+    async def test_a_trip_is_one_event_from_its_first_day_to_its_last(self):
+        tool = ToolTests.tool(self, CreateEventTool)
+        await tool.handle("c1", TRIP)
+        shown = self.confirm.await_args.args[2]
+        self.assertEqual(shown["when"], f"{FIRST_DAY:%a %d %b %Y} to {LAST_DAY:%a %d %b %Y}, all day")
+        _, start, end, *_ = self.calendar.create_event.await_args.args
+        self.assertEqual((start, end), (FIRST_DAY, LAST_DAY + timedelta(days=1)))
+        self.assertEqual(calendar_event(all_day_event()).when(),
+                         f"{FIRST_DAY:%a %d %b}, all day to {LAST_DAY:%a %d %b}")
+
+    async def test_all_day_events_are_checked(self):
+        for bad in ({**TRIP, "end": (FIRST_DAY - timedelta(days=1)).isoformat()},
+                    {**TRIP, "end": (FIRST_DAY + timedelta(days=31)).isoformat()},
+                    {**TRIP, "start": "2020-01-01", "end": "2020-01-02"}):
+            tool = ToolTests.tool(self, CreateEventTool)
+            await tool.handle("c1", bad)
+            self.confirm.assert_not_awaited()
+        with self.assertRaisesRegex(ValueError, "both"):
+            validate_create_arguments({**TRIP, "end": SLOT})
+
+    async def test_moving_a_trip_by_its_first_day_keeps_its_length(self):
+        tool = ToolTests.tool(self, UpdateEventTool, event=all_day_event())
+        moved = FIRST_DAY + timedelta(days=7)
+        await tool.handle("c1", {"event_id": "e1", **UNCHANGED, "start": moved.isoformat()})
+        changes = self.calendar.update_event.await_args.kwargs
+        self.assertEqual((changes["start"], changes["end"]), (moved, moved + timedelta(days=6)))
+        self.assertTrue(self.confirm.await_args.args[2]["now"].endswith("all day"))
 
 
 class ValidationTests(unittest.TestCase):
@@ -177,11 +227,41 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.changed.assert_not_called()
 
 
+class ForwardTests(unittest.IsolatedAsyncioTestCase):
+    async def test_an_invitation_can_be_forwarded_once_approved_showing_whose_it_is(self):
+        tool = ToolTests.tool(self, ForwardEventTool, event=graph_event(organised=False))
+        self.calendar.forward_event = AsyncMock()
+        arguments = {"event_id": "e1", "to": [{"address": "Nick@Example.com", "name": "Nick"}], "comment": "FYI"}
+        validate_forward_arguments(arguments)
+        await tool.handle("c1", arguments)
+        shown = self.confirm.await_args.args[2]
+        self.assertEqual(shown["forwarded to"], ["Nick <nick@example.com>"])
+        self.assertEqual((shown["organised by"], shown["comment"]), ("Cora <cora@intelligis.io>", "FYI"))
+        self.calendar.forward_event.assert_awaited_once_with("e1", [("nick@example.com", "Nick")], "FYI")
+        self.assertEqual(ToolTests.output(self)["status"], "ok")
+
+    async def test_declined_forwards_nothing_and_nobody_is_refused(self):
+        tool = ToolTests.tool(self, ForwardEventTool, outcome=DECLINED)
+        self.calendar.forward_event = AsyncMock()
+        await tool.handle("c1", {"event_id": "e1", "to": [{"address": "a@b.co", "name": None}], "comment": None})
+        self.calendar.forward_event.assert_not_awaited()
+        with self.assertRaises(ValueError):
+            validate_forward_arguments({"event_id": "e1", "to": [], "comment": None})
+
+    async def test_the_request_microsoft_gets(self):
+        client = FakeClient([FakeResponse(202, None)])
+        await Calendar(lambda: "tok", client).forward_event("e1", [("a@b.co", None), ("n@e.co", "Nick")], None)
+        method, url, body = client.sent[0]
+        self.assertEqual((method, url.split("/v1.0")[1]), ("POST", "/me/events/e1/forward"))
+        self.assertEqual(body, {"toRecipients": [{"emailAddress": {"address": "a@b.co"}},
+                                                 {"emailAddress": {"address": "n@e.co", "name": "Nick"}}], "comment": ""})
+
+
 class AppTests(unittest.IsolatedAsyncioTestCase):
     async def test_offered_where_you_talk_with_her_never_to_the_coordinator(self):
         async with keyboard_tests.running_app() as (app, pilot):
             names = [schema["name"] for schema in app.live.tool_schemas()]
-            for name in ("create_event", "update_event", "cancel_event"):
+            for name in ("create_event", "update_event", "cancel_event", "forward_event"):
                 self.assertIn(name, names)
             import app as app_module
             self.assertFalse({"create_event", "update_event", "cancel_event"}

@@ -1,4 +1,5 @@
-"""Cora's webhook listener: Microsoft Graph tells her mail has landed, and she checks for herself.
+"""Cora's webhook listener: Microsoft Graph tells her mail has landed or her calendar changed, and
+she checks for herself.
 
 It listens on 127.0.0.1 only; the person routes public HTTPS to it however they like (a reverse
 proxy, a tunnel). Every route sits under a secret path, and each notification must carry the
@@ -51,6 +52,12 @@ def mail_urls(public_url: str, path: str) -> tuple[str, str]:
     return base, f"{base}/lifecycle"
 
 
+def calendar_urls(public_url: str, path: str) -> tuple[str, str]:
+    """The notification and lifecycle URLs given to Microsoft for her calendar."""
+    base = f"{public_url.rstrip('/')}/webhooks/{path}/calendar"
+    return base, f"{base}/lifecycle"
+
+
 def matches(given, expected: str) -> bool:
     return isinstance(given, str) and hmac.compare_digest(given.encode(), expected.encode())
 
@@ -70,7 +77,8 @@ async def read_items(request: Request) -> list[dict] | None:
 
 
 def webhook_app(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[], None],
-                on_lifecycle: Callable[[str], None]) -> Starlette:
+                on_lifecycle: Callable[[str], None], on_calendar: Callable[[], None] = lambda: None,
+                on_calendar_lifecycle: Callable[[str], None] = lambda event: None) -> Starlette:
     """get_secrets() -> (path, clientState) as they are now, so new ones apply at once."""
     def handshake(request: Request) -> Response | None:
         # Graph proves the URL is ours before a subscription starts: echo its token, as plain text.
@@ -81,7 +89,8 @@ def webhook_app(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[]
             return Response(status_code=400)
         return PlainTextResponse(token)
 
-    async def notified(request: Request, lifecycle: bool) -> Response:
+    async def notified(request: Request, notify: Callable[[], None] | None,
+                       lifecycle: Callable[[str], None] | None = None) -> Response:
         path, client_state = get_secrets()
         if not matches(request.path_params["secret"], path):
             return Response(status_code=404)
@@ -91,18 +100,24 @@ def webhook_app(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[]
         if items is None:
             return Response(status_code=413)
         ours = [item for item in items if matches(item.get("clientState"), client_state)]
-        if lifecycle:
+        if lifecycle is not None:
             for event in {item.get("lifecycleEvent") for item in ours} & LIFECYCLE_EVENTS:
-                on_lifecycle(event)
+                lifecycle(event)
         elif ours:
-            on_mail()
+            notify()
         return Response(status_code=202)
 
     async def mail(request: Request) -> Response:
-        return await notified(request, lifecycle=False)
+        return await notified(request, on_mail)
 
     async def lifecycle(request: Request) -> Response:
-        return await notified(request, lifecycle=True)
+        return await notified(request, None, on_lifecycle)
+
+    async def calendar(request: Request) -> Response:
+        return await notified(request, on_calendar)
+
+    async def calendar_lifecycle(request: Request) -> Response:
+        return await notified(request, None, on_calendar_lifecycle)
 
     async def health(request: Request) -> Response:
         if not matches(request.path_params["secret"], get_secrets()[0]):
@@ -112,6 +127,8 @@ def webhook_app(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[]
     return Starlette(routes=[
         Route("/webhooks/{secret}/mail", mail, methods=["POST"]),
         Route("/webhooks/{secret}/mail/lifecycle", lifecycle, methods=["POST"]),
+        Route("/webhooks/{secret}/calendar", calendar, methods=["POST"]),
+        Route("/webhooks/{secret}/calendar/lifecycle", calendar_lifecycle, methods=["POST"]),
         Route("/webhooks/{secret}/health", health, methods=["GET"]),
     ])
 

@@ -19,6 +19,8 @@ from uuid import UUID
 
 import httpx2 as httpx
 import keyring
+
+from .formatting import email_fragment, email_html
 from keyring.errors import PasswordDeleteError
 
 CLIENT_ID_SETTING = "CORA_EMAIL_CLIENT_ID"
@@ -363,11 +365,13 @@ BODY_TAG = re.compile(r"<body[^>]*>", re.IGNORECASE)
 
 
 def reply_body(text: str, draft_body: dict) -> dict:
-    """Her plain text, escaped so none of it becomes markup, above the quote in Outlook's reply draft."""
+    """Her text, formatted (mail/formatting.py), above the quote in Outlook's reply draft."""
     quoted = draft_body.get("content") or ""
-    if draft_body.get("contentType", "").lower() != "html" or not quoted.strip():
-        return {"contentType": "Text", "content": text}
-    mine = "<div>" + html.escape(text).replace("\r\n", "\n").replace("\n", "<br>") + "</div><br>"
+    if not quoted.strip():
+        return {"contentType": "HTML", "content": email_html(text)}
+    if draft_body.get("contentType", "").lower() != "html":
+        quoted = "<div>" + html.escape(quoted).replace("\r\n", "\n").replace("\n", "<br>") + "</div>"
+    mine = email_fragment(text) + "<br>"
     tag = BODY_TAG.search(quoted)
     content = quoted[:tag.end()] + mine + quoted[tag.end():] if tag else mine + quoted
     return {"contentType": "HTML", "content": content}
@@ -430,10 +434,11 @@ class Mailbox:
         return await self._request("GET", path, params)
 
     async def send(self, address: str, name: str | None, subject: str, text: str) -> SentMail:
-        """A new plain-text email from her: saved as a draft first, so its thread is known, then sent."""
+        """A new email from her, formatted from her Markdown: saved as a draft first, so its thread is
+        known, then sent."""
         recipient = {"address": address} | ({"name": name} if name else {})
         draft = await self._request("POST", "/me/messages", body={
-            "subject": subject, "body": {"contentType": "Text", "content": text},
+            "subject": subject, "body": {"contentType": "HTML", "content": email_html(text)},
             "toRecipients": [{"emailAddress": recipient}],
         })
         await self._request("POST", f"/me/messages/{draft['id']}/send")
@@ -492,8 +497,10 @@ class Mailbox:
         }, headers=PLAIN_TEXT)
         return [inbox_mail(message) for message in page.get("value", [])]
 
-    async def subscribe(self, url: str, lifecycle_url: str, client_state: str, expires: datetime) -> MailSubscription:
-        """Graph calls `url` when mail lands in her inbox; any earlier subscription to it goes first.
+    async def subscribe(self, url: str, lifecycle_url: str, client_state: str, expires: datetime,
+                        resource: str = INBOX_RESOURCE, change_type: str = "created") -> MailSubscription:
+        """Graph calls `url` when mail lands in her inbox (or on changes to another resource, such as
+        her calendar's events); any earlier subscription to it goes first.
 
         Graph checks the URL answers its handshake before this returns, so the listener must be up.
         """
@@ -502,7 +509,7 @@ class Mailbox:
             if old.get("notificationUrl") == url and old.get("id"):
                 await self.unsubscribe(old["id"])
         made = await self._request("POST", "/subscriptions", body={
-            "changeType": "created", "resource": INBOX_RESOURCE, "notificationUrl": url,
+            "changeType": change_type, "resource": resource, "notificationUrl": url,
             "lifecycleNotificationUrl": lifecycle_url, "clientState": client_state,
             "expirationDateTime": graph_time(expires),
         })

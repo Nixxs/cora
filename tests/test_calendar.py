@@ -7,7 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 from mail.account import CALENDAR_SCOPES, SCOPES, SIGN_IN_SCOPES, EmailNotReady, access_token
 from mail.account import READY, EmailStatus, GraphError
-from mail.calendar_events import CALENDAR_CONTEXT_MAX_CHARS, Calendar, calendar_context, calendar_event
+from mail.calendar_events import (
+    CALENDAR_CONTEXT_MAX_CHARS, Calendar, calendar_context, calendar_event, event_time, local_zone,
+)
 from session_config import instruction_sections
 from tools.check_calendar import SCHEMA, CheckCalendarTool, validate_arguments
 import test_keyboard_persistence as keyboard_tests
@@ -42,7 +44,7 @@ class ScopeTests(unittest.TestCase):
 
 
 class EventTests(unittest.IsolatedAsyncioTestCase):
-    async def test_events_in_a_window_are_asked_for_in_utc_earliest_first(self):
+    async def test_events_in_a_window_are_asked_for_in_your_zone_earliest_first(self):
         client = FakeClient([FakeResponse(200, {"value": [EVENT]})])
         start = datetime(2026, 11, 2, tzinfo=timezone.utc)
         events = await Calendar(lambda: "tok", client).events(start, start + timedelta(days=1))
@@ -50,13 +52,20 @@ class EventTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(url.endswith("/me/calendarView"))
         self.assertEqual((params["startDateTime"], params["endDateTime"]), ("2026-11-02T00:00:00Z", "2026-11-03T00:00:00Z"))
         self.assertEqual(params["$orderby"], "start/dateTime")
-        self.assertEqual(headers["Prefer"], 'outlook.timezone="UTC"')
+        self.assertEqual(headers["Prefer"], f'outlook.timezone="{local_zone()}"')
         event = events[0]
         self.assertEqual(event.start, datetime(2026, 11, 2, 22, tzinfo=timezone.utc))
         self.assertEqual(event.location, "Bright Driving School")
         self.assertEqual(event.organizer, "Bright Driving School <info@school.example>")
         self.assertEqual(event.attendees, ("Cora <cora@intelligis.io>", "sarah@example.com"))
         self.assertEqual(len(event.preview), 200)
+
+    def test_times_in_your_zone_are_read_as_yours_and_utc_as_utc(self):
+        self.assertEqual(event_time({"dateTime": "2027-04-03T00:00:00.0000000", "timeZone": "W. Australia Standard Time"}),
+                         datetime(2027, 4, 3).astimezone())
+        self.assertEqual(event_time({"dateTime": "2027-04-03T00:00:00.0000000", "timeZone": "UTC"}),
+                         datetime(2027, 4, 3, tzinfo=timezone.utc))
+        self.assertTrue(local_zone())
 
     def test_when_is_in_local_time_and_all_day_events_are_dates(self):
         event = calendar_event(EVENT)

@@ -36,6 +36,16 @@ class MailArrivedEvent:
     occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@dataclass(frozen=True)
+class CalendarChangedEvent:
+    """Something changed in Cora's calendar (a webhook said so): an invitation, an update, a cancellation.
+    No content: whoever cares reads her calendar itself."""
+
+    source: str
+    event_id: UUID = field(default_factory=uuid4)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 Event = TypeVar("Event")
 
 

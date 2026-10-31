@@ -6,9 +6,9 @@ from .client_boundaries import (
 )
 from .check_email import CheckEmailTool, SCHEMA as CHECK_EMAIL_SCHEMA, validate_arguments as validate_check_email_arguments
 from .change_calendar import (
-    CANCEL_SCHEMA as CANCEL_EVENT_SCHEMA, CREATE_SCHEMA as CREATE_EVENT_SCHEMA, UPDATE_SCHEMA as UPDATE_EVENT_SCHEMA,
-    CancelEventTool, CreateEventTool, UpdateEventTool, validate_cancel_arguments, validate_create_arguments,
-    validate_update_arguments,
+    CANCEL_SCHEMA as CANCEL_EVENT_SCHEMA, CREATE_SCHEMA as CREATE_EVENT_SCHEMA, FORWARD_SCHEMA as FORWARD_EVENT_SCHEMA,
+    UPDATE_SCHEMA as UPDATE_EVENT_SCHEMA, CancelEventTool, CreateEventTool, ForwardEventTool, UpdateEventTool,
+    validate_cancel_arguments, validate_create_arguments, validate_forward_arguments, validate_update_arguments,
 )
 from .check_calendar import (
     CheckCalendarTool, SCHEMA as CHECK_CALENDAR_SCHEMA, validate_arguments as validate_check_calendar_arguments,
@@ -87,6 +87,7 @@ def create_tool_registry(
         (CREATE_EVENT_SCHEMA, validate_create_arguments, CreateEventTool),
         (UPDATE_EVENT_SCHEMA, validate_update_arguments, UpdateEventTool),
         (CANCEL_EVENT_SCHEMA, validate_cancel_arguments, CancelEventTool),
+        (FORWARD_EVENT_SCHEMA, validate_forward_arguments, ForwardEventTool),
     ):
         tool = tool_type(get_connection, is_closing, write_debug, get_calendar, confirm, calendar_changed)
         registry.register(schema, validate, tool.handle)

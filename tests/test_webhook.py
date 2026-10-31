@@ -20,7 +20,8 @@ from storage.webhook_settings_store import WebhookSettingsStore
 
 from mail import webhook
 from mail.account import READY, EmailStatus, GraphError, MailSubscription, Mailbox
-from mail.webhook import BODY_MAX_BYTES, WebhookServer, mail_urls, webhook_app, webhook_secrets
+from mail.calendar_events import Calendar
+from mail.webhook import BODY_MAX_BYTES, WebhookServer, calendar_urls, mail_urls, webhook_app, webhook_secrets
 from storage.webhook_settings_store import WebhookSettings, check_port, normalise_public_url
 import test_keyboard_persistence as keyboard_tests
 from test_email import FakeClient, FakeResponse
@@ -32,8 +33,11 @@ EXPIRES = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
 class WebhookAppTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.on_mail, self.on_lifecycle = MagicMock(), MagicMock()
+        self.on_calendar, self.on_calendar_lifecycle = MagicMock(), MagicMock()
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=webhook_app(lambda: (PATH, STATE), self.on_mail, self.on_lifecycle)),
+            transport=httpx.ASGITransport(app=webhook_app(
+                lambda: (PATH, STATE), self.on_mail, self.on_lifecycle, self.on_calendar, self.on_calendar_lifecycle,
+            )),
             base_url="http://test",
         )
 
@@ -73,6 +77,19 @@ class WebhookAppTests(unittest.IsolatedAsyncioTestCase):
         big = json.dumps({"value": ours, "pad": "x" * BODY_MAX_BYTES})
         self.assertEqual((await self.post(f"/webhooks/{PATH}/mail", content=big)).status_code, 413)
         self.on_mail.assert_not_called()
+
+    async def test_calendar_notifications_have_their_own_routes_under_the_same_secrets(self):
+        ours = [{"clientState": STATE, "changeType": "updated"}]
+        self.assertEqual((await self.post(f"/webhooks/{PATH}/calendar", validationToken="t")).text, "t")
+        self.assertEqual((await self.post(f"/webhooks/{PATH}/calendar", ours)).status_code, 202)
+        self.on_calendar.assert_called_once_with()
+        await self.post(f"/webhooks/{PATH}/calendar", [{"clientState": "nope"}])
+        self.assertEqual((await self.post("/webhooks/wrong/calendar", ours)).status_code, 404)
+        self.on_calendar.assert_called_once_with()
+        await self.post(f"/webhooks/{PATH}/calendar/lifecycle", [{"clientState": STATE, "lifecycleEvent": "missed"}])
+        self.on_calendar_lifecycle.assert_called_once_with("missed")
+        self.on_mail.assert_not_called()
+        self.on_lifecycle.assert_not_called()
 
     async def test_lifecycle_notes_are_passed_on_and_health_needs_the_path(self):
         await self.post(f"/webhooks/{PATH}/mail/lifecycle", [
@@ -176,6 +193,17 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "lifecycleNotificationUrl": lifecycle, "clientState": STATE, "expirationDateTime": "2026-11-02T09:00:00Z",
         })
 
+    async def test_her_calendar_is_subscribed_to_for_made_changed_and_deleted_events(self):
+        url, lifecycle = calendar_urls("https://cora.example.com", PATH)
+        self.assertEqual(url, f"https://cora.example.com/webhooks/{PATH}/calendar")
+        client = FakeClient([FakeResponse(200, {"value": []}),
+                             FakeResponse(201, {"id": "cal", "expirationDateTime": "2026-11-02T09:00:00Z"})])
+        made = await Calendar(lambda: "tok", client).subscribe_to_changes(url, lifecycle, STATE, EXPIRES)
+        self.assertEqual(made.id, "cal")
+        body = client.sent[1][2]
+        self.assertEqual((body["resource"], body["changeType"], body["notificationUrl"]),
+                         ("me/events", "created,updated,deleted", url))
+
     async def test_renewing_and_ending(self):
         client = FakeClient([FakeResponse(200, {"expirationDateTime": "2026-11-02T09:00:00Z"}), FakeResponse(204, None)])
         mailbox = Mailbox(lambda: "tok", client)
@@ -195,6 +223,10 @@ class WebhookAppWiringTests(unittest.IsolatedAsyncioTestCase):
         app.mailbox.subscribe = AsyncMock(return_value=MailSubscription("s1", EXPIRES))
         app.mailbox.renew = AsyncMock(return_value=MailSubscription("s1", EXPIRES))
         app.mailbox.unsubscribe = AsyncMock()
+        app.calendar = MagicMock()
+        app.calendar.subscribe_to_changes = AsyncMock(return_value=MailSubscription("c1", EXPIRES))
+        app.calendar.renew = AsyncMock(return_value=MailSubscription("c1", EXPIRES))
+        app.calendar.unsubscribe = AsyncMock()
         app.webhook_settings = WebhookSettings(True, "https://cora.example.com", 8000)
         app.webhook_secrets = (PATH, STATE)
         app.webhook_server = MagicMock()
@@ -279,6 +311,38 @@ class WebhookAppWiringTests(unittest.IsolatedAsyncioTestCase):
             await self.settle(app, pilot)
             self.assertEqual(len(runs), 2)
 
+    async def test_her_calendar_is_subscribed_alongside_mail_and_changes_refresh_her_week(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot)
+            app.mail_round()
+            await self.settle(app, pilot)
+            app.mailbox.subscribe.assert_awaited_once()
+            app.calendar.subscribe_to_changes.assert_awaited_once()
+            self.assertEqual(app.calendar.subscribe_to_changes.await_args.args[:3],
+                             (*calendar_urls("https://cora.example.com", PATH), STATE))
+            listening, detail, subscribed = app.webhook_controls.status() if app.webhook_controls else                 app.make_webhook_controls().status()
+            self.assertIn("Calendar: Microsoft tells Cora", detail)
+            app.refresh_calendar = MagicMock()
+            with patch.object(app_module(), "MAIL_NOTIFY_SECONDS", 0.05):
+                for _ in range(3):
+                    app.on_calendar_webhook()
+                await asyncio.sleep(0.2)
+                await pilot.pause()
+            app.refresh_calendar.assert_called_once_with()
+            await app.stop_webhooks()
+            app.calendar.unsubscribe.assert_awaited_once_with("c1")
+            self.assertEqual(app.calendar_subscription_status, "")
+
+    async def test_a_calendar_needing_another_sign_in_doesnt_stop_mail(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot)
+            app.calendar.subscribe_to_changes = AsyncMock(side_effect=account_not_ready())
+            app.mail_round()
+            await self.settle(app, pilot)
+            self.assertIsNotNone(app.mail_subscription)
+            self.assertIsNone(app.calendar_subscription)
+            self.assertIn("Calendar: not subscribed", app.calendar_subscription_status)
+
     async def test_stopping_ends_the_subscription_before_the_listener(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.ready(app, pilot)
@@ -320,6 +384,11 @@ class WebhookSettingsStoreDatabaseTests(unittest.TestCase):
         # The database holds the line too.
         with self.assertRaises(Exception), self.engine.begin() as connection:
             connection.execute(text("UPDATE public.webhook_settings SET public_url = 'http://x'"))
+
+
+def account_not_ready():
+    from mail.account import EmailNotReady
+    return EmailNotReady("Cora's calendar needs her signed in once more")
 
 
 def app_module():
