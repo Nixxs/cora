@@ -131,11 +131,12 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.add_task_party.assert_called_once_with(
                 task_id, EmailParty("x@y.example", None, "thread-2"), "Brief", "Emailed x@y.example: Hi")
 
-    async def test_offered_where_you_talk_with_her_but_never_to_contacts_or_the_coordinator(self):
+    async def test_offered_where_you_talk_with_her_and_to_the_coordinator_only_with_signal_approval(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.assertIn("send_email", [schema["name"] for schema in app.live.tool_schemas()])
             import app as app_module
             self.assertNotIn("send_email", app_module.COORDINATOR_TOOLS)
+            self.assertIn("send_email", app_module.COORDINATOR_SEND_TOOLS)
 
 
 if __name__ == "__main__":

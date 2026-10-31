@@ -10,6 +10,7 @@ refreshing a token) run off the event loop.
 
 import asyncio
 from dataclasses import dataclass
+import html
 import re
 from datetime import datetime
 from os import getenv
@@ -232,6 +233,20 @@ def thread_message(message: dict) -> MailMessage:
     )
 
 
+BODY_TAG = re.compile(r"<body[^>]*>", re.IGNORECASE)
+
+
+def reply_body(text: str, draft_body: dict) -> dict:
+    """Her plain text, escaped so none of it becomes markup, above the quote in Outlook's reply draft."""
+    quoted = draft_body.get("content") or ""
+    if draft_body.get("contentType", "").lower() != "html" or not quoted.strip():
+        return {"contentType": "Text", "content": text}
+    mine = "<div>" + html.escape(text).replace("\r\n", "\n").replace("\n", "<br>") + "</div><br>"
+    tag = BODY_TAG.search(quoted)
+    content = quoted[:tag.end()] + mine + quoted[tag.end():] if tag else mine + quoted
+    return {"contentType": "HTML", "content": content}
+
+
 @dataclass(frozen=True)
 class SentMail:
     id: str
@@ -275,11 +290,12 @@ class Mailbox:
         return SentMail(draft["id"], draft["conversationId"])
 
     async def reply(self, message_id: str, address: str, name: str | None, text: str) -> SentMail:
-        """A plain-text reply in that message's thread, to the one address given (never reply-all)."""
+        """A reply in that message's thread, to the one address given (never reply-all): her text on
+        top of the earlier mail Outlook quotes below, as anyone's reply looks."""
         draft = await self._request("POST", f"/me/messages/{message_id}/createReply")
         recipient = {"address": address} | ({"name": name} if name else {})
         await self._request("PATCH", f"/me/messages/{draft['id']}", body={
-            "body": {"contentType": "Text", "content": text}, "toRecipients": [{"emailAddress": recipient}],
+            "body": reply_body(text, draft.get("body") or {}), "toRecipients": [{"emailAddress": recipient}],
             "ccRecipients": [], "bccRecipients": [],
         })
         await self._request("POST", f"/me/messages/{draft['id']}/send")

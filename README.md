@@ -801,8 +801,13 @@ met she closes the task and tells you the outcome; if someone declined or needs
 something from you, she says plainly what happened, suggests a next step
 (searching if it helps) and asks what you'd like, and the task waits on you; if
 others are still to answer, she just tells you what came in. It reaches you by
-voice or on Signal like a heads-up, in her own words. She never contacts anyone
-new on her own: she suggests it, and your yes goes through the usual approval.
+voice or on Signal like a heads-up, in her own words. When asking someone new
+(or writing to someone again) is clearly the next step, she can message or
+email them for the task herself, but only with your YES on Signal: she sends
+you exactly who, what and the brief, one request at a time, and nothing goes
+until you answer. If you don't answer within 10 minutes nothing is sent, the
+task waits on you with a note, and she tells you once; you can say yes to a
+fresh request later. Without Signal linked she suggests it instead.
 If the coordinator fails, the answer reaches you as it came; if you can't be
 reached, the hourly round tries again. Your chats with her (desk, voice and your Signal chat) know your open tasks
 and those finished in the last three days, so "what did Sarah say?" works later
@@ -1295,8 +1300,9 @@ features it helps check, and package last.
     - [x] T3 E3a the mail check (every 10 minutes): replies in task threads are
       answered within the brief and reach the coordinator through `pass_on`;
       `send_email` without a subject replies in the thread; strangers only within a task
-    - [ ] T3 E3b background approvals on Signal: work Cora starts herself (the
-      coordinator) asks you on Signal, so she can email or message someone new mid-task
+    - [x] T3 E3b background approvals on Signal: the coordinator may use
+      `send_signal_message` and `send_email`, each approved by your YES on
+      Signal (10 minutes, one request at a time; a lapsed one waits on you)
     - [ ] T3 E4 email nudges after two working days, and bounces back to you
     - [ ] T4 new-mail events through awareness (later, with item 14): a webhook
       listener at https://cora.intelligis.io (port 8000 on Cora's PC) receives
@@ -1601,11 +1607,15 @@ features it helps check, and package last.
     add them as a party) or tells the person. Only it starts new contact.
     Built in T2b (`coordinate_task` in [app.py](app.py)): the turn sees the
     task's goal, every party's brief and word, and its latest steps, and may
-    search the web and memory and use `close_task`, nothing else. A report never
+    search the web and memory and use `close_task`. A report never
     closes a task by itself. Once the person is told, the task waits on them
-    unless someone is still to answer (a question always waits on them). For
-    now it suggests new contact rather than starting it, so the person's yes goes
-    through the normal approval; background approvals can come later. If the turn
+    unless someone is still to answer (a question always waits on them). Built
+    in E3b (`coordinator_route`): while Signal is linked it may also use
+    `send_signal_message` and `send_email` for the task, each asked in the
+    person's Signal chat (`signal_approval_asker`, one request at a time across
+    their chat and the coordinator, 10 minutes). A lapsed request sends nothing
+    and the task waits on the person with a note; without Signal it suggests
+    new contact instead. If the turn
     fails, the report reaches the person as it came; if they can't be reached, a
     task nobody is left to answer is retried in the hourly round.
   - *Before creating a task* she asks the person for details she knows she'll need

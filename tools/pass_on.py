@@ -59,6 +59,9 @@ def validate_arguments(arguments: dict) -> None:
 
 
 class PassOnTool:
+    # Tools built on this one (close_task, raise_concern, stop_replying) check their own arguments.
+    validate = staticmethod(validate_arguments)
+
     def __init__(self, get_connection, is_closing, write_debug, relay, relay_email=None):
         self.get_connection = get_connection
         self.is_closing = is_closing
@@ -96,7 +99,7 @@ class PassOnTool:
             connection = self.get_connection()
             if connection is None:
                 return
-            validate_arguments(arguments)
+            self.validate(arguments)
             try:
                 result = await self.result(connection, arguments)
             except Exception as error:

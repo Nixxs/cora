@@ -60,6 +60,18 @@ class MailboxTests(unittest.IsolatedAsyncioTestCase):
             "ccRecipients": [], "bccRecipients": [],
         })
 
+    async def test_her_text_goes_above_the_quoted_mail_and_never_becomes_markup(self):
+        quoted = '<html><head></head><body dir="ltr"><div id="quote">From: Nick</div></body></html>'
+        client = FakeClient([FakeResponse(201, {"id": "r1", "conversationId": "c1",
+                                                "body": {"contentType": "html", "content": quoted}}),
+                             FakeResponse(200, {}), FakeResponse(202, None)])
+        await Mailbox(lambda: "tok", client).reply("m1", SCHOOL, None, "Hi Nick,\n\nTuesday <b>works</b>.\nCora")
+        body = client.sent[1][2]["body"]
+        self.assertEqual(body, {"contentType": "HTML", "content": (
+            '<html><head></head><body dir="ltr"><div>Hi Nick,<br><br>Tuesday &lt;b&gt;works&lt;/b&gt;.<br>Cora</div>'
+            '<br><div id="quote">From: Nick</div></body></html>'
+        )})
+
     async def test_replying_in_a_thread_that_is_gone_says_so(self):
         client = FakeClient([FakeResponse(200, {"value": []})])
         with self.assertRaises(LookupError):

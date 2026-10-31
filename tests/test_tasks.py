@@ -1,8 +1,10 @@
 """Tasks with other people: started with an approved message and a brief, answered through pass_on."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -207,7 +209,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await app.workers.wait_for_complete()
 
-    async def test_an_answer_goes_through_a_turn_in_your_context_that_can_only_search_and_close(self):
+    async def test_an_answer_goes_through_a_turn_in_your_context_that_asks_you_on_signal_before_sending(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.linked(app)
             app.persistence.load_tasks_context.return_value = '[{"goal": "Lesson for Sarah"}]'
@@ -216,15 +218,64 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             await self.settle(app, pilot)
             kwargs = app.backend_chat.reply.await_args.kwargs
             note = kwargs["content"][0]["text"]
-            self.assertIn("Never message anyone yourself", note)
+            self.assertIn("nothing goes without their YES", note)
             self.assertEqual(json.loads(note[note.index("{"):]), {"news": "Sarah answered: Tuesdays", "task": self.TASK})
             self.assertIn("Lesson for Sarah", kwargs["sections"]["tasks"])
-            self.assertEqual(frozenset(app.tools.names()) - kwargs["route"].excluded, {"search_memory", "close_task"})
+            route = kwargs["route"]
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded,
+                             {"search_memory", "close_task", "send_signal_message", "send_email"})
+            self.assertIsNotNone(route.ask_approval)
+            self.assertEqual(route.approval_seconds, app_module.APPROVAL_SECONDS)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
             # Once told, it waits on the person unless someone is still to answer.
             app.persistence.task_needs_person.assert_called_once_with(
                 task_id, "Told them the news and asked what next.", True)
             self.assertEqual(app.tasks_coordinating, set())
+
+    async def test_without_signal_to_ask_you_on_it_only_searches_and_closes(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            app.signal.status = SignalStatus("not_linked")
+            route = app.coordinator_route([])
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded, {"search_memory", "close_task"})
+            self.assertIsNone(route.ask_approval)
+
+    async def test_a_request_you_dont_answer_in_time_sends_nothing_and_the_task_waits_on_you(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            async def turn(**kwargs):
+                # As the confirmation does: the request lapses unanswered.
+                request = SimpleNamespace(title="Signal", tool="send_signal_message", arguments={"to": "Karene"})
+                with self.assertRaises(TimeoutError):
+                    await asyncio.wait_for(kwargs["route"].ask_approval(request), 0.05)
+                return "Sarah can't do it. I asked about Karene, but didn't hear back from you."
+
+            self.linked(app, reply=AsyncMock(side_effect=turn))
+            task_id = uuid4()
+            app.coordinate_task(task_id, "Sarah answered: no", "From Sarah: no")
+            await self.settle(app, pilot)
+            sent = [call.args[2] for call in app.signal.client.send.await_args_list]
+            self.assertEqual(len(sent), 2)
+            self.assertIn("Reply YES", sent[0])
+            self.assertEqual(sent[1], "Sarah can't do it. I asked about Karene, but didn't hear back from you.")
+            self.assertEqual(app.signal_approvals, {})
+            app.persistence.task_needs_person.assert_called_once_with(task_id, app_module.COORDINATOR_LAPSED, False)
+
+    async def test_one_request_waits_on_signal_at_a_time_and_your_yes_answers_the_one_shown(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            ask = app.signal_approval_asker(CORA, NICK, NICK)
+            first = asyncio.create_task(ask(SimpleNamespace(title="Signal", tool="send_signal_message", arguments={"to": "A"})))
+            second = asyncio.create_task(ask(SimpleNamespace(title="Email", tool="send_email", arguments={"to": "b@x.example"})))
+            await pilot.pause()
+            self.assertEqual(app.signal.client.send.await_count, 1)
+            self.assertIn('"A"', app.signal.client.send.await_args.args[2])
+            app.signal_approvals[NICK].set_result(True)
+            self.assertTrue(await first)
+            await pilot.pause()
+            self.assertEqual(app.signal.client.send.await_count, 2)
+            self.assertIn("b@x.example", app.signal.client.send.await_args.args[2])
+            app.signal_approvals[NICK].set_result(False)
+            self.assertFalse(await second)
 
     async def test_a_question_always_waits_on_you(self):
         async with keyboard_tests.running_app() as (app, pilot):
