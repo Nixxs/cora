@@ -3,11 +3,11 @@
 from datetime import datetime, timedelta, timezone
 import json
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from backend_chat import BackendRoute
-from mail.account import READY, EmailNotReady, EmailStatus, MailMessage, Mailbox, SentMail
+from mail.account import READY, Bounce, EmailNotReady, EmailStatus, MailMessage, Mailbox, SentMail
 from session_config import NO_REPLY, email_party_instructions
 from storage.task_store import EmailThread
 from tools.pass_on import PassOnTool
@@ -71,6 +71,22 @@ class MailboxTests(unittest.IsolatedAsyncioTestCase):
             '<html><head></head><body dir="ltr"><div>Hi Nick,<br><br>Tuesday &lt;b&gt;works&lt;/b&gt;.<br>Cora</div>'
             '<br><div id="quote">From: Nick</div></body></html>'
         )})
+
+    async def test_bounces_are_inbox_failure_reports_since_she_wrote(self):
+        def report(id, subject):
+            return {"id": id, "conversationId": "c1", "subject": subject, "receivedDateTime": "2026-10-30T10:00:00Z",
+                    "body": {"content": f"Couldn't deliver to {SCHOOL}"}}
+        client = FakeClient([FakeResponse(200, {"value": [
+            report("n1", "Undeliverable: Lesson times"), report("n2", "Delivery Status Notification (Failure)"),
+            report("m1", "RE: Undeliverable times?"), report("d1", "Delivery delayed: Lesson times"),
+        ]})])
+        bounces = await Mailbox(lambda: "tok", client).bounces(SENT_AT)
+        self.assertEqual([bounce.id for bounce in bounces], ["n1", "n2"])
+        self.assertTrue(bounces[0].names(SCHOOL) and not bounces[0].names("o@school.example"))
+        url, params, headers = client.calls[0]
+        self.assertTrue(url.endswith("/me/mailFolders/inbox/messages"))
+        self.assertEqual(params["$filter"], "receivedDateTime ge 2026-10-30T09:00:00Z")
+        self.assertEqual(headers["Prefer"], 'outlook.body-content-type="text"')
 
     async def test_replying_in_a_thread_that_is_gone_says_so(self):
         client = FakeClient([FakeResponse(200, {"value": []})])
@@ -149,6 +165,7 @@ class MailCheckAppTests(unittest.IsolatedAsyncioTestCase):
         app.mailbox.thread = AsyncMock(return_value=messages)
         app.mailbox.reply = AsyncMock(return_value=SentMail("r1", "c1"))
         app.mailbox.mark_read = AsyncMock()
+        app.mailbox.bounces = AsyncMock(return_value=[])
         app.backend_chat.reply = AsyncMock(return_value=reply) if isinstance(reply, str) else reply
         app.task_needs_person = AsyncMock()
 
@@ -241,6 +258,86 @@ class MailCheckAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(news, "Bright School answered: Tuesdays")
             self.assertIn("by email, via Cora", fallback)
 
+    async def test_a_bounce_is_never_answered_and_brings_the_task_back_to_the_person(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            bounce = MailMessage("n1", "Microsoft Outlook", "postmaster@outlook.com", "Undeliverable: Lesson times",
+                                 SENT_AT + timedelta(minutes=1), "Your message couldn't be delivered.")
+            await self.ready(app, pilot, [mail("m1", CORA, 0), bounce])
+            app.mailbox.bounces = AsyncMock(return_value=[Bounce("n1", "c1", bounce.received_at, bounce.text)])
+            thread = self.thread(contacted_at=SENT_AT)
+            app.persistence.load_email_threads.return_value = [thread]
+            await app.read_task_mail()
+            app.backend_chat.reply.assert_not_awaited()
+            app.mailbox.bounces.assert_awaited_once_with(SENT_AT)
+            app.persistence.task_email_bounced.assert_called_once_with(thread.party_id, "My email to Bright School bounced.")
+            app.mailbox.mark_read.assert_awaited_once_with("n1")
+            app.task_needs_person.assert_awaited_once()
+            self.assertIn("bounced", app.task_needs_person.await_args.args[2])
+
+    async def test_a_bounce_elsewhere_counts_only_if_it_names_them_and_came_after_she_wrote(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot, [])
+            app.mailbox.bounces = AsyncMock(return_value=[
+                Bounce("n1", "other", SENT_AT - timedelta(minutes=1), f"Couldn't deliver to {SCHOOL}."),
+                Bounce("n2", "other", SENT_AT + timedelta(minutes=1), "Couldn't deliver to my-info@school.example."),
+            ])
+            app.persistence.load_email_threads.return_value = [
+                self.thread(contacted_at=SENT_AT), self.thread(contacted_at=SENT_AT, waiting=False)]
+            await app.read_task_mail()
+            app.persistence.task_email_bounced.assert_not_called()
+            app.mailbox.bounces.return_value.append(
+                Bounce("n3", "other", SENT_AT + timedelta(minutes=2), f"Your message to {SCHOOL.upper()}. failed"))
+            await app.read_task_mail()
+            app.persistence.task_email_bounced.assert_called_once()
+            app.mailbox.mark_read.assert_awaited_once_with("n3")
+
+
+class EmailFollowUpTests(unittest.IsolatedAsyncioTestCase):
+    thread = MailCheckAppTests.thread
+    ready = MailCheckAppTests.ready
+
+    async def test_a_quiet_party_gets_one_short_follow_up_in_their_thread(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot, [mail("m1", CORA, 0, "Hi, lesson times? Cora")],
+                             reply="Just following up on lesson times. Cora")
+            thread = self.thread()
+            await app.nudge_email_party(thread)
+            kwargs = app.backend_chat.reply.await_args.kwargs
+            self.assertIn(str(thread.task_id), kwargs["content"][0]["text"])
+            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()))
+            self.assertEqual([item["role"] for item in kwargs["history"]], ["assistant"])
+            app.mailbox.reply.assert_awaited_once_with("m1", SCHOOL, "Bright School", "Just following up on lesson times. Cora")
+            app.persistence.record_task_nudge.assert_called_once_with(
+                thread.party_id, "Followed up with Bright School by email: Just following up on lesson times. Cora")
+
+    async def test_no_follow_up_over_an_unread_reply_or_when_she_has_nothing_to_say(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot, [mail("m1", CORA, 0), mail("m2", SCHOOL, 30)])
+            await app.nudge_email_party(self.thread())
+            app.backend_chat.reply.assert_not_awaited()
+            await self.ready(app, pilot, [mail("m1", CORA, 0)], reply=NO_REPLY)
+            await app.nudge_email_party(self.thread())
+            app.mailbox.reply.assert_not_awaited()
+            app.persistence.record_task_nudge.assert_not_called()
+
+    async def test_the_hourly_round_follows_up_by_email_and_after_two_comes_back_to_you(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot, [])
+            app.nudge_email_party = AsyncMock()
+            quiet, ignored = self.thread(), self.thread(nudges=2)
+            app.persistence.load_task_checks.return_value = ([], [], [], [quiet, ignored])
+            with patch.object(app_module(), "NUDGE_HOURS", range(0, 24)):
+                app.check_tasks()
+                for _ in range(3):
+                    await pilot.pause()
+                    await app.workers.wait_for_complete()
+            if datetime.now().astimezone().weekday() == 6:
+                app.nudge_email_party.assert_not_awaited()
+            else:
+                app.nudge_email_party.assert_awaited_once_with(quiet)
+            app.task_needs_person.assert_awaited_once()
+            self.assertIn("even after 2 follow-ups", app.task_needs_person.await_args.args[2])
+
 
 class InstructionTests(unittest.TestCase):
     def test_the_thread_knows_who_its_with_and_how_to_say_nothing(self):
@@ -250,9 +347,13 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("untrusted", text)
 
 
+def app_module():
+    import app
+    return app
+
+
 def app_module_limit():
-    import app as app_module
-    return app_module.EMAIL_REPLIES_PER_DAY
+    return app_module().EMAIL_REPLIES_PER_DAY
 
 
 if __name__ == "__main__":

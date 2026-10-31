@@ -24,7 +24,7 @@ from storage.client_store import Client, ClientStore
 from storage.database import build_engine
 from storage.models import TaskPartyRecord, TaskRecord
 from storage.signal_settings_store import SignalSettings
-from storage.task_store import EmailParty, QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS
+from storage.task_store import EmailParty, QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS, email_nudge_due
 from tools.close_task import validate_arguments as validate_close_arguments
 from tools.send_signal_message import SendSignalMessageTool, validate_arguments
 import test_keyboard_persistence as keyboard_tests
@@ -98,6 +98,15 @@ class TaskToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't be saved", self.output()["message"])
 
 
+class EmailNudgeDueTests(unittest.TestCase):
+    def test_two_working_days_skip_sunday(self):
+        friday = datetime(2026, 10, 30, 10).astimezone()
+        saturday, monday = friday + timedelta(days=1), friday + timedelta(days=3)
+        self.assertEqual(email_nudge_due(friday), monday)
+        self.assertEqual(email_nudge_due(saturday), monday + timedelta(days=1))
+        self.assertEqual(email_nudge_due(monday), monday + timedelta(days=2))
+
+
 class TaskSectionTests(unittest.TestCase):
     def test_the_person_sees_tasks_and_a_party_sees_only_their_brief(self):
         mine = instruction_sections(tasks_context='[{"goal": "g"}]')["tasks"]
@@ -124,7 +133,7 @@ class TaskCheckAppTests(unittest.IsolatedAsyncioTestCase):
         return QuietParty(uuid4(), uuid4(), person_id, name, "Lesson for Sarah", "When suits her", nudges, last_message_at)
 
     async def check(self, app, pilot, quiet=(), stale=(), hours=range(0, 24), unsettled=()):
-        app.persistence.load_task_checks.return_value = (list(quiet), list(stale), list(unsettled))
+        app.persistence.load_task_checks.return_value = (list(quiet), list(stale), list(unsettled), [])
         with patch.object(app_module, "NUDGE_HOURS", hours):
             app.check_tasks()
             for _ in range(3):
@@ -311,7 +320,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.linked(app)
             busy, waiting = uuid4(), uuid4()
             app.tasks_coordinating.add(busy)
-            app.persistence.load_task_checks.return_value = ([], [], [(busy, "Busy"), (waiting, "Lesson for Sarah")])
+            app.persistence.load_task_checks.return_value = ([], [], [(busy, "Busy"), (waiting, "Lesson for Sarah")], [])
             app.check_tasks()
             await self.settle(app, pilot)
             self.assertEqual(app.persistence.task_coordination.call_args_list, [((waiting,),)])
@@ -559,6 +568,27 @@ class TaskStoreDatabaseTests(unittest.TestCase):
             self.tasks.report_email(uuid4(), thread.party_id, "x")
         self.tasks.close(task_id, "done", "Booked")
         self.assertEqual((self.tasks.email_threads(), self.tasks.email_thread(task_id, "info@school.example")), ([], None))
+
+    def test_email_parties_are_followed_up_after_two_working_days_and_a_bounce_ends_their_part(self):
+        now = datetime.now(timezone.utc)
+        task_id = self.tasks.start("Book a lesson", EmailParty("info@school.example", "Bright School", "thread-1"),
+                                   "Times and price", "Emailed Bright School: Hi")
+        self.tasks.add_party(task_id, self.sarah.id, "When suits her", "Asked Sarah")
+        self.assertEqual(self.tasks.quiet_email_parties(now), [])
+        # Four days back is always at least two working days, whichever day one is Sunday.
+        self.age(task_id, contacted_at=now - timedelta(days=4))
+        [thread] = self.tasks.quiet_email_parties(now)
+        self.assertEqual((thread.task_id, thread.address, thread.nudges, thread.waiting), (task_id, "info@school.example", 0, True))
+        # Signal parties keep their own day-long nudges.
+        self.assertEqual([party.name for party in self.tasks.quiet_parties(now)], ["Sarah"])
+        self.tasks.record_nudge(thread.party_id, "Followed up with Bright School by email: any news?")
+        self.assertEqual(self.tasks.quiet_email_parties(now), [])
+        self.tasks.email_bounced(thread.party_id, "My email to Bright School bounced.")
+        [thread] = self.tasks.email_threads()
+        self.assertFalse(thread.waiting)
+        self.assertEqual(self.steps(task_id)[-1], "My email to Bright School bounced.")
+        with self.assertRaises(LookupError):
+            self.tasks.email_bounced(thread.party_id, "again")
 
     def test_a_task_waits_on_the_person_unless_someone_is_still_to_answer(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")

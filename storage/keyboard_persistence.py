@@ -102,9 +102,12 @@ class KeyboardPersistence:
 
     def load_task_checks(
         self, now: datetime,
-    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]]]:
+    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]], list[EmailThread]]:
         store = TaskStore(self._get_store().engine)
-        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks()
+        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks(), store.quiet_email_parties(now)
+
+    def task_email_bounced(self, party_id: UUID, step: str) -> None:
+        TaskStore(self._get_store().engine).email_bounced(party_id, step)
 
     def record_task_nudge(self, party_id: UUID, step: str) -> None:
         TaskStore(self._get_store().engine).record_nudge(party_id, step)

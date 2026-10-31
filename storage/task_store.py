@@ -31,6 +31,10 @@ RECENTLY_CLOSED = timedelta(days=3)
 # this many unanswered nudges, the task goes back to the person instead.
 NUDGE_AFTER = timedelta(days=1)
 TASK_NUDGES_MAX = 2
+# By email, a party is followed up after this many working days instead (every day but Sunday).
+EMAIL_NUDGE_WORKING_DAYS = 2
+SUNDAY = 6
+BOUNCED = "Their email bounced, so it never reached them."
 # A task this long without progress (an answer, someone asked, the person's word) goes back to the person.
 STALE_AFTER = timedelta(days=7)
 NOTE_MAX_CHARS = 1000
@@ -93,6 +97,20 @@ class EmailThread:
     brief: str
     thread_id: str
     since: datetime
+    # When she first or last wrote to them for it, whether their part is still open, and follow-ups sent.
+    contacted_at: datetime | None = None
+    waiting: bool = True
+    nudges: int = 0
+
+
+def email_nudge_due(since: datetime) -> datetime:
+    """EMAIL_NUDGE_WORKING_DAYS working days after `since`, counting every day but Sunday, in local time."""
+    due, counted = since.astimezone(), 0
+    while counted < EMAIL_NUDGE_WORKING_DAYS:
+        due += timedelta(days=1)
+        if due.weekday() != SUNDAY:
+            counted += 1
+    return due
 
 
 # A party as the person and Cora see them: a contact's name, else an email party's name or address.
@@ -214,19 +232,44 @@ class TaskStore:
             task.updated_at = func.current_timestamp()
             return task.goal
 
-    def email_threads(self) -> list[EmailThread]:
+    def email_threads(self, *where) -> list[EmailThread]:
         """Every email party of an open task with a thread, for the mail check, oldest task first."""
         since = func.greatest(TaskPartyRecord.contacted_at, TaskPartyRecord.last_heard_at)
         with Session(self.engine) as session:
             rows = session.execute(
                 select(TaskPartyRecord.id, TaskRecord.id, TaskRecord.goal, TaskPartyRecord.address,
-                       TaskPartyRecord.name, TaskPartyRecord.brief, TaskPartyRecord.thread_id, since)
+                       TaskPartyRecord.name, TaskPartyRecord.brief, TaskPartyRecord.thread_id, since,
+                       TaskPartyRecord.contacted_at, TaskPartyRecord.status == "waiting", TaskPartyRecord.nudges)
                 .join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
                 .where(TaskRecord.status.in_(OPEN), TaskPartyRecord.channel == "email",
-                       TaskPartyRecord.thread_id.is_not(None))
+                       TaskPartyRecord.thread_id.is_not(None), *where)
                 .order_by(TaskRecord.created_at, TaskPartyRecord.contacted_at)
             ).all()
         return [EmailThread(*row) for row in rows]
+
+    def quiet_email_parties(self, now: datetime) -> list[EmailThread]:
+        """Email parties of waiting tasks quiet for EMAIL_NUDGE_WORKING_DAYS since asked, heard from or followed up."""
+        quiet = func.greatest(TaskPartyRecord.contacted_at, TaskPartyRecord.last_heard_at, TaskPartyRecord.nudged_at)
+        with Session(self.engine) as session:
+            due = {party_id for party_id, since in session.execute(
+                select(TaskPartyRecord.id, quiet).join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
+                .where(TaskRecord.status == "waiting", TaskPartyRecord.status == "waiting",
+                       TaskPartyRecord.channel == "email")
+            ).all() if email_nudge_due(since) <= now}
+        if not due:
+            return []
+        return self.email_threads(TaskRecord.status == "waiting", TaskPartyRecord.id.in_(due))
+
+    def email_bounced(self, party_id: UUID, step: str) -> None:
+        """Their email couldn't be delivered: their part is over. LookupError unless they're still waiting on an open task."""
+        with Session(self.engine) as session, session.begin():
+            party = session.get(TaskPartyRecord, party_id, with_for_update=True)
+            task = party and session.get(TaskRecord, party.task_id, with_for_update=True)
+            if task is None or task.status not in OPEN or party.status != "waiting":
+                raise LookupError("Not waiting on an open task")
+            party.status, party.outcome = "done", BOUNCED
+            task.updated_at = func.current_timestamp()
+            self._step(session, task.id, step)
 
     def email_heard(self, party_id: UUID, at: datetime) -> None:
         """Mail in their thread up to `at` (Microsoft's received time) has been read; never moves back."""
@@ -389,7 +432,8 @@ class TaskStore:
                 # As quiet_parties counts it: from whichever came last of asked, heard from and nudged.
                 since = max((time for time in (party.contacted_at, party.last_heard_at, party.nudged_at) if time),
                             default=None)
-                due = since and since + NUDGE_AFTER
+                if since is not None:
+                    due = email_nudge_due(since) if party.channel == "email" else since + NUDGE_AFTER
             by_task.setdefault(party.task_id, []).append(PartyView(name, party.status, party.nudges, due))
         return [TaskView(
             task.goal, task.status, task.created_at,

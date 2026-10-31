@@ -12,7 +12,7 @@ import asyncio
 from dataclasses import dataclass
 import html
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from os import getenv
 from pathlib import Path
 from uuid import UUID
@@ -38,6 +38,13 @@ REQUEST_SECONDS = 20
 PREVIEW_MAX_CHARS = 300
 # A thread as she reads it: its latest messages, each cut to this much of its own new text.
 THREAD_MESSAGES_MAX = 20
+# Delivery failure reports, by their subject (Microsoft's own, and other mail servers' for late bounces).
+BOUNCE_SUBJECT = re.compile(
+    r"^\s*(undeliverable|undelivered mail|delivery status notification \(failure\)|mail delivery failed"
+    r"|returned mail|delivery has failed|delivery failure|failure notice)", re.IGNORECASE,
+)
+BOUNCES_MAX = 50
+PLAIN_TEXT = {"Prefer": 'outlook.body-content-type="text"'}
 MESSAGE_TEXT_MAX_CHARS = 4000
 SIGN_IN_HINT = "sign her in again in Settings > Services > Email"
 
@@ -233,6 +240,23 @@ def thread_message(message: dict) -> MailMessage:
     )
 
 
+def is_bounce(message) -> bool:
+    """A delivery failure report, not someone's mail."""
+    return bool(BOUNCE_SUBJECT.match(message.subject or ""))
+
+
+@dataclass(frozen=True)
+class Bounce:
+    """A report that her mail couldn't be delivered: in its thread, or naming the address in its text."""
+    id: str
+    thread_id: str
+    received_at: datetime
+    text: str
+
+    def names(self, address: str) -> bool:
+        return re.search(rf"(?<![\w.+-]){re.escape(address)}(?![\w-]|\.\w)", self.text, re.IGNORECASE) is not None
+
+
 BODY_TAG = re.compile(r"<body[^>]*>", re.IGNORECASE)
 
 
@@ -307,7 +331,7 @@ class Mailbox:
         page = await self._request("GET", "/me/messages", params={
             "$filter": f"conversationId eq '{quoted}'", "$top": "50",
             "$select": "id,from,subject,receivedDateTime,uniqueBody,isDraft",
-        }, headers={"Prefer": 'outlook.body-content-type="text"'})
+        }, headers=PLAIN_TEXT)
         messages = [message for message in page.get("value", []) if not message.get("isDraft")]
         return sorted(map(thread_message, messages), key=lambda message: message.received_at)[-THREAD_MESSAGES_MAX:]
 
@@ -317,6 +341,20 @@ class Mailbox:
         if not messages:
             raise LookupError("That email thread is gone")
         return await self.reply(messages[-1].id, address, name, text)
+
+    async def bounces(self, since: datetime) -> list[Bounce]:
+        """Delivery failure reports in her inbox received since then, newest first. Nothing is marked read."""
+        page = await self._request("GET", "/me/mailFolders/inbox/messages", params={
+            "$filter": f"receivedDateTime ge {since.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+            "$orderby": "receivedDateTime desc", "$top": str(BOUNCES_MAX),
+            "$select": "id,conversationId,subject,receivedDateTime,body",
+        }, headers=PLAIN_TEXT)
+        return [
+            Bounce(message["id"], message.get("conversationId") or "",
+                   datetime.fromisoformat(message["receivedDateTime"].replace("Z", "+00:00")),
+                   (message.get("body") or {}).get("content") or "")
+            for message in page.get("value", []) if BOUNCE_SUBJECT.match(message.get("subject") or "")
+        ]
 
     async def mark_read(self, message_id: str) -> None:
         await self._request("PATCH", f"/me/messages/{message_id}", body={"isRead": True})

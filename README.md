@@ -819,7 +819,13 @@ someone she asked has been quiet for about a day (since she asked, they last
 wrote or she last nudged them), she sends one short, friendly follow-up in their
 chat, written in that chat's own context and within the brief, so it needs no
 approval. Nudges go out only between 9am and 7pm and never while a chat with
-them is going on (nothing either way for half an hour). After two unanswered
+them is going on (nothing either way for half an hour). Someone she emailed
+for a task is followed up after two working days instead (every day but
+Sunday counts), as a reply in her thread with them, between 9am and 7pm and
+never on a Sunday, and never over a reply she hasn't read yet. If an email
+bounces (a "couldn't be delivered" report in her inbox, in their thread or
+naming their address), their part ends and the task comes back to you at
+once. After two unanswered
 nudges, if the person is no longer one of your contacts, or after a week
 without the task moving on, she comes back to you ("About your task …: …
 What would you like me to do?"), by voice or on Signal like a heads-up. The
@@ -1303,7 +1309,8 @@ features it helps check, and package last.
     - [x] T3 E3b background approvals on Signal: the coordinator may use
       `send_signal_message` and `send_email`, each approved by your YES on
       Signal (10 minutes, one request at a time; a lapsed one waits on you)
-    - [ ] T3 E4 email nudges after two working days, and bounces back to you
+    - [x] T3 E4 email follow-ups after two working days (Sunday doesn't count),
+      as replies in the thread, and bounces back to you from the mail check
     - [ ] T4 new-mail events through awareness (later, with item 14): a webhook
       listener at https://cora.intelligis.io (port 8000 on Cora's PC) receives
       Microsoft Graph change notifications and starts the same mail check at once
@@ -1634,7 +1641,9 @@ features it helps check, and package last.
     each email approved in full, and email parties in migration 0030 with their
     name and thread; E3a built: the mail check in `read_task_mail` ([app.py](app.py)),
     `Mailbox.thread` and `Mailbox.reply`, each thread read up to its latest message
-    in `last_heard_at`). Email strangers (such as an instructor) are
+    in `last_heard_at`; E4 built: `nudge_email_party` and `read_bounces` in
+    [app.py](app.py), `Mailbox.bounces` matching failure reports by subject, and
+    `quiet_email_parties` / `email_nudge_due` in the task store). Email strangers (such as an instructor) are
     only allowed within a task: their mail is untrusted data, can't start
     anything new, gets only the brief's scope, and once the task closes their
     mail is just mail. If she doesn't know what to do with one, she asks the person.
@@ -1652,8 +1661,8 @@ features it helps check, and package last.
     task has been open about a week without one. Built in T2a: two unanswered
     nudges, a party no longer a contact, and a week without progress (counted
     from the task's last change, so resuming it restarts the week). Built in
-    T2b: declines and missing details, judged by the coordinator. Bounces and
-    deadlines come with email (T3).
+    T2b: declines and missing details, judged by the coordinator. Built in E4:
+    bounces. Deadlines are still to come.
   - *Reaching the person, wherever they are:* task turns run in the background, not from
     any chat, so one rule decides how she reaches them, keeping the seamless
     switching between voice and Signal. With Live Active she raises it by voice
@@ -1677,8 +1686,8 @@ features it helps check, and package last.
     [tools/close_task.py](tools/close_task.py); the latest step in the person's
     view); T2b the coordinator (built); T3 her own email through Microsoft Graph
     in four steps (E1 sign-in and reading, built; E2 sending and email parties, built;
-    E3a the mail check, built; E3b background approvals on Signal; E4 email nudges and
-    bounces) and commitment approvals; T4 (with awareness)
+    E3a the mail check, built; E3b background approvals on Signal, built; E4 email
+    nudges and bounces, built) and commitment approvals; T4 (with awareness)
     mail events wake waiting tasks instead of waiting for the next check. The mail check
     (`check_task_mail`) is written to be started from anywhere: a Graph change
     notification on her inbox, through the webhook listener, only needs to call it.
