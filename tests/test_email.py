@@ -5,10 +5,10 @@ import json
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from textual.widgets import Button, Input, Static, TabbedContent
+from textual.widgets import Button, Input, Static, TabbedContent, TextArea
 
 from mail import account
-from mail.account import SCOPES, EmailAccount, EmailNotReady, EmailStatus, Mailbox, access_token
+from mail.account import SCOPES, SIGN_IN_SCOPES, EmailAccount, EmailNotReady, EmailStatus, Mailbox, access_token
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.signal_settings_store import SignalSettings
 from tools.check_email import SCHEMA, CheckEmailTool, validate_arguments
@@ -123,7 +123,7 @@ class SignInTests(unittest.TestCase):
             "access_token": "tok", "id_token_claims": {"preferred_username": "cora@outlook.com"}}
         with patch.object(EmailAccount, "app", return_value=app):
             flow = email.start_sign_in()
-            app.initiate_device_flow.assert_called_once_with(scopes=SCOPES)
+            app.initiate_device_flow.assert_called_once_with(scopes=SIGN_IN_SCOPES)
             email.cancel_sign_in()
             self.assertEqual(flow["expires_at"], 0)
             self.assertEqual(email.finish_sign_in(flow), "cora@outlook.com")
@@ -349,6 +349,23 @@ class EmailSettingsTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             app.email_controls.save_app.assert_called_once_with(APP_ID, "intelligis.io")
             self.assertEqual(field.value, "")
+
+    async def test_her_signature_is_shown_saved_and_used_for_new_emails(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.email_account.signature.return_value = "Cora (AI PA)"
+            screen = await self.open_settings(app, pilot)
+            await pilot.click("#service-title-email")
+            await pilot.pause()
+            box = screen.query_one("#email-signature", TextArea)
+            self.assertEqual(box.text, "Cora (AI PA)")
+            app.email_account.save_signature.return_value = "Cora (AI PA)\nIntelligis.io"
+            box.text = "Cora (AI PA)\nIntelligis.io\n"
+            screen.query_one("#email-save-signature", Button).press()
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+            app.email_account.save_signature.assert_called_once_with("Cora (AI PA)\nIntelligis.io\n")
+            self.assertEqual(app.email_signature, "Cora (AI PA)\nIntelligis.io")
+            self.assertEqual(app.email_controls.signature, "Cora (AI PA)\nIntelligis.io")
 
 
 if __name__ == "__main__":

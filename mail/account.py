@@ -19,6 +19,8 @@ from uuid import UUID
 
 import httpx2 as httpx
 import keyring
+
+from .formatting import email_fragment, email_html
 from keyring.errors import PasswordDeleteError
 
 CLIENT_ID_SETTING = "CORA_EMAIL_CLIENT_ID"
@@ -26,6 +28,14 @@ KEYRING_SERVICE = "cora"
 CLIENT_ID_ACCOUNT = "email:client-id"
 TENANT_SETTING = "CORA_EMAIL_TENANT"
 TENANT_ACCOUNT = "email:tenant"
+# The person's own address: mail from it that Microsoft verifies is treated like their Signal chat.
+PERSON_ACCOUNT = "email:person"
+# Her signature for new emails, plain text: Outlook's own isn't added to mail sent through Graph.
+# Kept short, as the Windows credential store holds little.
+SIGNATURE_ACCOUNT = "email:signature"
+SIGNATURE_MAX_CHARS = 500
+# One plain address: no display names, lists or line breaks.
+ADDRESS = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
 # A work or school account signs in through its organisation's directory (a domain such as
 # example.com, or the Directory (tenant) ID); without one, personal accounts (outlook.com).
 LOGIN = "https://login.microsoftonline.com"
@@ -33,6 +43,10 @@ PERSONAL = "consumers"
 DOMAIN = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$")
 # Asked for once at sign-in, so sending later (E2) needs no second sign-in.
 SCOPES = ["User.Read", "Mail.ReadWrite", "Mail.Send"]
+# Her calendar (C1-C3), asked for at the same sign-in. Mail tokens don't need it, so a sign-in from
+# before the calendar still reads and sends mail; only the calendar asks for one more sign-in.
+CALENDAR_SCOPES = ["Calendars.ReadWrite"]
+SIGN_IN_SCOPES = SCOPES + CALENDAR_SCOPES
 GRAPH = "https://graph.microsoft.com/v1.0"
 REQUEST_SECONDS = 20
 PREVIEW_MAX_CHARS = 300
@@ -81,13 +95,15 @@ def sign_in_cache_path() -> Path:
     return Path(getenv("LOCALAPPDATA") or Path.home()) / "cora" / "email-sign-in.bin"
 
 
-def access_token(app) -> str:
+def access_token(app, scopes: list[str] = SCOPES) -> str:
     """A current access token from the saved sign-in, refreshed if needed. Blocking."""
     accounts = app.get_accounts()
     if not accounts:
         raise EmailNotReady("Cora's email isn't signed in yet; sign her in in Settings > Services > Email.")
-    result = app.acquire_token_silent(SCOPES, account=accounts[0])
+    result = app.acquire_token_silent(scopes, account=accounts[0])
     if not result or "access_token" not in result:
+        if scopes == CALENDAR_SCOPES:
+            raise EmailNotReady(f"Cora's calendar needs her signed in once more to allow it; {SIGN_IN_HINT}.")
         raise EmailNotReady(f"Cora's email sign-in has lapsed; {SIGN_IN_HINT}.")
     return result["access_token"]
 
@@ -137,6 +153,42 @@ class EmailAccount:
     def authority(self) -> str:
         return f"{LOGIN}/{self.tenant() or PERSONAL}"
 
+    def person_address(self) -> str:
+        """The person's own address, or "" when they haven't given one."""
+        return keyring.get_password(KEYRING_SERVICE, PERSON_ACCOUNT) or ""
+
+    def save_person_address(self, value: str) -> str:
+        """Their own address, lowercased; empty forgets it. ValueError for anything that isn't one address."""
+        value = value.strip().lower()
+        if not value:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, PERSON_ACCOUNT)
+            except PasswordDeleteError:
+                pass  # nothing was saved
+            return ""
+        if len(value) > 320 or not ADDRESS.match(value):
+            raise ValueError("That isn't one email address.")
+        keyring.set_password(KEYRING_SERVICE, PERSON_ACCOUNT, value)
+        return value
+
+    def signature(self) -> str:
+        """Her signature for new emails, or "" when there's none."""
+        return keyring.get_password(KEYRING_SERVICE, SIGNATURE_ACCOUNT) or ""
+
+    def save_signature(self, value: str) -> str:
+        """Plain text, tidied; empty forgets it. ValueError when it's too long."""
+        value = "\n".join(line.rstrip() for line in value.replace("\r\n", "\n").split("\n")).strip()
+        if not value:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, SIGNATURE_ACCOUNT)
+            except PasswordDeleteError:
+                pass  # nothing was saved
+            return ""
+        if len(value) > SIGNATURE_MAX_CHARS:
+            raise ValueError(f"Keep the signature under {SIGNATURE_MAX_CHARS} characters.")
+        keyring.set_password(KEYRING_SERVICE, SIGNATURE_ACCOUNT, value)
+        return value
+
     def app(self):
         """The sign-in client for the current app ID and directory, with its cache in the encrypted file."""
         app_client_id = self.client_id()
@@ -153,15 +205,15 @@ class EmailAccount:
             self._app_for = (app_client_id, authority)
         return self._app
 
-    def token(self) -> str:
-        return access_token(self.app())
+    def token(self, scopes: list[str] = SCOPES) -> str:
+        return access_token(self.app(), scopes)
 
     def signed_in(self) -> bool:
         return self.client_id() is not None and bool(self.app().get_accounts())
 
     def start_sign_in(self) -> dict:
         """Starts a sign-in with a code; the flow holds user_code and verification_uri."""
-        flow = self.app().initiate_device_flow(scopes=SCOPES)
+        flow = self.app().initiate_device_flow(scopes=SIGN_IN_SCOPES)
         if "user_code" not in flow:
             raise EmailNotReady(f"Microsoft wouldn't start a sign-in: {flow.get('error_description') or flow.get('error')}")
         self._flow = flow
@@ -240,6 +292,46 @@ def thread_message(message: dict) -> MailMessage:
     )
 
 
+@dataclass(frozen=True)
+class InboxMail:
+    """An unread message in her inbox, with Microsoft's verdict on who really sent it."""
+    id: str
+    thread_id: str
+    sender_name: str
+    sender_address: str
+    subject: str
+    received_at: datetime
+    text: str
+    has_attachments: bool
+    # Microsoft's own Authentication-Results header (the first, added on arrival), or "".
+    authentication: str
+
+
+def inbox_mail(message: dict) -> InboxMail:
+    sender = (message.get("from") or {}).get("emailAddress") or {}
+    headers = message.get("internetMessageHeaders") or []
+    authentication = next((header.get("value") or "" for header in headers
+                           if (header.get("name") or "").lower() == "authentication-results"), "")
+    return InboxMail(
+        message["id"], message.get("conversationId") or "", sender.get("name") or "",
+        (sender.get("address") or "").lower(), message.get("subject") or "",
+        parse_graph_time(message["receivedDateTime"]),
+        ((message.get("uniqueBody") or {}).get("content") or "").strip()[:MESSAGE_TEXT_MAX_CHARS],
+        bool(message.get("hasAttachments")), authentication,
+    )
+
+
+def verified_from(mail: InboxMail, address: str) -> bool:
+    """From that address, and Microsoft found DMARC passing for its domain: the From line wasn't forged."""
+    address = address.strip().lower()
+    if not address or mail.sender_address != address:
+        return False
+    results = mail.authentication.lower()
+    domain = re.search(r"header\.from=([^\s;]+)", results)
+    return re.search(r"\bdmarc=pass\b", results) is not None and domain is not None \
+        and domain.group(1) == address.rsplit("@", 1)[1]
+
+
 def is_bounce(message) -> bool:
     """A delivery failure report, not someone's mail."""
     return bool(BOUNCE_SUBJECT.match(message.subject or ""))
@@ -257,18 +349,56 @@ class Bounce:
         return re.search(rf"(?<![\w.+-]){re.escape(address)}(?![\w-]|\.\w)", self.text, re.IGNORECASE) is not None
 
 
+def signed(text: str, signature: str, name: str = "Cora") -> str:
+    """Her message with the signature below it. When the signature starts with her name, a last line
+    that is only her name is dropped, so she isn't signed twice."""
+    if not signature:
+        return text
+    lines = text.rstrip().split("\n")
+    if (len(lines) > 1 and lines[-1].strip(" -–—").lower() == name.lower()
+            and signature.lower().startswith(name.lower())):
+        lines.pop()
+    return "\n".join(lines).rstrip() + "\n\n" + signature
+
+
 BODY_TAG = re.compile(r"<body[^>]*>", re.IGNORECASE)
 
 
 def reply_body(text: str, draft_body: dict) -> dict:
-    """Her plain text, escaped so none of it becomes markup, above the quote in Outlook's reply draft."""
+    """Her text, formatted (mail/formatting.py), above the quote in Outlook's reply draft."""
     quoted = draft_body.get("content") or ""
-    if draft_body.get("contentType", "").lower() != "html" or not quoted.strip():
-        return {"contentType": "Text", "content": text}
-    mine = "<div>" + html.escape(text).replace("\r\n", "\n").replace("\n", "<br>") + "</div><br>"
+    if not quoted.strip():
+        return {"contentType": "HTML", "content": email_html(text)}
+    if draft_body.get("contentType", "").lower() != "html":
+        quoted = "<div>" + html.escape(quoted).replace("\r\n", "\n").replace("\n", "<br>") + "</div>"
+    mine = email_fragment(text) + "<br>"
     tag = BODY_TAG.search(quoted)
     content = quoted[:tag.end()] + mine + quoted[tag.end():] if tag else mine + quoted
     return {"contentType": "HTML", "content": content}
+
+
+INBOX_RESOURCE = "me/mailFolders('inbox')/messages"
+
+
+def graph_time(at: datetime) -> str:
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_graph_time(text: str) -> datetime:
+    # Graph may give seven decimal places, more than Python reads.
+    text = text.replace("Z", "+00:00")
+    if "." in text:
+        whole, rest = text.split(".", 1)
+        digits = re.match(r"\d*", rest).group()
+        text = f"{whole}.{digits[:6]}{rest[len(digits):]}"
+    return datetime.fromisoformat(text)
+
+
+@dataclass(frozen=True)
+class MailSubscription:
+    """Graph's subscription to new mail in her inbox, and when it lapses unless renewed."""
+    id: str
+    expires: datetime
 
 
 @dataclass(frozen=True)
@@ -304,10 +434,11 @@ class Mailbox:
         return await self._request("GET", path, params)
 
     async def send(self, address: str, name: str | None, subject: str, text: str) -> SentMail:
-        """A new plain-text email from her: saved as a draft first, so its thread is known, then sent."""
+        """A new email from her, formatted from her Markdown: saved as a draft first, so its thread is
+        known, then sent."""
         recipient = {"address": address} | ({"name": name} if name else {})
         draft = await self._request("POST", "/me/messages", body={
-            "subject": subject, "body": {"contentType": "Text", "content": text},
+            "subject": subject, "body": {"contentType": "HTML", "content": email_html(text)},
             "toRecipients": [{"emailAddress": recipient}],
         })
         await self._request("POST", f"/me/messages/{draft['id']}/send")
@@ -355,6 +486,42 @@ class Mailbox:
                    (message.get("body") or {}).get("content") or "")
             for message in page.get("value", []) if BOUNCE_SUBJECT.match(message.get("subject") or "")
         ]
+
+    async def unread(self, since: datetime) -> list[InboxMail]:
+        """Unread inbox mail received since then, oldest first, with each one's authentication results."""
+        page = await self._request("GET", "/me/mailFolders/inbox/messages", params={
+            "$filter": f"receivedDateTime ge {graph_time(since)} and isRead eq false",
+            "$orderby": "receivedDateTime asc", "$top": str(BOUNCES_MAX),
+            "$select": "id,conversationId,from,subject,receivedDateTime,uniqueBody,hasAttachments,"
+                       "internetMessageHeaders",
+        }, headers=PLAIN_TEXT)
+        return [inbox_mail(message) for message in page.get("value", [])]
+
+    async def subscribe(self, url: str, lifecycle_url: str, client_state: str, expires: datetime,
+                        resource: str = INBOX_RESOURCE, change_type: str = "created") -> MailSubscription:
+        """Graph calls `url` when mail lands in her inbox (or on changes to another resource, such as
+        her calendar's events); any earlier subscription to it goes first.
+
+        Graph checks the URL answers its handshake before this returns, so the listener must be up.
+        """
+        page = await self._get("/subscriptions")
+        for old in page.get("value", []):
+            if old.get("notificationUrl") == url and old.get("id"):
+                await self.unsubscribe(old["id"])
+        made = await self._request("POST", "/subscriptions", body={
+            "changeType": change_type, "resource": resource, "notificationUrl": url,
+            "lifecycleNotificationUrl": lifecycle_url, "clientState": client_state,
+            "expirationDateTime": graph_time(expires),
+        })
+        return MailSubscription(made["id"], parse_graph_time(made["expirationDateTime"]))
+
+    async def renew(self, subscription_id: str, expires: datetime) -> MailSubscription:
+        made = await self._request("PATCH", f"/subscriptions/{subscription_id}",
+                                   body={"expirationDateTime": graph_time(expires)})
+        return MailSubscription(subscription_id, parse_graph_time(made["expirationDateTime"]))
+
+    async def unsubscribe(self, subscription_id: str) -> None:
+        await self._request("DELETE", f"/subscriptions/{subscription_id}")
 
     async def mark_read(self, message_id: str) -> None:
         await self._request("PATCH", f"/me/messages/{message_id}", body={"isRead": True})

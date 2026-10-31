@@ -37,6 +37,8 @@ SUNDAY = 6
 BOUNCED = "Their email bounced, so it never reached them."
 # A task this long without progress (an answer, someone asked, the person's word) goes back to the person.
 STALE_AFTER = timedelta(days=7)
+# She tells the person once when an open task's deadline is this close, and once when it passes.
+DEADLINE_WARNING = timedelta(days=1)
 NOTE_MAX_CHARS = 1000
 # The coordinator sees this many of a task's latest steps.
 COORDINATION_STEPS = 12
@@ -117,6 +119,11 @@ def email_nudge_due(since: datetime) -> datetime:
 PARTY_NAME = func.coalesce(PersonRecord.display_name, TaskPartyRecord.name, TaskPartyRecord.address)
 
 
+def deadline_text(deadline: datetime) -> str:
+    """A deadline in local time, as she reads and says it: 'Fri 06 Nov 2026 17:00'."""
+    return deadline.astimezone().strftime("%a %d %b %Y %H:%M")
+
+
 def clean(text: str, limit: int, what: str) -> str:
     text = text.strip()
     if not text or len(text) > limit:
@@ -157,19 +164,23 @@ class TaskStore:
             "thread_id": who.thread_id, "brief": brief,
         }
 
-    def start(self, goal: str, who: UUID | EmailParty, brief: str, step: str) -> UUID:
+    def start(self, goal: str, who: UUID | EmailParty, brief: str, step: str, deadline: datetime | None = None) -> UUID:
         """A new task, waiting on its first party, who has just been contacted."""
         goal, brief = clean(goal, GOAL_MAX_CHARS, "A goal"), clean(brief, BRIEF_MAX_CHARS, "A brief")
         with Session(self.engine) as session, session.begin():
-            task = TaskRecord(goal=goal, status="waiting")
+            task = TaskRecord(goal=goal, status="waiting", deadline=deadline)
             session.add(task)
             session.flush()
             session.add(TaskPartyRecord(**self._party(task.id, who, brief)))
             self._step(session, task.id, step)
             return task.id
 
-    def add_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str) -> None:
-        """Someone more for an open task, or someone asked again with a new brief (and, by email, a new thread)."""
+    def add_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str,
+                  deadline: datetime | None = None) -> None:
+        """Someone more for an open task, or someone asked again with a new brief (and, by email, a new thread).
+
+        A deadline given here replaces the task's, and it's told about afresh.
+        """
         brief = clean(brief, BRIEF_MAX_CHARS, "A brief")
         values = self._party(task_id, who, brief)
         again = {"brief": brief, "status": "waiting", "contacted_at": func.current_timestamp(), "nudges": 0}
@@ -184,6 +195,8 @@ class TaskStore:
                 set_=again,
             ))
             task.status, task.updated_at = "waiting", func.current_timestamp()
+            if deadline is not None:
+                task.deadline, task.deadline_warned_at, task.deadline_passed_at = deadline, None, None
             self._step(session, task_id, step)
 
     def goal(self, task_id: UUID) -> str | None:
@@ -306,6 +319,7 @@ class TaskStore:
         view = {
             "task_id": str(task.id), "goal": task.goal, "status": task.status,
             "started": task.created_at.date().isoformat(),
+            **({"deadline": deadline_text(task.deadline)} if task.deadline else {}),
             "parties": [{"name": name, "status": status, "brief": brief, "outcome": outcome}
                         | ({"email": address} if address else {})
                         for name, status, brief, outcome, address in parties],
@@ -354,6 +368,30 @@ class TaskStore:
                 .where(TaskRecord.status == "waiting", TaskRecord.updated_at <= now - STALE_AFTER)
                 .order_by(TaskRecord.created_at)
             ).all()]
+
+    def deadlines_due(self, now: datetime) -> tuple[list[tuple[UUID, str, datetime]], list[tuple[UUID, str, datetime]]]:
+        """Open tasks whose deadline is a day away or less, and those whose deadline has passed, each not yet told."""
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(TaskRecord.id, TaskRecord.goal, TaskRecord.deadline, TaskRecord.deadline_warned_at,
+                       TaskRecord.deadline_passed_at)
+                .where(TaskRecord.status.in_(OPEN), TaskRecord.deadline.is_not(None),
+                       TaskRecord.deadline <= now + DEADLINE_WARNING)
+                .order_by(TaskRecord.deadline)
+            ).all()
+        soon = [(id, goal, deadline) for id, goal, deadline, warned, passed in rows
+                if deadline > now and warned is None]
+        overdue = [(id, goal, deadline) for id, goal, deadline, warned, passed in rows
+                   if deadline <= now and passed is None]
+        return soon, overdue
+
+    def deadline_told(self, task_id: UUID, passed: bool) -> None:
+        """The person has been told the deadline is near (or has passed): not again."""
+        column = "deadline_passed_at" if passed else "deadline_warned_at"
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(TaskRecord).where(TaskRecord.id == task_id).values(
+                {column: func.current_timestamp()},
+            ))
 
     def unsettled_tasks(self) -> list[tuple[UUID, str]]:
         """Waiting tasks nobody is left to answer: their last report never reached the person, oldest first."""
@@ -472,6 +510,8 @@ class TaskStore:
             by_task.setdefault(task_id, []).append(party | {"email": address} if address else party)
         return bounded([{
             "task_id": str(task.id), "goal": task.goal, "status": task.status,
-            "started": task.created_at.date().isoformat(), "parties": by_task.get(task.id, []),
+            "started": task.created_at.date().isoformat(),
+            **({"deadline": deadline_text(task.deadline)} if task.deadline else {}),
+            "parties": by_task.get(task.id, []),
             "latest_step": latest.get(task.id),
         } for task in tasks])

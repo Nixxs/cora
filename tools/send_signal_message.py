@@ -4,16 +4,26 @@ A message can start a task (or add someone to an open one): what to find out or 
 what she may share, goes in a brief that the person approves with the message.
 """
 
+from datetime import date, datetime, time
 import json
 from uuid import UUID
 
 from messaging.signal_cli import signal_failure
+from storage.task_store import deadline_text
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
 
 NAME_MAX_CHARS = 100
 MESSAGE_MAX_CHARS = 2000
 GOAL_MAX_CHARS = 1000
 BRIEF_MAX_CHARS = 2000
+# A task's deadline, if the person gave one: a day (settled by the end of it) or a day and time, their local time.
+DEADLINE_SCHEMA = {
+    "type": ["string", "null"],
+    "description": (
+        "When the person needs it settled by, if they said: YYYY-MM-DD (by the end of that day) or "
+        "YYYY-MM-DDTHH:MM, in their local time; otherwise null. For an open task, null keeps its deadline."
+    ),
+}
 
 SCHEMA = {
     "type": "function",
@@ -45,8 +55,9 @@ SCHEMA = {
                     "goal": {"type": ["string", "null"], "description": "A new task's goal, in the person's words."},
                     "task_id": {"type": ["string", "null"], "description": "An open task to add this contact to."},
                     "brief": {"type": "string", "description": "What to find out or agree with them, and what you may share."},
+                    "deadline": DEADLINE_SCHEMA,
                 },
-                "required": ["goal", "task_id", "brief"],
+                "required": ["goal", "task_id", "brief", "deadline"],
                 "additionalProperties": False,
             },
         },
@@ -62,6 +73,32 @@ NOT_DONE = {
 }
 
 
+def parse_deadline(value: str, now: datetime | None = None) -> datetime:
+    """A deadline in the person's local time; ValueError if it isn't one, or has already passed."""
+    value = value.strip()
+    try:
+        if len(value) == 10:
+            moment = datetime.combine(date.fromisoformat(value), time(23, 59))
+        else:
+            moment = datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError("deadline must be YYYY-MM-DD or YYYY-MM-DDTHH:MM") from None
+    moment = moment.astimezone() if moment.tzinfo is None else moment
+    if moment <= (now or datetime.now().astimezone()):
+        raise ValueError("That deadline has already passed; check the date with the person.")
+    return moment
+
+
+def task_deadline(task: dict) -> tuple[datetime | None, str | None]:
+    """(the task's deadline or None, why it can't be used or None)."""
+    if task.get("deadline") is None:
+        return None, None
+    try:
+        return parse_deadline(task["deadline"]), None
+    except ValueError as error:
+        return None, str(error)
+
+
 def check_text(value, key: str, limit: int) -> None:
     if not isinstance(value, str) or not 1 <= len(value.strip()) <= limit:
         raise ValueError(f"{key} must contain 1 to {limit} characters")
@@ -75,8 +112,10 @@ def validate_arguments(arguments: dict) -> None:
     task = arguments["task"]
     if task is None:
         return
-    if not isinstance(task, dict) or set(task) != {"goal", "task_id", "brief"}:
+    if not isinstance(task, dict) or set(task) != {"goal", "task_id", "brief", "deadline"}:
         raise ValueError("Invalid task")
+    if task["deadline"] is not None and not isinstance(task["deadline"], str):
+        raise ValueError("deadline must be a date or null")
     if (task["goal"] is None) == (task["task_id"] is None):
         raise ValueError("A task needs either a new goal or an open task_id")
     if task["goal"] is not None:
@@ -122,10 +161,13 @@ class SendSignalMessageTool:
         message = arguments["message"].strip()
         shown = {"to": f"{contact.name} ({contact.number})", "message": message}
         task = arguments["task"]
-        goal = task_id = None
+        goal = task_id = deadline = None
         if task is not None:
             if self.task_goal is None or self.record_task is None:
                 return {"status": "error", "message": "Tasks aren't available right now; send it without one."}
+            deadline, problem = task_deadline(task)
+            if problem:
+                return {"status": "error", "message": problem}
             goal = None if task["goal"] is None else task["goal"].strip()
             if task["task_id"] is not None:
                 task_id = UUID(task["task_id"])
@@ -136,6 +178,8 @@ class SendSignalMessageTool:
                 shown["task"] = goal
             # Approving the message approves what the brief lets her find out and share.
             shown["brief"] = task["brief"].strip()
+            if deadline is not None:
+                shown["deadline"] = deadline_text(deadline)
         # The pop-up shows exactly who and what; nothing is sent before the person clicks Approve.
         outcome = await self.confirm("signal", "send_signal_message", shown, title="Signal")
         if outcome != APPROVED:
@@ -145,7 +189,7 @@ class SendSignalMessageTool:
         if task is None:
             return {"status": "ok", "message": f"Sent to {contact.name}; their reply comes to you on Signal."}
         try:
-            task_id = await self.record_task(contact, goal, task_id, shown["brief"], message)
+            task_id = await self.record_task(contact, goal, task_id, shown["brief"], message, deadline=deadline)
         except Exception as error:
             self._log(f"Saving the task failed ({type(error).__name__}).", "Tool error")
             return {"status": "ok", "message": (

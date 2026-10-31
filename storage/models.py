@@ -7,8 +7,8 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    BigInteger, Boolean, CheckConstraint, DateTime, Double, ForeignKey, Identity, Index, LargeBinary, SmallInteger, Text,
-    UniqueConstraint,
+    BigInteger, Boolean, CheckConstraint, DateTime, Double, ForeignKey, Identity, Index, Integer, LargeBinary,
+    SmallInteger, Text, UniqueConstraint,
     Uuid,
 )
 from sqlalchemy import text as sql_text
@@ -50,7 +50,7 @@ class MessageRecord(Base):
         UniqueConstraint("conversation_id", "sequence_number", name="messages_conversation_sequence_key"),
         CheckConstraint("sequence_number > 0", name="messages_sequence_check"),
         CheckConstraint("role IN ('user', 'assistant')", name="messages_role_check"),
-        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal')", name="messages_channel_check"),
+        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal', 'email')", name="messages_channel_check"),
         CheckConstraint("status IN ('incomplete', 'completed', 'interrupted')", name="messages_status_check"),
         CheckConstraint(
             "delivery_status IN ('not_applicable', 'pending', 'sent', 'failed')",
@@ -625,6 +625,24 @@ class SignalSettingRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
+class WebhookSettingRecord(Base):
+    """Whether Cora listens for webhooks, the public address that reaches her, and her local port; at most one row."""
+
+    __tablename__ = "webhook_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="webhook_settings_single_row"),
+        CheckConstraint("public_url IS NULL OR public_url LIKE 'https://%'", name="webhook_settings_https"),
+        CheckConstraint("port BETWEEN 1024 AND 65535", name="webhook_settings_port"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, server_default=sql_text("1"))
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    public_url: Mapped[str | None] = mapped_column(Text)
+    port: Mapped[int] = mapped_column(Integer, server_default=sql_text("8000"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
 class SelfImageRecord(Base):
     """An image Cora chose to represent her, and her own description of it."""
 
@@ -709,6 +727,9 @@ class TaskRecord(Base):
     status: Mapped[str] = mapped_column(Text, server_default="waiting")
     result: Mapped[str | None] = mapped_column(Text)
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When she told the person the deadline was a day away, and that it had passed: once each.
+    deadline_warned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

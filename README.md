@@ -814,6 +814,35 @@ and those finished in the last three days, so "what did Sarah say?" works later
 too. She can ask another contact for the same open task too, approved the same
 way. Run `python migrate.py` once for migrations 0028 and 0029.
 
+**Nothing that commits you without your YES.** Her replies to a contact in a
+task (on Signal or in an email thread) go out without asking you, and she's told
+never to commit you herself. On top of that, every reply to a contact gets one
+cheap check before it's sent (`check_commitment` in
+[messaging/commitment.py](messaging/commitment.py), utility model, no tools). A
+reply commits you if it would:
+- confirm or accept a booking, time or arrangement;
+- agree to a price or payment;
+- promise you'll do something.
+
+Such a reply waits for your YES, on Signal when it's linked, otherwise in the
+desk pop-up. You see who it's to, what it commits you to and the exact reply.
+YES sends it as written. NO, or no answer within 10 minutes, sends a holding
+line instead ("Let me check with <your name> and come back to you"). An email task
+then waits on you with a note, and a Signal contact's lapsed reply is raised with
+you once. If the check itself fails, the reply is held, to be safe.
+
+**Deadlines.** If you say when you need something settled ("find a lesson time
+by Friday"), she gives the task that deadline when she starts it: a day (by the
+end of it) or a day and time, in your local time. You see it in the approval with
+the message and brief. Asking someone else for the same open task can move it.
+Your tasks and the coordinator's view show it.
+- **A day before:** if the task is still open, the hourly round tells you once,
+  at any hour.
+- **Once it passes:** if it's still unsettled, the task comes back to you.
+
+Each is noted only after you've been told, so a telling that fails is tried
+again next round. Run `python migrate.py` once for migration 0033.
+
 **Keeping tasks moving.** Each hourly background round checks open tasks. If
 someone she asked has been quiet for about a day (since she asked, they last
 wrote or she last nudged them), she sends one short, friendly follow-up in their
@@ -842,8 +871,8 @@ outlook.live.com). It's optional; without it nothing changes. Ask her "anything 
 your email?" and she uses `check_email` (newest mail, who from, subject and a
 preview; nothing is marked read). Anyone can email her, so all mail is untrusted:
 it can't ask her to do anything. Ask her to email someone ("email the driving
-school and ask for lesson times") and she uses `send_email`: plain text, from her
-address, signed as Cora. You approve every email first, by pop-up or YES on Signal,
+school and ask for lesson times") and she uses `send_email`, from her address,
+signed as Cora. You approve every email first, by pop-up or YES on Signal,
 seeing exactly who it's to, the subject and the message. Like a Signal message, an
 email can start a task or join an open one, with a brief you approve alongside it;
 the recipient becomes an email party, shown by name (or address) in your view of
@@ -885,7 +914,8 @@ To set it up once:
    Overview page; leave it empty for a personal account. Press **Save**.
 4. Press **Sign Cora in**. A link and a code appear; open the link, enter the
    code and sign in **as Cora's account**, never yours. It asks to read and send
-   her mail once, so sending later needs no second sign-in. In a work directory
+   her mail and to read and change her calendar once, so sending later needs no
+   second sign-in. In a work directory
    that limits what users may allow apps, an administrator may need to grant
    consent first (the app's **API permissions** > **Grant admin consent**). The
    row then shows her address.
@@ -898,6 +928,159 @@ in `.env` or the database: it's too big for the credential store. Activity says
 "Cora's email is ready" at launch, or that she needs signing in again, with
 Microsoft's error code if it refused. **Sign out** in the same row forgets her
 sign-in.
+
+**Webhooks: hearing about new mail straight away.** Without them, Cora checks her task
+email threads every 10 minutes. With them, Microsoft calls Cora the moment mail lands
+in her inbox, and she checks within a few seconds. The listener is part of Cora and
+runs while she does. It listens only on this PC, at `127.0.0.1` on a local port
+(8000 by default). Getting public HTTPS traffic to that port is up to you: Cora
+ships no proxy. Any reverse proxy or tunnel works. With Caddy, for example:
+
+```
+cora.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Then open Settings > Services > **Webhooks**, enter the public address (such as
+`https://cora.example.com`, without a path) and the local port, press **Save** and
+turn the switch on. Run `pip install -r requirements.txt` and `python migrate.py`
+once for migration 0031. Once her email is ready, the row shows that Microsoft tells
+her straight away, with the date her subscription runs to. She renews it every
+couple of days and ends it when she closes. The 10-minute check carries on as a
+fallback.
+
+How it's kept safe:
+- Every address she gives Microsoft carries a long random **secret path**, so
+  anything else on that address gets a bare 404.
+- Each notification must also carry a second secret, the **clientState** she
+  gave Microsoft. Notifications without it are ignored.
+- Both secrets are kept in the system credential store, never in `.env`, the
+  database or Activity. **New secrets** in the same row replaces them: the old
+  addresses stop working, and she subscribes again.
+- A notification carries no mail and nothing in it is used. It only starts the
+  same check, which reads her mailbox through Microsoft Graph itself, and a burst
+  of notifications becomes one check. So a forged call could at most cause an
+  extra check.
+- Requests are capped in size, and only Microsoft's handshake token is ever
+  echoed back, as plain text.
+
+**Formatted email.** She writes her emails in simple Markdown: headings, bold,
+bullet and numbered lists, tables and links. They're sent as formatted HTML, with
+inline styles so Outlook shows them properly, and no colours set, so dark mode still
+works. This covers her new emails, her replies in a thread, her nudges and her replies
+to you. Single line breaks stay as written, so a sign-off or signature keeps its
+lines. Any HTML in what she writes, or quotes from elsewhere, is shown as text and
+never becomes markup. Links go only to web (`https`) and `mailto:` addresses. The
+rendering is in [mail/formatting.py](mail/formatting.py). It uses `markdown-it-py`,
+which is in `requirements.txt`. Approvals still show the Markdown she wrote.
+
+**Her signature.** Outlook doesn't add its own signature to mail sent through
+Microsoft Graph, so paste a plain-text copy under Settings > Services > **Email**
+(**Save signature**). It goes below each new email she starts, and you see it in
+the approval. Replies in a thread go without it, as Outlook's "new messages only"
+setting would. If the signature starts with her name, her own "Cora" sign-off is
+dropped so she isn't signed twice.
+
+**Emailing Cora yourself.** Enter your own address under Settings > Services >
+**Email** (**Save your address**). Email from it then works like your Signal chat:
+it joins your one conversation, she does what you ask, and she replies by email,
+in the same thread. Anything that changes things still asks first: YES on Signal
+when it's linked, otherwise the pop-up at your desk. Email from you that's part of
+a task thread stays with that task. Only unread mail from the last day is
+answered, so a backlog from while she was closed isn't suddenly acted on.
+
+The "From" line of an email is easy to fake, so she acts on an email only when
+it's from your address **and** Microsoft's own checks confirm your mail provider
+really sent it: the DMARC result in Microsoft's Authentication-Results header must
+pass for your address's domain. One that only claims to be from you is marked
+read and never acted on, and she tells you about it once. Run `python migrate.py`
+once for migration 0032 (emails in your conversation's history).
+
+**The rest of her mail.** Anything else that lands in her inbox is sorted by one
+cheap call with the utility model. That covers mail that isn't from you, isn't part
+of a task and isn't a bounce. The call has no tools and treats every email as
+untrusted data:
+- **Urgent** mail reaches you straight away, at any hour: by voice when Live is
+  Active, otherwise on Signal. Examples are a cancellation, someone waiting on an
+  answer today, or a security alert about her account.
+- **Worth mentioning** mail waits for one digest, a line per email, the next time
+  you talk with her: when you speak, message her on Signal or email her.
+- **The rest** (newsletters, receipts, spam) is marked read.
+
+She never answers this mail herself. If one needs a reply, she tells you and you
+decide. Mail waiting for the digest stays unread until she's told you, so after a
+restart it's sorted again rather than lost.
+
+New mail arrives as a `MailArrivedEvent` on Cora's event bus
+([subconscious/event_bus.py](subconscious/event_bus.py)). Whatever cares about it
+subscribes: for now that's the task mail check, and later her awareness of the rest
+of her inbox.
+
+### Cora's calendar
+
+Her Outlook calendar comes with her email, from the same sign-in: hers, never yours.
+Ask "what's on this week?" and she uses `check_calendar` for a day or up to 31 days.
+It gives each event's time in your local time, where it is, who organised it, who's
+invited, and a short preview of its notes. The coordinator has it too, for when a task
+is about finding a time. Her coming week also sits in her context while you talk: when,
+what and where for each event, cancelled ones left out. So she knows what's on without
+looking. That context is refreshed when her email is ready at launch and then hourly.
+Connecting never waits for Microsoft. Clients' chats never see it.
+
+Anyone can send her an invitation, so what an event says is untrusted, like mail.
+
+**Changing it.** Ask her to put something in, move it or call it off, and she uses
+one of three tools:
+- `create_event`: the subject, start and end, and optionally a place, notes and
+  people to invite. Each invited person gets an Outlook invitation from her address.
+- `update_event`: only what changes. Moving the start keeps the length. A new
+  attendee list replaces the old one. Everyone invited gets the update.
+- `cancel_event`: everyone invited gets the cancellation, with her note if she gives
+  one. An event with nobody invited is just removed.
+
+You approve each change first, by pop-up or YES on Signal. The approval shows the
+event, the time it was and the time it will be, and exactly who will be told. She
+can only change or cancel events she organised. An invitation she received belongs
+to whoever sent it.
+
+Times are your local time. Microsoft is sent them in UTC and Outlook shows them in
+each viewer's time zone.
+
+**All-day events** are given as days instead of times: one event from the first day
+to the last, such as a holiday from 3 to 8 April, rather than one event a day. They
+can last up to 31 days, and moving the first day keeps the same number of days.
+They're set at midnight in this PC's Windows time zone, so they sit on your dates.
+For the same reason her calendar is read in your time zone.
+
+She makes changes only when you ask, never because an email, an invitation or a client
+asks. The coordinator and clients' chats can't change her calendar. After a change,
+her coming week in context is refreshed.
+
+**Forwarding.** `forward_event` sends an event on as an invitation from her, with
+a short comment if she gives one. It works for her own events and for ones she was
+invited to, such as passing an invitation on to you. You approve it first. The
+approval shows the event, who it goes to, and who organised it when that's someone
+else.
+
+**Hearing about changes straight away.** When webhooks are on (see her email's
+Webhooks section), Cora also subscribes to changes in her calendar: events made,
+changed or deleted, including new invitations and cancellations from others. The
+subscription uses the same listener and secrets, under `/webhooks/<secret>/calendar`.
+A notification publishes a `CalendarChangedEvent` on the event bus and carries
+nothing from the request. The event's subscriber reads her coming week again a few
+seconds later, once per burst. The subscription is made, renewed and ended alongside
+the mail one. Its status line sits under the mail one in Settings > Services >
+**Webhooks**. If the calendar still needs her signed in once more, only this
+subscription waits; mail is unaffected. Without webhooks, the hourly refresh still
+runs.
+
+A sign-in from before the calendar still reads and sends mail. Only the calendar
+says it needs her **signed in once more**: press **Sign Cora in** and allow it. If
+your app registration lists its **API permissions**, add Microsoft Graph's delegated
+`Calendars.ReadWrite` there too. A work directory may need an administrator's
+consent again. Activity says once if the calendar can't be read, and again when it
+can.
 
 ## How memory works
 
@@ -1311,19 +1494,46 @@ features it helps check, and package last.
       Signal (10 minutes, one request at a time; a lapsed one waits on you)
     - [x] T3 E4 email follow-ups after two working days (Sunday doesn't count),
       as replies in the thread, and bounces back to you from the mail check
-    - [ ] T4 new-mail events through awareness (later, with item 14): a webhook
-      listener at https://cora.intelligis.io (port 8000 on Cora's PC) receives
-      Microsoft Graph change notifications and starts the same mail check at once
+    - [x] T4a mail webhooks (the start of awareness): a listener inside Cora on
+      127.0.0.1 (Settings > Services > Webhooks; you route public HTTPS to it)
+      takes Microsoft Graph's new-mail notifications under a secret path and
+      clientState, publishes `MailArrivedEvent` on the event bus, and the task mail
+      check subscribes to it; the 10-minute check stays as the fallback
+    - [x] T4b-1 email from you (your address, and Microsoft's DMARC check passing
+      for its domain) treated like your Signal chat: she acts on it and replies in
+      the thread, with the usual approvals; mail only claiming to be yours is
+      never acted on
+    - [x] T4b-2 the rest of her new mail: one cheap triage call per batch
+      ([mail/triage.py](mail/triage.py)); urgent reaches you at any hour,
+      worth mentioning waits for one digest the next time you talk with her, the
+      rest is marked read; she never answers it herself
+    - [x] T5a commitment approvals: every reply to a contact is checked, and one
+      that commits you (confirms a booking, agrees a price, promises you'll do
+      something) waits for your YES; otherwise a holding line goes instead
+    - [x] T5b task deadlines: taken from your request (`deadline` on a task in
+      `send_signal_message` and `send_email`); she tells you a day before if it's
+      still open, and the task comes back to you when it passes
+    - [x] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
+      sign-in (one sign-in again), `check_calendar` for a day or range, and her
+      coming week in your context (refreshed hourly) so she knows what's coming
+    - [x] C2 changing it, each approved: `create_event` (with attendees, which
+      sends the invites), `update_event` and `cancel_event` (the cancellation goes
+      to attendees); only events she organised; all-day and multi-day events as
+      days (one event for a trip), set in this PC's Windows time zone
+    - [x] Formatted email: she writes Markdown, sent as safe, styled HTML
+      (mail/formatting.py) for new emails, replies and nudges
+    - [x] C3 forwarding invites to you or others (`forward_event`, approved), and
+      calendar changes through the webhook listener (a second Graph subscription,
+      to her events), published as `CalendarChangedEvent` to refresh her week
 
 *Phase 3 — noticing things*
 
 11. Awareness W1–W3, including quiet hours and the off switch.
 12. Relevance and awareness triggers (interests step 8 below).
 13. Home Assistant, starting with its demo devices.
-14. Awareness W4: expectations from memory tasks; Tasks T4 (mail events wake
-    waiting tasks). Webhooks arrive at https://cora.intelligis.io, which points to
-    port 8000 on the PC Cora runs on: a small FastAPI process (or container) beside
-    her takes webhook calls and turns them into events for her, starting with new mail.
+14. Awareness W4: expectations from memory tasks. Webhooks already reach her
+    (T4a: a Starlette listener inside Cora on 127.0.0.1, [mail/webhook.py](mail/webhook.py),
+    publishing events on the event bus); new kinds of webhook join the same listener.
 15. Camera and screen awareness.
 16. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
@@ -1632,7 +1842,8 @@ features it helps check, and package last.
   - *Approval:* the person approves the first contact with each new party, seeing the
     brief. Replies and nudges within that party's brief go out without
     approval. Anything that commits them (confirming a booking, agreeing a price)
-    always needs their YES.
+    always needs their YES (built in T5a: a cheap check on every reply to a
+    contact, and the exact reply held for their YES).
   - *Her own email:* her own address, like any colleague, never the person's
     mailbox. Through Microsoft Graph rather than MCP: Cora's email needs no
     third-party MCP server, and tasks need code-level control of
@@ -1662,7 +1873,7 @@ features it helps check, and package last.
     nudges, a party no longer a contact, and a week without progress (counted
     from the task's last change, so resuming it restarts the week). Built in
     T2b: declines and missing details, judged by the coordinator. Built in E4:
-    bounces. Deadlines are still to come.
+    bounces. Built in T5b: deadlines, a day before and once passed.
   - *Reaching the person, wherever they are:* task turns run in the background, not from
     any chat, so one rule decides how she reaches them, keeping the seamless
     switching between voice and Signal. With Live Active she raises it by voice
@@ -1687,13 +1898,14 @@ features it helps check, and package last.
     view); T2b the coordinator (built); T3 her own email through Microsoft Graph
     in four steps (E1 sign-in and reading, built; E2 sending and email parties, built;
     E3a the mail check, built; E3b background approvals on Signal, built; E4 email
-    nudges and bounces, built) and commitment approvals; T4 (with awareness)
-    mail events wake waiting tasks instead of waiting for the next check. The mail check
-    (`check_task_mail`) is written to be started from anywhere: a Graph change
-    notification on her inbox, through the webhook listener, only needs to call it.
-    Graph notifications only say that something changed, and mail subscriptions expire
-    within about three days, so they're renewed regularly and the 10-minute check stays
-    as the fallback for any notification that's missed.
+    nudges and bounces, built) and commitment approvals; T4a (built) mail events
+    wake waiting tasks instead of waiting for the next check: Graph's change
+    notifications reach the listener, become a `MailArrivedEvent`, and the task mail
+    check subscribes to it (one check per burst, and once more if mail lands while
+    one runs). Graph notifications only say that something changed, and mail
+    subscriptions expire, so hers lasts two days and is renewed by the 10-minute
+    round once under 12 hours are left; that round's check stays as the fallback
+    for any notification that's missed.
 
 - **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)
   is command-line only today. A "Her picture" section in Settings would make it a

@@ -4,7 +4,7 @@ import asyncio
 import unittest
 from unittest.mock import MagicMock, patch
 
-from textual.widgets import Select, Switch, TabbedContent
+from textual.widgets import Input, Select, Switch, TabbedContent
 
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.keyboard_persistence import KeyboardPersistence
@@ -135,6 +135,32 @@ class ModelSettingsScreenTests(unittest.IsolatedAsyncioTestCase):
             activity = "\n".join(app.activity.entries)
             self.assertIn("Model setting save failed (RuntimeError).", activity)
             self.assertNotIn("private SQL", activity)
+
+    async def test_webhooks_need_an_address_before_switching_on_and_save_it(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.persistence.load_models.return_value = MODELS
+            await self.open_settings(app, pilot)
+            screen = app.screen
+            screen.query_one(TabbedContent).active = "settings-services"
+            await pilot.pause()
+            switch = screen.query_one("#webhooks-enabled", Switch)
+            with patch.object(screen, "notify") as notify:
+                switch.value = True
+                await pilot.pause()
+            notify.assert_called_once()
+            self.assertFalse(switch.value)
+            app.persistence.save_webhook_enabled.assert_not_called()
+            screen.query_one("#webhooks-url", Input).value = "https://cora.example.com"
+            screen.query_one("#webhooks-port", Input).value = "8001"
+            screen.save_webhook_address()
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.persistence.save_webhook_address.assert_called_once_with("https://cora.example.com", 8001)
+            with patch.object(app, "notify") as notify:
+                screen.query_one("#webhooks-port", Input).value = "eighty"
+                screen.save_webhook_address()
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            notify.assert_called_once()
+            self.assertEqual(app.persistence.save_webhook_address.call_count, 1)
 
 
 if __name__ == "__main__":

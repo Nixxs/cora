@@ -599,6 +599,10 @@ ModelSettingsScreen {
     height: auto;
 }
 
+#email-signature {
+    height: 8;
+}
+
 .service-buttons Button {
     width: 1fr;
 }

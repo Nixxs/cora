@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane
+from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
 
 from mail import account as email_setup
 from mail.account import EmailStatus
@@ -68,6 +68,39 @@ class EmailControls:
     sign_out: Callable[[], None]
     has_client_id: bool = False
     tenant: str = ""
+    # The person's own address: verified mail from it is treated like their Signal chat. Empty forgets it.
+    person_address: str = ""
+    save_person: Callable[[str], None] = lambda address: None
+    # Her plain-text signature, added below each new email (not replies). Empty forgets it.
+    signature: str = ""
+    save_signature: Callable[[str], None] = lambda signature: None
+
+
+@dataclass
+class WebhookControls:
+    """What the Webhooks row reads and does; the app owns the listener, the secrets and Graph's subscription."""
+
+    # status() -> (the listener's line, the new-mail subscription's line, whether subscribed); lines may be empty.
+    status: Callable[[], tuple[str, str, bool]]
+    set_enabled: Callable[[bool], None]
+    # save_address(public URL, port as typed): the app checks both and says if not.
+    save_address: Callable[[str, str], None]
+    rotate: Callable[[], None]
+    enabled: bool = False
+    public_url: str = ""
+    port: int = 8000
+
+
+WEBHOOK_INTRO = (
+    "Lets Microsoft tell Cora the moment new mail lands, instead of her checking every 10 minutes. "
+    "She listens only on this PC (127.0.0.1, the port below); you route public HTTPS from the "
+    "address below to that port yourself, with a reverse proxy or tunnel. See the README."
+)
+WEBHOOK_URL_HELP = "The public HTTPS address that reaches this PC, such as https://cora.example.com."
+WEBHOOK_SECRET_HELP = (
+    "Her webhook URLs carry a secret path, and Microsoft sends back a second secret with every "
+    "notification; anything without both is ignored. Both are kept in the system credential store."
+)
 
 
 EMAIL_INTRO = (
@@ -77,6 +110,14 @@ EMAIL_INTRO = (
 EMAIL_APP_HELP = (
     "The Application (client) ID of the app registered for her in the Azure portal (Entra ID › "
     "App registrations, public client flows on). See the README."
+)
+EMAIL_PERSON_HELP = (
+    "Your own email address. Emails from it, once Microsoft verifies they really came from you, "
+    "are treated like your Signal messages: she acts on them and replies. Leave empty to turn this off."
+)
+EMAIL_SIGNATURE_HELP = (
+    "Her signature for new emails, in plain text. Outlook's own signature isn't added to mail she "
+    "sends, so paste a copy here. Replies in a thread go without it, as in Outlook."
 )
 EMAIL_TENANT_HELP = (
     "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
@@ -134,6 +175,17 @@ def email_code_text(status: EmailStatus) -> Text:
     return text
 
 
+def webhook_line(listening: str, mail: str, subscribed: bool) -> Text:
+    """Green once Microsoft tells her about new mail, red if subscribing failed, grey while only listening."""
+    if not listening:
+        return Text("○ off", style="#8f98a8")
+    if subscribed:
+        return Text("● Listening · Microsoft tells her straight away", style="#8fcf8f")
+    if mail:
+        return Text("● Listening · new mail not subscribed", style="#e07a7a")
+    return Text(f"● {listening}", style="#8f98a8")
+
+
 def status_line(status: ServiceStatus, enabled: bool) -> Text:
     """Short enough for the service's row; a failure's reason shows in its details."""
     if status.state == CONNECTED:
@@ -174,6 +226,7 @@ class ModelSettingsScreen(ModalScreen):
     def __init__(
         self, models: dict, save, screen_looking: bool, set_screen_looking, services: ServiceControls | None = None,
         signal: SignalControls | None = None, email: EmailControls | None = None,
+        webhooks: WebhookControls | None = None,
     ) -> None:
         super().__init__()
         self.models = dict(models)
@@ -183,6 +236,7 @@ class ModelSettingsScreen(ModalScreen):
         self.services = services
         self.signal = signal
         self.email = email
+        self.webhooks = webhooks
         self.shown_link_uri: str | None = None
         self.shown_clients: list[tuple[str, str]] | None = None
         self.shown_tools: dict[str, tuple] = {}
@@ -211,6 +265,8 @@ class ModelSettingsScreen(ModalScreen):
                                 yield from self.compose_signal()
                             if self.email is not None:
                                 yield from self.compose_email()
+                            if self.webhooks is not None:
+                                yield from self.compose_webhooks()
             yield Button("Close", id="model-settings-close")
 
     def compose_signal(self) -> ComposeResult:
@@ -258,6 +314,29 @@ class ModelSettingsScreen(ModalScreen):
                 yield Button("Sign Cora in", id="email-sign-in")
                 yield Button("Sign out", id="email-sign-out")
             yield Static(id="email-code", classes="service-reason")
+            yield Label(EMAIL_PERSON_HELP, classes="model-settings-label service-help")
+            yield Input(value=self.email.person_address, id="email-person", placeholder="you@example.com")
+            yield Button("Save your address", id="email-save-person")
+            yield Label(EMAIL_SIGNATURE_HELP, classes="model-settings-label service-help")
+            yield TextArea(self.email.signature, id="email-signature", soft_wrap=True)
+            yield Button("Save signature", id="email-save-signature")
+
+    def compose_webhooks(self) -> ComposeResult:
+        with Horizontal(classes="service-heading", id="service-heading-webhooks"):
+            yield Label("▸ Webhooks", classes="service-title", id="service-title-webhooks")
+            yield Static(id="webhooks-status", classes="service-status")
+            yield Switch(value=self.webhooks.enabled, id="webhooks-enabled")
+        with Vertical(classes="service-details", id="service-details-webhooks"):
+            yield Static(Text(WEBHOOK_INTRO, style="#d7a06a"), classes="service-help")
+            yield Static(id="webhooks-mail", classes="service-reason")
+            yield Label(WEBHOOK_URL_HELP, classes="model-settings-label service-help")
+            yield Input(value=self.webhooks.public_url, id="webhooks-url", placeholder="https://cora.example.com")
+            yield Label("Local port (on 127.0.0.1)", classes="model-settings-label")
+            yield Input(value=str(self.webhooks.port), id="webhooks-port", placeholder="8000")
+            yield Static(Text(WEBHOOK_SECRET_HELP, style="#8f98a8"), classes="service-help")
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save", id="webhooks-save")
+                yield Button("New secrets", id="webhooks-rotate")
 
     def compose_service(self, service) -> ComposeResult:
         # One row per service; clicking it (anywhere but the switch) opens or closes its details.
@@ -291,7 +370,8 @@ class ModelSettingsScreen(ModalScreen):
         details = self.query_one(f"#service-details-{service_id}")
         details.display = not details.display
         arrow = "▾" if details.display else "▸"
-        title = {"signal": "Signal", "email": "Email"}.get(service_id) or SERVICES[service_id].title
+        titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks"}
+        title = titles.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
     async def on_mount(self) -> None:
@@ -354,11 +434,20 @@ class ModelSettingsScreen(ModalScreen):
         self.query_one("#email-sign-out", Button).disabled = status.state not in (
             email_setup.READY, email_setup.SIGNING_IN, email_setup.FAILED)
 
+    def show_webhooks(self) -> None:
+        listening, mail, subscribed = self.webhooks.status()
+        self.query_one("#webhooks-status", Static).update(webhook_line(listening, mail, subscribed))
+        detail = self.query_one("#webhooks-mail", Static)
+        detail.display = bool(mail)
+        detail.update(Text(mail, style="#8f98a8"))
+
     async def show_services(self) -> None:
         if self.signal is not None:
             await self.show_signal()
         if self.email is not None:
             self.show_email()
+        if self.webhooks is not None:
+            self.show_webhooks()
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -399,6 +488,16 @@ class ModelSettingsScreen(ModalScreen):
             if event.value != self.signal.enabled:
                 self.signal.enabled = event.value
                 self.signal.set_enabled(event.value)
+            return
+        if event.switch.id == "webhooks-enabled":
+            if event.value == self.webhooks.enabled:
+                return
+            if event.value and not self.webhooks.public_url:
+                self.notify("Save the public address first.", severity="warning")
+                event.switch.value = False
+                return
+            self.webhooks.enabled = event.value
+            self.webhooks.set_enabled(event.value)
             return
         if event.switch.id == "screen-looking":
             if event.value == self.screen_looking:
@@ -447,6 +546,10 @@ class ModelSettingsScreen(ModalScreen):
             self.save_person_number()
         elif event.input.id in ("email-client-id", "email-tenant"):
             self.save_email_app()
+        elif event.input.id == "email-person":
+            self.email.save_person(event.input.value)
+        elif event.input.id in ("webhooks-url", "webhooks-port"):
+            self.save_webhook_address()
         elif event.input.id in ("signal-client-name", "signal-client-number"):
             self.add_client()
         else:
@@ -490,6 +593,14 @@ class ModelSettingsScreen(ModalScreen):
         self.email.save_app(field_.value, self.query_one("#email-tenant", Input).value)
         field_.value = ""
 
+    def save_webhook_address(self) -> None:
+        url = self.query_one("#webhooks-url", Input).value
+        if not url.strip():
+            self.notify("Give the public HTTPS address first.", severity="warning")
+            return
+        # The app checks both and saves them, or says why not.
+        self.webhooks.save_address(url, self.query_one("#webhooks-port", Input).value)
+
     def save_service_token(self, service_id: str) -> None:
         field_ = self.query_one(f"#service-token-{service_id}", Input)
         token = field_.value.strip()
@@ -511,10 +622,18 @@ class ModelSettingsScreen(ModalScreen):
             self.signal.link()
         elif button == "email-save-id":
             self.save_email_app()
+        elif button == "email-save-person":
+            self.email.save_person(self.query_one("#email-person", Input).value)
+        elif button == "email-save-signature":
+            self.email.save_signature(self.query_one("#email-signature", TextArea).text)
         elif button == "email-sign-in":
             self.email.sign_in()
         elif button == "email-sign-out":
             self.email.sign_out()
+        elif button == "webhooks-save":
+            self.save_webhook_address()
+        elif button == "webhooks-rotate":
+            self.webhooks.rotate()
         elif button == "signal-add-client":
             self.add_client()
         elif button.startswith("signal-remove-"):
