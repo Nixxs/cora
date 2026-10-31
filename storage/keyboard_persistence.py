@@ -14,6 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
+from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
 from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
@@ -185,6 +186,15 @@ class KeyboardPersistence:
 
     def save_signal_account(self, account: str | None) -> None:
         SignalSettingsStore(self._get_store().engine).set_account(account)
+
+    def load_webhook_settings(self) -> WebhookSettings:
+        return WebhookSettingsStore(self._get_store().engine).settings()
+
+    def save_webhook_enabled(self, enabled: bool) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_enabled(enabled)
+
+    def save_webhook_address(self, public_url: str, port: int) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_address(public_url, port)
 
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()

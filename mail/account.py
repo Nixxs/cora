@@ -271,6 +271,30 @@ def reply_body(text: str, draft_body: dict) -> dict:
     return {"contentType": "HTML", "content": content}
 
 
+INBOX_RESOURCE = "me/mailFolders('inbox')/messages"
+
+
+def graph_time(at: datetime) -> str:
+    return at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_graph_time(text: str) -> datetime:
+    # Graph may give seven decimal places, more than Python reads.
+    text = text.replace("Z", "+00:00")
+    if "." in text:
+        whole, rest = text.split(".", 1)
+        digits = re.match(r"\d*", rest).group()
+        text = f"{whole}.{digits[:6]}{rest[len(digits):]}"
+    return datetime.fromisoformat(text)
+
+
+@dataclass(frozen=True)
+class MailSubscription:
+    """Graph's subscription to new mail in her inbox, and when it lapses unless renewed."""
+    id: str
+    expires: datetime
+
+
 @dataclass(frozen=True)
 class SentMail:
     id: str
@@ -355,6 +379,30 @@ class Mailbox:
                    (message.get("body") or {}).get("content") or "")
             for message in page.get("value", []) if BOUNCE_SUBJECT.match(message.get("subject") or "")
         ]
+
+    async def subscribe(self, url: str, lifecycle_url: str, client_state: str, expires: datetime) -> MailSubscription:
+        """Graph calls `url` when mail lands in her inbox; any earlier subscription to it goes first.
+
+        Graph checks the URL answers its handshake before this returns, so the listener must be up.
+        """
+        page = await self._get("/subscriptions")
+        for old in page.get("value", []):
+            if old.get("notificationUrl") == url and old.get("id"):
+                await self.unsubscribe(old["id"])
+        made = await self._request("POST", "/subscriptions", body={
+            "changeType": "created", "resource": INBOX_RESOURCE, "notificationUrl": url,
+            "lifecycleNotificationUrl": lifecycle_url, "clientState": client_state,
+            "expirationDateTime": graph_time(expires),
+        })
+        return MailSubscription(made["id"], parse_graph_time(made["expirationDateTime"]))
+
+    async def renew(self, subscription_id: str, expires: datetime) -> MailSubscription:
+        made = await self._request("PATCH", f"/subscriptions/{subscription_id}",
+                                   body={"expirationDateTime": graph_time(expires)})
+        return MailSubscription(subscription_id, parse_graph_time(made["expirationDateTime"]))
+
+    async def unsubscribe(self, subscription_id: str) -> None:
+        await self._request("DELETE", f"/subscriptions/{subscription_id}")
 
     async def mark_read(self, message_id: str) -> None:
         await self._request("PATCH", f"/me/messages/{message_id}", body={"isRead": True})

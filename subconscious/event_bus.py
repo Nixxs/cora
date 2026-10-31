@@ -27,6 +27,15 @@ class FindingEvent:
     occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+@dataclass(frozen=True)
+class MailArrivedEvent:
+    """Mail landed in Cora's inbox (a webhook said so). No content: whoever cares reads her mailbox itself."""
+
+    source: str
+    event_id: UUID = field(default_factory=uuid4)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
 Event = TypeVar("Event")
 
 

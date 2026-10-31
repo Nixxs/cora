@@ -18,6 +18,7 @@ from storage.dashboard_snapshot import DashboardSnapshot
 from storage.database import build_engine
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.signal_settings_store import SignalSettings
+from storage.webhook_settings_store import WebhookSettings
 from migrate import apply_migrations, database_settings
 
 
@@ -138,6 +139,7 @@ async def running_app(persistence=None):
                 persistence.load_delegation_model.return_value = BACKEND_MODEL
                 # Signal and services off, as on a fresh install.
                 persistence.load_signal_settings.return_value = SignalSettings()
+                persistence.load_webhook_settings.return_value = WebhookSettings()
                 persistence.load_enabled_services.return_value = set()
                 persistence.load_service_tools.return_value = {}
                 persistence.load_clients.return_value = []

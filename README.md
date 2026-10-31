@@ -899,6 +899,47 @@ in `.env` or the database: it's too big for the credential store. Activity says
 Microsoft's error code if it refused. **Sign out** in the same row forgets her
 sign-in.
 
+**Webhooks: hearing about new mail straight away.** Without them, Cora checks her task
+email threads every 10 minutes. With them, Microsoft calls Cora the moment mail lands
+in her inbox, and she checks within a few seconds. The listener is part of Cora and
+runs while she does. It listens only on this PC, at `127.0.0.1` on a local port
+(8000 by default). Getting public HTTPS traffic to that port is up to you: Cora
+ships no proxy. Any reverse proxy or tunnel works. With Caddy, for example:
+
+```
+cora.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Then open Settings > Services > **Webhooks**, enter the public address (such as
+`https://cora.example.com`, without a path) and the local port, press **Save** and
+turn the switch on. Run `pip install -r requirements.txt` and `python migrate.py`
+once for migration 0031. Once her email is ready, the row shows that Microsoft tells
+her straight away, with the date her subscription runs to. She renews it every
+couple of days and ends it when she closes. The 10-minute check carries on as a
+fallback.
+
+How it's kept safe:
+- Every address she gives Microsoft carries a long random **secret path**, so
+  anything else on that address gets a bare 404.
+- Each notification must also carry a second secret, the **clientState** she
+  gave Microsoft. Notifications without it are ignored.
+- Both secrets are kept in the system credential store, never in `.env`, the
+  database or Activity. **New secrets** in the same row replaces them: the old
+  addresses stop working, and she subscribes again.
+- A notification carries no mail and nothing in it is used. It only starts the
+  same check, which reads her mailbox through Microsoft Graph itself, and a burst
+  of notifications becomes one check. So a forged call could at most cause an
+  extra check.
+- Requests are capped in size, and only Microsoft's handshake token is ever
+  echoed back, as plain text.
+
+New mail arrives as a `MailArrivedEvent` on Cora's event bus
+([subconscious/event_bus.py](subconscious/event_bus.py)). Whatever cares about it
+subscribes: for now that's the task mail check, and later her awareness of the rest
+of her inbox.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -1311,19 +1352,22 @@ features it helps check, and package last.
       Signal (10 minutes, one request at a time; a lapsed one waits on you)
     - [x] T3 E4 email follow-ups after two working days (Sunday doesn't count),
       as replies in the thread, and bounces back to you from the mail check
-    - [ ] T4 new-mail events through awareness (later, with item 14): a webhook
-      listener at https://cora.intelligis.io (port 8000 on Cora's PC) receives
-      Microsoft Graph change notifications and starts the same mail check at once
+    - [x] T4a mail webhooks (the start of awareness): a listener inside Cora on
+      127.0.0.1 (Settings > Services > Webhooks; you route public HTTPS to it)
+      takes Microsoft Graph's new-mail notifications under a secret path and
+      clientState, publishes `MailArrivedEvent` on the event bus, and the task mail
+      check subscribes to it; the 10-minute check stays as the fallback
+    - [ ] T4b the rest of her new mail through awareness: triage of other new mail
+      in her inbox into observations she mentions at a lull (with item 11)
 
 *Phase 3 — noticing things*
 
 11. Awareness W1–W3, including quiet hours and the off switch.
 12. Relevance and awareness triggers (interests step 8 below).
 13. Home Assistant, starting with its demo devices.
-14. Awareness W4: expectations from memory tasks; Tasks T4 (mail events wake
-    waiting tasks). Webhooks arrive at https://cora.intelligis.io, which points to
-    port 8000 on the PC Cora runs on: a small FastAPI process (or container) beside
-    her takes webhook calls and turns them into events for her, starting with new mail.
+14. Awareness W4: expectations from memory tasks. Webhooks already reach her
+    (T4a: a Starlette listener inside Cora on 127.0.0.1, [mail/webhook.py](mail/webhook.py),
+    publishing events on the event bus); new kinds of webhook join the same listener.
 15. Camera and screen awareness.
 16. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
@@ -1687,13 +1731,14 @@ features it helps check, and package last.
     view); T2b the coordinator (built); T3 her own email through Microsoft Graph
     in four steps (E1 sign-in and reading, built; E2 sending and email parties, built;
     E3a the mail check, built; E3b background approvals on Signal, built; E4 email
-    nudges and bounces, built) and commitment approvals; T4 (with awareness)
-    mail events wake waiting tasks instead of waiting for the next check. The mail check
-    (`check_task_mail`) is written to be started from anywhere: a Graph change
-    notification on her inbox, through the webhook listener, only needs to call it.
-    Graph notifications only say that something changed, and mail subscriptions expire
-    within about three days, so they're renewed regularly and the 10-minute check stays
-    as the fallback for any notification that's missed.
+    nudges and bounces, built) and commitment approvals; T4a (built) mail events
+    wake waiting tasks instead of waiting for the next check: Graph's change
+    notifications reach the listener, become a `MailArrivedEvent`, and the task mail
+    check subscribes to it (one check per burst, and once more if mail lands while
+    one runs). Graph notifications only say that something changed, and mail
+    subscriptions expire, so hers lasts two days and is renewed by the 10-minute
+    round once under 12 hours are left; that round's check stays as the fallback
+    for any notification that's missed.
 
 - **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)
   is command-line only today. A "Her picture" section in Settings would make it a
