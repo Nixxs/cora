@@ -458,6 +458,22 @@ Screen > .screen--selection {
     color: #d0d6e0;
 }
 
+/* Beside the heatmap; a percentage, as only the context box may use a fr width in a scrolling row. */
+#tasks-box {
+    width: 30%;
+    min-width: 34;
+}
+
+#tasks-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#task-list {
+    height: auto;
+    color: #d0d6e0;
+}
+
 #background-runs {
     height: auto;
     color: #d0d6e0;
@@ -581,6 +597,10 @@ ModelSettingsScreen {
 
 .service-buttons {
     height: auto;
+}
+
+#email-signature {
+    height: 8;
 }
 
 .service-buttons Button {

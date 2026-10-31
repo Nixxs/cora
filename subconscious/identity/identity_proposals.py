@@ -4,10 +4,11 @@ This checks shape only: exact fields, types, and that every id is one the model 
 shown (traits it may change or cite, experiences it may cite). Whether a change is
 allowed is decided per change by identity_rules. A malformed reply rejects the whole
 reflection, so the same experiences are read again next time.
+
+The model is shown short ids (t1, e1) rather than UUIDs, which it miscopies.
 """
 
 from collections.abc import Sequence
-from uuid import UUID
 
 from subconscious.identity.identity_evidence import Experience
 from subconscious.identity.identity_rules import ACTIONS, Change, Trait
@@ -17,6 +18,15 @@ CHANGE_FIELDS = {"action", "trait_id", "kind", "statement", "polarity", "subject
                  "reason", "cited_trait_ids", "evidence_ids"}
 RETIRE_EMPTY = ("kind", "statement", "polarity", "subject", "confidence")
 MAX_CHANGES = len(ACTIONS)  # at most one form, revise and retire
+
+
+def trait_refs(traits: Sequence[Trait]) -> dict[str, Trait]:
+    """Short ids for the active traits, the only ones the model is shown."""
+    return {f"t{n}": trait for n, trait in enumerate((item for item in traits if item.status == "active"), 1)}
+
+
+def experience_refs(experiences: Sequence[Experience]) -> dict[str, Experience]:
+    return {f"e{n}": item for n, item in enumerate(experiences, 1)}
 
 
 def optional_text(value: object, name: str) -> str | None:
@@ -30,7 +40,7 @@ def parse_ids(value: object, allowed: dict, name: str) -> tuple:
         raise ValueError(f"Identity {name} must be a list of ids")
     parsed = []
     for item in value:
-        key = str(UUID(item))
+        key = item.strip().lower()
         if key not in allowed:
             raise ValueError(f"Identity change cites an unknown {name}")
         parsed.append(allowed[key])
@@ -45,8 +55,8 @@ def validate_reflection(
         raise ValueError("Invalid identity reflection")
     if len(payload["changes"]) > MAX_CHANGES:
         raise ValueError(f"At most {MAX_CHANGES} identity changes")
-    trait_ids = {str(trait.id): trait.id for trait in traits if trait.status == "active"}
-    evidence = {str(item.id): item.evidence for item in experiences}
+    trait_ids = {ref: trait.id for ref, trait in trait_refs(traits).items()}
+    evidence = {ref: item.evidence for ref, item in experience_refs(experiences).items()}
     changes = []
     for row in payload["changes"]:
         if not isinstance(row, dict) or set(row) != CHANGE_FIELDS:

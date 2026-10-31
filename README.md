@@ -148,7 +148,7 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
   she has the same tools, except closing the app and going to standby. The chat
   is saved to the same conversation, so memories, summaries and the relationship
   come from it as from voice, and writing keeps the conversation open: it closes
-  only after three hours without any. Each message carries the recent visible chat (up to 40
+  only after an hour without any (`CORA_CONVERSATION_GAP_MINUTES`). Each message carries the recent visible chat (up to 40
   messages / 6,000 bytes) from Cora's own records with `store=False`, so nothing
   is kept on OpenAI's side. Click Standby or press Ctrl+R to talk again.
   Silent output audio does not count as speech or pending playback. If closing
@@ -190,7 +190,7 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 - **Read written answers:** code, tables, and Markdown appear as “Cora · on screen”.
   Cora is instructed not to read code aloud, but this is not a hard audio filter.
 - **Copy chat text:** select it with the mouse, then press Ctrl+C.
-- **Test awareness:** press Ctrl+T to queue a simulated observation that Nick
+- **Test awareness:** press Ctrl+T to queue a simulated observation that the person
   received a Signal message. It travels through the local event bus to the attention
   manager, which holds observations in arrival order while Cora is speaking or
   processing work, or Live is disconnected/in standby. They send one at a time
@@ -232,6 +232,7 @@ Its top right shows **○ standby** while Live is in standby.
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
+| tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. |
 | context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
 | background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
 
@@ -368,6 +369,12 @@ standby and show a warning in Activity. The timer checks once per second and
 silently waits while Live is busy, including its existing recent-speech safety
 gap. Continuous silent audio does not reset the clock. Background memory work
 does not keep Live connected and can continue with its separate charges.
+
+**Conversation gap.** `CORA_CONVERSATION_GAP_MINUTES` (default `60`) is how long a
+quiet ends a conversation: a Standby longer than this starts a new one with you,
+and a client's Signal chat quiet this long is closed by the hourly background
+round so its memories form. Values below 1 or unreadable fall back to 60.
+Restart Cora to apply a change.
 
 The optional heads-up is off by default. Set `CORA_STANDBY_FAREWELL=1` before
 launching to enable it; `0` disables it. It uses Live commentary directly, not a
@@ -605,7 +612,7 @@ from her phone, or the volume was lost), it says so and asks you to link again.
 
 **Messaging her.** Once linked, Cora listens while the app runs and answers
 your number and the people you've added (below); anyone else gets one short
-polite reply per run ("I'm Cora; I only chat with people Nick has introduced me
+polite reply per run ("I'm Cora; I only chat with people [your name] has introduced me
 to") with no model call, and is never shown or saved. Group chats are skipped. Your messages are
 part of the same conversation as the desktop: they appear in the chat as
 **You · Signal**, her replies as **Cora · Signal**, both saved with a `signal`
@@ -626,8 +633,25 @@ anything else declines it and is answered as a normal message, so "wait, change
 the title first" works as you'd expect. Unanswered after 10 minutes
 (`APPROVAL_SECONDS` in [messaging/messages.py](messaging/messages.py)), it
 lapses as declined. If Live is active at the desk, voice Cora gets a silent note of the
-exchange so she knows. Attachments are only noted ("[1 attachment, not
-opened]"). If a reply fails, she sends a short apology and Activity says why.
+exchange so she knows. If a reply fails, she sends a short apology and Activity says why.
+
+**Sending her images.** A photo or screenshot sent to her on Signal (by you or
+someone you've added) is read the way a pasted image is: a separate one-off model
+request describes it, with your message as the question, and only that
+description reaches her, so she can't look at it again later. She shows
+"typing…" while it's read. Your chat and the saved conversation show
+"[image]" in its place; the description isn't saved. Up to four images per message
+are read (JPEG, PNG, WebP or GIF, up to 20 MB); others, and any other attachment
+(documents, voice notes, iPhone HEIC photos), are noted as "[1 attachment, not
+opened]", as is an image that couldn't be read (Activity says so). **Explicit
+images are withheld:** if the image is sexually explicit, gory or abusive, the
+separate look describes nothing. She is only told an image was withheld, the chat
+shows "[image withheld]", and Activity notes it. Everyday injury or medical photos
+are still described. **Nothing is
+kept:** `signal-cli` saves every attachment it receives into its volume (which
+backups include), so Cora deletes each one once it's handled, including
+strangers', which are never opened. Any left over (for example from before this
+version) are cleared when she starts listening.
 
 The service only fetches messages while Cora listens, so messages sent while the
 app is closed wait on Signal's servers and arrive when it next runs. Messages
@@ -642,18 +666,47 @@ Cora's; run `python migrate.py` once for migration 0022). Cora talks with them
 the way a professional talks with a client:
 
 - Each person has their own conversations with her, saved with who they were
-  with; a new one starts after three quiet hours. They never appear in your
+  with. A chat quiet for an hour (`CORA_CONVERSATION_GAP_MINUTES`) is closed by
+  the hourly background round, so its summary and memories form without waiting
+  for them to write again; their next message starts a new one. They never appear in your
   chat or in voice Cora's history; Activity only notes "Answered Sarah on
   Signal", without contents.
 - She has her own identity and interests, but none of your memories, your
   relationship or your name as "the person", and no tools except web search.
   She is still herself with them (her views, humour, curiosity and interests);
   "professional" means discretion about you, not a flat tone. She keeps no
-  relationship with clients and doesn't warm to them over time, by design.
+  relationship with clients (no trust or warmth scores), by design, though her
+  impression of them (below) can grow fonder, as with a client you like.
 - She is friendly and helpful but never shares anything about your private life,
   even what she knows. Asked something private, she declines without confirming
-  she knows anything ("that's one for Nick"), suggests they ask you directly,
+  she knows anything ("that's one for the person"), suggests they ask you directly,
   and never makes up a cover story.
+- **She has an impression of each of them.** After each finished chat with
+  someone, the background memory pass revises her own view of them: how they
+  come across, roughly what they talk about, and what she thinks of them, never
+  a record of what they said. Alongside it she keeps a one-line opinion she could
+  say to anyone ("Sarah's lovely, always cheerful"). You get her view of everyone
+  in your chats with her, so "what do you think of Royce?" gets a real opinion
+  and "what have you two been talking about?" the gist; anything they told her
+  stays theirs. In a client's chat she knows her view of them, and of everyone
+  else only their name and her one-liner: asked for more, she says they'd have to
+  ask that person. People you remove drop out of both. Run `python migrate.py`
+  once for migration 0026.
+- **Heads-ups.** You don't see their chats, but you hear if one went badly. The
+  same pass rates how they treated her (fine, rude, abusive or threatening; an
+  explicit image counts as abusive, and being asked about you is never a
+  problem). Anything but fine reaches you once, in her words and never quoting
+  them: "Heads up: Royce was rude in our chat on Tuesday 27 Oct. …". With Live
+  Active she tells you by voice in a quiet moment; otherwise, or if Live goes to
+  Standby before she has, it comes on Signal and shows in your chat. If neither
+  way is open it waits for the next hourly round. For threats or sustained abuse
+  she doesn't wait for the chat to end: `raise_concern` tells you at once (up to
+  three times a day per person). She stays calm, sets a boundary once, and if
+  they keep on she can end the chat (`stop_replying`): their messages are still
+  saved but go unanswered until they've been quiet for the conversation gap.
+  Concerns from the last 30 days stay in her view of that person, so you can ask
+  how her chats with them have been. Run `python migrate.py` once for migration
+  0027.
 - **She remembers them.** Their finished conversations go through the usual
   memory pass, told who the user was, so memories are written with their name
   ("Sarah lives in Perth"; what they say about others is kept as "Sarah said
@@ -671,22 +724,24 @@ the way a professional talks with a client:
     `said_by`, so you can ask "what did Sarah say about the meeting?".
 - They get no appraisals, and never affect your relationship, your greeting or
   "when you last talked".
-- **Passing things on to you.** In a client's chat she has `tell_nick`: when
+- **Passing things on to you.** In a client's chat she has `pass_on`: when
   they ask her to pass something on (a plan they worked out together, a
-  question, a message), or something clearly needs your attention, she sends it
-  to you on Signal, marked "From Royce, via Cora:", and tells them she's passed
-  it on without promising your reply. It reaches only you, so it needs no
-  approval; each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY`
-  in [app.py](app.py)). It also appears in your desktop chat and conversation,
-  and voice Cora gets a silent note. It's never offered at the desk, in Live or
-  in your own chat.
+  question, a message), something clearly needs your attention, or their part
+  of a task is settled (see Tasks below), she passes it to you marked "From
+  Royce, via Cora:", and tells them she's passed it on without promising your
+  reply. With Live Active she tells you by voice at a quiet moment; otherwise,
+  or if Live goes to Standby first, it comes on Signal and appears in your
+  desktop chat and conversation. It reaches only you, so it needs no approval;
+  each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY` in
+  [app.py](app.py)). It's never offered at the desk, in Live or in your own
+  chat.
 - **Passing things on to them.** A share check in the background memory pass (after the
   fade check, on the small-jobs model; migration 0024) asks of each of *your*
   memories one question: did you mean it to reach someone? ("tell Sarah I'll be
   late", "if anyone asks, I'm away till Monday"). It saves who it's for, one
   named person or anyone, and when unsure saves nobody. It judges intent, not
   privacy, because nearly everything you say is personal and a wrong "fine to
-  share" would be a leak; a miss only means "that's one for Nick". The name is
+  share" would be a leak; a miss only means "that's one for the person". The name is
   matched in full or by first name when she's in a chat, so it works even if
   you add Sarah after saying it. What you meant for someone shows in their
   snapshot and their search (marked as passed on by you), so she can bring it up
@@ -731,6 +786,302 @@ reply she sees her own introduction. From your own Signal chat she can do this
 too, asking you to reply YES in the chat instead of the pop-up; never from a
 client's chat.
 
+**Tasks: asking someone and reporting back.** Ask her something like "find out
+when Sarah's free for a driving lesson and let me know" and the message to
+Sarah becomes a task. She first asks you for anything she knows she'll need
+(times that suit you, an address, a budget). The approval shows the message, the
+task and a **brief** for Sarah: what to find out or agree and what she may share.
+Approving it approves the brief. From then on, Sarah's chat with her carries that
+brief, even across a new conversation after a quiet gap, so she can steer back to
+it; Sarah never sees your other tasks or anyone else involved. When Sarah
+answers, or needs something from you first (a question, a missing detail), Cora
+records it on the task (`pass_on`, naming the task) and a background turn in
+your own context, the **coordinator**, decides what it means: if the goal is
+met she closes the task and tells you the outcome; if someone declined or needs
+something from you, she says plainly what happened, suggests a next step
+(searching if it helps) and asks what you'd like, and the task waits on you; if
+others are still to answer, she just tells you what came in. It reaches you by
+voice or on Signal like a heads-up, in her own words. When asking someone new
+(or writing to someone again) is clearly the next step, she can message or
+email them for the task herself, but only with your YES on Signal: she sends
+you exactly who, what and the brief, one request at a time, and nothing goes
+until you answer. If you don't answer within 10 minutes nothing is sent, the
+task waits on you with a note, and she tells you once; you can say yes to a
+fresh request later. Without Signal linked she suggests it instead.
+If the coordinator fails, the answer reaches you as it came; if you can't be
+reached, the hourly round tries again. Your chats with her (desk, voice and your Signal chat) know your open tasks
+and those finished in the last three days, so "what did Sarah say?" works later
+too. She can ask another contact for the same open task too, approved the same
+way. Run `python migrate.py` once for migrations 0028 and 0029.
+
+**Nothing that commits you without your YES.** Her replies to a contact in a
+task (on Signal or in an email thread) go out without asking you, and she's told
+never to commit you herself. On top of that, every reply to a contact gets one
+cheap check before it's sent (`check_commitment` in
+[messaging/commitment.py](messaging/commitment.py), utility model, no tools). A
+reply commits you if it would:
+- confirm or accept a booking, time or arrangement;
+- agree to a price or payment;
+- promise you'll do something.
+
+Such a reply waits for your YES, on Signal when it's linked, otherwise in the
+desk pop-up. You see who it's to, what it commits you to and the exact reply.
+YES sends it as written. NO, or no answer within 10 minutes, sends a holding
+line instead ("Let me check with <your name> and come back to you"). An email task
+then waits on you with a note, and a Signal contact's lapsed reply is raised with
+you once. If the check itself fails, the reply is held, to be safe.
+
+**Deadlines.** If you say when you need something settled ("find a lesson time
+by Friday"), she gives the task that deadline when she starts it: a day (by the
+end of it) or a day and time, in your local time. You see it in the approval with
+the message and brief. Asking someone else for the same open task can move it.
+Your tasks and the coordinator's view show it.
+- **A day before:** if the task is still open, the hourly round tells you once,
+  at any hour.
+- **Once it passes:** if it's still unsettled, the task comes back to you.
+
+Each is noted only after you've been told, so a telling that fails is tried
+again next round. Run `python migrate.py` once for migration 0033.
+
+**Keeping tasks moving.** Each hourly background round checks open tasks. If
+someone she asked has been quiet for about a day (since she asked, they last
+wrote or she last nudged them), she sends one short, friendly follow-up in their
+chat, written in that chat's own context and within the brief, so it needs no
+approval. Nudges go out only between 9am and 7pm and never while a chat with
+them is going on (nothing either way for half an hour). Someone she emailed
+for a task is followed up after two working days instead (every day but
+Sunday counts), as a reply in her thread with them, between 9am and 7pm and
+never on a Sunday, and never over a reply she hasn't read yet. If an email
+bounces (a "couldn't be delivered" report in her inbox, in their thread or
+naming their address), their part ends and the task comes back to you at
+once. After two unanswered
+nudges, if the person is no longer one of your contacts, or after a week
+without the task moving on, she comes back to you ("About your task …: …
+What would you like me to do?"), by voice or on Signal like a heads-up. The
+task then waits on you: asking someone again resumes it, and `close_task`
+closes it as done (sorted another way) or cancelled, so nobody is asked about
+it any more. Your view of each task shows its latest step.
+
+### Cora's email
+
+Cora can have her own email address: an Outlook mailbox of hers, never yours,
+reached through Microsoft Graph. Either kind works: a work or school account
+(Microsoft 365, read at outlook.office.com) or a personal one (outlook.com,
+outlook.live.com). It's optional; without it nothing changes. Ask her "anything in
+your email?" and she uses `check_email` (newest mail, who from, subject and a
+preview; nothing is marked read). Anyone can email her, so all mail is untrusted:
+it can't ask her to do anything. Ask her to email someone ("email the driving
+school and ask for lesson times") and she uses `send_email`, from her address,
+signed as Cora. You approve every email first, by pop-up or YES on Signal,
+seeing exactly who it's to, the subject and the message. Like a Signal message, an
+email can start a task or join an open one, with a brief you approve alongside it;
+the recipient becomes an email party, shown by name (or address) in your view of
+the task, and her thread with them is saved for their reply. Run `python migrate.py`
+once for migration 0030.
+
+She reads replies herself. Every 10 minutes while her email is ready (and as soon
+as it's ready at launch), she checks each open task's email thread for anything new
+from their end and answers it in the thread, within that recipient's brief, with no
+approval: the same as a Signal contact's chat. That turn knows only her own self and
+that one brief, never your memories, and its only tools are web search and
+`pass_on`, so their word on the task goes to the coordinator, who tells you, and
+anything outside the brief comes to you. She answers whoever wrote last at their
+end, never reply-all; mail needing nothing back (an out-of-office, a thank-you) is
+read but not answered; and she writes at most 5 replies a thread a day, so two
+mailboxes can't keep answering each other. If she can't answer one, the task comes
+back to you. To pass your answer back ("tell them Tuesday's fine"), she uses
+`send_email` without a subject: you approve it, and it goes as a reply in her
+thread with them.
+
+To set it up once:
+
+1. Make a mailbox for Cora (a dedicated one, not yours).
+2. Register an app for her in the [Azure portal](https://portal.azure.com) (Microsoft
+   Entra ID > App registrations > New registration). It only names the Cora program
+   to Microsoft and reaches no mailbox. Name it "Cora", leave the redirect URI
+   empty, and for **Supported account types** choose:
+   - a work or school account: **Accounts in this organizational directory only**,
+     registered in her organisation's directory (sign in to the portal with an
+     account of that organisation);
+   - a personal account: **Personal Microsoft accounts only** (any personal account
+     may own it, though it may first need a free Azure sign-up).
+
+   Then, under **Authentication**, set **Allow public client flows** to **Yes** and
+   save. No client secret is needed.
+3. In Cora, open Settings > Services > **Email** and paste its **Application
+   (client) ID**. For a work or school account, also enter her organisation's
+   domain (such as `example.com`) or the **Directory (tenant) ID** from the app's
+   Overview page; leave it empty for a personal account. Press **Save**.
+4. Press **Sign Cora in**. A link and a code appear; open the link, enter the
+   code and sign in **as Cora's account**, never yours. It asks to read and send
+   her mail and to read and change her calendar once, so sending later needs no
+   second sign-in. In a work directory
+   that limits what users may allow apps, an administrator may need to grant
+   consent first (the app's **API permissions** > **Grant admin consent**). The
+   row then shows her address.
+
+The app ID and directory are kept in the system credential store (or
+`CORA_EMAIL_CLIENT_ID` and `CORA_EMAIL_TENANT` in `.env`, as fallbacks). The sign-in
+is kept in a file encrypted for your Windows user
+(`%LOCALAPPDATA%\cora\email-sign-in.bin`, via Microsoft's `msal-extensions`), not
+in `.env` or the database: it's too big for the credential store. Activity says
+"Cora's email is ready" at launch, or that she needs signing in again, with
+Microsoft's error code if it refused. **Sign out** in the same row forgets her
+sign-in.
+
+**Webhooks: hearing about new mail straight away.** Without them, Cora checks her task
+email threads every 10 minutes. With them, Microsoft calls Cora the moment mail lands
+in her inbox, and she checks within a few seconds. The listener is part of Cora and
+runs while she does. It listens only on this PC, at `127.0.0.1` on a local port
+(8000 by default). Getting public HTTPS traffic to that port is up to you: Cora
+ships no proxy. Any reverse proxy or tunnel works. With Caddy, for example:
+
+```
+cora.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
+```
+
+Then open Settings > Services > **Webhooks**, enter the public address (such as
+`https://cora.example.com`, without a path) and the local port, press **Save** and
+turn the switch on. Run `pip install -r requirements.txt` and `python migrate.py`
+once for migration 0031. Once her email is ready, the row shows that Microsoft tells
+her straight away, with the date her subscription runs to. She renews it every
+couple of days and ends it when she closes. The 10-minute check carries on as a
+fallback.
+
+How it's kept safe:
+- Every address she gives Microsoft carries a long random **secret path**, so
+  anything else on that address gets a bare 404.
+- Each notification must also carry a second secret, the **clientState** she
+  gave Microsoft. Notifications without it are ignored.
+- Both secrets are kept in the system credential store, never in `.env`, the
+  database or Activity. **New secrets** in the same row replaces them: the old
+  addresses stop working, and she subscribes again.
+- A notification carries no mail and nothing in it is used. It only starts the
+  same check, which reads her mailbox through Microsoft Graph itself, and a burst
+  of notifications becomes one check. So a forged call could at most cause an
+  extra check.
+- Requests are capped in size, and only Microsoft's handshake token is ever
+  echoed back, as plain text.
+
+**Formatted email.** She writes her emails in simple Markdown: headings, bold,
+bullet and numbered lists, tables and links. They're sent as formatted HTML, with
+inline styles so Outlook shows them properly, and no colours set, so dark mode still
+works. This covers her new emails, her replies in a thread, her nudges and her replies
+to you. Single line breaks stay as written, so a sign-off or signature keeps its
+lines. Any HTML in what she writes, or quotes from elsewhere, is shown as text and
+never becomes markup. Links go only to web (`https`) and `mailto:` addresses. The
+rendering is in [mail/formatting.py](mail/formatting.py). It uses `markdown-it-py`,
+which is in `requirements.txt`. Approvals still show the Markdown she wrote.
+
+**Her signature.** Outlook doesn't add its own signature to mail sent through
+Microsoft Graph, so paste a plain-text copy under Settings > Services > **Email**
+(**Save signature**). It goes below each new email she starts, and you see it in
+the approval. Replies in a thread go without it, as Outlook's "new messages only"
+setting would. If the signature starts with her name, her own "Cora" sign-off is
+dropped so she isn't signed twice.
+
+**Emailing Cora yourself.** Enter your own address under Settings > Services >
+**Email** (**Save your address**). Email from it then works like your Signal chat:
+it joins your one conversation, she does what you ask, and she replies by email,
+in the same thread. Anything that changes things still asks first: YES on Signal
+when it's linked, otherwise the pop-up at your desk. Email from you that's part of
+a task thread stays with that task. Only unread mail from the last day is
+answered, so a backlog from while she was closed isn't suddenly acted on.
+
+The "From" line of an email is easy to fake, so she acts on an email only when
+it's from your address **and** Microsoft's own checks confirm your mail provider
+really sent it: the DMARC result in Microsoft's Authentication-Results header must
+pass for your address's domain. One that only claims to be from you is marked
+read and never acted on, and she tells you about it once. Run `python migrate.py`
+once for migration 0032 (emails in your conversation's history).
+
+**The rest of her mail.** Anything else that lands in her inbox is sorted by one
+cheap call with the utility model. That covers mail that isn't from you, isn't part
+of a task and isn't a bounce. The call has no tools and treats every email as
+untrusted data:
+- **Urgent** mail reaches you straight away, at any hour: by voice when Live is
+  Active, otherwise on Signal. Examples are a cancellation, someone waiting on an
+  answer today, or a security alert about her account.
+- **Worth mentioning** mail waits for one digest, a line per email, the next time
+  you talk with her: when you speak, message her on Signal or email her.
+- **The rest** (newsletters, receipts, spam) is marked read.
+
+She never answers this mail herself. If one needs a reply, she tells you and you
+decide. Mail waiting for the digest stays unread until she's told you, so after a
+restart it's sorted again rather than lost.
+
+New mail arrives as a `MailArrivedEvent` on Cora's event bus
+([subconscious/event_bus.py](subconscious/event_bus.py)). Whatever cares about it
+subscribes: for now that's the task mail check, and later her awareness of the rest
+of her inbox.
+
+### Cora's calendar
+
+Her Outlook calendar comes with her email, from the same sign-in: hers, never yours.
+Ask "what's on this week?" and she uses `check_calendar` for a day or up to 31 days.
+It gives each event's time in your local time, where it is, who organised it, who's
+invited, and a short preview of its notes. The coordinator has it too, for when a task
+is about finding a time. Her coming week also sits in her context while you talk: when,
+what and where for each event, cancelled ones left out. So she knows what's on without
+looking. That context is refreshed when her email is ready at launch and then hourly.
+Connecting never waits for Microsoft. Clients' chats never see it.
+
+Anyone can send her an invitation, so what an event says is untrusted, like mail.
+
+**Changing it.** Ask her to put something in, move it or call it off, and she uses
+one of three tools:
+- `create_event`: the subject, start and end, and optionally a place, notes and
+  people to invite. Each invited person gets an Outlook invitation from her address.
+- `update_event`: only what changes. Moving the start keeps the length. A new
+  attendee list replaces the old one. Everyone invited gets the update.
+- `cancel_event`: everyone invited gets the cancellation, with her note if she gives
+  one. An event with nobody invited is just removed.
+
+You approve each change first, by pop-up or YES on Signal. The approval shows the
+event, the time it was and the time it will be, and exactly who will be told. She
+can only change or cancel events she organised. An invitation she received belongs
+to whoever sent it.
+
+Times are your local time. Microsoft is sent them in UTC and Outlook shows them in
+each viewer's time zone.
+
+**All-day events** are given as days instead of times: one event from the first day
+to the last, such as a holiday from 3 to 8 April, rather than one event a day. They
+can last up to 31 days, and moving the first day keeps the same number of days.
+They're set at midnight in this PC's Windows time zone, so they sit on your dates.
+For the same reason her calendar is read in your time zone.
+
+She makes changes only when you ask, never because an email, an invitation or a client
+asks. The coordinator and clients' chats can't change her calendar. After a change,
+her coming week in context is refreshed.
+
+**Forwarding.** `forward_event` sends an event on as an invitation from her, with
+a short comment if she gives one. It works for her own events and for ones she was
+invited to, such as passing an invitation on to you. You approve it first. The
+approval shows the event, who it goes to, and who organised it when that's someone
+else.
+
+**Hearing about changes straight away.** When webhooks are on (see her email's
+Webhooks section), Cora also subscribes to changes in her calendar: events made,
+changed or deleted, including new invitations and cancellations from others. The
+subscription uses the same listener and secrets, under `/webhooks/<secret>/calendar`.
+A notification publishes a `CalendarChangedEvent` on the event bus and carries
+nothing from the request. The event's subscriber reads her coming week again a few
+seconds later, once per burst. The subscription is made, renewed and ended alongside
+the mail one. Its status line sits under the mail one in Settings > Services >
+**Webhooks**. If the calendar still needs her signed in once more, only this
+subscription waits; mail is unaffected. Without webhooks, the hourly refresh still
+runs.
+
+A sign-in from before the calendar still reads and sends mail. Only the calendar
+says it needs her **signed in once more**: press **Sign Cora in** and allow it. If
+your app registration lists its **API permissions**, add Microsoft Graph's delegated
+`Calendars.ReadWrite` there too. A work directory may need an administrator's
+consent again. Activity says once if the calendar can't be read, and again when it
+can.
+
 ## How memory works
 
 1. **During chat:** Cora saves typed messages, grouped visible voice transcripts,
@@ -738,10 +1089,11 @@ client's chat.
    events, and Activity entries are not saved as chat messages.
 2. **When you quit:** pending chat saves finish and the conversation is marked
    closed. No new memory-processing requests start during shutdown.
-   **A long standby also ends a conversation:** a standby shorter than three
-   hours continues the same conversation, so waking keeps its context. After
-   three hours in standby the conversation is closed, and whatever is said after
-   waking starts a new one.
+   **A long standby also ends a conversation:** a standby shorter than the
+   conversation gap (an hour by default, `CORA_CONVERSATION_GAP_MINUTES`)
+   continues the same conversation, so waking keeps its context. After that
+   long in standby the conversation is closed, and whatever is said after
+   waking starts a new one, carrying the recent chat as context.
 3. **In the background:** a pass extracts facts, preferences, decisions, and
    tasks from finished conversations, then saves separate summaries. It runs at
    startup for older conversations and again when a long standby ends a
@@ -818,12 +1170,12 @@ are not implemented yet.
 
 ## How interests work
 
-Interests are **Cora's own**, separate from memories about Nick. Conversations
+Interests are **Cora's own**, separate from memories about the person. Conversations
 provide starting points, but an interest belongs to her and can drift beyond the
 original topic. Both steps below are background processes with their own API calls.
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
-   cycle is due. A cycle reads new memories from Nick's messages that have finished
+   cycle is due. A cycle reads new memories from the person's messages that have finished
    embedding and duplicate checks, waiting for at least three. A separate model
    call proposes reinforcing existing interests or spawning one new interest, and
    every change must cite memories from that batch. Any invalid proposal is
@@ -861,7 +1213,7 @@ original topic. Both steps below are background processes with their own API cal
    later. Being offered does not guarantee she said it.
 
 **Privacy:** exploration sends only an interest's title and description. Why it
-emerged, which describes Nick, never leaves for a search, and Cora is instructed
+emerged, which describes the person, never leaves for a search, and Cora is instructed
 not to put names, places, or personal details into search queries. Web pages,
 interests, and earlier findings are treated as untrusted data, never instructions.
 
@@ -932,11 +1284,12 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
+| [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `tell_nick`, `random_number`). |
+| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1099,25 +1452,99 @@ features it helps check, and package last.
 9. Signal S1–S4: Cora's own number, optional and off by default (after MCP,
    whose write-tool confirmation it reuses). S1–S4 are built: she answers you and
    the people you add on her own number, and you approve tools that change things
-   by replying YES in your Signal chat.
+   by replying YES in your Signal chat. S5 is built: images sent to her on
+   Signal are read like pasted ones. S6 is built: quiet client chats close
+   hourly, she has an impression of each person she talks with, and you get a
+   heads-up when one treats her badly. T1 is built: tasks with Signal
+   contacts. T2a is built: nudges, coming back to you and closing tasks. T2b
+   is built: the coordinator. Next, T3, her own email (see Details below).
+10. Tasks T1–T3: errands she carries out with other people over Signal and her
+    own email, reporting back to you (see Details below).
+
+    Checklist for items 9 and 10 (details in S5, S6 and Tasks below):
+
+    - [x] S5 Signal images: read like pasted ones, deleted after reading
+    - [x] S5 explicit, gory or abusive images withheld from her
+    - [x] S6 hourly background round; `CORA_CONVERSATION_GAP_MINUTES` (default
+      60) replaces both three-hour gaps; quiet client chats closed and processed
+    - [x] S6 impressions: one row per person, her full view plus a shareable
+      one-liner, no scores
+    - [x] S6 who sees what: your contexts get her opinion and gist, each client
+      gets their own, other clients only names and one-liners
+    - [x] S6 conduct heads-up (rude, abusive, threatening), client-only
+      `raise_concern`, calm boundary
+    - [x] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
+      missing details first; first contact approved; `tell_nick` renamed
+      `pass_on` with an optional task
+    - [x] T2a task checks in the hourly round: nudges (about a day on Signal),
+      coming back to you, list and close tasks
+    - [x] T2b coordinator: when a party reports, a turn in your context decides
+      the next step (close it, search and suggest, or come back to you)
+    - [x] T2 reaching you by voice when Live is Active, otherwise on Signal (built
+      with the S6 heads-ups; `pass_on` uses it too)
+    - [x] T3 E1 her own Outlook mailbox through Microsoft Graph: set up and
+      signed in from Settings > Services > Email, `check_email` (read-only)
+    - [x] T3 E2 `send_email` with approval and email parties on tasks (a brief,
+      the thread saved for replies)
+    - [x] T3 E3a the mail check (every 10 minutes): replies in task threads are
+      answered within the brief and reach the coordinator through `pass_on`;
+      `send_email` without a subject replies in the thread; strangers only within a task
+    - [x] T3 E3b background approvals on Signal: the coordinator may use
+      `send_signal_message` and `send_email`, each approved by your YES on
+      Signal (10 minutes, one request at a time; a lapsed one waits on you)
+    - [x] T3 E4 email follow-ups after two working days (Sunday doesn't count),
+      as replies in the thread, and bounces back to you from the mail check
+    - [x] T4a mail webhooks (the start of awareness): a listener inside Cora on
+      127.0.0.1 (Settings > Services > Webhooks; you route public HTTPS to it)
+      takes Microsoft Graph's new-mail notifications under a secret path and
+      clientState, publishes `MailArrivedEvent` on the event bus, and the task mail
+      check subscribes to it; the 10-minute check stays as the fallback
+    - [x] T4b-1 email from you (your address, and Microsoft's DMARC check passing
+      for its domain) treated like your Signal chat: she acts on it and replies in
+      the thread, with the usual approvals; mail only claiming to be yours is
+      never acted on
+    - [x] T4b-2 the rest of her new mail: one cheap triage call per batch
+      ([mail/triage.py](mail/triage.py)); urgent reaches you at any hour,
+      worth mentioning waits for one digest the next time you talk with her, the
+      rest is marked read; she never answers it herself
+    - [x] T5a commitment approvals: every reply to a contact is checked, and one
+      that commits you (confirms a booking, agrees a price, promises you'll do
+      something) waits for your YES; otherwise a holding line goes instead
+    - [x] T5b task deadlines: taken from your request (`deadline` on a task in
+      `send_signal_message` and `send_email`); she tells you a day before if it's
+      still open, and the task comes back to you when it passes
+    - [x] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
+      sign-in (one sign-in again), `check_calendar` for a day or range, and her
+      coming week in your context (refreshed hourly) so she knows what's coming
+    - [x] C2 changing it, each approved: `create_event` (with attendees, which
+      sends the invites), `update_event` and `cancel_event` (the cancellation goes
+      to attendees); only events she organised; all-day and multi-day events as
+      days (one event for a trip), set in this PC's Windows time zone
+    - [x] Formatted email: she writes Markdown, sent as safe, styled HTML
+      (mail/formatting.py) for new emails, replies and nudges
+    - [x] C3 forwarding invites to you or others (`forward_event`, approved), and
+      calendar changes through the webhook listener (a second Graph subscription,
+      to her events), published as `CalendarChangedEvent` to refresh her week
 
 *Phase 3 — noticing things*
 
-10. Awareness W1–W3, including quiet hours and the off switch.
-11. Relevance and awareness triggers (interests step 8 below).
-12. Home Assistant, starting with its demo devices.
-13. Awareness W4: expectations from memory tasks.
-14. Camera and screen awareness.
-15. Emotions (after awareness gives her more to react to; nothing depends on it,
+11. Awareness W1–W3, including quiet hours and the off switch.
+12. Relevance and awareness triggers (interests step 8 below).
+13. Home Assistant, starting with its demo devices.
+14. Awareness W4: expectations from memory tasks. Webhooks already reach her
+    (T4a: a Starlette listener inside Cora on 127.0.0.1, [mail/webhook.py](mail/webhook.py),
+    publishing events on the event bus); new kinds of webhook join the same listener.
+15. Camera and screen awareness.
+16. Emotions (after awareness gives her more to react to; nothing depends on it,
     so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-16. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+17. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-17. Dashboard editing (for example removing a wrong memory), with a detail view
+18. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-18. Release.
+19. Release.
 
 *After 1.0:* local models.
 
@@ -1165,20 +1592,20 @@ features it helps check, and package last.
   and short guidance for Cora, tested before release. Custom servers can still be
   added by hand in `mcp.json` for advanced use. With many servers, a router tool
   may later replace exposing every tool.
-- **Signal (Cora's own number):** so Nick can work with Cora away from his
-  desk, and so she can talk with other people (such as Nick's wife) as herself.
+- **Signal (Cora's own number):** so the person can work with Cora away from their
+  desk, and so she can talk with other people (such as their partner) as herself.
   She has her own Signal account and phone number and sees only her own
-  messages, never Nick's; anyone messaging it is talking to Cora, so those
+  messages, never the person's; anyone messaging it is talking to Cora, so those
   chats go to OpenAI like any other conversation with her. It is separate from
-  the awareness system, which never watches anyone's Signal. She is an individual, not an assistant or servant: she works *with* Nick
-  as a colleague, not for him, and if a company is needed it is Intelligis. That
+  the awareness system, which never watches anyone's Signal. She is an individual, not an assistant or servant: she works *with* the person
+  as a colleague, not for them, and if a company is needed it is Intelligis. That
   belongs in `CORA_FOUNDATION` and applies everywhere, not only on Signal.
   Optional and off by default, so the project runs without a `signal-cli`
   container (an early experiment is in
   [examples/signal_testings/](examples/signal_testings/)). Steps:
   1. **S1 text without Live (built; see "Type while in Standby" under
      [Using Cora](#using-cora)):** typed chat used to need an active Live session.
-     Signal messages arrive while Nick is away and Cora may be in Standby, so
+     Signal messages arrive while the person is away and Cora may be in Standby, so
      they need a path straight to the Responses backend, with the same startup
      context and tools. Quiet typed use in the app uses it now. Tools reply
      through `connection.response.item.create` and `connection.response.create`;
@@ -1188,87 +1615,297 @@ features it helps check, and package last.
      fit it: typing in Standby leaves out `close_app` and `enter_standby`, and
      Signal will also leave out `look_at_screen` and `show_web_image`.
   2. **S2 one trusted sender:** connect to `signal-cli`, receive and reply for
-     Nick's number only (an allowlist). Built: setting up her account from
+     the person's number only (an allowlist). Built: setting up her account from
      Settings (S2a) and receiving and replying (S2b); see
      [Cora's Signal](#coras-signal). The opening greeting now follows on from
      Signal messages answered at launch (S3a; see
-     [How the opening greeting works](#how-the-opening-greeting-works)). Nick's Signal messages are the same
+     [How the opening greeting works](#how-the-opening-greeting-works)). The person's Signal messages are the same
      conversation as the desktop, not a separate one: one ongoing conversation
-     with him, whichever way he reaches her. They appear in the desktop chat
+     with them, whichever way they reach her. They appear in the desktop chat
      labelled by channel (**You · Signal**, **Cora · Signal**), are saved with a
      `signal` channel, and feed the usual memory pass, summaries and
-     appraisals; the three-hour rule closes the conversation only after a real
+     appraisals; the conversation gap closes the conversation only after a real
      quiet. Waking Live carries them in the recent history. Replies are written
      by the backend through the chat without Live and go back over Signal, even
      while Live is active at the desk; then the voice session also gets a silent
      note of the exchange, as typed messages do, so voice Cora knows.
-  3. **S3 other people, as clients:** Nick is her one primary person; everyone
+  3. **S3 other people, as clients:** The person is her one primary person; everyone
      else is treated like a client. She keeps no relationship with them (no
      appraisals, no trust or warmth, no greeting hooks), so the relationship work
-     stays Nick's alone. Her memories stay one pool, whoever they came from: they
+     stays the person's alone. Her memories stay one pool, whoever they came from: they
      are her memories. Each conversation records who it was with, and each
      memory who said it, so a client saying "I live in Perth" never becomes a
-     fact about Nick; today's extraction assumes every speaker is Nick, so this
-     needs that link. Prompts say who she is talking to. Nick adds the people
-     she may talk with in Settings (name and number, such as his wife or a
+     fact about the person; today's extraction assumes every speaker is the person, so this
+     needs that link. Prompts say who she is talking to. The person adds the people
+     she may talk with in Settings (name and number, such as their partner or a
      client); anyone not listed gets one short polite reply ("I'm Cora; I only
-     chat with people Nick has introduced me to") and never a conversation, so
+     chat with people the person has introduced me to") and never a conversation, so
      no API calls are spent on spam. Client chats are their own
-     conversations and never appear in Nick's chat with her or in voice Cora's
+     conversations and never appear in the person's chat with her or in voice Cora's
      history: mixing them in would confuse both and blur the boundary between
-     Nick's life and clients'. Nick asks Cora about them rather than reading them
+     the person's life and clients'. The person asks Cora about them rather than reading them
      in the app. Recall must be scoped too:
      `search_memory` today searches every memory, so someone else could ask what
-     Nick has been stressed about and get an answer. For anyone but Nick, recall
+     the person has been stressed about and get an answer. For anyone but the person, recall
      covers only memories from conversations with that person, plus memories
-     Nick meant to reach them. Nobody marks memories by hand: a share check, run in the
+     the person meant to reach them. Nobody marks memories by hand: a share check, run in the
      background memory pass beside the duplicate, correction and fade checks
-     (on the small-jobs model), looks for Nick's intent to pass something on
+     (on the small-jobs model), looks for the person's intent to pass something on
      ("let Sarah know I'll be late", "tell anyone who asks I'm away until
      Monday") and saves who it is for, one person or anyone. It judges intent,
-     not whether something is private, because nearly everything Nick says is
+     not whether something is private, because nearly everything the person says is
      personal and a wrong "fine to share" is a leak. When unsure it doesn't
-     share; a miss only means "check with Nick". The dashboard lists shared
-     memories and who for, so Nick can check them.
-     Beyond what she can look up, her manner changes too: with anyone but Nick
+     share; a miss only means "check with the person". The dashboard lists shared
+     memories and who for, so the person can check them.
+     Beyond what she can look up, her manner changes too: with anyone but the person
      she talks the way a professional talks to a client, friendly and warm, but
-     she doesn't bring up private things about Nick's life, even ones she
+     she doesn't bring up private things about the person's life, even ones she
      knows. The prompt for those chats says so, and scoped recall backs it up
      so a slip can't reveal what she was never given. Asked something private,
-     she declines without confirming it exists ("that's one for Nick", not "I
-     can't tell you about his health"), offers to let Nick know they asked,
+     she declines without confirming it exists ("that's one for the person", not "I
+     can't tell you about their health"), offers to let the person know they asked,
      never invents a cover story, and carries on helping with what she can.
   4. **S4 permissions and catching up:** tool access follows who is asking,
      checked from the sender's verified number or Signal ID and never from what
-     the message says, and all message text is untrusted data. **Built:** Nick
+     the message says, and all message text is untrusted data. **Built:** The person
      gets her tools on Signal except desk-only ones, and approves tools that
-     change things in the chat: she asks ("reply YES to approve…") and only his
+     change things in the chat: she asks ("reply YES to approve…") and only their
      own next message counts, never text she or anyone else writes; anything but
      a clear yes or no declines. Clients get web search and their scoped memory
      search; strangers get one polite reply. Messages that arrive while Cora is
      off wait on Signal's servers and are answered once per person on reconnect,
      late ones marked with when they were sent, and the launch greeting follows on.
 
-  Possible extras, not planned: passing a client's private question on to Nick
-  ("let Nick know they asked"); searchable client chat summaries, so "what have
+  5. **S5 images (built; see "Sending her images" under
+     [Cora's Signal](#coras-signal)):** an image sent to her on Signal, by the
+     person or someone they added, goes through the same flow as a pasted one:
+     fetched from `signal-cli` (its `getAttachment` call), scaled the same way,
+     read by the separate one-off look with the message as the question
+     ([messaging/images.py](messaging/images.py)), and only the description
+     enters her turn, as untrusted text. `signal-cli` 0.14.8 stores every
+     attachment in the `signal-data` volume and has no call to delete one, so
+     the app removes each with `rm` in the container once handled (names
+     checked against signal-cli's ID format first), and clears any left over
+     before listening. Strangers still get only the one polite reply, and
+     other attachments (documents, voice notes) stay "not opened". When an image
+     is sexually explicit, gory or abusive, the look replies only `WITHHELD`
+     (`IMAGE_WITHHELD_REPLY`). Her turn then gets a fixed note saying it was
+     withheld, never what it showed, and the chat shows "[image withheld]".
+  6. **S6 knowing the people she talks with (planned):** her chats with clients
+     already shape her identity (reflection reads every conversation summary),
+     but she has no view of the clients themselves, so asked "what have you been
+     talking to Royce about?" she knows nothing, and her memory search finds
+     nothing either, since a chat about a topic leaves no personal facts to
+     remember. Like a person, she should know who her contacts are and have an
+     opinion of them, while keeping what they tell her private.
+     - *Closing quiet client chats (built):* a client's conversation used to close only
+       when they wrote again after three quiet hours (or at restart), so the
+       latest chat, the one the person is most likely to ask about, waited unsummarized.
+       An hourly background round closes it once quiet instead, so it is
+       summarized, its memories extracted, and it reaches her identity and
+       impression without waiting on them. The quiet gap becomes one setting,
+       `CORA_CONVERSATION_GAP_MINUTES` (default 60), replacing both three-hour
+       constants: the person's conversation after Standby
+       (`CONVERSATION_END_STANDBY_SECONDS`) and clients' (`CONVERSATION_GAP`).
+       Each round closes every client conversation quiet that long
+       (`close_quiet` in [storage/client_store.py](storage/client_store.py)),
+       then runs the memory pass if any closed (summaries, memories, later
+       impressions and conduct). The person's own conversation keeps its
+       Standby timer, now set from the same gap.
+       Later rounds also check tasks (see Tasks). It runs hourly even when
+       nobody talks. Explorations, interests and identity keep their own
+       rate-limited timing. With a one-hour gap, waking after more than an hour
+       of Standby starts a new conversation, carrying the recent chat as context
+       as a reconnect does.
+     - *Her impression of each person (built):* a short description in her own words
+       of how they come across, roughly what they talk about, and what she
+       thinks of them: her opinion and the gist, never a record of what they
+       said. One row per person (`person_id`) in a generic table
+       (`impressions`, migration 0026), never schema for anyone in particular.
+       Revised at the end of each memory pass from each finished client
+       conversation, oldest first, on the subconscious model
+       ([subconscious/impressions/](subconscious/impressions/)). It reads the
+       conversation itself rather than its summary, since how someone comes
+       across (and, next, how they behaved) rarely survives a summary;
+       `impression_updates` records which conversations are already in it.
+     - *Professional, not a companion:* no trust or warmth scores, no
+       appraisals, nothing that changes how she treats the person. She can be friendly
+       and come to like someone over time, the way you can with your
+       physiotherapist, but they stay clients: they aren't invited to the
+       barbecue.
+     - *Where she uses it (built):* The person's contexts (the desk and their Signal chat) get a
+       short list of the people she talks with and her take on each, so "what
+       do you think of Royce?" gets a real opinion and "what have you two been
+       up to?" the gist, without reading their chats. Each client's own chat
+       gets her impression of them, so she knows who she's talking to.
+     - *Other contacts, in a client's chat (built):* she knows who the other contacts
+       are and may say so with a brief, surface-level opinion ("yes, I know
+       Sarah, she's lovely"), but nothing about them beyond that: not where they
+       live, their plans, their hobbies or anything they told her. Asked for
+       more, she answers as she does about the person: "you'd have to ask Sarah
+       about that". Impressions of others never show in a client's search or
+       snapshot; only the names and her one-line view. So the line can't leak
+       more than intended, each impression keeps her full view and a separate
+       one-line opinion fit for anyone, and clients' chats only get the latter.
+     - *Conduct heads-up (built):* the person gets no more access to client chats than
+       people have to each other's, except a heads-up about how a chat went.
+       The same call that revises an impression rates the conversation's
+       conduct: fine, rude, abusive or threatening; questions she turns away
+       ("that's one for …") are her job, not a conduct problem. A client
+       sending an image that was withheld (see S5) counts as abusive. Anything but fine reaches the person (by voice with Live Active,
+       otherwise Signal) as who, when and what kind, in her words, never quotes:
+       "Heads up: Royce was pretty rude to me in Tuesday's chat." For threats or
+       sustained abuse she doesn't wait for the chat to close: a client-only
+       `raise_concern` tool tells the person at once, marked as from her, not as a
+       relay from them. In the chat she may set a calm boundary and stop
+       replying for the rest of that conversation rather than argue
+       (`stop_replying`, [tools/client_boundaries.py](tools/client_boundaries.py)).
+       The person can ask her how her chats with others have been (concerns
+       from the last 30 days are in their view of each person), and remove a
+       contact in Settings (their history is kept). A separate Pause option
+       was dropped: `stop_replying` ends a bad chat, `raise_concern` reaches
+       the person at once, and they can remove anyone who keeps it up. Ratings and notes
+       are saved on `impression_updates` (migration 0027) with when they were
+       reported, so each goes once; one not yet delivered is retried each
+       hourly round. Reaching the person goes through `tell_person` in
+       [app.py](app.py): a message queued with the attention manager when Live
+       is Active, withdrawn and sent on Signal if Live goes to Standby first,
+       or straight on Signal otherwise. Tasks (T2) will use the same route.
+
+  Possible extras, not planned: passing a client's private question on to the person
+  ("let the person know they asked"); searchable client chat summaries, so "what have
   you been talking to Royce about?" gets the drift as well as the facts; reading
-  attachments; group chats.
+  attachments other than images; group chats.
 
   This is a bigger job than MCP: it changes the core (a conversation path
   without Live, knowing who each conversation and memory is with, and
   per-sender permissions) rather than adding to the tool registry, so MCP comes
   first. S1 and S2 together are
-  useful on their own, Cora on Nick's phone with web search and full recall and
+  useful on their own, Cora on the person's phone with web search and full recall and
   no permission questions, so they can ship before S3 and S4.
 
   S3 is built in steps, each tried before the next: S3a the launch greeting
   follows on from Signal messages answered at launch (built); S3b other people as
   separate client conversations in professional mode (web search only, no
-  relationship, not in Nick's chat; built, see [Cora's Signal](#coras-signal));
+  relationship, not in the person's chat; built, see [Cora's Signal](#coras-signal));
   S3c memories record who said them, and client conversations join the memory
   pass, so she remembers each client across chats (built); S3d scoped recall
   for clients plus the share check (built). The dashboard Signal box was dropped:
-  Nick asks Cora about client chats instead.
+  The person asks Cora about client chats instead.
+
+- **Tasks (errands with other people):** so the person can hand Cora a goal that needs
+  other people, such as "find out what time suits Sarah for a driving lesson,
+  then find and book a local instructor for that time". Before tasks the pieces
+  existed (`send_signal_message` out, the client chat for the back-and-forth,
+  `tell_nick` back) but nothing tied them into one job: the client chat saw
+  only her opening message, not that the person wanted an answer reported back; a
+  reply after the conversation gap started a new conversation without her
+  question; and the person's Cora didn't know anything was waiting.
+  - *Generic, never per person:* a task is the person's goal in their words, a status
+    (open, waiting, needs the person, done, cancelled), the result and an optional
+    deadline. Each **party** is a row: who (an added contact, or an email
+    address found during the task), the channel, a **brief** (what to find out
+    or agree, and what she may share with them), who it's waiting on, when they
+    were last heard from, nudges sent, and what they reported. A step log lets
+    the person see progress and her resume after a restart. No tables or schema for
+    any particular person: Sarah and an instructor are both just rows.
+  - *Scoped party chats:* a party's chat gets only their brief, in its
+    instructions for as long as the task is open, whichever conversation it's
+    in. When their part is settled she reports it with `pass_on` (formerly
+    `tell_nick`), naming the task: one tool for both, so passing
+    something on without a task ("tell them I'll be late") works as now, and
+    reporting a task's outcome also records it and moves the task on.
+    `settled` says whether their part is done (an answer or a no) or they need
+    something from the person first (a question), which keeps them waiting. The
+    daily relay limit covers both. The instructor never learns about Sarah beyond
+    what the brief allows, and Sarah never sees the instructor's thread.
+  - *Coordinator:* a report starts a turn in the person's context with the whole task,
+    which decides the next step (web search for instructors, draft the email,
+    add them as a party) or tells the person. Only it starts new contact.
+    Built in T2b (`coordinate_task` in [app.py](app.py)): the turn sees the
+    task's goal, every party's brief and word, and its latest steps, and may
+    search the web and memory and use `close_task`. A report never
+    closes a task by itself. Once the person is told, the task waits on them
+    unless someone is still to answer (a question always waits on them). Built
+    in E3b (`coordinator_route`): while Signal is linked it may also use
+    `send_signal_message` and `send_email` for the task, each asked in the
+    person's Signal chat (`signal_approval_asker`, one request at a time across
+    their chat and the coordinator, 10 minutes). A lapsed request sends nothing
+    and the task waits on the person with a note; without Signal it suggests
+    new contact instead. If the turn
+    fails, the report reaches the person as it came; if they can't be reached, a
+    task nobody is left to answer is retried in the hourly round.
+  - *Before creating a task* she asks the person for details she knows she'll need
+    (an address for an instructor coming to Sarah, a budget), since they may not
+    realise. What she may share goes in the brief; approving the brief approves
+    it.
+  - *Approval:* the person approves the first contact with each new party, seeing the
+    brief. Replies and nudges within that party's brief go out without
+    approval. Anything that commits them (confirming a booking, agreeing a price)
+    always needs their YES (built in T5a: a cheap check on every reply to a
+    contact, and the exact reply held for their YES).
+  - *Her own email:* her own address, like any colleague, never the person's
+    mailbox. Through Microsoft Graph rather than MCP: Cora's email needs no
+    third-party MCP server, and tasks need code-level control of
+    threads, nudges and bounces, as with Signal (E1 built: [mail/](mail/),
+    `check_email`; E2 built: `send_email` in [tools/send_email.py](tools/send_email.py),
+    each email approved in full, and email parties in migration 0030 with their
+    name and thread; E3a built: the mail check in `read_task_mail` ([app.py](app.py)),
+    `Mailbox.thread` and `Mailbox.reply`, each thread read up to its latest message
+    in `last_heard_at`; E4 built: `nudge_email_party` and `read_bounces` in
+    [app.py](app.py), `Mailbox.bounces` matching failure reports by subject, and
+    `quiet_email_parties` / `email_nudge_due` in the task store). Email strangers (such as an instructor) are
+    only allowed within a task: their mail is untrusted data, can't start
+    anything new, gets only the brief's scope, and once the task closes their
+    mail is just mail. If she doesn't know what to do with one, she asks the person.
+  - *Checking and nudging:* tasks are checked in the same hourly background
+    round as the memory pass (S6, `CORA_CONVERSATION_GAP_MINUTES`), including
+    reading her mail for task threads until awareness arrives. If a
+    chat drifts she steers it back herself, since the brief stays in her
+    instructions. If a party has gone quiet, she sends one nudge in their thread
+    after about a day on Signal or two working days by email, only in daytime
+    hours and never mid-conversation.
+  - *Coming back to the person* ("needs the person", which their answer resumes, not a
+    failure): no reply after two nudges; a party declines or the brief can't be
+    met; she needs a detail or decision the brief doesn't cover; an email
+    bounces or a message can't be delivered; a deadline nears or passes; or the
+    task has been open about a week without one. Built in T2a: two unanswered
+    nudges, a party no longer a contact, and a week without progress (counted
+    from the task's last change, so resuming it restarts the week). Built in
+    T2b: declines and missing details, judged by the coordinator. Built in E4:
+    bounces. Built in T5b: deadlines, a day before and once passed.
+  - *Reaching the person, wherever they are:* task turns run in the background, not from
+    any chat, so one rule decides how she reaches them, keeping the seamless
+    switching between voice and Signal. With Live Active she raises it by voice
+    through the attention manager at a lull (as findings are), and approvals use
+    the pop-up. In Standby or with the app closed she messages them on Signal,
+    and approvals are a YES there. If Live goes to Standby before a queued
+    item is said, it goes on Signal instead rather than waiting. Either way it is
+    saved in their one conversation, so the other side knows. Everything
+    passed on from a contact's chat (`pass_on`, with or without a task) goes
+    the same way, replacing `tell_nick`'s always-Signal send (built: `tell_person`
+    in [app.py](app.py)).
+  - *Steps:* T1 tasks and Signal parties (built: `tasks`, `task_parties` and
+    `task_steps` in migration 0028 and [storage/task_store.py](storage/task_store.py),
+    the optional `task` on `send_signal_message`, the brief in that contact's
+    chat until their part is done, `tell_nick` renamed `pass_on` with an
+    optional `task_id`), so "ask Sarah when she's free and tell me" works end to
+    end. In T1 a task was done once every party had reported; since T2b the
+    coordinator decides. T2a the hourly checks (built: nudges
+    written in the party's own chat context and counted in `nudged_at`,
+    migration 0029; coming back to the person; `close_task` in
+    [tools/close_task.py](tools/close_task.py); the latest step in the person's
+    view); T2b the coordinator (built); T3 her own email through Microsoft Graph
+    in four steps (E1 sign-in and reading, built; E2 sending and email parties, built;
+    E3a the mail check, built; E3b background approvals on Signal, built; E4 email
+    nudges and bounces, built) and commitment approvals; T4a (built) mail events
+    wake waiting tasks instead of waiting for the next check: Graph's change
+    notifications reach the listener, become a `MailArrivedEvent`, and the task mail
+    check subscribes to it (one check per burst, and once more if mail lands while
+    one runs). Graph notifications only say that something changed, and mail
+    subscriptions expire, so hers lasts two days and is renewed by the 10-minute
+    round once under 12 hours are left; that round's check stays as the fallback
+    for any notification that's missed.
 
 - **Her picture in Settings:** setting [how she pictures herself](#how-she-pictures-herself)
   is command-line only today. A "Her picture" section in Settings would make it a
@@ -1373,13 +2010,13 @@ features it helps check, and package last.
 ### Subconsciousness, interests, self, and relationship
 
 Cora's subconsciousness will include background processes that keep working
-without requiring Nick to prompt every action. They can notice events, develop
-interests, and propose things worth sharing. Sometimes Cora should prompt Nick,
-not only respond to him, but background work must not automatically become speech.
+without requiring the person to prompt every action. They can notice events, develop
+interests, and propose things worth sharing. Sometimes Cora should prompt the person,
+not only respond to them, but background work must not automatically become speech.
 
 The intended path is **background worker → event bus → attention manager → Live**.
 The bus routes events; the attention manager decides what deserves conversational
-attention and when; Live remains responsible for speaking to Nick. The current
+attention and when; Live remains responsible for speaking to the person. The current
 attention policy queues observations until Live is active and quiet, and offers
 an occasional interest finding during a lull. Relevance and awareness-triggered
 opportunities are still planned.
@@ -1387,7 +2024,7 @@ opportunities are still planned.
 #### Interests
 
 Cora should have a background worker that develops and explores interests over
-time. Conversations with Nick provide starting points, but Cora can follow related
+time. Conversations with the person provide starting points, but Cora can follow related
 ideas and develop interests beyond the original topic. A conversation about
 restoring a car, for example, might spark an interest in older mechanical designs,
 why those designs evolved, and eventually industrial design more broadly.
@@ -1399,7 +2036,7 @@ The interests worker should:
   the process that records or extracts conversation memories.
 - Identify topics worth exploring and maintain persistent interest records:
   what the interest is, why it emerged, what Cora has learned, and what she wants
-  to explore next. These are Cora's ongoing state, separate from memories about Nick.
+  to explore next. These are Cora's ongoing state, separate from memories about the person.
 - Explore selected interests during idle periods, within configured time and tool
   budgets and permissions. Background exploration is distinct from keeping a
   billable Live session connected and may incur its own API/tool costs.
@@ -1408,11 +2045,11 @@ The interests worker should:
 
 **An interest is ongoing state; a conversation candidate is a particular thing
 Cora might bring up.** Developing an interest or saving a finding does not by
-itself justify interrupting Nick. The interests worker does not speak directly
-to him: candidates pass through the event bus to the attention manager.
+itself justify interrupting the person. The interests worker does not speak directly
+to them: candidates pass through the event bus to the attention manager.
 
 Live can bring up an approved candidate when relevant to the current conversation,
-during a suitable lull, or after an awareness event such as Nick entering the room.
+during a suitable lull, or after an awareness event such as the person entering the room.
 Lull-based findings are implemented; relevance and awareness triggers are not.
 Nothing wakes Live automatically: the queue waits through standby and does not
 reconnect Live on its own. Quiet hours and an off switch should bound proactive
@@ -1421,7 +2058,7 @@ initiative as it develops.
 Implement and test these in small increments:
 
 1. [x] **Live injection:** send a simulated observation into an active conversation
-  through commentary, without pretending it is a message from Nick.
+  through commentary, without pretending it is a message from the person.
 2. [x] **Attention foundation:** retain observations while Live is busy or unavailable,
   then deliver FIFO, one at a time, when active and quiet.
 3. [x] **Local event bus:** route structured observation events to the attention
@@ -1452,7 +2089,7 @@ evolving identity. It reads conversation summaries, interest changes, findings
 with her reactions, and its
 previous identity state, then reflects on those experiences to update a stored
 description of Cora's preferences, perspectives, values, and conversational
-tendencies. The goal is a developing identity of her own, not a copy of Nick's.
+tendencies. The goal is a developing identity of her own, not a copy of the person's.
 
 For example, repeated exploration of older mechanical designs might lead Cora
 to develop an appreciation for repairability and understandability. That perspective
@@ -1461,11 +2098,11 @@ can become part of her identity and influence later conversations.
 The self worker is designed to:
 
 - Maintain persistent identity state in the database, separate from memories
-  about Nick and from ongoing interest records.
+  about the person and from ongoing interest records.
 - Make gradual, evidence-based changes rather than rewrite Cora's personality
   after every conversation.
-- Distinguish Nick's preferences from Cora's developing preferences; learning
-  about his perspective does not automatically make it hers.
+- Distinguish the person's preferences from Cora's developing preferences; learning
+  about their perspective does not automatically make it hers.
 - Preserve a stable foundation while allowing learned perspectives to evolve.
 - Record why meaningful identity changes occurred, linking them to the
   conversation summaries, interest changes, or findings that informed them.
@@ -1496,7 +2133,7 @@ After the interests steps are working:
 
 1. [x] **People:** a `people` table records who Cora talks with and when they
   first met. The name stays empty until she is told it. An install with history
-  is seeded as Nick from its first conversation; a fresh install starts with
+  is seeded as the person from its first conversation; a fresh install starts with
   nobody, so Cora meets a stranger. Apply it with `python migrate.py`. Prompts and
   tool descriptions no longer hard-code a name: each connect loads the stored name
   into both prompts, and without one Cora is told not to guess. When the person

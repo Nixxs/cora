@@ -2,10 +2,21 @@
 
 import asyncio
 from collections import deque
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 # Stands in the queue for "consider raising one of Cora's findings". The finding is
 # chosen and marked as mentioned only at delivery, so nothing is claimed while waiting.
 FINDING_REQUEST = object()
+
+
+@dataclass(eq=False)
+class PersonMessage:
+    """Something Cora should tell the person by voice. If she can't (the send fails, or Live goes
+    to Standby first), fallback gets it to them another way; delivered runs once she has it."""
+    text: str
+    delivered: Callable[[], Awaitable[None]]
+    fallback: Callable[[], Awaitable[None]]
 
 
 class AttentionManager:
@@ -18,7 +29,7 @@ class AttentionManager:
     def __init__(
         self, *, can_deliver, is_closing, schedule_delivery, send_observation,
         record_activity, delivery_finished, write_activity,
-        claim_finding, send_finding, release_finding,
+        claim_finding, send_finding, release_finding, send_message=None,
     ):
         self.can_deliver = can_deliver
         self.is_closing = is_closing
@@ -30,6 +41,7 @@ class AttentionManager:
         self.claim_finding = claim_finding
         self.send_finding = send_finding
         self.release_finding = release_finding
+        self.send_message = send_message
         self.pending = deque()
         self.worker = None
         self.sending = False
@@ -56,6 +68,18 @@ class AttentionManager:
         self.pending.append(FINDING_REQUEST)
         self.check()
 
+    def submit_message(self, message: PersonMessage) -> None:
+        if self.stopped or self.is_closing():
+            raise RuntimeError("Attention is stopped")
+        self.pending.append(message)
+        self.check()
+
+    def withdraw_messages(self) -> list[PersonMessage]:
+        """Take back messages not yet said, so they can reach the person another way."""
+        messages = [item for item in self.pending if isinstance(item, PersonMessage)]
+        self.pending = deque(item for item in self.pending if not isinstance(item, PersonMessage))
+        return messages
+
     def check(self) -> None:
         if self.stopped or self.is_closing() or not self.pending or self.busy:
             return
@@ -75,6 +99,8 @@ class AttentionManager:
         try:
             if item is FINDING_REQUEST:
                 attempted = await self._offer_finding()
+            elif isinstance(item, PersonMessage):
+                await self._send_message(item)
             else:
                 await self._send_observation(item)
         finally:
@@ -94,6 +120,19 @@ class AttentionManager:
             )
         else:
             self.write_activity("Observation sent to Live.", "Awareness sent")
+
+    async def _send_message(self, message: PersonMessage) -> None:
+        try:
+            self.record_activity()
+            await asyncio.wait_for(self.send_message(message.text), timeout=5)
+        except Exception as error:
+            # Partly said at worst; better twice than never, so it goes the other way too.
+            self.write_activity(f"Message for the person not said ({type(error).__name__}); sending it instead.",
+                                "Awareness send failed")
+            await message.fallback()
+        else:
+            self.write_activity("Message for the person sent to Live.", "Awareness sent")
+            await message.delivered()
 
     async def _offer_finding(self) -> bool:
         """Claim a finding only now that Live is quiet; return whether one was sent."""

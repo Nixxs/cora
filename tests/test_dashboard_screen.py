@@ -19,6 +19,7 @@ from session_config import BACKEND_MODEL, MODEL_AREAS, config_from_sections, ins
 from storage.dashboard_snapshot import (
     HISTORY_LIMIT, CALENDAR_DAYS, DashboardSnapshot, live_interests, next_due, read_dashboard_snapshot,
 )
+from storage.task_store import PartyView, TaskView
 from subconscious.identity.identity_rules import Trait
 from subconscious.interests.evolve_interests import EVOLVE_EVERY
 from subconscious.interests.exploration_store import DAILY_LIMIT, MIN_GAP
@@ -153,6 +154,7 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.next_due", return_value={"identity": None}) as due, \
                 patch("storage.dashboard_snapshot.ConversationStore") as conversations, \
                 patch("storage.dashboard_snapshot.IdentityStore") as identity, \
+                patch("storage.dashboard_snapshot.TaskStore") as tasks, \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -163,8 +165,10 @@ class DashboardSnapshotTests(unittest.TestCase):
             memories.return_value.pending_counts.return_value = {"embedding": 1}
             conversations.return_value.daily_message_counts.return_value = [3, 0]
             identity.return_value.list_traits.return_value = ["trait"]
+            tasks.return_value.open_tasks.return_value = ["task"]
             snapshot = read_dashboard_snapshot("engine", now)
         self.assertEqual(snapshot.traits, ("trait",))
+        self.assertEqual(snapshot.tasks, ("task",))
         conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
         self.assertEqual(snapshot.message_days, (3, 0))
         store.assert_called_once_with("engine")
@@ -603,6 +607,49 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             )
             # The box hugs its widest line (plus border and padding).
             self.assertEqual(screen.query_one("#background-box").outer_size.width, 33 + 4)
+
+    async def test_tasks_box_shows_each_open_task_with_its_peoples_next_checks(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            tasks = screen.query_one("#task-list", Static)
+            self.assertEqual(str(tasks.render()), "no open tasks")
+            self.assertEqual(screen.query_one("#tasks-box").border_title, "tasks")
+            now = datetime.now(timezone.utc)
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
+                memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
+                message_days=(), traits=(),
+                tasks=(
+                    TaskView("Lesson for [b]Sarah[/b]", "waiting", now - timedelta(days=2, minutes=5),
+                             now + timedelta(days=5, minutes=5), (
+                                 PartyView("Karene", "waiting", 0, now + timedelta(hours=6, minutes=5)),
+                                 PartyView("Royce", "waiting", 1, now - timedelta(minutes=5)),
+                                 PartyView("Al", "waiting", 2, now + timedelta(hours=1, minutes=5)),
+                                 PartyView("Sam", "done", 0, None),
+                             ), "Sam reported:\nTuesdays " + "x" * 200),
+                    TaskView("Car service", "needs_person", now - timedelta(hours=3, minutes=5), None,
+                             (PartyView("Royce", "waiting", 0, None),), None),
+                ),
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            lines = str(tasks.render()).splitlines()
+            # Brackets in a goal are shown as written, not read as markup.
+            self.assertEqual(lines[:6], [
+                "● Lesson for [b]Sarah[/b]",
+                "  waiting · started 2d ago · back to you in 5d",
+                "  Karene  nudge 1/2 in 6h",
+                "  Royce   nudge 2/2 next check",
+                "  Al      no answer · back to you in 1h",
+                "  Sam     answered",
+            ])
+            self.assertTrue(lines[6].startswith("  ↳ Sam reported: Tuesdays xxx"))
+            self.assertTrue(lines[6].endswith("…"))
+            self.assertEqual(lines[7:], ["", "● Car service", "  needs you · started 3h ago", "  Royce  asked"])
+            self.assertEqual(screen.query_one("#tasks-box").border_subtitle, "2 open")
 
     async def test_context_box_lists_each_models_startup_items_once_connected(self):
         async with keyboard_tests.running_app() as (app, pilot):

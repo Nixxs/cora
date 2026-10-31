@@ -1,5 +1,6 @@
 """Cora's signal-cli service, reached over its local JSON-RPC API (one daemon, any linked accounts)."""
 
+import base64
 from itertools import count
 
 import httpx2 as httpx
@@ -87,6 +88,11 @@ class SignalClient:
 
     async def send(self, account: str, recipient: str, message: str) -> None:
         await self.rpc("send", {"account": account, "recipient": [recipient], "message": message})
+
+    async def attachment(self, account: str, attachment_id: str) -> bytes:
+        """A received attachment's bytes, from signal-cli's stored copy (see container.delete_attachments)."""
+        result = await self.rpc("getAttachment", {"account": account, "id": attachment_id}, timeout=60)
+        return base64.b64decode(result["data"])
 
     async def send_typing(self, account: str, recipient: str, stop: bool = False) -> None:
         params = {"account": account, "recipient": [recipient]}

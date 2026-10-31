@@ -12,14 +12,41 @@ RETRY_SECONDS = (2, 5, 15, 30, 60)
 
 
 @dataclass(frozen=True)
+class Attachment:
+    # signal-cli's name for its stored copy, used to fetch and then delete it.
+    id: str
+    content_type: str = ""
+    size: int = 0
+
+
+# Stands in for an explicit, gory or abusive image: she is told it was sent, never what it shows.
+WITHHELD_IMAGE = "<withheld image>"
+
+
+@dataclass(frozen=True)
 class IncomingMessage:
     # Their number, or '' when Signal hasn't shared it yet (an unaccepted first message).
     sender: str
     text: str
     sent_at: datetime
-    attachments: int = 0
+    attachments: tuple[Attachment, ...] = ()
     # Their Signal ID, which every message carries.
     sender_id: str | None = None
+    # What a separate look saw in each image read for Cora; the images themselves are never kept.
+    # Each read image's description, or WITHHELD_IMAGE for one not described to her.
+    images_seen: tuple[str, ...] = ()
+
+
+def parse_attachments(items) -> tuple[Attachment, ...]:
+    attachments = []
+    for item in items if isinstance(items, list) else []:
+        if isinstance(item, dict):
+            size = item.get("size")
+            attachments.append(Attachment(
+                str(item.get("id") or ""), str(item.get("contentType") or "").lower(),
+                size if isinstance(size, int) else 0,
+            ))
+    return tuple(attachments)
 
 
 def parse_event(data: str) -> IncomingMessage | None:
@@ -42,7 +69,7 @@ def parse_event(data: str) -> IncomingMessage | None:
     if message.get("groupInfo") or message.get("groupV2"):
         return None  # group chats are not handled
     text = (message.get("message") or "").strip()
-    attachments = len(message.get("attachments") or [])
+    attachments = parse_attachments(message.get("attachments"))
     if not text and not attachments:
         return None
     milliseconds = envelope.get("timestamp") or message.get("timestamp")

@@ -7,7 +7,8 @@ from uuid import UUID, uuid4
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean, CheckConstraint, DateTime, Double, ForeignKey, Index, LargeBinary, SmallInteger, Text, UniqueConstraint,
+    BigInteger, Boolean, CheckConstraint, DateTime, Double, ForeignKey, Identity, Index, Integer, LargeBinary,
+    SmallInteger, Text, UniqueConstraint,
     Uuid,
 )
 from sqlalchemy import text as sql_text
@@ -49,7 +50,7 @@ class MessageRecord(Base):
         UniqueConstraint("conversation_id", "sequence_number", name="messages_conversation_sequence_key"),
         CheckConstraint("sequence_number > 0", name="messages_sequence_check"),
         CheckConstraint("role IN ('user', 'assistant')", name="messages_role_check"),
-        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal')", name="messages_channel_check"),
+        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal', 'email')", name="messages_channel_check"),
         CheckConstraint("status IN ('incomplete', 'completed', 'interrupted')", name="messages_status_check"),
         CheckConstraint(
             "delivery_status IN ('not_applicable', 'pending', 'sent', 'failed')",
@@ -624,6 +625,24 @@ class SignalSettingRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
+class WebhookSettingRecord(Base):
+    """Whether Cora listens for webhooks, the public address that reaches her, and her local port; at most one row."""
+
+    __tablename__ = "webhook_settings"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="webhook_settings_single_row"),
+        CheckConstraint("public_url IS NULL OR public_url LIKE 'https://%'", name="webhook_settings_https"),
+        CheckConstraint("port BETWEEN 1024 AND 65535", name="webhook_settings_port"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, server_default=sql_text("1"))
+    enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    public_url: Mapped[str | None] = mapped_column(Text)
+    port: Mapped[int] = mapped_column(Integer, server_default=sql_text("8000"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
 class SelfImageRecord(Base):
     """An image Cora chose to represent her, and her own description of it."""
 
@@ -641,6 +660,135 @@ class SelfImageRecord(Base):
     image: Mapped[bytes | None] = mapped_column(LargeBinary)
     image_type: Mapped[str | None] = mapped_column(Text)
     chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ImpressionRecord(Base):
+    """Cora's own view of someone she talks with as a client, and a one-line opinion fit for anyone."""
+
+    __tablename__ = "impressions"
+    __table_args__ = (
+        CheckConstraint("btrim(impression) <> '' AND char_length(impression) <= 1200",
+                        name="impressions_impression_check"),
+        CheckConstraint("btrim(opinion) <> '' AND char_length(opinion) <= 200", name="impressions_opinion_check"),
+        {"schema": "public"},
+    )
+
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="impressions_person_id_fkey", ondelete="CASCADE"), primary_key=True,
+    )
+    impression: Mapped[str] = mapped_column(Text)
+    opinion: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ImpressionUpdateRecord(Base):
+    """A finished client conversation that has shaped their impression."""
+
+    __tablename__ = "impression_updates"
+    __table_args__ = (
+        CheckConstraint("conduct IS NULL OR conduct IN ('fine', 'rude', 'abusive', 'threatening')",
+                        name="impression_updates_conduct_check"),
+        CheckConstraint(
+            "(conduct_note IS NULL) = (conduct IS NULL OR conduct = 'fine') "
+            "AND (conduct_note IS NULL OR (btrim(conduct_note) <> '' AND char_length(conduct_note) <= 500))",
+            name="impression_updates_conduct_note_check",
+        ),
+        {"schema": "public"},
+    )
+
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.conversations.id", name="impression_updates_conversation_id_fkey", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    person_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.people.id", name="impression_updates_person_id_fkey", ondelete="CASCADE"),
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    # How they treated her; anything but 'fine' carries her note and is reported to the person.
+    conduct: Mapped[str | None] = mapped_column(Text)
+    conduct_note: Mapped[str | None] = mapped_column(Text)
+    reported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TaskRecord(Base):
+    """An errand for the person that needs other people: their goal in their words, and how it stands."""
+
+    __tablename__ = "tasks"
+    __table_args__ = (
+        CheckConstraint("btrim(goal) <> '' AND char_length(goal) <= 1000", name="tasks_goal_check"),
+        CheckConstraint("status IN ('open', 'waiting', 'needs_person', 'done', 'cancelled')", name="tasks_status_check"),
+        CheckConstraint("result IS NULL OR char_length(result) <= 4000", name="tasks_result_check"),
+        CheckConstraint("(closed_at IS NOT NULL) = (status IN ('done', 'cancelled'))", name="tasks_closed_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    goal: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default="waiting")
+    result: Mapped[str | None] = mapped_column(Text)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When she told the person the deadline was a day away, and that it had passed: once each.
+    deadline_warned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TaskPartyRecord(Base):
+    """Someone a task needs, with their brief: what to find out or agree, and what she may share."""
+
+    __tablename__ = "task_parties"
+    __table_args__ = (
+        CheckConstraint("channel IN ('signal', 'email')", name="task_parties_channel_check"),
+        CheckConstraint(
+            "(channel = 'signal' AND person_id IS NOT NULL AND address IS NULL) "
+            "OR (channel = 'email' AND person_id IS NULL AND btrim(address) <> '' AND char_length(address) <= 320)",
+            name="task_parties_who_check",
+        ),
+        CheckConstraint("btrim(brief) <> '' AND char_length(brief) <= 2000", name="task_parties_brief_check"),
+        CheckConstraint("status IN ('waiting', 'done')", name="task_parties_status_check"),
+        CheckConstraint("nudges >= 0", name="task_parties_nudges_check"),
+        CheckConstraint("outcome IS NULL OR char_length(outcome) <= 3000", name="task_parties_outcome_check"),
+        CheckConstraint("name IS NULL OR (btrim(name) <> '' AND char_length(name) <= 100)", name="task_parties_name_check"),
+        CheckConstraint("thread_id IS NULL OR char_length(thread_id) <= 500", name="task_parties_thread_check"),
+        UniqueConstraint("task_id", "person_id", name="task_parties_person_key"),
+        UniqueConstraint("task_id", "address", name="task_parties_address_key"),
+        Index("task_parties_person_id_idx", "person_id", postgresql_where=sql_text("person_id IS NOT NULL")),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("public.tasks.id", ondelete="CASCADE"))
+    channel: Mapped[str] = mapped_column(Text)
+    person_id: Mapped[UUID | None] = mapped_column(ForeignKey("public.people.id", ondelete="CASCADE"))
+    address: Mapped[str | None] = mapped_column(Text)
+    brief: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default="waiting")
+    contacted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    last_heard_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    nudges: Mapped[int] = mapped_column(SmallInteger, server_default="0")
+    nudged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str | None] = mapped_column(Text)
+    # Email parties only: who they are, as she knows them, and her email thread with them.
+    name: Mapped[str | None] = mapped_column(Text)
+    thread_id: Mapped[str | None] = mapped_column(Text)
+
+
+class TaskStepRecord(Base):
+    """One thing that happened in a task, in order."""
+
+    __tablename__ = "task_steps"
+    __table_args__ = (
+        CheckConstraint("btrim(text) <> '' AND char_length(text) <= 4000", name="task_steps_text_check"),
+        Index("task_steps_task_id_idx", "task_id", "id"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("public.tasks.id", ondelete="CASCADE"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    text: Mapped[str] = mapped_column(Text)
 
 
 class ServiceToolRecord(Base):

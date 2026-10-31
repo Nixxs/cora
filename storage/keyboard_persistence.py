@@ -14,8 +14,11 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
+from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
+from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
+from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
 from subconscious.interests.interest_store import InterestStore
 from subconscious.relationship.relationship_rules import RelationshipValues
 from subconscious.relationship.relationship_store import RelationshipStore
@@ -52,6 +55,80 @@ class KeyboardPersistence:
 
     def load_relationship_context(self) -> str:
         return RelationshipStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
+
+    def load_people_context(self) -> str:
+        return ImpressionStore(self._get_store().engine).people_context(datetime.now(timezone.utc))
+
+    def load_heads_ups(self) -> list[HeadsUp]:
+        return ImpressionStore(self._get_store().engine).unreported_heads_ups()
+
+    def mark_heads_up_reported(self, conversation_id: UUID) -> None:
+        ImpressionStore(self._get_store().engine).mark_reported(conversation_id)
+
+    def load_client_people_context(self, person_id: UUID) -> str:
+        return ImpressionStore(self._get_store().engine).client_context(person_id)
+
+    def start_task(self, goal: str, who: UUID | EmailParty, brief: str, step: str,
+                   deadline: datetime | None = None) -> UUID:
+        return TaskStore(self._get_store().engine).start(goal, who, brief, step, deadline)
+
+    def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str,
+                       deadline: datetime | None = None) -> None:
+        TaskStore(self._get_store().engine).add_party(task_id, who, brief, step, deadline)
+
+    def load_deadlines_due(self, now: datetime):
+        return TaskStore(self._get_store().engine).deadlines_due(now)
+
+    def task_deadline_told(self, task_id: UUID, passed: bool) -> None:
+        TaskStore(self._get_store().engine).deadline_told(task_id, passed)
+
+    def task_goal(self, task_id: UUID) -> str | None:
+        return TaskStore(self._get_store().engine).goal(task_id)
+
+    def report_task(self, task_id: UUID, person_id: UUID, outcome: str, settled: bool) -> str:
+        return TaskStore(self._get_store().engine).report(task_id, person_id, outcome, settled)
+
+    def report_email_task(self, task_id: UUID, party_id: UUID, outcome: str, settled: bool) -> str:
+        return TaskStore(self._get_store().engine).report_email(task_id, party_id, outcome, settled)
+
+    def load_email_threads(self) -> list[EmailThread]:
+        return TaskStore(self._get_store().engine).email_threads()
+
+    def email_party_heard(self, party_id: UUID, at: datetime) -> None:
+        TaskStore(self._get_store().engine).email_heard(party_id, at)
+
+    def task_email_thread(self, task_id: UUID, address: str) -> str | None:
+        return TaskStore(self._get_store().engine).email_thread(task_id, address)
+
+    def task_coordination(self, task_id: UUID) -> dict | None:
+        return TaskStore(self._get_store().engine).coordination(task_id)
+
+    def task_party_heard(self, person_id: UUID) -> None:
+        TaskStore(self._get_store().engine).heard_from(person_id)
+
+    def load_task_briefs(self, person_id: UUID) -> str:
+        return TaskStore(self._get_store().engine).briefs_for(person_id)
+
+    def load_task_checks(
+        self, now: datetime,
+    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]], list[EmailThread]]:
+        store = TaskStore(self._get_store().engine)
+        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks(), store.quiet_email_parties(now)
+
+    def task_email_bounced(self, party_id: UUID, step: str) -> None:
+        TaskStore(self._get_store().engine).email_bounced(party_id, step)
+
+    def record_task_nudge(self, party_id: UUID, step: str) -> None:
+        TaskStore(self._get_store().engine).record_nudge(party_id, step)
+
+    def task_needs_person(self, task_id: UUID, reason: str, unless_waiting: bool = False) -> bool:
+        return TaskStore(self._get_store().engine).needs_person(task_id, reason, unless_waiting)
+
+    def close_task(self, task_id: UUID, status: str, note: str) -> str:
+        return TaskStore(self._get_store().engine).close(task_id, status, note)
+
+    def load_tasks_context(self) -> str:
+        return TaskStore(self._get_store().engine).tasks_context(datetime.now(timezone.utc))
 
     def load_relationship_values(self) -> RelationshipValues | None:
         return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))
@@ -93,6 +170,9 @@ class KeyboardPersistence:
     def client_conversation(self, person_id: UUID) -> UUID:
         return ClientStore(self._get_store().engine).conversation_for(person_id, datetime.now(timezone.utc))
 
+    def close_quiet_client_conversations(self) -> int:
+        return ClientStore(self._get_store().engine).close_quiet(datetime.now(timezone.utc))
+
     def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
         ClientStore(self._get_store().engine).save(conversation_id, role, text)
 
@@ -114,6 +194,15 @@ class KeyboardPersistence:
 
     def save_signal_account(self, account: str | None) -> None:
         SignalSettingsStore(self._get_store().engine).set_account(account)
+
+    def load_webhook_settings(self) -> WebhookSettings:
+        return WebhookSettingsStore(self._get_store().engine).settings()
+
+    def save_webhook_enabled(self, enabled: bool) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_enabled(enabled)
+
+    def save_webhook_address(self, public_url: str, port: int) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_address(public_url, port)
 
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()

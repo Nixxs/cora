@@ -10,7 +10,7 @@ from threading import Event
 from types import SimpleNamespace
 import unittest
 
-from tools.tell_nick import CLIENT_ONLY
+from tools.pass_on import CLIENT_ONLY
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
