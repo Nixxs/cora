@@ -14,7 +14,7 @@ from .people_store import PeopleStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
-from .task_store import QuietParty, TaskStore
+from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -67,17 +67,29 @@ class KeyboardPersistence:
     def load_client_people_context(self, person_id: UUID) -> str:
         return ImpressionStore(self._get_store().engine).client_context(person_id)
 
-    def start_task(self, goal: str, person_id: UUID, brief: str, step: str) -> UUID:
-        return TaskStore(self._get_store().engine).start(goal, person_id, brief, step)
+    def start_task(self, goal: str, who: UUID | EmailParty, brief: str, step: str) -> UUID:
+        return TaskStore(self._get_store().engine).start(goal, who, brief, step)
 
-    def add_task_party(self, task_id: UUID, person_id: UUID, brief: str, step: str) -> None:
-        TaskStore(self._get_store().engine).add_party(task_id, person_id, brief, step)
+    def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str) -> None:
+        TaskStore(self._get_store().engine).add_party(task_id, who, brief, step)
 
     def task_goal(self, task_id: UUID) -> str | None:
         return TaskStore(self._get_store().engine).goal(task_id)
 
     def report_task(self, task_id: UUID, person_id: UUID, outcome: str, settled: bool) -> str:
         return TaskStore(self._get_store().engine).report(task_id, person_id, outcome, settled)
+
+    def report_email_task(self, task_id: UUID, party_id: UUID, outcome: str, settled: bool) -> str:
+        return TaskStore(self._get_store().engine).report_email(task_id, party_id, outcome, settled)
+
+    def load_email_threads(self) -> list[EmailThread]:
+        return TaskStore(self._get_store().engine).email_threads()
+
+    def email_party_heard(self, party_id: UUID, at: datetime) -> None:
+        TaskStore(self._get_store().engine).email_heard(party_id, at)
+
+    def task_email_thread(self, task_id: UUID, address: str) -> str | None:
+        return TaskStore(self._get_store().engine).email_thread(task_id, address)
 
     def task_coordination(self, task_id: UUID) -> dict | None:
         return TaskStore(self._get_store().engine).coordination(task_id)
@@ -90,9 +102,12 @@ class KeyboardPersistence:
 
     def load_task_checks(
         self, now: datetime,
-    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]]]:
+    ) -> tuple[list[QuietParty], list[tuple[UUID, str]], list[tuple[UUID, str]], list[EmailThread]]:
         store = TaskStore(self._get_store().engine)
-        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks()
+        return store.quiet_parties(now), store.stale_tasks(now), store.unsettled_tasks(), store.quiet_email_parties(now)
+
+    def task_email_bounced(self, party_id: UUID, step: str) -> None:
+        TaskStore(self._get_store().engine).email_bounced(party_id, step)
 
     def record_task_nudge(self, party_id: UUID, step: str) -> None:
         TaskStore(self._get_store().engine).record_nudge(party_id, step)

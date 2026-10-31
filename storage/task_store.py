@@ -17,6 +17,8 @@ from sqlalchemy.orm import Session
 from .models import ConversationRecord, MessageRecord, PersonRecord, TaskPartyRecord, TaskRecord, TaskStepRecord
 
 GOAL_MAX_CHARS = 1000
+NAME_MAX_CHARS = 100
+ADDRESS_MAX_CHARS = 320
 BRIEF_MAX_CHARS = 2000
 OUTCOME_MAX_CHARS = 3000
 STEP_MAX_CHARS = 4000
@@ -29,6 +31,10 @@ RECENTLY_CLOSED = timedelta(days=3)
 # this many unanswered nudges, the task goes back to the person instead.
 NUDGE_AFTER = timedelta(days=1)
 TASK_NUDGES_MAX = 2
+# By email, a party is followed up after this many working days instead (every day but Sunday).
+EMAIL_NUDGE_WORKING_DAYS = 2
+SUNDAY = 6
+BOUNCED = "Their email bounced, so it never reached them."
 # A task this long without progress (an answer, someone asked, the person's word) goes back to the person.
 STALE_AFTER = timedelta(days=7)
 NOTE_MAX_CHARS = 1000
@@ -71,6 +77,46 @@ class TaskView:
     latest_step: str | None
 
 
+@dataclass(frozen=True)
+class EmailParty:
+    """Someone emailed for a task: not a contact, so who they are travels with the row."""
+    address: str
+    name: str | None
+    # Her email thread with them (Microsoft Graph's conversationId), for their replies.
+    thread_id: str | None
+
+
+@dataclass(frozen=True)
+class EmailThread:
+    """An email party of an open task, for the mail check: mail in their thread after `since` is new."""
+    party_id: UUID
+    task_id: UUID
+    goal: str
+    address: str
+    name: str | None
+    brief: str
+    thread_id: str
+    since: datetime
+    # When she first or last wrote to them for it, whether their part is still open, and follow-ups sent.
+    contacted_at: datetime | None = None
+    waiting: bool = True
+    nudges: int = 0
+
+
+def email_nudge_due(since: datetime) -> datetime:
+    """EMAIL_NUDGE_WORKING_DAYS working days after `since`, counting every day but Sunday, in local time."""
+    due, counted = since.astimezone(), 0
+    while counted < EMAIL_NUDGE_WORKING_DAYS:
+        due += timedelta(days=1)
+        if due.weekday() != SUNDAY:
+            counted += 1
+    return due
+
+
+# A party as the person and Cora see them: a contact's name, else an email party's name or address.
+PARTY_NAME = func.coalesce(PersonRecord.display_name, TaskPartyRecord.name, TaskPartyRecord.address)
+
+
 def clean(text: str, limit: int, what: str) -> str:
     text = text.strip()
     if not text or len(text) > limit:
@@ -100,29 +146,43 @@ class TaskStore:
     def _step(session: Session, task_id: UUID, text: str) -> None:
         session.add(TaskStepRecord(task_id=task_id, text=clean(text, STEP_MAX_CHARS, "A step")))
 
-    def start(self, goal: str, person_id: UUID, brief: str, step: str) -> UUID:
+    @staticmethod
+    def _party(task_id: UUID, who: UUID | EmailParty, brief: str) -> dict:
+        """A party row's values: a contact (by person ID) on Signal, or an EmailParty."""
+        if not isinstance(who, EmailParty):
+            return {"task_id": task_id, "channel": "signal", "person_id": who, "brief": brief}
+        return {
+            "task_id": task_id, "channel": "email", "address": clean(who.address, ADDRESS_MAX_CHARS, "An address").lower(),
+            "name": None if not who.name or not who.name.strip() else clean(who.name, NAME_MAX_CHARS, "A name"),
+            "thread_id": who.thread_id, "brief": brief,
+        }
+
+    def start(self, goal: str, who: UUID | EmailParty, brief: str, step: str) -> UUID:
         """A new task, waiting on its first party, who has just been contacted."""
         goal, brief = clean(goal, GOAL_MAX_CHARS, "A goal"), clean(brief, BRIEF_MAX_CHARS, "A brief")
         with Session(self.engine) as session, session.begin():
             task = TaskRecord(goal=goal, status="waiting")
             session.add(task)
             session.flush()
-            session.add(TaskPartyRecord(task_id=task.id, channel="signal", person_id=person_id, brief=brief))
+            session.add(TaskPartyRecord(**self._party(task.id, who, brief)))
             self._step(session, task.id, step)
             return task.id
 
-    def add_party(self, task_id: UUID, person_id: UUID, brief: str, step: str) -> None:
-        """Someone more for an open task, or someone asked again with a new brief."""
+    def add_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str) -> None:
+        """Someone more for an open task, or someone asked again with a new brief (and, by email, a new thread)."""
         brief = clean(brief, BRIEF_MAX_CHARS, "A brief")
+        values = self._party(task_id, who, brief)
+        again = {"brief": brief, "status": "waiting", "contacted_at": func.current_timestamp(), "nudges": 0}
+        if isinstance(who, EmailParty):
+            again |= {"name": values["name"], "thread_id": values["thread_id"]}
         with Session(self.engine) as session, session.begin():
             task = session.get(TaskRecord, task_id, with_for_update=True)
             if task is None or task.status not in OPEN:
                 raise LookupError("No such open task")
-            session.execute(insert(TaskPartyRecord).values(
-                task_id=task_id, channel="signal", person_id=person_id, brief=brief,
-            ).on_conflict_do_update(constraint="task_parties_person_key", set_={
-                "brief": brief, "status": "waiting", "contacted_at": func.current_timestamp(), "nudges": 0,
-            }))
+            session.execute(insert(TaskPartyRecord).values(**values).on_conflict_do_update(
+                constraint="task_parties_address_key" if isinstance(who, EmailParty) else "task_parties_person_key",
+                set_=again,
+            ))
             task.status, task.updated_at = "waiting", func.current_timestamp()
             self._step(session, task_id, step)
 
@@ -145,21 +205,87 @@ class TaskStore:
         Nothing closes here: the coordinator decides what it means. Returns the goal; LookupError
         if they aren't a party to an open task.
         """
+        return self._report(task_id, TaskPartyRecord.person_id == person_id, outcome, settled)
+
+    def report_email(self, task_id: UUID, party_id: UUID, outcome: str, settled: bool = True) -> str:
+        """The same for an email party, by their party row."""
+        return self._report(task_id, TaskPartyRecord.id == party_id, outcome, settled)
+
+    def _report(self, task_id: UUID, which, outcome: str, settled: bool) -> str:
         outcome = clean(outcome, OUTCOME_MAX_CHARS, "An outcome")
         with Session(self.engine) as session, session.begin():
             task = session.get(TaskRecord, task_id, with_for_update=True)
-            party = session.scalar(select(TaskPartyRecord).where(
-                TaskPartyRecord.task_id == task_id, TaskPartyRecord.person_id == person_id,
-            ))
+            party = session.scalar(select(TaskPartyRecord).where(TaskPartyRecord.task_id == task_id, which))
             if task is None or task.status not in OPEN or party is None:
                 raise LookupError("Not a party to an open task")
-            name = session.scalar(select(PersonRecord.display_name).where(PersonRecord.id == person_id))
-            party.last_heard_at = func.current_timestamp()
+            name = session.scalar(
+                select(PARTY_NAME).select_from(TaskPartyRecord)
+                .outerjoin(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                .where(TaskPartyRecord.id == party.id)
+            )
+            if party.channel == "signal":
+                # By email, the mail check notes what it has read, up to the latest message's time.
+                party.last_heard_at = func.current_timestamp()
             if settled:
                 party.status, party.outcome = "done", outcome
             self._step(session, task_id, f"{name} {'reported' if settled else 'asked'}: {outcome}")
             task.updated_at = func.current_timestamp()
             return task.goal
+
+    def email_threads(self, *where) -> list[EmailThread]:
+        """Every email party of an open task with a thread, for the mail check, oldest task first."""
+        since = func.greatest(TaskPartyRecord.contacted_at, TaskPartyRecord.last_heard_at)
+        with Session(self.engine) as session:
+            rows = session.execute(
+                select(TaskPartyRecord.id, TaskRecord.id, TaskRecord.goal, TaskPartyRecord.address,
+                       TaskPartyRecord.name, TaskPartyRecord.brief, TaskPartyRecord.thread_id, since,
+                       TaskPartyRecord.contacted_at, TaskPartyRecord.status == "waiting", TaskPartyRecord.nudges)
+                .join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
+                .where(TaskRecord.status.in_(OPEN), TaskPartyRecord.channel == "email",
+                       TaskPartyRecord.thread_id.is_not(None), *where)
+                .order_by(TaskRecord.created_at, TaskPartyRecord.contacted_at)
+            ).all()
+        return [EmailThread(*row) for row in rows]
+
+    def quiet_email_parties(self, now: datetime) -> list[EmailThread]:
+        """Email parties of waiting tasks quiet for EMAIL_NUDGE_WORKING_DAYS since asked, heard from or followed up."""
+        quiet = func.greatest(TaskPartyRecord.contacted_at, TaskPartyRecord.last_heard_at, TaskPartyRecord.nudged_at)
+        with Session(self.engine) as session:
+            due = {party_id for party_id, since in session.execute(
+                select(TaskPartyRecord.id, quiet).join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
+                .where(TaskRecord.status == "waiting", TaskPartyRecord.status == "waiting",
+                       TaskPartyRecord.channel == "email")
+            ).all() if email_nudge_due(since) <= now}
+        if not due:
+            return []
+        return self.email_threads(TaskRecord.status == "waiting", TaskPartyRecord.id.in_(due))
+
+    def email_bounced(self, party_id: UUID, step: str) -> None:
+        """Their email couldn't be delivered: their part is over. LookupError unless they're still waiting on an open task."""
+        with Session(self.engine) as session, session.begin():
+            party = session.get(TaskPartyRecord, party_id, with_for_update=True)
+            task = party and session.get(TaskRecord, party.task_id, with_for_update=True)
+            if task is None or task.status not in OPEN or party.status != "waiting":
+                raise LookupError("Not waiting on an open task")
+            party.status, party.outcome = "done", BOUNCED
+            task.updated_at = func.current_timestamp()
+            self._step(session, task.id, step)
+
+    def email_heard(self, party_id: UUID, at: datetime) -> None:
+        """Mail in their thread up to `at` (Microsoft's received time) has been read; never moves back."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(TaskPartyRecord).where(TaskPartyRecord.id == party_id).values(
+                last_heard_at=func.greatest(TaskPartyRecord.last_heard_at, at),
+            ))
+
+    def email_thread(self, task_id: UUID, address: str) -> str | None:
+        """Her thread with that address for an open task, or None."""
+        with Session(self.engine) as session:
+            return session.scalar(
+                select(TaskPartyRecord.thread_id).join(TaskRecord, TaskRecord.id == TaskPartyRecord.task_id)
+                .where(TaskPartyRecord.task_id == task_id, TaskPartyRecord.address == address.strip().lower(),
+                       TaskRecord.status.in_(OPEN))
+            )
 
     def coordination(self, task_id: UUID) -> dict | None:
         """The whole of an open task for the coordinator: goal, every party's brief and word, recent steps."""
@@ -168,8 +294,9 @@ class TaskStore:
             if task is None or task.status not in OPEN:
                 return None
             parties = session.execute(
-                select(PersonRecord.display_name, TaskPartyRecord.status, TaskPartyRecord.brief, TaskPartyRecord.outcome)
-                .join(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                select(PARTY_NAME, TaskPartyRecord.status, TaskPartyRecord.brief, TaskPartyRecord.outcome,
+                       TaskPartyRecord.address)
+                .outerjoin(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
                 .where(TaskPartyRecord.task_id == task_id).order_by(TaskPartyRecord.contacted_at)
             ).all()
             steps = list(reversed(session.scalars(
@@ -180,7 +307,8 @@ class TaskStore:
             "task_id": str(task.id), "goal": task.goal, "status": task.status,
             "started": task.created_at.date().isoformat(),
             "parties": [{"name": name, "status": status, "brief": brief, "outcome": outcome}
-                        for name, status, brief, outcome in parties],
+                        | ({"email": address} if address else {})
+                        for name, status, brief, outcome, address in parties],
             "steps": steps,
         }
         # The oldest steps give way first if a long task doesn't fit.
@@ -291,8 +419,8 @@ class TaskStore:
             ).all()
             ids = [task.id for task in tasks]
             parties = session.execute(
-                select(TaskPartyRecord, PersonRecord.display_name)
-                .join(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                select(TaskPartyRecord, PARTY_NAME)
+                .outerjoin(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
                 .where(TaskPartyRecord.task_id.in_(ids)).order_by(TaskPartyRecord.contacted_at)
             ).all()
             latest = self._latest_steps(session, ids)
@@ -304,7 +432,8 @@ class TaskStore:
                 # As quiet_parties counts it: from whichever came last of asked, heard from and nudged.
                 since = max((time for time in (party.contacted_at, party.last_heard_at, party.nudged_at) if time),
                             default=None)
-                due = since and since + NUDGE_AFTER
+                if since is not None:
+                    due = email_nudge_due(since) if party.channel == "email" else since + NUDGE_AFTER
             by_task.setdefault(party.task_id, []).append(PartyView(name, party.status, party.nudges, due))
         return [TaskView(
             task.goal, task.status, task.created_at,
@@ -329,16 +458,18 @@ class TaskStore:
                 TaskRecord.status.in_(OPEN) | (TaskRecord.closed_at >= now - RECENTLY_CLOSED),
             ).order_by(TaskRecord.created_at)).all()
             parties = session.execute(
-                select(TaskPartyRecord.task_id, PersonRecord.display_name, TaskPartyRecord.status,
-                       TaskPartyRecord.outcome)
-                .join(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
+                select(TaskPartyRecord.task_id, PARTY_NAME, TaskPartyRecord.status,
+                       TaskPartyRecord.outcome, TaskPartyRecord.address)
+                .outerjoin(PersonRecord, PersonRecord.id == TaskPartyRecord.person_id)
                 .where(TaskPartyRecord.task_id.in_([task.id for task in tasks]))
                 .order_by(TaskPartyRecord.contacted_at)
             ).all()
             latest = self._latest_steps(session, [task.id for task in tasks])
         by_task: dict[UUID, list[dict]] = {}
-        for task_id, name, status, outcome in parties:
-            by_task.setdefault(task_id, []).append({"name": name, "status": status, "outcome": outcome})
+        for task_id, name, status, outcome, address in parties:
+            party = {"name": name, "status": status, "outcome": outcome}
+            # Email parties aren't contacts: their address is how she reaches them again.
+            by_task.setdefault(task_id, []).append(party | {"email": address} if address else party)
         return bounded([{
             "task_id": str(task.id), "goal": task.goal, "status": task.status,
             "started": task.created_at.date().isoformat(), "parties": by_task.get(task.id, []),

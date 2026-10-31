@@ -1,9 +1,9 @@
-"""In a client's Signal chat: pass something on to the person she works with, or report a task.
+"""In a client's Signal chat or a task's email thread: pass something on to the person, or report a task.
 
 It only ever reaches the person, marked as coming from that client, so it needs no approval;
 a daily limit per client keeps a chatty or hostile one from flooding them. Naming a task also
 records their word on it, and the coordinator takes it to the person. Only offered in clients'
-chats: the route says which client is asking.
+chats and task email threads: the route says who is asking.
 """
 
 import json
@@ -59,12 +59,17 @@ def validate_arguments(arguments: dict) -> None:
 
 
 class PassOnTool:
-    def __init__(self, get_connection, is_closing, write_debug, relay):
+    # Tools built on this one (close_task, raise_concern, stop_replying) check their own arguments.
+    validate = staticmethod(validate_arguments)
+
+    def __init__(self, get_connection, is_closing, write_debug, relay, relay_email=None):
         self.get_connection = get_connection
         self.is_closing = is_closing
         self.write_debug = write_debug
         # relay(client_id, client_name, text, task_id, settled) -> None or a reason it wasn't sent (such as the daily limit).
         self.relay = relay
+        # relay_email(party_id, party_task_id, who, text, task_id, settled): the same from a task's email thread.
+        self.relay_email = relay_email
 
     def _log(self, message: str, title: str) -> None:
         try:
@@ -73,14 +78,16 @@ class PassOnTool:
             pass
 
     async def result(self, connection, arguments: dict) -> dict:
-        # The client's chat carries who they are; nowhere else may pass things on.
+        # The client's chat or email thread carries who they are; nowhere else may pass things on.
         client = getattr(connection, "memory_scope", None)
-        if not isinstance(client, tuple):
+        party = getattr(connection, "email_party", None)
+        task_id = None if arguments["task_id"] is None else UUID(arguments["task_id"])
+        if isinstance(party, tuple) and self.relay_email is not None:
+            problem = await self.relay_email(*party, arguments["message"].strip(), task_id, arguments["settled"])
+        elif isinstance(client, tuple):
+            problem = await self.relay(*client, arguments["message"].strip(), task_id, arguments["settled"])
+        else:
             return {"status": "error", "message": "This is only for passing things on from a contact's chat."}
-        task_id = arguments["task_id"]
-        problem = await self.relay(
-            *client, arguments["message"].strip(), None if task_id is None else UUID(task_id), arguments["settled"],
-        )
         if problem:
             return {"status": "not_done", "message": problem}
         return {"status": "ok", "message": "Passed on. Tell them you've passed it on; you can't promise a reply."}
@@ -92,7 +99,7 @@ class PassOnTool:
             connection = self.get_connection()
             if connection is None:
                 return
-            validate_arguments(arguments)
+            self.validate(arguments)
             try:
                 result = await self.result(connection, arguments)
             except Exception as error:

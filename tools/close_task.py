@@ -48,6 +48,8 @@ def validate_arguments(arguments: dict) -> None:
 class CloseTaskTool(PassOnTool):
     """relay(task_id, status, note) -> None once closed, else why not."""
 
+    validate = staticmethod(validate_arguments)
+
     async def result(self, connection, arguments: dict) -> dict:
         problem = await self.relay(UUID(arguments["task_id"]), arguments["status"], arguments["note"].strip())
         if problem:

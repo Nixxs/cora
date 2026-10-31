@@ -46,8 +46,11 @@ class AnswerTests(unittest.TestCase):
         self.assertIn('"title": "Standby bug"', text)
         self.assertIn("Reply YES to approve or NO to decline", text)
         self.assertIn(f"{APPROVAL_SECONDS // 60} minutes", text)
-        long = approval_request_text(SimpleNamespace(title="GitHub", tool="t", arguments={"body": "x" * 5000}))
-        self.assertLess(len(long), 1800)
+        # A whole email with its task and brief is shown in full; anything longer is cut.
+        email = approval_request_text(SimpleNamespace(title="Email", tool="send_email", arguments={"message": "x" * 4000}))
+        self.assertIn("x" * 4000, email)
+        long = approval_request_text(SimpleNamespace(title="GitHub", tool="t", arguments={"body": "x" * 20000}))
+        self.assertLess(len(long), 8300)
 
 
 class ChatApprovalQueueTests(unittest.IsolatedAsyncioTestCase):

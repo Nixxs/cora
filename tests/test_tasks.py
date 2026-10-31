@@ -1,15 +1,17 @@
 """Tasks with other people: started with an approved message and a brief, answered through pass_on."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import json
 import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import psycopg
 from psycopg import sql
-from sqlalchemy import text, update
+from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
 import app as app_module
@@ -22,7 +24,7 @@ from storage.client_store import Client, ClientStore
 from storage.database import build_engine
 from storage.models import TaskPartyRecord, TaskRecord
 from storage.signal_settings_store import SignalSettings
-from storage.task_store import QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS
+from storage.task_store import EmailParty, QuietParty, TaskStore, TASKS_CONTEXT_MAX_CHARS, email_nudge_due
 from tools.close_task import validate_arguments as validate_close_arguments
 from tools.send_signal_message import SendSignalMessageTool, validate_arguments
 import test_keyboard_persistence as keyboard_tests
@@ -96,6 +98,15 @@ class TaskToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("couldn't be saved", self.output()["message"])
 
 
+class EmailNudgeDueTests(unittest.TestCase):
+    def test_two_working_days_skip_sunday(self):
+        friday = datetime(2026, 10, 30, 10).astimezone()
+        saturday, monday = friday + timedelta(days=1), friday + timedelta(days=3)
+        self.assertEqual(email_nudge_due(friday), monday)
+        self.assertEqual(email_nudge_due(saturday), monday + timedelta(days=1))
+        self.assertEqual(email_nudge_due(monday), monday + timedelta(days=2))
+
+
 class TaskSectionTests(unittest.TestCase):
     def test_the_person_sees_tasks_and_a_party_sees_only_their_brief(self):
         mine = instruction_sections(tasks_context='[{"goal": "g"}]')["tasks"]
@@ -122,7 +133,7 @@ class TaskCheckAppTests(unittest.IsolatedAsyncioTestCase):
         return QuietParty(uuid4(), uuid4(), person_id, name, "Lesson for Sarah", "When suits her", nudges, last_message_at)
 
     async def check(self, app, pilot, quiet=(), stale=(), hours=range(0, 24), unsettled=()):
-        app.persistence.load_task_checks.return_value = (list(quiet), list(stale), list(unsettled))
+        app.persistence.load_task_checks.return_value = (list(quiet), list(stale), list(unsettled), [])
         with patch.object(app_module, "NUDGE_HOURS", hours):
             app.check_tasks()
             for _ in range(3):
@@ -207,7 +218,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             await app.workers.wait_for_complete()
 
-    async def test_an_answer_goes_through_a_turn_in_your_context_that_can_only_search_and_close(self):
+    async def test_an_answer_goes_through_a_turn_in_your_context_that_asks_you_on_signal_before_sending(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.linked(app)
             app.persistence.load_tasks_context.return_value = '[{"goal": "Lesson for Sarah"}]'
@@ -216,15 +227,64 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             await self.settle(app, pilot)
             kwargs = app.backend_chat.reply.await_args.kwargs
             note = kwargs["content"][0]["text"]
-            self.assertIn("Never message anyone yourself", note)
+            self.assertIn("nothing goes without their YES", note)
             self.assertEqual(json.loads(note[note.index("{"):]), {"news": "Sarah answered: Tuesdays", "task": self.TASK})
             self.assertIn("Lesson for Sarah", kwargs["sections"]["tasks"])
-            self.assertEqual(frozenset(app.tools.names()) - kwargs["route"].excluded, {"search_memory", "close_task"})
+            route = kwargs["route"]
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded,
+                             {"search_memory", "close_task", "send_signal_message", "send_email"})
+            self.assertIsNotNone(route.ask_approval)
+            self.assertEqual(route.approval_seconds, app_module.APPROVAL_SECONDS)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
             # Once told, it waits on the person unless someone is still to answer.
             app.persistence.task_needs_person.assert_called_once_with(
                 task_id, "Told them the news and asked what next.", True)
             self.assertEqual(app.tasks_coordinating, set())
+
+    async def test_without_signal_to_ask_you_on_it_only_searches_and_closes(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            app.signal.status = SignalStatus("not_linked")
+            route = app.coordinator_route([])
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded, {"search_memory", "close_task"})
+            self.assertIsNone(route.ask_approval)
+
+    async def test_a_request_you_dont_answer_in_time_sends_nothing_and_the_task_waits_on_you(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            async def turn(**kwargs):
+                # As the confirmation does: the request lapses unanswered.
+                request = SimpleNamespace(title="Signal", tool="send_signal_message", arguments={"to": "Karene"})
+                with self.assertRaises(TimeoutError):
+                    await asyncio.wait_for(kwargs["route"].ask_approval(request), 0.05)
+                return "Sarah can't do it. I asked about Karene, but didn't hear back from you."
+
+            self.linked(app, reply=AsyncMock(side_effect=turn))
+            task_id = uuid4()
+            app.coordinate_task(task_id, "Sarah answered: no", "From Sarah: no")
+            await self.settle(app, pilot)
+            sent = [call.args[2] for call in app.signal.client.send.await_args_list]
+            self.assertEqual(len(sent), 2)
+            self.assertIn("Reply YES", sent[0])
+            self.assertEqual(sent[1], "Sarah can't do it. I asked about Karene, but didn't hear back from you.")
+            self.assertEqual(app.signal_approvals, {})
+            app.persistence.task_needs_person.assert_called_once_with(task_id, app_module.COORDINATOR_LAPSED, False)
+
+    async def test_one_request_waits_on_signal_at_a_time_and_your_yes_answers_the_one_shown(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.linked(app)
+            ask = app.signal_approval_asker(CORA, NICK, NICK)
+            first = asyncio.create_task(ask(SimpleNamespace(title="Signal", tool="send_signal_message", arguments={"to": "A"})))
+            second = asyncio.create_task(ask(SimpleNamespace(title="Email", tool="send_email", arguments={"to": "b@x.example"})))
+            await pilot.pause()
+            self.assertEqual(app.signal.client.send.await_count, 1)
+            self.assertIn('"A"', app.signal.client.send.await_args.args[2])
+            app.signal_approvals[NICK].set_result(True)
+            self.assertTrue(await first)
+            await pilot.pause()
+            self.assertEqual(app.signal.client.send.await_count, 2)
+            self.assertIn("b@x.example", app.signal.client.send.await_args.args[2])
+            app.signal_approvals[NICK].set_result(False)
+            self.assertFalse(await second)
 
     async def test_a_question_always_waits_on_you(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -260,7 +320,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.linked(app)
             busy, waiting = uuid4(), uuid4()
             app.tasks_coordinating.add(busy)
-            app.persistence.load_task_checks.return_value = ([], [], [(busy, "Busy"), (waiting, "Lesson for Sarah")])
+            app.persistence.load_task_checks.return_value = ([], [], [(busy, "Busy"), (waiting, "Lesson for Sarah")], [])
             app.check_tasks()
             await self.settle(app, pilot)
             self.assertEqual(app.persistence.task_coordination.call_args_list, [((waiting,),)])
@@ -458,6 +518,77 @@ class TaskStoreDatabaseTests(unittest.TestCase):
         self.assertEqual((royce.status, royce.due_at), ("done", None))
         self.assertGreater(lesson.stale_at, now + timedelta(days=6))
         self.assertEqual((car.status, car.stale_at, car.parties[0].due_at), ("needs_person", None, None))
+
+    def test_an_email_party_is_named_by_who_they_are_or_their_address_with_its_thread(self):
+        task_id = self.tasks.start("Book a lesson", EmailParty("Info@School.example", "Bright School", "thread-1"),
+                                   "Times and price", "Emailed Bright School: Hi")
+        self.tasks.add_party(task_id, EmailParty("bob@garage.example", None, "thread-2"), "Can he drive", "Emailed bob")
+        self.tasks.add_party(task_id, self.sarah.id, "When suits her", "Asked Sarah")
+        # Emailing the same address again for this task asks them again, in the new thread.
+        self.tasks.add_party(task_id, EmailParty("info@school.example", "Bright School", "thread-3"), "Just times", "Again")
+        with Session(self.engine) as session:
+            school = session.scalar(select(TaskPartyRecord).where(TaskPartyRecord.address == "info@school.example"))
+            self.assertEqual((school.channel, school.name, school.thread_id, school.brief, school.person_id),
+                             ("email", "Bright School", "thread-3", "Just times", None))
+        [context] = json.loads(self.tasks.tasks_context(datetime.now(timezone.utc)))
+        # In the order they were (last) asked.
+        self.assertEqual(context["parties"], [
+            {"name": "bob@garage.example", "status": "waiting", "outcome": None, "email": "bob@garage.example"},
+            {"name": "Sarah", "status": "waiting", "outcome": None},
+            {"name": "Bright School", "status": "waiting", "outcome": None, "email": "info@school.example"},
+        ])
+        self.assertEqual([party["name"] for party in self.tasks.coordination(task_id)["parties"]],
+                         ["bob@garage.example", "Sarah", "Bright School"])
+        [view] = self.tasks.open_tasks()
+        self.assertEqual([party.name for party in view.parties], ["bob@garage.example", "Sarah", "Bright School"])
+        # Email parties wait for E3's mail check, not for Signal nudges.
+        self.age(task_id, contacted_at=datetime.now(timezone.utc) - timedelta(days=2))
+        self.assertEqual([party.name for party in self.tasks.quiet_parties(datetime.now(timezone.utc))], ["Sarah"])
+
+    def test_the_mail_check_reads_each_email_thread_once_and_their_word_reaches_the_task(self):
+        task_id = self.tasks.start("Book a lesson", EmailParty("info@school.example", "Bright School", "thread-1"),
+                                   "Times and price", "Emailed Bright School: Hi")
+        self.tasks.add_party(task_id, self.sarah.id, "When suits her", "Asked Sarah")
+        self.tasks.add_party(task_id, EmailParty("no-thread@x.example", None, None), "b", "s")
+        [thread] = self.tasks.email_threads()
+        self.assertEqual((thread.task_id, thread.goal, thread.address, thread.name, thread.brief, thread.thread_id),
+                         (task_id, "Book a lesson", "info@school.example", "Bright School", "Times and price", "thread-1"))
+        self.assertEqual(self.tasks.email_thread(task_id, "Info@School.example "), "thread-1")
+        # Read up to Microsoft's time for their latest; it never moves back.
+        later = thread.since + timedelta(hours=2)
+        self.tasks.email_heard(thread.party_id, later)
+        self.tasks.email_heard(thread.party_id, later - timedelta(hours=1))
+        [thread] = self.tasks.email_threads()
+        self.assertEqual(thread.since, later)
+        # Their word, through pass_on, is the task's; it leaves what the mail check has read alone.
+        self.assertEqual(self.tasks.report_email(task_id, thread.party_id, "Tuesdays, $70"), "Book a lesson")
+        self.assertEqual(self.tasks.email_threads()[0].since, later)
+        self.assertEqual(self.steps(task_id)[-1], "Bright School reported: Tuesdays, $70")
+        with self.assertRaises(LookupError):
+            self.tasks.report_email(uuid4(), thread.party_id, "x")
+        self.tasks.close(task_id, "done", "Booked")
+        self.assertEqual((self.tasks.email_threads(), self.tasks.email_thread(task_id, "info@school.example")), ([], None))
+
+    def test_email_parties_are_followed_up_after_two_working_days_and_a_bounce_ends_their_part(self):
+        now = datetime.now(timezone.utc)
+        task_id = self.tasks.start("Book a lesson", EmailParty("info@school.example", "Bright School", "thread-1"),
+                                   "Times and price", "Emailed Bright School: Hi")
+        self.tasks.add_party(task_id, self.sarah.id, "When suits her", "Asked Sarah")
+        self.assertEqual(self.tasks.quiet_email_parties(now), [])
+        # Four days back is always at least two working days, whichever day one is Sunday.
+        self.age(task_id, contacted_at=now - timedelta(days=4))
+        [thread] = self.tasks.quiet_email_parties(now)
+        self.assertEqual((thread.task_id, thread.address, thread.nudges, thread.waiting), (task_id, "info@school.example", 0, True))
+        # Signal parties keep their own day-long nudges.
+        self.assertEqual([party.name for party in self.tasks.quiet_parties(now)], ["Sarah"])
+        self.tasks.record_nudge(thread.party_id, "Followed up with Bright School by email: any news?")
+        self.assertEqual(self.tasks.quiet_email_parties(now), [])
+        self.tasks.email_bounced(thread.party_id, "My email to Bright School bounced.")
+        [thread] = self.tasks.email_threads()
+        self.assertFalse(thread.waiting)
+        self.assertEqual(self.steps(task_id)[-1], "My email to Bright School bounced.")
+        with self.assertRaises(LookupError):
+            self.tasks.email_bounced(thread.party_id, "again")
 
     def test_a_task_waits_on_the_person_unless_someone_is_still_to_answer(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")

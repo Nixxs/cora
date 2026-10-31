@@ -58,6 +58,8 @@ def validate_stop_arguments(arguments: dict) -> None:
 class RaiseConcernTool(PassOnTool):
     """relay(client_id, client_name, concern) -> None once on its way, else why not."""
 
+    validate = staticmethod(validate_concern_arguments)
+
     async def result(self, connection, arguments: dict) -> dict:
         client = getattr(connection, "memory_scope", None)
         if not isinstance(client, tuple):
@@ -70,6 +72,8 @@ class RaiseConcernTool(PassOnTool):
 
 class StopReplyingTool(PassOnTool):
     """relay(client_id, client_name) -> None once she has stopped, else why not."""
+
+    validate = staticmethod(validate_stop_arguments)
 
     async def result(self, connection, arguments: dict) -> dict:
         client = getattr(connection, "memory_scope", None)
