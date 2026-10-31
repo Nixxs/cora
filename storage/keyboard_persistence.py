@@ -68,11 +68,19 @@ class KeyboardPersistence:
     def load_client_people_context(self, person_id: UUID) -> str:
         return ImpressionStore(self._get_store().engine).client_context(person_id)
 
-    def start_task(self, goal: str, who: UUID | EmailParty, brief: str, step: str) -> UUID:
-        return TaskStore(self._get_store().engine).start(goal, who, brief, step)
+    def start_task(self, goal: str, who: UUID | EmailParty, brief: str, step: str,
+                   deadline: datetime | None = None) -> UUID:
+        return TaskStore(self._get_store().engine).start(goal, who, brief, step, deadline)
 
-    def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str) -> None:
-        TaskStore(self._get_store().engine).add_party(task_id, who, brief, step)
+    def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str,
+                       deadline: datetime | None = None) -> None:
+        TaskStore(self._get_store().engine).add_party(task_id, who, brief, step, deadline)
+
+    def load_deadlines_due(self, now: datetime):
+        return TaskStore(self._get_store().engine).deadlines_due(now)
+
+    def task_deadline_told(self, task_id: UUID, passed: bool) -> None:
+        TaskStore(self._get_store().engine).deadline_told(task_id, passed)
 
     def task_goal(self, task_id: UUID) -> str | None:
         return TaskStore(self._get_store().engine).goal(task_id)

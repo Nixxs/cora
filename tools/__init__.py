@@ -5,6 +5,9 @@ from .client_boundaries import (
     validate_stop_arguments,
 )
 from .check_email import CheckEmailTool, SCHEMA as CHECK_EMAIL_SCHEMA, validate_arguments as validate_check_email_arguments
+from .check_calendar import (
+    CheckCalendarTool, SCHEMA as CHECK_CALENDAR_SCHEMA, validate_arguments as validate_check_calendar_arguments,
+)
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
 from .close_task import CloseTaskTool, SCHEMA as CLOSE_TASK_SCHEMA, validate_arguments as validate_close_task_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
@@ -31,7 +34,7 @@ def create_tool_registry(
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
     signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
     task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
-    relay_from_email=None, find_email_thread=None,
+    relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -69,6 +72,9 @@ def create_tool_registry(
     registry.register(CHECK_EMAIL_SCHEMA, validate_check_email_arguments, check_email.handle)
     send_email = SendEmailTool(
         get_connection, is_closing, write_debug, get_mailbox, confirm, task_goal, record_email_task, find_email_thread,
+        email_signature,
     )
     registry.register(SEND_EMAIL_SCHEMA, validate_send_email_arguments, send_email.handle)
+    check_calendar = CheckCalendarTool(get_connection, is_closing, write_debug, get_calendar)
+    registry.register(CHECK_CALENDAR_SCHEMA, validate_check_calendar_arguments, check_calendar.handle)
     return registry

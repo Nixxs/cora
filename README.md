@@ -831,6 +831,18 @@ line instead ("Let me check with <your name> and come back to you"). An email ta
 then waits on you with a note, and a Signal contact's lapsed reply is raised with
 you once. If the check itself fails, the reply is held, to be safe.
 
+**Deadlines.** If you say when you need something settled ("find a lesson time
+by Friday"), she gives the task that deadline when she starts it: a day (by the
+end of it) or a day and time, in your local time. You see it in the approval with
+the message and brief. Asking someone else for the same open task can move it.
+Your tasks and the coordinator's view show it.
+- **A day before:** if the task is still open, the hourly round tells you once,
+  at any hour.
+- **Once it passes:** if it's still unsettled, the task comes back to you.
+
+Each is noted only after you've been told, so a telling that fails is tried
+again next round. Run `python migrate.py` once for migration 0033.
+
 **Keeping tasks moving.** Each hourly background round checks open tasks. If
 someone she asked has been quiet for about a day (since she asked, they last
 wrote or she last nudged them), she sends one short, friendly follow-up in their
@@ -902,7 +914,8 @@ To set it up once:
    Overview page; leave it empty for a personal account. Press **Save**.
 4. Press **Sign Cora in**. A link and a code appear; open the link, enter the
    code and sign in **as Cora's account**, never yours. It asks to read and send
-   her mail once, so sending later needs no second sign-in. In a work directory
+   her mail and to read and change her calendar once, so sending later needs no
+   second sign-in. In a work directory
    that limits what users may allow apps, an administrator may need to grant
    consent first (the app's **API permissions** > **Grant admin consent**). The
    row then shows her address.
@@ -952,6 +965,13 @@ How it's kept safe:
 - Requests are capped in size, and only Microsoft's handshake token is ever
   echoed back, as plain text.
 
+**Her signature.** Outlook doesn't add its own signature to mail sent through
+Microsoft Graph, so paste a plain-text copy under Settings > Services > **Email**
+(**Save signature**). It goes below each new email she starts, and you see it in
+the approval. Replies in a thread go without it, as Outlook's "new messages only"
+setting would. If the signature starts with her name, her own "Cora" sign-off is
+dropped so she isn't signed twice.
+
 **Emailing Cora yourself.** Enter your own address under Settings > Services >
 **Email** (**Save your address**). Email from it then works like your Signal chat:
 it joins your one conversation, she does what you ask, and she replies by email,
@@ -986,6 +1006,26 @@ New mail arrives as a `MailArrivedEvent` on Cora's event bus
 ([subconscious/event_bus.py](subconscious/event_bus.py)). Whatever cares about it
 subscribes: for now that's the task mail check, and later her awareness of the rest
 of her inbox.
+
+### Cora's calendar
+
+Her Outlook calendar comes with her email, from the same sign-in: hers, never yours.
+Ask "what's on this week?" and she uses `check_calendar` for a day or up to 31 days.
+It gives each event's time in your local time, where it is, who organised it, who's
+invited, and a short preview of its notes. The coordinator has it too, for when a task
+is about finding a time. Her coming week also sits in her context while you talk: when,
+what and where for each event, cancelled ones left out. So she knows what's on without
+looking. That context is refreshed when her email is ready at launch and then hourly.
+Connecting never waits for Microsoft. Clients' chats never see it.
+
+Anyone can send her an invitation, so what an event says is untrusted, like mail.
+
+A sign-in from before the calendar still reads and sends mail. Only the calendar
+says it needs her **signed in once more**: press **Sign Cora in** and allow it. If
+your app registration lists its **API permissions**, add Microsoft Graph's delegated
+`Calendars.ReadWrite` there too. A work directory may need an administrator's
+consent again. Activity says once if the calendar can't be read, and again when it
+can.
 
 ## How memory works
 
@@ -1415,11 +1455,12 @@ features it helps check, and package last.
     - [x] T5a commitment approvals: every reply to a contact is checked, and one
       that commits you (confirms a booking, agrees a price, promises you'll do
       something) waits for your YES; otherwise a holding line goes instead
-    - [ ] T5b task deadlines: taken from your request; she tells you a day before
-      if it's still open, and the task comes back to you when it passes
-    - [ ] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
+    - [x] T5b task deadlines: taken from your request (`deadline` on a task in
+      `send_signal_message` and `send_email`); she tells you a day before if it's
+      still open, and the task comes back to you when it passes
+    - [x] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
       sign-in (one sign-in again), `check_calendar` for a day or range, and her
-      upcoming events in your context so she knows what's coming
+      coming week in your context (refreshed hourly) so she knows what's coming
     - [ ] C2 changing it, each approved: create events (with attendees, which
       sends the invites), update them and cancel them (the cancellation goes to
       attendees)
@@ -1774,7 +1815,7 @@ features it helps check, and package last.
     nudges, a party no longer a contact, and a week without progress (counted
     from the task's last change, so resuming it restarts the week). Built in
     T2b: declines and missing details, judged by the coordinator. Built in E4:
-    bounces. Deadlines are still to come.
+    bounces. Built in T5b: deadlines, a day before and once passed.
   - *Reaching the person, wherever they are:* task turns run in the background, not from
     any chat, so one rule decides how she reaches them, keeping the seamless
     switching between voice and Signal. With Live Active she raises it by voice

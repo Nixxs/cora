@@ -45,6 +45,8 @@ class CoraLive:
         self.self_image_context = ""
         self.people_context = ""
         self.tasks_context = ""
+        # Her coming week, kept fresh by the app from her calendar.
+        self.calendar_context = ""
         self.relationship_context = ""
         self.person_name = None
         self.delegation_model = BACKEND_MODEL
@@ -81,7 +83,7 @@ class CoraLive:
                         person_name=self.person_name, identity_context=self.identity_context,
                         self_image_context=self.self_image_context,
                         relationship_context=self.relationship_context, people_context=self.people_context,
-                        tasks_context=self.tasks_context,
+                        tasks_context=self.tasks_context, calendar_context=self.calendar_context,
                     )
                     config = config_from_sections(
                         self.tool_schemas(), sections, self.conversation_history, self.delegation_model,

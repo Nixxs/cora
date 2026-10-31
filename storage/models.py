@@ -727,6 +727,9 @@ class TaskRecord(Base):
     status: Mapped[str] = mapped_column(Text, server_default="waiting")
     result: Mapped[str | None] = mapped_column(Text)
     deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When she told the person the deadline was a day away, and that it had passed: once each.
+    deadline_warned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deadline_passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

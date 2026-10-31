@@ -43,12 +43,13 @@ from messaging.setup import (
 from messaging.signal_cli import SignalClient, signal_failure
 from storage.client_store import CONVERSATION_GAP, Client
 from storage.signal_settings_store import SignalSettings, normalise_number
-from storage.task_store import SUNDAY, TASK_NUDGES_MAX, EmailParty
+from storage.task_store import SUNDAY, TASK_NUDGES_MAX, EmailParty, deadline_text
 from mail.account import (
     FAILED as EMAIL_FAILED, NO_APP as EMAIL_NO_APP, READY as EMAIL_READY, SIGNED_OUT as EMAIL_SIGNED_OUT,
     SIGNING_IN as EMAIL_SIGNING_IN, EmailAccount, EmailNotReady, EmailStatus, GraphError, Mailbox, is_bounce,
-    verified_from,
+    verified_from, CALENDAR_SCOPES,
 )
+from mail.calendar_events import Calendar
 from mail.triage import IGNORE, URGENT, digest_text, triage_mail
 from mail.webhook import WebhookServer, mail_urls, webhook_app, webhook_secrets
 from storage.webhook_settings_store import WebhookSettings
@@ -129,7 +130,7 @@ NUDGE_NOTE = (
 # The coordinator: a background turn in the person's context when someone answers on a task. It may
 # search and close the task, and, while the person can be asked on Signal, message or email someone
 # for it: each one waits for their YES there (see coordinator_route).
-COORDINATOR_TOOLS = frozenset({"search_memory", "close_task"})
+COORDINATOR_TOOLS = frozenset({"search_memory", "close_task", "check_calendar"})
 COORDINATOR_SEND_TOOLS = frozenset({"send_signal_message", "send_email"})
 COORDINATOR_NOTE = (
     "Background note, not a message from the person: there's news on one of their tasks from someone "
@@ -355,6 +356,10 @@ class CoraApp(App):
         # Her own mailbox, set up in Settings > Services > Email; optional.
         self.email_account = EmailAccount()
         self.mailbox = Mailbox(self.email_account.token)
+        # Her calendar comes with her email sign-in.
+        self.calendar = Calendar(lambda: self.email_account.token(CALENDAR_SCOPES))
+        # Why her calendar couldn't last be read, so it's said once, not hourly.
+        self.calendar_problem = ""
         self.email_status = EmailStatus()
         self.email_controls: EmailControls | None = None
         self.tools = create_tool_registry(
@@ -374,7 +379,8 @@ class CoraApp(App):
             task_goal=self.task_goal, record_task=self.record_task, close_task=self.close_task,
             get_mailbox=lambda: self.mailbox, record_email_task=self.record_email_task,
             relay_to_person=self.relay_to_person, relay_from_email=self.relay_from_email,
-            find_email_thread=self.find_email_thread,
+            find_email_thread=self.find_email_thread, email_signature=lambda: self.email_signature,
+            get_calendar=lambda: self.calendar,
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
         # Live never sees client-only tools such as pass_on.
@@ -421,6 +427,8 @@ class CoraApp(App):
         self.email_replies: dict[tuple, int] = {}
         # The person's own address (Settings > Services > Email), and their emails answered one at a time.
         self.email_person = ""
+        # Her signature for new emails (Settings > Services > Email).
+        self.email_signature = ""
         self.person_email_lock = asyncio.Lock()
         # Her other mail already sorted, and what's waiting for the digest, by message id.
         self.mail_sorted: set[str] = set()
@@ -1038,6 +1046,7 @@ class CoraApp(App):
             has_email_app = await asyncio.to_thread(self.email_account.client_id) is not None
             email_tenant = await asyncio.to_thread(self.email_account.tenant)
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
+            self.email_signature = await asyncio.to_thread(self.email_account.signature)
         except Exception as error:
             self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
             self.notify("Could not load model settings. Check Activity.", severity="error")
@@ -1076,6 +1085,7 @@ class CoraApp(App):
             status=lambda: self.email_status, save_app=self.save_email_app,
             sign_in=self.sign_in_email, sign_out=self.sign_out_email, has_client_id=has_client_id, tenant=tenant,
             person_address=self.email_person, save_person=self.save_email_person,
+            signature=self.email_signature, save_signature=self.save_email_signature,
         )
         return self.email_controls
 
@@ -1112,6 +1122,7 @@ class CoraApp(App):
                 return
             address = await self.mailbox.address()
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
+            self.email_signature = await asyncio.to_thread(self.email_account.signature)
         except EmailNotReady as error:
             self.email_status = EmailStatus(EMAIL_SIGNED_OUT, reason=str(error))
             self.activity.write(str(error), "Email not ready")
@@ -1125,6 +1136,7 @@ class CoraApp(App):
             return
         self.email_status = EmailStatus(EMAIL_READY, address=address)
         self.activity.write(f"Cora's email is ready: {address}", "Email ready")
+        self.refresh_calendar()
         self.check_task_mail()
         self.ensure_mail_subscription()
 
@@ -1169,6 +1181,23 @@ class CoraApp(App):
             f"Saved your email address: {address}." if address else "Forgot your email address.", "Email",
         )
 
+    @work(group="email-setup", exit_on_error=False)
+    async def save_email_signature(self, signature: str) -> None:
+        """Her signature, added below each new email she sends (not replies). Empty forgets it."""
+        try:
+            signature = await asyncio.to_thread(self.email_account.save_signature, signature)
+        except ValueError as error:
+            self.notify(str(error), severity="warning")
+            return
+        except Exception as error:
+            self.activity.write(f"Saving Cora's email signature failed ({type(error).__name__}).", "Email error")
+            self.notify("The signature couldn't be saved. Check Activity.", severity="error")
+            return
+        self.email_signature = signature
+        if self.email_controls is not None:
+            self.email_controls.signature = signature
+        self.activity.write("Saved Cora's email signature." if signature else "Forgot Cora's email signature.", "Email")
+
     @work(group="email-sign-in", exclusive=True, exit_on_error=False)
     async def sign_in_email(self) -> None:
         """Shows a code in Settings to enter at Microsoft's sign-in page, then waits for it to be used."""
@@ -1205,6 +1234,7 @@ class CoraApp(App):
             self.activity.write(f"Signing Cora out of her email failed ({type(error).__name__}).", "Email error")
             return
         self.email_status = EmailStatus(EMAIL_SIGNED_OUT)
+        self.live.calendar_context = ""
         self.activity.write("Signed Cora out of her email.", "Email")
 
     @work(group="signal")
@@ -1348,7 +1378,7 @@ class CoraApp(App):
             person_name=self.live.person_name, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context,
             relationship_context=self.live.relationship_context, people_context=self.live.people_context,
-            tasks_context=self.live.tasks_context,
+            tasks_context=self.live.tasks_context, calendar_context=self.live.calendar_context,
         )
 
     @work(group="text-chat")
@@ -1870,6 +1900,28 @@ class CoraApp(App):
         self.activity.write(f"A task was closed ({status}).", "Task")
         return None
 
+    @work(group="calendar", exclusive=True, exit_on_error=False)
+    async def refresh_calendar(self) -> None:
+        """Her coming week into her context, at launch once email is ready and then hourly. Kept as it
+        was when the calendar can't be read; a new reason why not is said once in Activity."""
+        if self.closing or self.email_status.state != EMAIL_READY:
+            return
+        try:
+            context = await self.calendar.coming_week(datetime.now(timezone.utc))
+        except EmailNotReady as error:
+            problem = str(error)
+        except Exception as error:
+            problem = f"Cora's calendar couldn't be read: {str(error) if isinstance(error, GraphError) else type(error).__name__}"
+        else:
+            self.live.calendar_context = context
+            if self.calendar_problem:
+                self.activity.write("Cora's calendar can be read again.", "Calendar")
+            self.calendar_problem = ""
+            return
+        if problem != self.calendar_problem:
+            self.activity.write(problem, "Calendar not read")
+        self.calendar_problem = problem
+
     @work(group="task-checks", exclusive=True, exit_on_error=False)
     async def check_tasks(self) -> None:
         """Hourly: nudge parties who've gone quiet, and come back to the person when a task is stuck."""
@@ -1912,6 +1964,7 @@ class CoraApp(App):
             if self.closing:
                 return
             await self.task_needs_person(task_id, goal, "it's been a week without it moving on.")
+        await self.check_deadlines(now)
         # Answers whose news never reached the person: the coordinator tries again.
         for task_id, goal in unsettled:
             if self.closing:
@@ -1923,19 +1976,54 @@ class CoraApp(App):
                     f"About your task \"{goal}\": everyone I asked has answered. What would you like me to do?",
                 )
 
-    async def task_needs_person(self, task_id, goal: str, reason: str) -> None:
-        """Back to the person: told first, then marked, so a failed telling is tried again next round."""
+    async def check_deadlines(self, now: datetime) -> None:
+        """Hourly, at any hour: a day before an open task's deadline the person hears once; once it passes,
+        the task comes back to them. Each is noted only after they've been told, so a failed telling is retried."""
+        try:
+            soon, overdue = await self.conversation_persistence.call_database(self.persistence.load_deadlines_due, now)
+        except Exception as error:
+            self.activity.write(f"Checking task deadlines failed ({type(error).__name__}).", "Task")
+            return
+        for task_id, goal, deadline in soon:
+            if self.closing:
+                return
+            try:
+                await self.tell_person(
+                    f"About your task \"{goal}\": it's due by {deadline_text(deadline)} and isn't settled yet. "
+                    "Anything you'd like me to do?"
+                )
+                await self.conversation_persistence.call_database(self.persistence.task_deadline_told, task_id, False)
+            except Exception as error:
+                self.activity.write(f"A task's deadline reminder couldn't reach you yet ({type(error).__name__}).", "Task")
+                continue
+            self.activity.write("Reminded you of a task's deadline.", "Task")
+        for task_id, goal, deadline in overdue:
+            if self.closing:
+                return
+            if not await self.task_needs_person(
+                task_id, goal, f"its deadline ({deadline_text(deadline)}) has passed and it isn't settled.",
+            ):
+                continue
+            try:
+                await self.conversation_persistence.call_database(self.persistence.task_deadline_told, task_id, True)
+            except Exception as error:
+                self.activity.write(f"Saving a passed deadline failed ({type(error).__name__}).", "Task")
+
+    async def task_needs_person(self, task_id, goal: str, reason: str) -> bool:
+        """Back to the person: told first, then marked, so a failed telling is tried again next round.
+        True once they've been told."""
         try:
             await self.tell_person(f"About your task \"{goal}\": {reason} What would you like me to do?")
         except Exception as error:
             self.activity.write(f"A stuck task couldn't reach you yet ({type(error).__name__}).", "Task")
-            return
+            return False
         try:
             await self.conversation_persistence.call_database(self.persistence.task_needs_person, task_id, reason)
         except Exception as error:
             self.activity.write(f"Saving that a task needs you failed ({type(error).__name__}).", "Task")
-            return
+            return True
         self.activity.write("A task needs you.", "Task")
+        return True
 
     async def nudge_party(self, client: Client, party) -> None:
         """One short follow-up in their own chat, written as she'd write any message to them; within the brief, so no approval."""
@@ -2529,26 +2617,29 @@ class CoraApp(App):
     async def task_goal(self, task_id) -> str | None:
         return await self.conversation_persistence.call_database(self.persistence.task_goal, task_id)
 
-    async def record_task(self, contact: Client, goal: str | None, task_id, brief: str, message: str):
+    async def record_task(self, contact: Client, goal: str | None, task_id, brief: str, message: str, deadline=None):
         """After the approved message has gone: a new task with them as its first party, or them added to one."""
-        return await self.save_task_party(contact.id, contact.name, goal, task_id, brief, f"Asked {contact.name}: {message}")
+        return await self.save_task_party(contact.id, contact.name, goal, task_id, brief,
+                                          f"Asked {contact.name}: {message}", deadline)
 
     async def record_email_task(self, address: str, name: str | None, goal: str | None, task_id, brief: str,
-                                message: str, thread_id: str):
+                                message: str, thread_id: str, deadline=None):
         """After an approved email has gone: the same, with them as an email party in that thread."""
         who = name or address
         return await self.save_task_party(
-            EmailParty(address, name, thread_id), who, goal, task_id, brief, f"Emailed {who}: {message}",
+            EmailParty(address, name, thread_id), who, goal, task_id, brief, f"Emailed {who}: {message}", deadline,
         )
 
-    async def save_task_party(self, party, who: str, goal: str | None, task_id, brief: str, step: str):
+    async def save_task_party(self, party, who: str, goal: str | None, task_id, brief: str, step: str, deadline=None):
         if task_id is None:
             task_id = await self.conversation_persistence.call_database(
-                self.persistence.start_task, goal, party, brief, step,
+                self.persistence.start_task, goal, party, brief, step, deadline,
             )
             self.activity.write(f"Started a task with {who}.", "Task")
             return task_id
-        await self.conversation_persistence.call_database(self.persistence.add_task_party, task_id, party, brief, step)
+        await self.conversation_persistence.call_database(
+            self.persistence.add_task_party, task_id, party, brief, step, deadline,
+        )
         self.activity.write(f"Added {who} to a task.", "Task")
         return task_id
 
@@ -2947,6 +3038,7 @@ class CoraApp(App):
         """Hourly: close clients' chats quiet for the conversation gap, then run the memory pass on them."""
         if self.closing:
             return
+        self.refresh_calendar()
         try:
             closed = await self.conversation_persistence.call_database(self.persistence.close_quiet_client_conversations)
         except Exception as error:

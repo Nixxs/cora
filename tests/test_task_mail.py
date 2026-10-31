@@ -108,7 +108,7 @@ class PassOnFromEmailTests(unittest.IsolatedAsyncioTestCase):
 
 class SendInThreadTests(unittest.IsolatedAsyncioTestCase):
     REPLY = {"to": SCHOOL, "name": "Bright School", "subject": None, "message": "Nick says Tuesday is fine. Cora",
-             "task": {"goal": None, "task_id": None, "brief": "Confirm Tuesday at 4."}}
+             "task": {"goal": None, "task_id": None, "brief": "Confirm Tuesday at 4.", "deadline": None}}
 
     def tool(self, thread_id="c1"):
         self.route = BackendRoute()
@@ -129,7 +129,7 @@ class SendInThreadTests(unittest.IsolatedAsyncioTestCase):
     def test_no_subject_only_for_an_open_tasks_thread(self):
         validate_arguments(self.arguments)
         for bad in ({**self.REPLY, "task": None},
-                    {**self.REPLY, "task": {"goal": "New", "task_id": None, "brief": "b"}}):
+                    {**self.REPLY, "task": {"goal": "New", "task_id": None, "brief": "b", "deadline": None}}):
             with self.subTest(arguments=bad), self.assertRaises(ValueError):
                 validate_arguments(bad)
 
@@ -141,7 +141,7 @@ class SendInThreadTests(unittest.IsolatedAsyncioTestCase):
         self.mailbox.reply_in_thread.assert_awaited_once_with("c1", SCHOOL, "Bright School", self.arguments["message"])
         self.mailbox.send.assert_not_awaited()
         self.record.assert_awaited_once_with(SCHOOL, "Bright School", None, self.task_id, "Confirm Tuesday at 4.",
-                                             self.arguments["message"], "c1")
+                                             self.arguments["message"], "c1", deadline=None)
 
     async def test_without_a_thread_nobody_is_asked(self):
         tool = self.tool(thread_id=None)

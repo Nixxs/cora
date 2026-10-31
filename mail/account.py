@@ -28,6 +28,10 @@ TENANT_SETTING = "CORA_EMAIL_TENANT"
 TENANT_ACCOUNT = "email:tenant"
 # The person's own address: mail from it that Microsoft verifies is treated like their Signal chat.
 PERSON_ACCOUNT = "email:person"
+# Her signature for new emails, plain text: Outlook's own isn't added to mail sent through Graph.
+# Kept short, as the Windows credential store holds little.
+SIGNATURE_ACCOUNT = "email:signature"
+SIGNATURE_MAX_CHARS = 500
 # One plain address: no display names, lists or line breaks.
 ADDRESS = re.compile(r"^[^@\s<>,;\"]+@[^@\s<>,;\"]+\.[^@\s<>,;\"]+$")
 # A work or school account signs in through its organisation's directory (a domain such as
@@ -37,6 +41,10 @@ PERSONAL = "consumers"
 DOMAIN = re.compile(r"^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$")
 # Asked for once at sign-in, so sending later (E2) needs no second sign-in.
 SCOPES = ["User.Read", "Mail.ReadWrite", "Mail.Send"]
+# Her calendar (C1-C3), asked for at the same sign-in. Mail tokens don't need it, so a sign-in from
+# before the calendar still reads and sends mail; only the calendar asks for one more sign-in.
+CALENDAR_SCOPES = ["Calendars.ReadWrite"]
+SIGN_IN_SCOPES = SCOPES + CALENDAR_SCOPES
 GRAPH = "https://graph.microsoft.com/v1.0"
 REQUEST_SECONDS = 20
 PREVIEW_MAX_CHARS = 300
@@ -85,13 +93,15 @@ def sign_in_cache_path() -> Path:
     return Path(getenv("LOCALAPPDATA") or Path.home()) / "cora" / "email-sign-in.bin"
 
 
-def access_token(app) -> str:
+def access_token(app, scopes: list[str] = SCOPES) -> str:
     """A current access token from the saved sign-in, refreshed if needed. Blocking."""
     accounts = app.get_accounts()
     if not accounts:
         raise EmailNotReady("Cora's email isn't signed in yet; sign her in in Settings > Services > Email.")
-    result = app.acquire_token_silent(SCOPES, account=accounts[0])
+    result = app.acquire_token_silent(scopes, account=accounts[0])
     if not result or "access_token" not in result:
+        if scopes == CALENDAR_SCOPES:
+            raise EmailNotReady(f"Cora's calendar needs her signed in once more to allow it; {SIGN_IN_HINT}.")
         raise EmailNotReady(f"Cora's email sign-in has lapsed; {SIGN_IN_HINT}.")
     return result["access_token"]
 
@@ -159,6 +169,24 @@ class EmailAccount:
         keyring.set_password(KEYRING_SERVICE, PERSON_ACCOUNT, value)
         return value
 
+    def signature(self) -> str:
+        """Her signature for new emails, or "" when there's none."""
+        return keyring.get_password(KEYRING_SERVICE, SIGNATURE_ACCOUNT) or ""
+
+    def save_signature(self, value: str) -> str:
+        """Plain text, tidied; empty forgets it. ValueError when it's too long."""
+        value = "\n".join(line.rstrip() for line in value.replace("\r\n", "\n").split("\n")).strip()
+        if not value:
+            try:
+                keyring.delete_password(KEYRING_SERVICE, SIGNATURE_ACCOUNT)
+            except PasswordDeleteError:
+                pass  # nothing was saved
+            return ""
+        if len(value) > SIGNATURE_MAX_CHARS:
+            raise ValueError(f"Keep the signature under {SIGNATURE_MAX_CHARS} characters.")
+        keyring.set_password(KEYRING_SERVICE, SIGNATURE_ACCOUNT, value)
+        return value
+
     def app(self):
         """The sign-in client for the current app ID and directory, with its cache in the encrypted file."""
         app_client_id = self.client_id()
@@ -175,15 +203,15 @@ class EmailAccount:
             self._app_for = (app_client_id, authority)
         return self._app
 
-    def token(self) -> str:
-        return access_token(self.app())
+    def token(self, scopes: list[str] = SCOPES) -> str:
+        return access_token(self.app(), scopes)
 
     def signed_in(self) -> bool:
         return self.client_id() is not None and bool(self.app().get_accounts())
 
     def start_sign_in(self) -> dict:
         """Starts a sign-in with a code; the flow holds user_code and verification_uri."""
-        flow = self.app().initiate_device_flow(scopes=SCOPES)
+        flow = self.app().initiate_device_flow(scopes=SIGN_IN_SCOPES)
         if "user_code" not in flow:
             raise EmailNotReady(f"Microsoft wouldn't start a sign-in: {flow.get('error_description') or flow.get('error')}")
         self._flow = flow
@@ -317,6 +345,18 @@ class Bounce:
 
     def names(self, address: str) -> bool:
         return re.search(rf"(?<![\w.+-]){re.escape(address)}(?![\w-]|\.\w)", self.text, re.IGNORECASE) is not None
+
+
+def signed(text: str, signature: str, name: str = "Cora") -> str:
+    """Her message with the signature below it. When the signature starts with her name, a last line
+    that is only her name is dropped, so she isn't signed twice."""
+    if not signature:
+        return text
+    lines = text.rstrip().split("\n")
+    if (len(lines) > 1 and lines[-1].strip(" -–—").lower() == name.lower()
+            and signature.lower().startswith(name.lower())):
+        lines.pop()
+    return "\n".join(lines).rstrip() + "\n\n" + signature
 
 
 BODY_TAG = re.compile(r"<body[^>]*>", re.IGNORECASE)

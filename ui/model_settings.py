@@ -6,7 +6,7 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane
+from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
 
 from mail import account as email_setup
 from mail.account import EmailStatus
@@ -71,6 +71,9 @@ class EmailControls:
     # The person's own address: verified mail from it is treated like their Signal chat. Empty forgets it.
     person_address: str = ""
     save_person: Callable[[str], None] = lambda address: None
+    # Her plain-text signature, added below each new email (not replies). Empty forgets it.
+    signature: str = ""
+    save_signature: Callable[[str], None] = lambda signature: None
 
 
 @dataclass
@@ -111,6 +114,10 @@ EMAIL_APP_HELP = (
 EMAIL_PERSON_HELP = (
     "Your own email address. Emails from it, once Microsoft verifies they really came from you, "
     "are treated like your Signal messages: she acts on them and replies. Leave empty to turn this off."
+)
+EMAIL_SIGNATURE_HELP = (
+    "Her signature for new emails, in plain text. Outlook's own signature isn't added to mail she "
+    "sends, so paste a copy here. Replies in a thread go without it, as in Outlook."
 )
 EMAIL_TENANT_HELP = (
     "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
@@ -310,6 +317,9 @@ class ModelSettingsScreen(ModalScreen):
             yield Label(EMAIL_PERSON_HELP, classes="model-settings-label service-help")
             yield Input(value=self.email.person_address, id="email-person", placeholder="you@example.com")
             yield Button("Save your address", id="email-save-person")
+            yield Label(EMAIL_SIGNATURE_HELP, classes="model-settings-label service-help")
+            yield TextArea(self.email.signature, id="email-signature", soft_wrap=True)
+            yield Button("Save signature", id="email-save-signature")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
@@ -614,6 +624,8 @@ class ModelSettingsScreen(ModalScreen):
             self.save_email_app()
         elif button == "email-save-person":
             self.email.save_person(self.query_one("#email-person", Input).value)
+        elif button == "email-save-signature":
+            self.email.save_signature(self.query_one("#email-signature", TextArea).text)
         elif button == "email-sign-in":
             self.email.sign_in()
         elif button == "email-sign-out":

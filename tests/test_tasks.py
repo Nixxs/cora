@@ -33,7 +33,7 @@ CORA = "+61400000001"
 NICK = "+61400000002"
 SARAH = Client(uuid4(), "Sarah", "+61400000003")
 NEW_TASK = {"goal": "Find out when Sarah can do a driving lesson", "task_id": None,
-            "brief": "Which weekday afternoons next week suit her for an hour's lesson. You may say Nick asked."}
+            "brief": "Which weekday afternoons next week suit her for an hour's lesson. You may say Nick asked.", "deadline": None}
 
 
 class TaskToolTests(unittest.IsolatedAsyncioTestCase):
@@ -55,7 +55,7 @@ class TaskToolTests(unittest.IsolatedAsyncioTestCase):
 
     def test_a_task_has_a_new_goal_or_an_open_task_and_always_a_brief(self):
         validate_arguments({"to": "Sarah", "message": "Hi", "task": NEW_TASK})
-        validate_arguments({"to": "Sarah", "message": "Hi", "task": {"goal": None, "task_id": str(uuid4()), "brief": "b"}})
+        validate_arguments({"to": "Sarah", "message": "Hi", "task": {"goal": None, "task_id": str(uuid4()), "brief": "b", "deadline": None}})
         for task in ({**NEW_TASK, "task_id": str(uuid4())}, {**NEW_TASK, "goal": None},
                      {**NEW_TASK, "brief": " "}, {**NEW_TASK, "goal": None, "task_id": "nope"}, {"goal": "g"}):
             with self.subTest(task=task), self.assertRaises(ValueError):
@@ -71,7 +71,7 @@ class TaskToolTests(unittest.IsolatedAsyncioTestCase):
         }, title="Signal")
         self.send.assert_awaited_once_with(SARAH, "Hi Sarah, when suits you for a lesson?")
         self.record.assert_awaited_once_with(
-            SARAH, NEW_TASK["goal"], None, NEW_TASK["brief"], "Hi Sarah, when suits you for a lesson?")
+            SARAH, NEW_TASK["goal"], None, NEW_TASK["brief"], "Hi Sarah, when suits you for a lesson?", deadline=None)
         self.assertIn(str(task_id), self.output()["message"])
 
     async def test_declined_means_no_message_and_no_task(self):
@@ -83,11 +83,11 @@ class TaskToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_adding_someone_to_an_open_task_shows_its_goal_and_an_unknown_one_asks_nothing(self):
         task_id = uuid4()
         tool = self.tool(goal="Book Sarah a driving lesson")
-        await tool.handle("c1", {"to": "Sarah", "message": "Hi", "task": {"goal": None, "task_id": str(task_id), "brief": "b"}})
+        await tool.handle("c1", {"to": "Sarah", "message": "Hi", "task": {"goal": None, "task_id": str(task_id), "brief": "b", "deadline": None}})
         self.assertEqual(self.confirm.await_args.args[2]["task"], "Book Sarah a driving lesson")
-        self.record.assert_awaited_once_with(SARAH, None, task_id, "b", "Hi")
+        self.record.assert_awaited_once_with(SARAH, None, task_id, "b", "Hi", deadline=None)
         tool = self.tool(goal=None)
-        await tool.handle("c1", {"to": "Sarah", "message": "Hi", "task": {"goal": None, "task_id": str(task_id), "brief": "b"}})
+        await tool.handle("c1", {"to": "Sarah", "message": "Hi", "task": {"goal": None, "task_id": str(task_id), "brief": "b", "deadline": None}})
         self.confirm.assert_not_awaited()
         self.assertEqual(self.output()["status"], "error")
 
@@ -232,7 +232,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Lesson for Sarah", kwargs["sections"]["tasks"])
             route = kwargs["route"]
             self.assertEqual(frozenset(app.tools.names()) - route.excluded,
-                             {"search_memory", "close_task", "send_signal_message", "send_email"})
+                             {"search_memory", "close_task", "check_calendar", "send_signal_message", "send_email"})
             self.assertIsNotNone(route.ask_approval)
             self.assertEqual(route.approval_seconds, app_module.APPROVAL_SECONDS)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
@@ -241,12 +241,12 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
                 task_id, "Told them the news and asked what next.", True)
             self.assertEqual(app.tasks_coordinating, set())
 
-    async def test_without_signal_to_ask_you_on_it_only_searches_and_closes(self):
+    async def test_without_signal_to_ask_you_on_it_only_searches_reads_the_calendar_and_closes(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.linked(app)
             app.signal.status = SignalStatus("not_linked")
             route = app.coordinator_route([])
-            self.assertEqual(frozenset(app.tools.names()) - route.excluded, {"search_memory", "close_task"})
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded, {"search_memory", "close_task", "check_calendar"})
             self.assertIsNone(route.ask_approval)
 
     async def test_a_request_you_dont_answer_in_time_sends_nothing_and_the_task_waits_on_you(self):
@@ -333,9 +333,9 @@ class TaskAppTests(unittest.IsolatedAsyncioTestCase):
             task_id = uuid4()
             app.persistence.start_task.return_value = task_id
             self.assertEqual(await app.record_task(SARAH, "Goal", None, "Brief", "Hi Sarah"), task_id)
-            app.persistence.start_task.assert_called_once_with("Goal", SARAH.id, "Brief", "Asked Sarah: Hi Sarah")
+            app.persistence.start_task.assert_called_once_with("Goal", SARAH.id, "Brief", "Asked Sarah: Hi Sarah", None)
             self.assertEqual(await app.record_task(SARAH, None, task_id, "Brief 2", "And?"), task_id)
-            app.persistence.add_task_party.assert_called_once_with(task_id, SARAH.id, "Brief 2", "Asked Sarah: And?")
+            app.persistence.add_task_party.assert_called_once_with(task_id, SARAH.id, "Brief 2", "Asked Sarah: And?", None)
 
     async def test_writing_as_herself_carries_her_tasks(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -589,6 +589,28 @@ class TaskStoreDatabaseTests(unittest.TestCase):
         self.assertEqual(self.steps(task_id)[-1], "My email to Bright School bounced.")
         with self.assertRaises(LookupError):
             self.tasks.email_bounced(thread.party_id, "again")
+
+    def test_a_deadline_is_kept_shown_and_told_once_a_day_before_and_once_when_it_passes(self):
+        now = datetime.now(timezone.utc)
+        due = now + timedelta(hours=20)
+        task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah", due)
+        later = self.tasks.start("Later", self.sarah.id, "b", "s", now + timedelta(days=3))
+        self.tasks.start("No deadline", self.sarah.id, "b", "s")
+        self.assertEqual(self.tasks.deadlines_due(now), ([(task_id, "Lesson for Sarah", due)], []))
+        self.assertIn("deadline", self.tasks.coordination(task_id))
+        self.assertIn('"deadline"', self.tasks.tasks_context(now))
+        self.tasks.deadline_told(task_id, False)
+        self.assertEqual(self.tasks.deadlines_due(now), ([], []))
+        self.assertEqual(self.tasks.deadlines_due(due + timedelta(minutes=1)), ([], [(task_id, "Lesson for Sarah", due)]))
+        self.tasks.deadline_told(task_id, True)
+        self.assertEqual(self.tasks.deadlines_due(due + timedelta(minutes=1)), ([], []))
+        # A new deadline is told about afresh; a closed task never.
+        moved = now + timedelta(hours=10)
+        self.tasks.add_party(task_id, EmailParty("info@school.example", None, "t"), "b", "Emailed", moved)
+        self.assertEqual(self.tasks.deadlines_due(now)[0], [(task_id, "Lesson for Sarah", moved)])
+        self.tasks.close(task_id, "done", "Booked")
+        self.tasks.close(later, "cancelled", "No")
+        self.assertEqual(self.tasks.deadlines_due(now + timedelta(days=5)), ([], []))
 
     def test_a_task_waits_on_the_person_unless_someone_is_still_to_answer(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah")

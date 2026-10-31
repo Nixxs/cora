@@ -9,9 +9,12 @@ with them for that task, so their answers stay together.
 import json
 from uuid import UUID
 
-from mail.account import ADDRESS, EmailNotReady, GraphError
+from mail.account import ADDRESS, EmailNotReady, GraphError, signed
 from services.confirmation import APPROVED
-from .send_signal_message import BRIEF_MAX_CHARS, GOAL_MAX_CHARS, NOT_DONE, check_text
+from storage.task_store import deadline_text
+from .send_signal_message import (
+    BRIEF_MAX_CHARS, DEADLINE_SCHEMA, GOAL_MAX_CHARS, NOT_DONE, check_text, task_deadline,
+)
 
 ADDRESS_MAX_CHARS = 320
 NAME_MAX_CHARS = 100
@@ -52,8 +55,9 @@ SCHEMA = {
                     "goal": {"type": ["string", "null"], "description": "A new task's goal, in the person's words."},
                     "task_id": {"type": ["string", "null"], "description": "An open task to add them to."},
                     "brief": {"type": "string", "description": "What to find out or agree with them, and what you may share."},
+                    "deadline": DEADLINE_SCHEMA,
                 },
-                "required": ["goal", "task_id", "brief"],
+                "required": ["goal", "task_id", "brief", "deadline"],
                 "additionalProperties": False,
             },
         },
@@ -83,8 +87,10 @@ def validate_arguments(arguments: dict) -> None:
         if subject is None:
             raise ValueError("A reply in a thread needs the task it's for")
         return
-    if not isinstance(task, dict) or set(task) != {"goal", "task_id", "brief"}:
+    if not isinstance(task, dict) or set(task) != {"goal", "task_id", "brief", "deadline"}:
         raise ValueError("Invalid task")
+    if task["deadline"] is not None and not isinstance(task["deadline"], str):
+        raise ValueError("deadline must be a date or null")
     if (task["goal"] is None) == (task["task_id"] is None):
         raise ValueError("A task needs either a new goal or an open task_id")
     if task["goal"] is not None:
@@ -100,7 +106,7 @@ def validate_arguments(arguments: dict) -> None:
 
 class SendEmailTool:
     def __init__(self, get_connection, is_closing, write_debug, get_mailbox, confirm, task_goal=None,
-                 record_task=None, find_thread=None):
+                 record_task=None, find_thread=None, get_signature=lambda: ""):
         self.get_connection = get_connection
         self.is_closing = is_closing
         self.write_debug = write_debug
@@ -113,6 +119,8 @@ class SendEmailTool:
         self.record_task = record_task
         # find_thread(task_id, address) -> her thread with them for that open task, or None.
         self.find_thread = find_thread
+        # get_signature() -> her signature for new emails (not replies in a thread), or "".
+        self.get_signature = get_signature
 
     def _log(self, message: str, title: str) -> None:
         try:
@@ -128,13 +136,19 @@ class SendEmailTool:
         name = None if arguments["name"] is None else arguments["name"].strip()
         subject = None if arguments["subject"] is None else arguments["subject"].strip()
         message = arguments["message"].strip()
+        if subject is not None:
+            # Signed before approval, so the person sees exactly what goes.
+            message = signed(message, self.get_signature())
         shown = {"to": f"{name} <{address}>" if name else address,
                  "subject": subject or "(a reply in your thread with them)", "message": message}
         task = arguments["task"]
-        goal = task_id = thread_id = None
+        goal = task_id = thread_id = deadline = None
         if task is not None:
             if self.task_goal is None or self.record_task is None:
                 return {"status": "error", "message": "Tasks aren't available right now; send it without one."}
+            deadline, problem = task_deadline(task)
+            if problem:
+                return {"status": "error", "message": problem}
             goal = None if task["goal"] is None else task["goal"].strip()
             if task["task_id"] is not None:
                 task_id = UUID(task["task_id"])
@@ -151,6 +165,8 @@ class SendEmailTool:
                 shown["task"] = goal
             # Approving the email approves what the brief lets her find out and share.
             shown["brief"] = task["brief"].strip()
+            if deadline is not None:
+                shown["deadline"] = deadline_text(deadline)
         # Checked before asking, so the person is never asked to approve what can't be sent.
         try:
             await mailbox.address()
@@ -172,7 +188,8 @@ class SendEmailTool:
         if task is None:
             return {"status": "ok", "message": f"Sent to {shown['to']}."}
         try:
-            task_id = await self.record_task(address, name, goal, task_id, shown["brief"], message, sent.thread_id)
+            task_id = await self.record_task(address, name, goal, task_id, shown["brief"], message, sent.thread_id,
+                                             deadline=deadline)
         except Exception as error:
             self._log(f"Saving the task failed ({type(error).__name__}).", "Tool error")
             return {"status": "ok", "message": (
