@@ -142,7 +142,10 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
   to resume. The button shows Connecting and cannot be clicked again while waking.
 - **Type while in Standby:** a typed message is answered in writing ("Cora ·
   written") straight from her backend, without waking Live, so there is no voice
-  and no Live billing, only the backend request. It is the same Cora: each
+  and no Live billing, only the backend request. The reply streams in as she
+  writes it ("Cora · writing…"), then becomes one finished Markdown message; if it
+  fails or is cut off, what was shown stays, labelled "Cora · written · incomplete",
+  and is not saved as her reply. It is the same Cora: each
   message reloads her startup context as a Live connect does (name, memories,
   interests, identity, relationship and chosen model; database reads only), and
   she has the same tools, except closing the app and going to standby. The chat
@@ -1377,6 +1380,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 ### Available now
 
 - Unified terminal voice/text chat, streaming transcripts, and written answers.
+- Speaker labels coloured in the chat and the dashboard's chat box: Cora in moss green, You in blue
+  (the names stay as text, so colour is not the only cue).
 - Separate clickable microphone and speaker mute controls in the bottom status row.
 - A fixed-width speaking animation driven by output audio playback levels.
 - Manual Live reconnect with recent chat context, without closing the local app.

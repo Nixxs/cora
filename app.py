@@ -1373,13 +1373,18 @@ class CoraApp(App):
 
     async def reply_in_writing(
         self, content: list[dict], history: list[dict], route: BackendRoute, extra_instructions: str = "",
+        on_text=None,
     ) -> str:
-        """One turn of a chat without Live, as the same Cora: raises if it fails."""
+        """One turn of a chat without Live, as the same Cora: raises if it fails.
+
+        on_text, if given, gets her text so far as it streams in.
+        """
         # Reloaded each time, as at a Live connect, so she is the same Cora with what she
         # knows now: name, memories, interests, identity, relationship and chosen model.
         return await self.backend_chat.reply(
             content=content, history=history, sections=await self.person_sections(),
             model=self.live.delegation_model, route=route, extra_instructions=extra_instructions,
+            on_text=on_text,
         )
 
     async def person_sections(self) -> dict[str, str]:
@@ -1396,19 +1401,30 @@ class CoraApp(App):
     @work(group="text-chat")
     async def answer_without_live(self, content: list[dict], history: list[dict]) -> None:
         self.activity.write("Answering in writing without waking Live.", "Writing a reply")
+        # Shown as it streams in, then replaced by the finished reply.
+        draft = self.conversation.start_written_reply()
         try:
-            text = await self.reply_in_writing(content, history, BackendRoute(excluded=STANDBY_EXCLUDED))
+            text = await self.reply_in_writing(
+                content, history, BackendRoute(excluded=STANDBY_EXCLUDED), on_text=draft.update,
+            )
         except Exception as error:
+            draft.fail()
             # The type only: a message could echo the conversation.
             self.activity.write(f"Written reply failed ({type(error).__name__}).", "Written reply failed")
             self.notify("Cora couldn't reply in writing. Check Activity.", severity="error")
             return
+        except asyncio.CancelledError:
+            # Stopped, say by closing: anything already shown stays, marked incomplete.
+            draft.fail()
+            raise
         if self.closing:
+            draft.fail()
             return
         if text:
-            self.conversation.show_written_reply(text)
+            draft.finish(text)
             self.activity.write(f"Written reply shown: characters={len(text)}", "Written reply")
         else:
+            draft.fail()
             self.activity.write("The written reply was empty.", "Written reply empty")
 
     async def listen_on_signal(self) -> None:

@@ -86,6 +86,31 @@ def output_text(item) -> str:
     return "\n\n".join(parts)
 
 
+# Streamed events that carry written text, as the non-streamed output_text reads it.
+TEXT_DELTAS = ("response.output_text.delta", "response.refusal.delta")
+
+
+async def stream_round(client, request: dict, on_text):
+    """One backend request, streamed: on_text gets the round's text so far; returns the full response.
+
+    The final reply is still read from the returned response, so what is shown at the end is
+    exactly what a non-streamed request would have given.
+    """
+    # Each message part's text so far, in the order they began.
+    parts: dict[tuple, str] = {}
+    async with await client.responses.create(**request, stream=True) as stream:
+        async for event in stream:
+            if event.type in TEXT_DELTAS:
+                key = (event.item_id, event.content_index)
+                parts[key] = parts.get(key, "") + event.delta
+                on_text("\n\n".join(text for part in parts.values() if (text := part.strip())))
+            elif event.type in ("response.completed", "response.incomplete"):
+                return event.response
+            elif event.type in ("response.failed", "error"):
+                raise RuntimeError(f"Streamed response ended with {event.type}")
+    raise RuntimeError("Stream ended without a response")
+
+
 class BackendChat:
     """Runs one turn of a chat without Live, tools included, and returns Cora's written reply."""
 
@@ -98,19 +123,24 @@ class BackendChat:
 
     async def reply(
         self, *, content: list[dict], history: list[dict], sections: dict[str, str], model: str,
-        route: BackendRoute, extra_instructions: str = "",
+        route: BackendRoute, extra_instructions: str = "", on_text=None,
     ) -> str:
+        """on_text, if given, gets each round's written text so far as it streams in."""
         instructions = BACKEND_INSTRUCTIONS + "".join(sections.values()) + TEXT_CHAT_INSTRUCTIONS + extra_instructions
         tools = [{"type": "web_search"}, *self.tools.schemas(excluding=route.excluded)]
         items = [*history, {"type": "message", "role": "user", "content": content}]
         async with self.client_factory() as client:
             for _ in range(MAX_ROUNDS):
-                response = await client.responses.create(
+                request = dict(
                     model=model, instructions=instructions, input=items, tools=tools,
                     tool_choice="auto", parallel_tool_calls=False, store=False,
                     # Without storage, reasoning is handed back encrypted so tool rounds keep it.
                     include=["reasoning.encrypted_content"],
                 )
+                if on_text is None:
+                    response = await client.responses.create(**request)
+                else:
+                    response = await stream_round(client, request, on_text)
                 calls = [item for item in response.output if item.type == "function_call"]
                 if not calls:
                     return "\n\n".join(
