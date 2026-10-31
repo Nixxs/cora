@@ -5,6 +5,11 @@ from .client_boundaries import (
     validate_stop_arguments,
 )
 from .check_email import CheckEmailTool, SCHEMA as CHECK_EMAIL_SCHEMA, validate_arguments as validate_check_email_arguments
+from .change_calendar import (
+    CANCEL_SCHEMA as CANCEL_EVENT_SCHEMA, CREATE_SCHEMA as CREATE_EVENT_SCHEMA, UPDATE_SCHEMA as UPDATE_EVENT_SCHEMA,
+    CancelEventTool, CreateEventTool, UpdateEventTool, validate_cancel_arguments, validate_create_arguments,
+    validate_update_arguments,
+)
 from .check_calendar import (
     CheckCalendarTool, SCHEMA as CHECK_CALENDAR_SCHEMA, validate_arguments as validate_check_calendar_arguments,
 )
@@ -35,6 +40,7 @@ def create_tool_registry(
     signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
     task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
+    calendar_changed=lambda: None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -77,4 +83,11 @@ def create_tool_registry(
     registry.register(SEND_EMAIL_SCHEMA, validate_send_email_arguments, send_email.handle)
     check_calendar = CheckCalendarTool(get_connection, is_closing, write_debug, get_calendar)
     registry.register(CHECK_CALENDAR_SCHEMA, validate_check_calendar_arguments, check_calendar.handle)
+    for schema, validate, tool_type in (
+        (CREATE_EVENT_SCHEMA, validate_create_arguments, CreateEventTool),
+        (UPDATE_EVENT_SCHEMA, validate_update_arguments, UpdateEventTool),
+        (CANCEL_EVENT_SCHEMA, validate_cancel_arguments, CancelEventTool),
+    ):
+        tool = tool_type(get_connection, is_closing, write_debug, get_calendar, confirm, calendar_changed)
+        registry.register(schema, validate, tool.handle)
     return registry

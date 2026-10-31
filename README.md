@@ -1020,6 +1020,26 @@ Connecting never waits for Microsoft. Clients' chats never see it.
 
 Anyone can send her an invitation, so what an event says is untrusted, like mail.
 
+**Changing it.** Ask her to put something in, move it or call it off, and she uses
+one of three tools:
+- `create_event`: the subject, start and end, and optionally a place, notes and
+  people to invite. Each invited person gets an Outlook invitation from her address.
+- `update_event`: only what changes. Moving the start keeps the length. A new
+  attendee list replaces the old one. Everyone invited gets the update.
+- `cancel_event`: everyone invited gets the cancellation, with her note if she gives
+  one. An event with nobody invited is just removed.
+
+You approve each change first, by pop-up or YES on Signal. The approval shows the
+event, the time it was and the time it will be, and exactly who will be told. She
+can only change or cancel events she organised. An invitation she received belongs
+to whoever sent it.
+
+Times are your local time. Microsoft is sent them in UTC and Outlook shows them in
+each viewer's time zone. All-day events can be read but not yet made or moved. She
+makes changes only when you ask, never because an email, an invitation or a client
+asks. The coordinator and clients' chats can't change her calendar. After a change,
+her coming week in context is refreshed.
+
 A sign-in from before the calendar still reads and sends mail. Only the calendar
 says it needs her **signed in once more**: press **Sign Cora in** and allow it. If
 your app registration lists its **API permissions**, add Microsoft Graph's delegated
@@ -1461,9 +1481,9 @@ features it helps check, and package last.
     - [x] C1 her own Microsoft calendar, read: `Calendars.ReadWrite` added to her
       sign-in (one sign-in again), `check_calendar` for a day or range, and her
       coming week in your context (refreshed hourly) so she knows what's coming
-    - [ ] C2 changing it, each approved: create events (with attendees, which
-      sends the invites), update them and cancel them (the cancellation goes to
-      attendees)
+    - [x] C2 changing it, each approved: `create_event` (with attendees, which
+      sends the invites), `update_event` and `cancel_event` (the cancellation goes
+      to attendees); only events she organised; all-day events read-only for now
     - [ ] C3 forwarding invites to you or others (Graph's event forward), and
       calendar changes through the webhook listener (a second Graph subscription,
       to her events) so new invites and changes reach her as events

@@ -380,7 +380,7 @@ class CoraApp(App):
             get_mailbox=lambda: self.mailbox, record_email_task=self.record_email_task,
             relay_to_person=self.relay_to_person, relay_from_email=self.relay_from_email,
             find_email_thread=self.find_email_thread, email_signature=lambda: self.email_signature,
-            get_calendar=lambda: self.calendar,
+            get_calendar=lambda: self.calendar, calendar_changed=lambda: self.refresh_calendar(),
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
         )
         # Live never sees client-only tools such as pass_on.
