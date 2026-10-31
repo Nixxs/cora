@@ -221,11 +221,12 @@ Click **dashboard** on the top border to switch to a read-only, btop-style view 
 what Cora has stored; click **chat** to switch back. The conversation carries on
 while it is open: its chat box shows the same messages and sends what you type, and
 the voice box's speaker and mic toggles press the same mute controls as the chat.
-Its top right shows **○ standby** while Live is in standby.
+Its top right mirrors the chat's connection button, showing **● active** or
+**○ standby** in the same colours; clicking it enters standby or resumes.
 
 | Box | Shows |
 | --- | --- |
-| voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. |
+| voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. The connection state at the top right (● active, ○ standby) is a button that enters standby or resumes without leaving the dashboard. |
 | chat | The running conversation; type here to send. |
 | relationship | Trust, warmth and familiarity as they stand now (drift included), their history, and the tone of recent everyday conversations. |
 | memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |

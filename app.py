@@ -3318,7 +3318,7 @@ class CoraApp(App):
             else:
                 self.push_screen(DashboardScreen(
                     self.voice_bands, self.conversation, self.audio_status,
-                    self.conversation_persistence.load_dashboard_snapshot, self.activity,
+                    self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context,
                 ))
         elif event.button.id == "chat-status":

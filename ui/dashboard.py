@@ -114,7 +114,7 @@ def task_lines(tasks, now) -> Text:
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
-    def __init__(self, voice_bands, conversation, audio_status, load_snapshot, activity, context) -> None:
+    def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context) -> None:
         super().__init__()
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
         # or an empty tuple for silence.
@@ -122,6 +122,8 @@ class DashboardScreen(Screen):
         self.conversation = conversation
         # Owns the chat's mic and speaker buttons, which the voice box's toggles press.
         self.audio_status = audio_status
+        # The chat's connection button, which enters standby or resumes; the voice box's toggle presses it.
+        self.connection = connection
         # Reads a DashboardSnapshot off the UI thread; returns None if the database failed.
         self.load_snapshot = load_snapshot
         # The last good snapshot; a failed refresh keeps showing it.
@@ -136,12 +138,12 @@ class DashboardScreen(Screen):
         with Vertical(id="dashboard-panel"):
             with Horizontal(id="dashboard-top", classes="dashboard-row"):
                 with Vertical(id="voice-column"):
-                    # The box's top border, drawn as widgets so standby can show at its right.
+                    # The box's top border, drawn as widgets so the standby toggle can sit at its right.
                     with HorizontalGroup(id="voice-header"):
                         yield Static("╭─", classes="voice-line")
                         yield Static("voice", id="voice-title")
                         yield BorderLine(id="voice-header-fill")
-                        yield Static("○ standby", id="dashboard-standby")
+                        yield Button("○ disconnected", id="dashboard-standby")
                         yield Static("─╮", classes="voice-line")
                     # Cora's voice rises above the line and the person's hangs below it.
                     with Vertical(id="voice-box", classes="dashboard-box"):
@@ -345,6 +347,7 @@ class DashboardScreen(Screen):
         chat_button = {
             "dashboard-speaker": self.audio_status.speaker,
             "dashboard-mic": self.audio_status.mic,
+            "dashboard-standby": self.connection,
         }.get(event.button.id)
         if chat_button is None:
             return
@@ -355,17 +358,25 @@ class DashboardScreen(Screen):
 
     def sync_audio_controls(self) -> None:
         live = self.audio_status.live
-        for button_id, chat_button, muted, labels in (
-            ("#dashboard-speaker", self.audio_status.speaker, live.speaker_muted, ("🔊 speaker", "🔇 muted")),
-            ("#dashboard-mic", self.audio_status.mic, live.microphone_muted, ("🎙 mic", "🎙 muted")),
+        # The connection shows its state as the chat does, like "● active" or "○ standby".
+        connection_label = str(self.connection.label).lower()
+        for button_id, chat_button, label, classes in (
+            ("#dashboard-speaker", self.audio_status.speaker,
+             "🔇 muted" if live.speaker_muted else "🔊 speaker", {"audio-muted": live.speaker_muted}),
+            ("#dashboard-mic", self.audio_status.mic,
+             "🎙 muted" if live.microphone_muted else "🎙 mic", {"audio-muted": live.microphone_muted}),
+            ("#dashboard-standby", self.connection, connection_label, {
+                f"state-{state}": self.connection.has_class(f"state-{state}")
+                for state in ("active", "standby", "connecting", "disconnecting")
+            }),
         ):
             button = self.query_one(button_id, Button)
-            label = labels[muted]
             if str(button.label) != label:
                 button.label = label
                 # Button.label repaints but does not invalidate its cached auto width.
                 button.refresh(layout=True)
-            button.set_class(muted, "audio-muted")
+            for name, on in classes.items():
+                button.set_class(on, name)
             button.tooltip = chat_button.tooltip
             button.disabled = chat_button.disabled
         summary = self.query_one("#dashboard-activity", Static)
@@ -374,7 +385,6 @@ class DashboardScreen(Screen):
             # Text, so brackets in an error summary are not read as markup.
             summary.update(Text(panel.title))
         summary.set_class(panel.has_class("activity-error"), "activity-error")
-        self.query_one("#dashboard-standby", Static).display = self.app.standby
 
     def sample_voice(self) -> None:
         speaker, mic = self.voice_bands()
