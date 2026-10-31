@@ -29,6 +29,8 @@ HISTORY_LIMIT = 200
 # An interest reinforced (or spawned) this recently counts as rising; otherwise it is
 # only decaying, so it counts as falling.
 RISING_WINDOW = timedelta(days=3)
+# Before an interest of her own: one sparked by her exploring, not by the person.
+OWN_MARK = "✦"
 
 # A year of weeks, more than the widest conversations heatmap will show.
 CALENDAR_DAYS = 7 * 53
@@ -109,16 +111,20 @@ def live_interests(engine: Engine, now: datetime) -> tuple[
     """The live interests, strongest first, and the newest finding on any of them."""
     store = InterestStore(engine)
     live = {}
+    titles = {}
     for interest in store.list_interests():
         # Read-time settling only, like Cora's startup context; nothing is saved.
         strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
         if status != "dormant":
             grown_at = interest.last_reinforced_at or interest.created_at
-            live[interest.id] = (interest.title, strength, now - grown_at <= RISING_WINDOW)
+            titles[interest.id] = interest.title
+            # Her own interests, sparked by her exploring rather than by the person, are marked.
+            shown = f"{OWN_MARK} {interest.title}" if interest.origin == "own" else interest.title
+            live[interest.id] = (shown, strength, now - grown_at <= RISING_WINDOW)
     findings = store.latest_findings(list(live)) if live else {}
     # Each finding is (text, found_at); keep the most recently found.
     newest = max(findings.items(), key=lambda item: item[1][1], default=None)
-    latest = (live[newest[0]][0], newest[1][0]) if newest else None
+    latest = (titles[newest[0]], newest[1][0]) if newest else None
     return tuple(sorted(live.values(), key=lambda item: item[1], reverse=True)), latest
 
 

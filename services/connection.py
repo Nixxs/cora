@@ -3,15 +3,23 @@
 import asyncio
 from collections.abc import Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from os import environ, getenv
+from pathlib import Path
+import shutil
 
-from mcp import Client
+from mcp import Client, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.shared._httpx_utils import create_mcp_http_client
 
 from .catalogue import SERVICES, Service
 
 OFF, CONNECTING, CONNECTED, FAILED = "off", "connecting", "connected", "failed"
+# Listing tools may wait on a first-run download of a local server.
+LIST_TOOLS_SECONDS = 180
+# Passed to a local server as well as the library's defaults (with any DOCKER_ settings).
+PASSED_VARIABLES = frozenset({"PROGRAMFILES", "PROGRAMDATA", "PROGRAMW6432", "XDG_RUNTIME_DIR"})
 
 
 @dataclass(frozen=True)
@@ -20,6 +28,13 @@ class ServiceTool:
     description: str
     read_only: bool  # the server's own hint, never a guarantee
     input_schema: dict
+    # In the catalogue's list of tools that run without asking, though not marked read-only.
+    unasked: bool = False
+
+    @property
+    def asks_first(self) -> bool:
+        """Whether the person approves each call before it reaches the service."""
+        return not (self.read_only or self.unasked)
 
 
 @dataclass(frozen=True)
@@ -50,6 +65,40 @@ async def open_http_client(url: str, token: str, errors: HttpErrors):
         yield client
 
 
+def local_log_path(service_id: str) -> Path:
+    """Where a local server's own error output goes, for when it fails to start."""
+    # %LOCALAPPDATA% on Windows; the XDG state folder elsewhere.
+    base = getenv("LOCALAPPDATA") or getenv("XDG_STATE_HOME") or Path.home() / ".local" / "state"
+    return Path(base) / "cora" / "services" / f"{service_id}.log"
+
+
+def passed_environment() -> dict[str, str]:
+    """What a local server gets beyond the MCP library's short safe list: Docker's own settings.
+
+    Without ProgramFiles and ProgramData, Docker on Windows can't find its compose plugin.
+    """
+    return {
+        name: value for name, value in environ.items()
+        if name.upper() in PASSED_VARIABLES or name.upper().startswith("DOCKER_")
+    }
+
+
+@asynccontextmanager
+async def open_stdio_client(service: Service, errors: HttpErrors):
+    """Start a local server (such as a container) and talk to it over stdio; closing stops it."""
+    if shutil.which(service.command[0]) is None:
+        raise FileNotFoundError(f"{service.command[0]} not found; install Docker and start it")
+    path = local_log_path(service.id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A real file: inside the app, sys.stderr is Textual's capture, which has no file handle.
+    with path.open("w", encoding="utf-8") as log:
+        parameters = StdioServerParameters(
+            command=service.command[0], args=list(service.command[1:]), env=passed_environment(),
+        )
+        async with Client(stdio_client(parameters, errlog=log)) as client:
+            yield client
+
+
 async def list_all_tools(client) -> tuple[ServiceTool, ...]:
     tools, cursor = [], None
     while True:
@@ -67,6 +116,17 @@ async def list_all_tools(client) -> tuple[ServiceTool, ...]:
     ), key=lambda tool: tool.name))
 
 
+def apply_catalogue(tools: tuple[ServiceTool, ...], service: Service) -> tuple[ServiceTool, ...]:
+    """Drop the tools the catalogue hides, and mark those it lets run without asking.
+
+    The server's own read-only hint is kept as it is.
+    """
+    return tuple(
+        replace(tool, unasked=True) if tool.name in service.unasked_tools else tool
+        for tool in tools if tool.name not in service.hidden_tools
+    )
+
+
 def failure_reason(error: BaseException, errors: HttpErrors) -> str:
     """A short reason for Activity and Settings, built from replies and errors, never the token."""
     if errors.last:
@@ -80,11 +140,15 @@ def failure_reason(error: BaseException, errors: HttpErrors) -> str:
 class ServiceConnection:
     """Connects, lists the tools, then stays open until stopped or the server drops it."""
 
-    def __init__(self, service: Service, token: str, report: Callable, open_client=open_http_client) -> None:
+    def __init__(
+        self, service: Service, token: str | None, report: Callable, open_client=open_http_client,
+        open_local=open_stdio_client,
+    ) -> None:
         self.service = service
         self.token = token
         self.report = report
         self.open_client = open_client
+        self.open_local = open_local
         self.status = ServiceStatus(CONNECTING)
         self.stopped = asyncio.Event()
         # Set only while connected, for calling the server's tools.
@@ -97,17 +161,26 @@ class ServiceConnection:
         # The client must be opened and closed in this same task, so it lives here throughout.
         errors = HttpErrors()
         try:
-            async with self.open_client(self.service.url, self.token, errors) as client:
+            opened = (
+                self.open_local(self.service, errors) if self.service.command
+                else self.open_client(self.service.url, self.token, errors)
+            )
+            async with opened as client:
                 if self.stopped.is_set():
                     return
-                tools = await list_all_tools(client)
+                tools = apply_catalogue(
+                    await asyncio.wait_for(list_all_tools(client), LIST_TOOLS_SECONDS), self.service,
+                )
                 self.client = client
                 self.set_status(ServiceStatus(CONNECTED, tools=tools))
                 await self.stopped.wait()
         except Exception as error:
             self.client = None
             if not self.stopped.is_set():
-                self.set_status(ServiceStatus(FAILED, failure_reason(error, errors)))
+                reason = failure_reason(error, errors)
+                if self.service.command:
+                    reason += f"; its own output is in {local_log_path(self.service.id)}"
+                self.set_status(ServiceStatus(FAILED, reason))
             return
         self.client = None
         self.set_status(ServiceStatus(OFF))
@@ -120,10 +193,14 @@ class ServiceConnection:
 class ServiceManager:
     """Starts and stops each service's connection and reports changes; the app schedules the tasks."""
 
-    def __init__(self, schedule, write_activity, open_client=open_http_client, on_change=lambda: None) -> None:
+    def __init__(
+        self, schedule, write_activity, open_client=open_http_client, on_change=lambda: None,
+        open_local=open_stdio_client,
+    ) -> None:
         self.schedule = schedule
         self.write_activity = write_activity
         self.open_client = open_client
+        self.open_local = open_local
         # Called whenever a service connects, fails or stops, so the app can update Cora's tools.
         self.on_change = on_change
         self.connections: dict[str, ServiceConnection] = {}
@@ -148,10 +225,12 @@ class ServiceManager:
         connection = self.connections.get(service_id)
         return connection.status if connection is not None else ServiceStatus()
 
-    def start(self, service_id: str, token: str) -> None:
+    def start(self, service_id: str, token: str | None = None) -> None:
         """Connect, replacing any earlier connection (such as one that failed with an old token)."""
         self.stop(service_id, quietly=True)
-        connection = ServiceConnection(SERVICES[service_id], token, self.report, self.open_client)
+        connection = ServiceConnection(
+            SERVICES[service_id], token, self.report, self.open_client, self.open_local,
+        )
         self.connections[service_id] = connection
         self.schedule(connection.run())
 

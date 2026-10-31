@@ -1048,7 +1048,10 @@ class CoraApp(App):
                 client.number: client
                 for client in await self.conversation_persistence.call_database(self.persistence.load_clients)
             }
-            has_token ={service_id for service_id in SERVICES if await asyncio.to_thread(get_token, service_id)}
+            has_token = {
+                service_id for service_id, service in SERVICES.items()
+                if service.needs_token and await asyncio.to_thread(get_token, service_id)
+            }
             has_email_app = await asyncio.to_thread(self.email_account.client_id) is not None
             email_tenant = await asyncio.to_thread(self.email_account.tenant)
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
@@ -3039,11 +3042,12 @@ class CoraApp(App):
                 lambda: self.closing or self.reconnecting, self.activity.write,
                 cache=self.service_results,
                 paged=PAGE_ARGUMENT not in tool.input_schema.get("properties", {}),
-                # Anything the server doesn't mark read-only asks the person first.
-                confirm=None if tool.read_only else self.confirmations.ask,
+                # Anything the server doesn't mark read-only asks the person first, unless the
+                # catalogue lets it run without asking.
+                confirm=self.confirmations.ask if tool.asks_first else None,
             )
             self.tools.register(schema, validate_service_arguments, handler.handle)
-        self.confirming_tools = frozenset(name for name, (_, tool, _) in wanted.items() if not tool.read_only)
+        self.confirming_tools = frozenset(name for name, (_, tool, _) in wanted.items() if tool.asks_first)
         if current != set(wanted):
             self.service_tools_changed = True
 
@@ -3055,14 +3059,19 @@ class CoraApp(App):
             self.service_tool_choices = await self.conversation_persistence.call_database(
                 self.persistence.load_service_tools,
             )
-            tokens = {service_id: await asyncio.to_thread(get_token, service_id) for service_id in enabled}
+            tokens = {
+                service_id: await asyncio.to_thread(get_token, service_id)
+                for service_id in enabled if SERVICES[service_id].needs_token
+            }
         except Exception as error:
             self.activity.write(f"Services load failed ({type(error).__name__}).", "Services error")
             return
         for service_id in sorted(enabled):
             if self.closing:
                 return
-            if tokens[service_id]:
+            if not SERVICES[service_id].needs_token:
+                self.services.start(service_id)
+            elif tokens[service_id]:
                 self.services.start(service_id, tokens[service_id])
             else:
                 title = SERVICES[service_id].title
@@ -3081,6 +3090,10 @@ class CoraApp(App):
             return
         if not enabled:
             self.services.stop(service_id)
+            return
+        if not SERVICES[service_id].needs_token:
+            if not self.closing:
+                self.services.start(service_id)
             return
         try:
             token = await asyncio.to_thread(get_token, service_id)

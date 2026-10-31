@@ -1,7 +1,8 @@
 """Check the model's proposed interest changes before anything is saved.
 
 The model may reinforce interests it was shown, spawn at most one new interest, or do
-nothing. Every change must cite memories from the batch it was given. Any invalid part
+nothing. Reinforcements cite memories from the batch it was given; a spawn cites those
+memories, her own sparks (the explorations they came from), or both. Any invalid part
 rejects the whole proposal, so the batch is retried later.
 """
 
@@ -10,11 +11,11 @@ from dataclasses import dataclass
 from uuid import UUID
 
 from subconscious.interests.interest_store import (
-    TITLE_MAX_CHARS, Interest, NewMemory, clean_text, validate_delta,
+    TITLE_MAX_CHARS, Interest, NewMemory, Spark, clean_text, validate_delta,
 )
 
 REINFORCE_FIELDS = {"interest_id", "delta", "reason", "memory_ids"}
-SPAWN_FIELDS = {"title", "description", "why_emerged", "reason", "parent_interest_id", "memory_ids"}
+SPAWN_FIELDS = {"title", "description", "why_emerged", "reason", "parent_interest_id", "memory_ids", "exploration_ids"}
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,12 @@ class Spawn:
     reason: str
     parent_interest_id: UUID | None
     memory_ids: tuple[UUID, ...]
+    exploration_ids: tuple[UUID, ...] = ()
+
+    @property
+    def origin(self) -> str:
+        """Her own when only her exploring sparked it; anything from the person makes it theirs too."""
+        return "conversation" if self.memory_ids else "own"
 
 
 @dataclass(frozen=True)
@@ -54,13 +61,22 @@ def parse_id(value: object, allowed: set[UUID], name: str) -> UUID:
     return parsed
 
 
+def parse_ids(value: object, allowed: set[UUID], name: str) -> tuple[UUID, ...]:
+    if not isinstance(value, list):
+        raise ValueError(f"Proposal {name}s must be a list")
+    return tuple(dict.fromkeys(parse_id(item, allowed, name) for item in value))
+
+
 def parse_memory_ids(value: object, memory_ids: set[UUID]) -> tuple[UUID, ...]:
-    if not isinstance(value, list) or not value:
+    cited = parse_ids(value, memory_ids, "memory id")
+    if not cited:
         raise ValueError("Each interest change must cite at least one memory")
-    return tuple(dict.fromkeys(parse_id(item, memory_ids, "memory id") for item in value))
+    return cited
 
 
-def validate_proposal(payload: object, interests: Sequence[Interest], memories: Sequence[NewMemory]) -> Proposal:
+def validate_proposal(
+    payload: object, interests: Sequence[Interest], memories: Sequence[NewMemory], sparks: Sequence[Spark] = (),
+) -> Proposal:
     """Pass every interest the model was shown; new titles must not repeat any of them."""
     if not isinstance(payload, dict) or set(payload) != {"reinforce", "spawn"}:
         raise ValueError("Invalid interest proposal")
@@ -88,10 +104,14 @@ def validate_proposal(payload: object, interests: Sequence[Interest], memories: 
         if title_key(title) in {title_key(interest.title) for interest in interests}:
             raise ValueError("New interest repeats an existing title")
         parent = spawn["parent_interest_id"]
+        cited_memories = parse_ids(spawn["memory_ids"], memory_ids, "memory id")
+        cited_sparks = parse_ids(spawn["exploration_ids"], {spark.exploration_id for spark in sparks}, "exploration id")
+        if not cited_memories and not cited_sparks:
+            raise ValueError("A new interest must cite at least one memory or spark")
         spawn = Spawn(
             title, clean_text(spawn["description"], "description"),
             clean_text(spawn["why_emerged"], "why_emerged"), clean_text(spawn["reason"], "reason"),
             None if parent is None else parse_id(parent, interest_ids, "parent interest id"),
-            parse_memory_ids(spawn["memory_ids"], memory_ids),
+            cited_memories, cited_sparks,
         )
     return Proposal(tuple(reinforcements), spawn)

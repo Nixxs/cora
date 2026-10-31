@@ -103,7 +103,7 @@ class ModelDatabaseTests(unittest.TestCase):
                     str(column.server_default.arg) if column.server_default is not None and column.identity is None else None
                 )
                 actual_default = reflected["default"]
-                if expected_default in ("active", "incomplete", "not_applicable", "primary", "waiting"):
+                if expected_default in ("active", "incomplete", "not_applicable", "primary", "waiting", "conversation"):
                     self.assertEqual(actual_default, f"'{expected_default}'::text")
                 else:
                     self.assertEqual(actual_default, expected_default)
@@ -200,7 +200,7 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 33)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 34)
 
     def interest(self, **changes):
         values = {

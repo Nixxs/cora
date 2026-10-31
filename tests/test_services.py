@@ -650,7 +650,10 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {"title": "Standby bug"}))
             await self.wait_for_screen(app, pilot, True)
             self.assertIn('"title": "Standby bug"', app.screen.query_one("#confirm-arguments", TextArea).text)
-            self.assertTrue(app.screen.query_one("#confirm-deny").has_focus)
+            # Focus lands a frame after the pop-up mounts; under load that can take a moment.
+            deny = app.screen.query_one("#confirm-deny")
+            await until(pilot, lambda: deny.has_focus)
+            self.assertTrue(deny.has_focus)
             # Typing letters does nothing: there are no shortcuts to approve.
             await pilot.press("y", "e", "s", "enter")
             self.assertEqual(await asyncio.wait_for(asked, 5), DECLINED)

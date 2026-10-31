@@ -7,6 +7,7 @@ limits on how often she explores can count every attempt, including failed ones.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from random import Random
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -15,7 +16,9 @@ from sqlalchemy.orm import Session
 
 from storage.database import build_engine
 from storage.models import InterestExplorationRecord, InterestRecord
-from subconscious.interests.interest_store import Interest, clean_text, snapshot as interest_snapshot, validate_now
+from subconscious.interests.interest_store import (
+    TITLE_MAX_CHARS, Interest, clean_text, snapshot as interest_snapshot, validate_now,
+)
 from subconscious.interests.interest_strength import settle
 from subconscious.relationship.relationship_rules import BASELINE
 from subconscious.relationship.relationship_store import RelationshipStore
@@ -26,6 +29,8 @@ QUESTION_MAX_CHARS = 300
 SOURCE_MAX_CHARS = 2000
 MAX_NEXT_QUESTIONS = 3
 MAX_SOURCES = 10
+MAX_TANGENTS = 2
+PULLS = ("none", "some", "strong")
 LIST_LIMIT = 50
 # Every attempt counts, including failed and running ones, so a broken API is not retried often.
 MIN_GAP = timedelta(hours=6)
@@ -65,6 +70,9 @@ class Exploration:
     next_questions: tuple[str, ...]
     sources: tuple[str, ...]
     reaction: str | None = None  # her own take on the finding, if she had one
+    # Other things she noticed along the way and would like to look into: (title, why) each.
+    tangents: tuple[tuple[str, str], ...] = ()
+    pull: str | None = None  # none, some or strong: how much she wants to keep going
 
 
 @dataclass(frozen=True)
@@ -87,7 +95,22 @@ def snapshot(record: InterestExplorationRecord) -> Exploration:
     return Exploration(
         record.id, record.interest_id, record.status, record.started_at, record.finished_at,
         record.finding, tuple(record.next_questions), tuple(record.sources), record.reaction,
+        tuple((tangent["title"], tangent["why"]) for tangent in record.tangents or ()), record.pull,
     )
+
+
+def clean_tangents(tangents: Iterable[tuple[str, str]]) -> list[dict]:
+    """Up to MAX_TANGENTS distinct (title, why) pairs, stored as {"title", "why"}."""
+    cleaned, seen = [], set()
+    for title, why in tangents:
+        title = clean_text(title, "tangent title", TITLE_MAX_CHARS)
+        if title.casefold() in seen:
+            continue
+        seen.add(title.casefold())
+        cleaned.append({"title": title, "why": clean_text(why, "tangent why")})
+    if len(cleaned) > MAX_TANGENTS:
+        raise ValueError(f"At most {MAX_TANGENTS} tangents")
+    return cleaned
 
 
 def clean_questions(questions: Iterable[str]) -> list[str]:
@@ -117,8 +140,10 @@ def clean_sources(sources: Iterable[str]) -> list[str]:
 
 
 class ExplorationStore:
-    def __init__(self, engine: Engine):
+    def __init__(self, engine: Engine, rng: Random | None = None):
         self.engine = engine
+        # Picks among explored interests, weighted by strength; seeded in tests.
+        self.rng = rng or Random()
 
     def start_next(self, *, now: datetime) -> Start:
         """Start exploring the next eligible interest, if the limits allow one now."""
@@ -143,18 +168,26 @@ class ExplorationStore:
             last_explored = dict(session.execute(
                 select(attempts.interest_id, func.max(attempts.started_at)).group_by(attempts.interest_id),
             ).all())
-            candidates = []
-            for interest in session.scalars(select(InterestRecord).where(InterestRecord.status != "dormant")):
+            fresh, explored_before = [], []
+            for interest in session.scalars(select(InterestRecord).where(
+                InterestRecord.status != "dormant",
+            ).order_by(InterestRecord.created_at, InterestRecord.id)):
                 strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
                 explored = last_explored.get(interest.id)
                 if status == "dormant" or (explored is not None and explored > now - INTEREST_COOLDOWN):
                     continue
-                # Never explored first, then least recently explored, then strongest.
-                candidates.append((explored is not None, explored or now, -strength,
-                                   interest.created_at, interest.id, interest))
-            if not candidates:
+                (fresh if explored is None else explored_before).append((strength, interest))
+            if fresh:
+                # A new interest is explored first, the strongest of them (oldest on a tie).
+                interest = min(fresh, key=lambda item: (-item[0], item[1].created_at, item[1].id))[1]
+            elif explored_before:
+                # Otherwise any of them, stronger ones more often, so she doesn't circle in a fixed order.
+                interest = self.rng.choices(
+                    [interest for _, interest in explored_before],
+                    weights=[strength for strength, _ in explored_before],
+                )[0]
+            else:
                 return Start("no eligible interest")
-            interest = min(candidates, key=lambda candidate: candidate[:5])[5]
 
             record = attempts(interest_id=interest.id, status="running", started_at=now)
             session.add(record)
@@ -163,7 +196,8 @@ class ExplorationStore:
 
     def finish(
         self, exploration_id: UUID, finding: str, next_questions: Iterable[str], sources: Iterable[str],
-        *, now: datetime, reaction: str | None = None,
+        *, now: datetime, reaction: str | None = None, tangents: Iterable[tuple[str, str]] = (),
+        pull: str | None = None,
     ) -> Exploration | None:
         """Record what was found; None if the attempt is no longer running."""
         finding = clean_text(finding, "finding", FINDING_MAX_CHARS)
@@ -171,6 +205,9 @@ class ExplorationStore:
             reaction = clean_text(reaction, "reaction", REACTION_MAX_CHARS)
         next_questions = clean_questions(next_questions)
         sources = clean_sources(sources)
+        tangents = clean_tangents(tangents)
+        if pull is not None and pull not in PULLS:
+            raise ValueError("Unknown pull")
         validate_now(now)
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             record = self._running(session, exploration_id)
@@ -178,6 +215,7 @@ class ExplorationStore:
                 return None
             record.status, record.finding, record.reaction = "found", finding, reaction
             record.next_questions, record.sources = next_questions, sources
+            record.tangents, record.pull = tangents, pull
             record.finished_at = max(now, record.started_at)
             return snapshot(record)
 

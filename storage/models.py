@@ -12,7 +12,7 @@ from sqlalchemy import (
     Uuid,
 )
 from sqlalchemy import text as sql_text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 MEMORY_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -199,6 +199,7 @@ class InterestRecord(Base):
         CheckConstraint(
             "parent_interest_id IS NULL OR parent_interest_id <> id", name="interests_parent_check",
         ),
+        CheckConstraint("origin IN ('conversation', 'own')", name="interests_origin_check"),
         {"schema": "public"},
     )
 
@@ -214,6 +215,8 @@ class InterestRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 'conversation': sparked by the person; 'own': by something she came across exploring.
+    origin: Mapped[str] = mapped_column(Text, default="conversation", server_default="conversation")
 
 
 class InterestEventRecord(Base):
@@ -309,6 +312,15 @@ class InterestExplorationRecord(Base):
             "reaction IS NULL OR (status = 'found' AND btrim(reaction) <> '' AND char_length(reaction) <= 500)",
             name="interest_explorations_reaction_check",
         ),
+        CheckConstraint(
+            "jsonb_typeof(tangents) = 'array' AND jsonb_array_length(tangents) <= 2 "
+            "AND (status = 'found' OR jsonb_array_length(tangents) = 0)",
+            name="interest_explorations_tangents_check",
+        ),
+        CheckConstraint(
+            "pull IS NULL OR (status = 'found' AND pull IN ('none', 'some', 'strong'))",
+            name="interest_explorations_pull_check",
+        ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
         {"schema": "public"},
@@ -326,6 +338,10 @@ class InterestExplorationRecord(Base):
     sources: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     mentioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reaction: Mapped[str | None] = mapped_column(Text)
+    # Up to two other things she noticed and would like to look into: {"title", "why"} each.
+    tangents: Mapped[list[dict]] = mapped_column(JSONB, default=list, server_default=sql_text("'[]'::jsonb"))
+    pull: Mapped[str | None] = mapped_column(Text)  # none, some or strong: how much she wants to keep going
+    sparks_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityTraitRecord(Base):

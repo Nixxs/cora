@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from dotenv import load_dotenv
-from sqlalchemy import Engine, and_, func, or_, select, text
+from sqlalchemy import Engine, and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,7 @@ from storage.models import (
 from memory.store import SAID_BY_PRIMARY
 from subconscious.interests.interest_strength import (
     INITIAL_STRENGTH, MAX_REINFORCE_DELTA, effective_strength, has_room,
-    needs_room, next_status, reinforce, settle,
+    needs_room, next_status, pulled, reinforce, settle,
 )
 
 if TYPE_CHECKING:  # interest_proposals imports this module
@@ -40,6 +40,10 @@ MEMORY_BATCH_LIMIT = 50
 # older than one already read. Skipping very recent rows lets those saves land first.
 MEMORY_COMMIT_MARGIN = timedelta(minutes=5)
 INTEREST_CONTEXT_MAX_CHARS = 3000
+# Her sparks are weighed once each, while recent, a few at a time.
+SPARKS_FRESH_FOR = timedelta(days=14)
+SPARK_BATCH_LIMIT = 10
+PULL_REASON = "Her own pull after exploring it"
 
 Cursor = tuple[datetime, UUID]
 
@@ -56,6 +60,16 @@ class Interest:
     parent_interest_id: UUID | None
     created_at: datetime
     last_reinforced_at: datetime | None
+    origin: str = "conversation"  # or 'own': sparked by something she came across exploring
+
+
+@dataclass(frozen=True)
+class Spark:
+    """Something she noticed while exploring and would like to look into: a possible interest of her own."""
+    exploration_id: UUID
+    title: str
+    why: str
+    found_while: str  # the interest she was exploring at the time
 
 
 @dataclass(frozen=True)
@@ -82,6 +96,10 @@ class Evolution:
     refused: int  # changes skipped because the live-interest cap was full
 
 
+class _AlreadyUsed(Exception):
+    """The memories or sparks were used by another cycle since they were read."""
+
+
 def clean_text(value: str, name: str, max_chars: int = TEXT_MAX_CHARS) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"Interest {name} must not be blank")
@@ -106,7 +124,7 @@ def snapshot(record: InterestRecord) -> Interest:
     return Interest(
         record.id, record.title, record.description, record.why_emerged, record.strength,
         record.strength_at, record.status, record.parent_interest_id, record.created_at,
-        record.last_reinforced_at,
+        record.last_reinforced_at, record.origin,
     )
 
 
@@ -216,7 +234,7 @@ class InterestStore:
 
     def spawn(
         self, title: str, description: str, why_emerged: str, reason: str, *, now: datetime,
-        parent_interest_id: UUID | None = None, memory_ids: Iterable[UUID] = (),
+        parent_interest_id: UUID | None = None, memory_ids: Iterable[UUID] = (), origin: str = "conversation",
     ) -> Interest | None:
         """Create an emerging interest, or return None when the live cap is full."""
         title = clean_text(title, "title", TITLE_MAX_CHARS)
@@ -227,7 +245,44 @@ class InterestStore:
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             self._lock(session)
             return self._spawn(session, title, description, why_emerged, reason, now,
-                               parent_interest_id, memory_ids)
+                               parent_interest_id, memory_ids, origin)
+
+    def read_sparks(self, *, now: datetime, limit: int = SPARK_BATCH_LIMIT) -> tuple[Spark, ...]:
+        """Tangents from recent explorations not yet weighed, newest first."""
+        validate_now(now)
+        exploration = InterestExplorationRecord
+        with Session(self.engine) as session:
+            rows = session.execute(select(exploration, InterestRecord.title).join(
+                InterestRecord, InterestRecord.id == exploration.interest_id,
+            ).where(
+                exploration.status == "found", exploration.sparks_used_at.is_(None),
+                exploration.finished_at > now - SPARKS_FRESH_FOR,
+                func.jsonb_array_length(exploration.tangents) > 0,
+            ).order_by(exploration.finished_at.desc(), exploration.id.desc()).limit(limit)).all()
+        return tuple(
+            Spark(record.id, tangent["title"], tangent["why"], title)
+            for record, title in rows for tangent in record.tangents
+        )
+
+    def pull(self, interest_id: UUID, pull: str, *, now: datetime) -> Interest | None:
+        """Her own pull after exploring: a little strength, up to the ceiling; None when it adds nothing.
+
+        Only a live interest gains: a pull never revives one that faded meanwhile.
+        """
+        validate_now(now)
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            self._lock(session)
+            record = session.get(InterestRecord, interest_id)
+            if record is None:
+                raise LookupError("Interest does not exist")
+            settled, settled_status = settle(record.strength, record.strength_at, record.status, now)
+            after = pulled(settled, pull)
+            if settled_status == "dormant" or after <= settled:
+                return None
+            self._add_event(session, record.id, "reinforce", settled, after, PULL_REASON, ())
+            record.strength, record.status = after, next_status(settled_status, after)
+            record.strength_at = max(record.strength_at, now)
+            return snapshot(record)
 
     def reinforce(
         self, interest_id: UUID, delta: float, reason: str, *, now: datetime,
@@ -253,17 +308,36 @@ class InterestStore:
             state = session.get(InterestWorkerStateRecord, 1)
             return None if state is None else state.last_evolved_at
 
-    def apply_evolution(self, batch: MemoryBatch, proposal: "Proposal", *, now: datetime) -> Evolution | None:
-        """Settle, apply a validated proposal, move the cursor and stamp the cycle in ONE transaction.
+    def apply_evolution(
+        self, batch: MemoryBatch, proposal: "Proposal", *, now: datetime, sparks: Iterable[Spark] = (),
+    ) -> Evolution | None:
+        """Settle, apply a validated proposal, move the cursor, mark the sparks weighed and stamp
+        the cycle, in ONE transaction.
 
-        Returns None, changing nothing, if the cursor moved since the batch was read, so a
-        retried or concurrent cycle can never reinforce from the same memories twice.
+        Returns None, changing nothing, if the cursor moved or a spark was already weighed since
+        they were read, so a retried or concurrent cycle can never use the same memories or
+        sparks twice.
         """
         validate_now(now)
+        exploration_ids = {spark.exploration_id for spark in sparks}
+        try:
+            return self._apply_evolution(batch, proposal, now, exploration_ids)
+        except _AlreadyUsed:
+            return None
+
+    def _apply_evolution(
+        self, batch: MemoryBatch, proposal: "Proposal", now: datetime, exploration_ids: set[UUID],
+    ) -> Evolution:
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             self._lock(session)
-            if not self._advance_cursor(session, batch):
-                return None
+            memories_read = batch.cursor is not None and batch.cursor != batch.after
+            if not memories_read and not exploration_ids:
+                raise _AlreadyUsed
+            if memories_read and not self._advance_cursor(session, batch):
+                raise _AlreadyUsed
+            # Raising rolls back the cursor too, so memories and sparks are used together or not at all.
+            if exploration_ids and not self._use_sparks(session, exploration_ids, now):
+                raise _AlreadyUsed
             self._settle_all(session, now)
             reinforced, refused = [], 0
             for change in proposal.reinforcements:
@@ -277,21 +351,35 @@ class InterestStore:
             if proposal.spawn is not None:
                 new = proposal.spawn
                 spawned = self._spawn(session, new.title, new.description, new.why_emerged, new.reason,
-                                      now, new.parent_interest_id, new.memory_ids)
+                                      now, new.parent_interest_id, new.memory_ids, new.origin)
                 refused += spawned is None
+            session.execute(insert(InterestWorkerStateRecord).values(id=1).on_conflict_do_nothing())
             session.get(InterestWorkerStateRecord, 1).last_evolved_at = now
             return Evolution(tuple(reinforced), spawned, refused)
 
+    @staticmethod
+    def _use_sparks(session: Session, exploration_ids: set[UUID], now: datetime) -> bool:
+        """Mark sparks weighed, only if none was weighed since they were read."""
+        exploration = InterestExplorationRecord
+        result = session.execute(update(exploration).where(
+            exploration.id.in_(exploration_ids), exploration.sparks_used_at.is_(None),
+        ).values(sparks_used_at=now).execution_options(synchronize_session=False))
+        return result.rowcount == len(exploration_ids)
+
     def _spawn(
         self, session: Session, title: str, description: str, why_emerged: str, reason: str,
-        now: datetime, parent_interest_id: UUID | None, memory_ids: Iterable[UUID],
+        now: datetime, parent_interest_id: UUID | None, memory_ids: Iterable[UUID], origin: str = "conversation",
     ) -> Interest | None:
-        if not has_room(self._live_count(session, now)):
+        if origin not in ("conversation", "own"):
+            raise ValueError("Unknown interest origin")
+        own_count = self._live_count(session, now, origin="own") if origin == "own" else None
+        if not has_room(self._live_count(session, now), own_count):
             return None
         record = InterestRecord(
             title=title, description=description, why_emerged=why_emerged,
             strength=INITIAL_STRENGTH, strength_at=now,
             status=next_status("emerging", INITIAL_STRENGTH), parent_interest_id=parent_interest_id,
+            origin=origin,
         )
         session.add(record)
         session.flush()
@@ -309,7 +397,8 @@ class InterestStore:
         after = reinforce(settled, delta)
         status = next_status(settled_status, after)
         if needs_room(settled_status, status) and not has_room(
-                self._live_count(session, now, exclude_id=record.id)):
+                self._live_count(session, now, exclude_id=record.id),
+                self._live_count(session, now, exclude_id=record.id, origin="own") if record.origin == "own" else None):
             return None
         self._fade_if_needed(session, record, settled, settled_status)
         kind = "revive" if settled_status == "dormant" and status != "dormant" else "reinforce"
@@ -356,9 +445,12 @@ class InterestStore:
         return True
 
     @staticmethod
-    def _live_count(session: Session, now: datetime, exclude_id: UUID | None = None) -> int:
+    def _live_count(session: Session, now: datetime, exclude_id: UUID | None = None, origin: str | None = None) -> int:
         """Count interests that are live after decay, so stale stored statuses don't block growth."""
-        records = session.scalars(select(InterestRecord).where(InterestRecord.status != "dormant"))
+        query = select(InterestRecord).where(InterestRecord.status != "dormant")
+        if origin is not None:
+            query = query.where(InterestRecord.origin == origin)
+        records = session.scalars(query)
         return sum(
             1 for record in records
             if record.id != exclude_id

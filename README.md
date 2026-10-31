@@ -233,7 +233,7 @@ Its top right mirrors the chat's connection button, showing **● active** or
 | chat | The running conversation; type here to send. |
 | relationship | Trust, warmth and familiarity as they stand now (drift included), their history, and the tone of recent everyday conversations. |
 | memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |
-| interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
+| interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, ✦ before one of her own (sparked by her exploring, not by you), and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
 | tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. |
@@ -523,7 +523,8 @@ embedding model would also need a migration and re-embedding stored memories.
 ### Connecting services
 
 Settings > **Services** connects Cora to outside services over MCP (the Model
-Context Protocol). GitHub is the first, through GitHub's hosted MCP server. Run
+Context Protocol). GitHub is the first, through GitHub's hosted MCP server; a
+local browser is the second (below). Run
 `python migrate.py` once after updating (migrations 0018 and 0019) and reinstall
 the requirements.
 
@@ -583,6 +584,44 @@ turn, one pop-up at a time, and quitting declines any still waiting. This works
 the same for every service's tools; nothing is specific to GitHub. Activity shows each call and
 its size, never its contents. Every switched-on tool's description takes space
 in her context; the dashboard's context box shows how much.
+
+**The browser (Playwright).** The second service, **Browser**, is a local one:
+Microsoft's Playwright MCP server, the `browser` service in
+[compose.yaml](compose.yaml) (`mcr.microsoft.com/playwright/mcp`, version
+pinned there, under the `browser` profile so `docker compose up` leaves it
+alone). While it's switched on, Cora runs one with `docker compose run --rm -T
+browser` and talks to it over stdin/stdout; it shows in Docker under the `cora`
+project as `cora-browser-run-…`, and is removed, with everything it wrote, when
+switched off or when Cora quits. It needs Docker running (as Postgres and Signal
+do) but no token and no Node.js: there is no token field, and the first start may
+take a few minutes while Docker pulls the image (about 1.5 GB;
+`docker compose --env-file .env.database --profile browser pull` fetches it
+ahead). The container is the browser's sandbox, kept away from your files and
+your own browser: headless Chromium as a non-root user, no new privileges, 2 GB
+of memory at most, and a fresh profile each run (`--isolated`), never your
+logins or cookies. It has its own network (`cora_browser`), so it can't reach
+the database or Signal containers. It works the same on Windows and Linux. It
+can still reach your home network, so the address check below stays. Switch on at least `browser_navigate` and `browser_snapshot`:
+opening a page only links its text, so she reads it with a snapshot (her tool
+description says so). Opening pages, going back, tabs, closing, clicking, hovering,
+typing, filling in fields, choosing options and pressing keys run without asking,
+though the server doesn't mark them read-only (`unasked_tools` in the catalogue;
+Settings labels them "runs without asking"), so a flight or shop search just
+works. They're limited by a rule in their own tool descriptions: never enter your
+personal details (name, address, email, phone, date of birth), payment details or
+passwords, and never click or fill in a booking, order, payment, message or
+sign-up; she stops and tells you instead. That's an instruction she follows, not
+a hard block; the browser holding no logins, cookies or card details is what
+keeps a mistake contained. Uploads and the other remaining tools ask first, as
+above. Running her own JavaScript in the page (`browser_run_code_unsafe`,
+`browser_evaluate`) is never offered (`hidden_tools`): the normal tools cover it,
+and code is too hard to judge in a pop-up. Only public `http`/`https` pages open: `file:` paths, `localhost`, this
+PC and the home network (router pages, private addresses, `.local` names, and
+public names that resolve to a private address) are refused before the browser
+is reached ([services/web_guard.py](services/web_guard.py)). Its error output
+goes to a log (`%LOCALAPPDATA%\cora\services\playwright.log` on Windows,
+`~/.local/state/cora/services/` on Linux), rewritten at each start; a failed
+start, such as Docker not running, names it.
 
 ### Cora's Signal
 
@@ -1174,31 +1213,56 @@ are not implemented yet.
 
 ## How interests work
 
-Interests are **Cora's own**, separate from memories about the person. Conversations
-provide starting points, but an interest belongs to her and can drift beyond the
-original topic. Both steps below are background processes with their own API calls.
+Interests are **Cora's own**, separate from memories about the person. They come
+from two places: conversations with the person, and her own exploring (an
+interest of her own, `origin` `own`, sparked by something she came across while
+looking into something else). Both steps below are background processes with their
+own API calls. The prompts ask for breadth (nature, history, places, people, art,
+food, craft, science…): being an AI is not a lens for everything, and topics are
+not to be recast as lessons for AI or assistants. (Run `python migrate.py` once
+after updating, for migration 0034.)
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
    cycle is due. A cycle reads new memories from the person's messages that have finished
-   embedding and duplicate checks, waiting for at least three. A separate model
-   call proposes reinforcing existing interests or spawning one new interest, and
-   every change must cite memories from that batch. Any invalid proposal is
-   rejected whole. Changes and the reading position are saved in one transaction.
+   embedding and duplicate checks, and her **sparks**: the tangents from her recent
+   explorations (last 14 days) not yet weighed. With no sparks it waits for at least
+   three memories; with any, it runs on whatever memories there are, so her own
+   curiosity doesn't wait for the person. A separate model call proposes
+   reinforcing existing interests or spawning one new interest. Reinforcements
+   cite memories from the batch; a spawn cites memories, sparks (by exploration
+   id), or both, and one sparked only by her exploring is her own. Hobbies, places
+   and passing enthusiasms the person mentions count as sparks too, and between
+   candidates the one furthest from her existing interests is preferred. Any
+   invalid proposal is rejected whole. Changes, the reading position and the
+   sparks being marked weighed (each is offered once) are saved in one
+   transaction.
 2. **Strength and fading:** a new interest starts *emerging* (strength 0.2),
    becomes *active* at 0.25, and goes *dormant* below 0.1. Strength halves every
-   seven days without reinforcement; one reinforcement adds at most 0.15. At most
-   five interests are live at once. A dormant interest can revive only when
-   there is room; nothing is forcibly demoted.
+   seven days without reinforcement; one reinforcement from conversation adds at
+   most 0.15. At most eight interests are live at once, and at most four of them
+   her own, so neither kind crowds out the other. A dormant interest can revive
+   only when there is room; nothing is forcibly demoted. Existing interests keep
+   their origin (`conversation`); none were changed when interests of her own
+   arrived.
 3. **Exploration (idle time only):** in Standby, or after 10 minutes without
    conversation, Cora may research one interest with web search (at most three
    searches). Limits: one attempt per six hours, three per day, and the same
-   interest at most once a day. She prefers interests she has never explored.
-   Each finding (up to 2,000 characters) is saved with up to three next questions
-   and only source addresses the search actually returned. She may also save her
-   own short reaction to it (up to 500 characters): what she thought of it and why,
-   kept as evidence for later reflection on who she is. Later explorations
-   build on her three most recent findings. Exploring does not strengthen an
-   interest, so it cannot keep itself alive.
+   interest at most once a day. An interest never explored goes first (the
+   strongest of those); otherwise she picks at random, stronger interests more
+   often, so she doesn't circle them in a fixed order. She follows her curiosity:
+   an earlier next question, or sideways into a neighbouring field, person, place
+   or craft, reading widely (encyclopedias, magazines, museums, enthusiasts'
+   sites) rather than mainly academic papers. Each finding (up to 2,000
+   characters) is saved with up to three next questions and only source addresses
+   the search actually returned. She may also save her own short reaction to it
+   (up to 500 characters): what she thought of it and why, kept as evidence for
+   later reflection on who she is. She also notes up to two **tangents** (a title
+   and why it caught her eye: the sparks above) and her **pull**: how much it
+   makes her want to keep going (`none`, `some` or `strong`). Pull adds a little
+   strength to the interest she explored (+0.03 or +0.06), never lifting it past
+   0.6 and never reviving a dormant one, so something she cares about can stay
+   alive a while on its own but only the person's conversations make an interest
+   strong. Later explorations build on her three most recent findings.
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
    to mention only when they fit naturally. Each includes its latest finding and

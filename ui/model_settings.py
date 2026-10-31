@@ -199,9 +199,14 @@ def status_line(status: ServiceStatus, enabled: bool) -> Text:
 
 def tool_label(tool) -> Text:
     text = Text(tool.name, style="bold #e0e6ef")
-    # The server's own label, a hint only. Anything not marked read-only asks the person each time.
-    text.append("  read-only" if tool.read_only else "  changes things · asks you first",
-                style="#8fcf8f" if tool.read_only else "#d7a06a")
+    # The server's own label, a hint only. Anything not marked read-only asks the person each time,
+    # unless the catalogue lets it run without asking.
+    if tool.read_only:
+        text.append("  read-only", style="#8fcf8f")
+    elif tool.unasked:
+        text.append("  runs without asking", style="#8fcf8f")
+    else:
+        text.append("  changes things · asks you first", style="#d7a06a")
     summary = tool.description.splitlines()[0] if tool.description else ""
     if summary:
         text.append(f"\n{summary}", style="#8f98a8")
@@ -347,13 +352,15 @@ class ModelSettingsScreen(ModalScreen):
         with Vertical(classes="service-details", id=f"service-details-{service.id}"):
             yield Static(id=f"service-reason-{service.id}", classes="service-reason")
             yield Label(service.token_help, classes="model-settings-label service-help")
-            yield Input(
-                password=True, id=f"service-token-{service.id}",
-                placeholder="token saved · paste to replace" if service.id in self.services.has_token else "paste a token",
-            )
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save token", id=f"service-save-{service.id}")
-                yield Button("Forget token", id=f"service-forget-{service.id}")
+            # A local service runs on this PC and has no token to save.
+            if service.needs_token:
+                yield Input(
+                    password=True, id=f"service-token-{service.id}",
+                    placeholder="token saved · paste to replace" if service.id in self.services.has_token else "paste a token",
+                )
+                with Horizontal(classes="service-buttons"):
+                    yield Button("Save token", id=f"service-save-{service.id}")
+                    yield Button("Forget token", id=f"service-forget-{service.id}")
             yield Static(id=f"service-tools-heading-{service.id}", classes="service-tools-heading")
             # Filled with one row per tool once connected.
             yield VerticalScroll(classes="service-tools", id=f"service-tools-{service.id}")
@@ -469,8 +476,8 @@ class ModelSettingsScreen(ModalScreen):
         # Finish removing the old rows first, so the new ones can reuse their ids.
         await listing.remove_children()
         listing.display = bool(tools)
-        # Read-only tools first, then those that ask the person each time.
-        ordered = sorted(tools, key=lambda tool: (not tool.read_only, tool.name))
+        # Tools that run without asking first, then those that ask the person each time.
+        ordered = sorted(tools, key=lambda tool: (tool.asks_first, tool.name))
         # Switch ids use positions: tool names come from the server and may not be valid ids.
         self.tool_switches[service_id] = [tool.name for tool in ordered]
         await listing.mount_all(
@@ -521,7 +528,7 @@ class ModelSettingsScreen(ModalScreen):
         # The switch also reports changes made here, such as turning back off below.
         if event.value == (service_id in self.services.enabled):
             return
-        if event.value and service_id not in self.services.has_token:
+        if event.value and SERVICES[service_id].needs_token and service_id not in self.services.has_token:
             self.notify(f"Save a {SERVICES[service_id].title} token first.", severity="warning")
             event.switch.value = False
             return
