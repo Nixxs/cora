@@ -1,0 +1,187 @@
+"""Validation plus opt-in disposable PostgreSQL tests; never reset personal data."""
+
+from datetime import datetime, timedelta, timezone
+import os
+import unittest
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
+
+from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from storage.models import DesireRecord, InterestExplorationRecord, InterestRecord
+from subconscious.desires.desire_rules import (
+    INITIAL_STRENGTH, LET_GO_THRESHOLD, MAX_CANDIDATES, MAX_HELD, MAX_REINFORCE_DELTA,
+)
+from subconscious.desires.desire_store import FADE_NOTE, DesireStore, Sources
+from subconscious.interests.interest_strength import reinforce
+import test_conversation_summaries as summary_tests
+
+NOW = datetime(2026, 11, 1, 9, tzinfo=timezone.utc)
+
+
+def form_args(description="To walk through an old-growth forest"):
+    return (description, "Reading about forests made me want to be in one", "Grew from the forests interest")
+
+
+class DesireStoreValidationTests(unittest.TestCase):
+    def test_invalid_inputs_are_rejected_before_connecting(self):
+        store = DesireStore(MagicMock())
+        with patch("subconscious.desires.desire_store.Session") as session:
+            for args in (("", *form_args()[1:]), ("x" * 301, *form_args()[1:]), (form_args()[0], " ", form_args()[2]),
+                         (*form_args()[:2], "x" * 1001), (*form_args()[:2], None)):
+                with self.subTest(args=args), self.assertRaises(ValueError):
+                    store.form(*args, now=NOW)
+            with self.assertRaises(ValueError):
+                store.form(*form_args(), now=datetime(2026, 11, 1))
+            for delta in (0, -0.1, MAX_REINFORCE_DELTA + 0.001, True, float("nan"), "0.1"):
+                with self.subTest(delta=delta), self.assertRaises(ValueError):
+                    store.reinforce(uuid4(), delta, "Because", now=NOW)
+            for call in (lambda: store.reinforce(uuid4(), 0.1, " ", now=NOW),
+                         lambda: store.change(uuid4(), "pursue", "", now=NOW),
+                         lambda: store.note_progress(uuid4(), "x" * 1001, now=NOW),
+                         lambda: store.settle_all(datetime(2026, 11, 1))):
+                with self.assertRaises(ValueError):
+                    call()
+            session.assert_not_called()
+
+
+@unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")
+class DesireStoreDatabaseTests(unittest.TestCase):
+    setUpClass = classmethod(summary_tests.SummaryDatabaseTests.setUpClass.__func__)
+
+    def setUp(self):
+        # Only in the disposable DB created above. Children before parents.
+        with self.engine.begin() as connection:
+            for table in ("desire_sources", "desire_events", "desires", "interest_explorations", "interests"):
+                connection.execute(text(f"DELETE FROM public.{table}"))
+        summary_tests.SummaryDatabaseTests.setUp(self)
+        self.desires = DesireStore(self.engine)
+
+    def fill(self, count, now=NOW):
+        return [self.desires.form(*form_args(f"Desire {index}"), now=now) for index in range(count)]
+
+    def held(self, description="To walk through an old-growth forest", now=NOW):
+        desire = self.desires.form(*form_args(description), now=now)
+        self.desires.reinforce(desire.id, MAX_REINFORCE_DELTA, "Kept coming back to it", now=now)
+        return self.desires.reinforce(desire.id, MAX_REINFORCE_DELTA, "Still want it", now=now)
+
+    def kinds(self, desire_id):
+        return [event.kind for event in self.desires.history(desire_id)]
+
+    def test_forming_saves_a_candidate_its_first_event_and_what_it_grew_from(self):
+        with Session(self.engine) as session, session.begin():
+            interest = InterestRecord(title="Forests", description="Old-growth forests", why_emerged="Came up",
+                                      strength=0.5, strength_at=NOW, status="active")
+            session.add(interest)
+            session.flush()
+            finding = InterestExplorationRecord(interest_id=interest.id, status="found", started_at=NOW,
+                                                finished_at=NOW, finding="Some trees are 2,000 years old")
+            session.add(finding)
+            session.flush()
+            interest_id, finding_id = interest.id, finding.id
+        self.store.close_conversation(self.conversation_id)
+        self.store.save_summary(self.conversation_id, "We talked about forests.")
+        desire = self.desires.form(*form_args(), now=NOW, sources=Sources(
+            (interest_id, interest_id), (finding_id,), (self.conversation_id,)))
+        self.assertEqual((desire.status, desire.strength, desire.ended_at), ("candidate", INITIAL_STRENGTH, None))
+        [event] = self.desires.history(desire.id)
+        self.assertEqual((event.kind, event.strength_before, event.note),
+                         ("form", None, "Grew from the forests interest"))
+        self.assertEqual(self.desires.sources(desire.id),
+                         Sources((interest_id,), (finding_id,), (self.conversation_id,)))
+        # What it grew from can't be deleted from under it.
+        with self.engine.connect() as connection, self.assertRaises(IntegrityError):
+            connection.execute(text("DELETE FROM public.interests"))
+
+    def test_candidates_are_capped_but_faded_ones_make_room(self):
+        self.fill(MAX_CANDIDATES)
+        self.assertIsNone(self.desires.form(*form_args("One too many"), now=NOW))
+        self.assertIsNotNone(self.desires.form(*form_args("Later"), now=NOW + timedelta(days=21)))
+
+    def test_two_reinforcements_hold_a_desire_with_its_history(self):
+        desire = self.held()
+        self.assertEqual(desire.status, "held")
+        self.assertAlmostEqual(desire.strength, reinforce(reinforce(INITIAL_STRENGTH, 0.15), 0.15))
+        self.assertEqual(desire.last_reinforced_at, NOW)
+        self.assertEqual(self.kinds(desire.id), ["form", "reinforce", "reinforce", "hold"])
+
+    def test_a_candidate_waits_while_she_holds_three(self):
+        for index in range(MAX_HELD):
+            self.held(f"Held {index}")
+        waiting = self.held("Waiting")
+        self.assertEqual(waiting.status, "candidate")
+        self.assertEqual(len([d for d in self.desires.list_desires() if d.status == "held"]), MAX_HELD)
+
+    def test_pursuing_progress_and_fulfilling(self):
+        desire = self.held()
+        self.assertEqual(self.desires.change(desire.id, "pursue", "Found a forest walk nearby", now=NOW).status,
+                         "pursuing")
+        self.desires.note_progress(desire.id, "Asked Nick about a hike", now=NOW)
+        fulfilled = self.desires.change(desire.id, "fulfil", "We went", now=NOW + timedelta(days=2))
+        self.assertEqual(fulfilled.status, "fulfilled")
+        self.assertIsNotNone(fulfilled.ended_at)
+        self.assertEqual(self.kinds(desire.id)[-3:], ["pursue", "progress", "fulfil"])
+        self.assertEqual(self.desires.list_desires(), [])
+        self.assertEqual(len(self.desires.list_desires(include_ended=True)), 1)
+        # Ended desires never change again.
+        with self.assertRaises(ValueError):
+            self.desires.change(desire.id, "pursue", "Again", now=NOW)
+        with self.assertRaises(ValueError):
+            self.desires.note_progress(desire.id, "More", now=NOW)
+        self.assertEqual(self.desires.reinforce(desire.id, 0.1, "Again", now=NOW).status, "fulfilled")
+
+    def test_changes_that_do_not_apply_are_refused_and_change_nothing(self):
+        desire = self.desires.form(*form_args(), now=NOW)
+        for kind in ("pursue", "pause", "fulfil", "hold"):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.desires.change(desire.id, kind, "Because", now=NOW)
+        with self.assertRaises(ValueError):
+            self.desires.note_progress(desire.id, "Too early", now=NOW)
+        self.assertEqual(self.kinds(desire.id), ["form"])
+        with self.assertRaises(LookupError):
+            self.desires.change(uuid4(), "let_go", "Gone", now=NOW)
+
+    def test_letting_go_on_purpose(self):
+        desire = self.desires.form(*form_args(), now=NOW)
+        gone = self.desires.change(desire.id, "let_go", "It was never really mine", now=NOW)
+        self.assertEqual((gone.status, self.kinds(desire.id)), ("let_go", ["form", "let_go"]))
+
+    def test_a_desire_nothing_reinforces_fades_and_is_let_go(self):
+        desire = self.held()
+        self.assertEqual(self.desires.settle_all(NOW + timedelta(days=12))[0].status, "held")
+        later = NOW + timedelta(days=24)
+        [faded] = self.desires.settle_all(later)
+        self.assertEqual(faded.status, "let_go")
+        self.assertLess(faded.strength, LET_GO_THRESHOLD)
+        self.assertEqual(faded.ended_at, later)
+        self.assertEqual(self.desires.history(desire.id)[-1].note, FADE_NOTE)
+        # A desire that faded is returned let go, not revived or changed.
+        self.assertEqual(self.desires.reinforce(desire.id, 0.15, "Too late", now=later).status, "let_go")
+        self.assertEqual(self.desires.change(desire.id, "pursue", "Too late", now=later).status, "let_go")
+        self.assertEqual(self.kinds(desire.id)[-1], "fade")
+
+    def test_reinforcing_settles_first(self):
+        desire = self.desires.form(*form_args(), now=NOW)
+        after = self.desires.reinforce(desire.id, 0.15, "Thought of it again", now=NOW + timedelta(days=10))
+        self.assertAlmostEqual(after.strength, reinforce(INITIAL_STRENGTH / 2, 0.15))
+        self.assertEqual(after.status, "candidate")
+
+    def test_database_rejects_inconsistent_rows(self):
+        cases = (
+            {"status": "wanted"}, {"status": "fulfilled"}, {"ended_at": NOW}, {"strength": 1.5},
+            {"description": " "}, {"motivation": "x" * 1001},
+        )
+        for changes in cases:
+            values = {"description": "To see a forest", "motivation": "Because", "strength": 0.3,
+                      "strength_at": NOW, "status": "candidate", **changes}
+            with self.subTest(changes=changes), self.assertRaises(IntegrityError), \
+                    Session(self.engine) as session, session.begin():
+                session.add(DesireRecord(**values))
+        with Session(self.engine) as session:
+            self.assertEqual(session.scalars(select(DesireRecord)).all(), [])
+
+
+if __name__ == "__main__":
+    unittest.main()

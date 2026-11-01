@@ -1517,7 +1517,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
+| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it; [subconscious/desires/](subconscious/desires/) holds desire rules and the desire store. |
 | [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
@@ -1764,25 +1764,30 @@ features it helps check, and package last.
       calendar changes through the webhook listener (a second Graph subscription,
       to her events), published as `CalendarChangedEvent` to refresh her week
 
-*Phase 3 — noticing things*
+*Phase 3 — wanting and noticing things*
 
-11. Awareness W1–W3, including quiet hours and the off switch.
-12. Relevance and awareness triggers (interests step 8 below).
-13. Home Assistant, starting with its demo devices.
-14. Awareness W4: expectations from memory tasks. Webhooks already reach her
-    (T4a: a Starlette listener inside Cora on 127.0.0.1, [mail/webhook.py](mail/webhook.py),
-    publishing events on the event bus); new kinds of webhook join the same listener.
-15. Camera and screen awareness.
-16. Emotions (after awareness gives her more to react to; nothing depends on it,
-    so it can move earlier).
+11. Desires D1–D6, next (see [Desires](#desires--the-next-stage-not-built)
+    below): what she'd like to do or experience, growing from her interests,
+    pursued on her own where she can, and with your help where she can't.
+12. ~~Awareness foundation.~~ Done through the webhook work: the listener
+    ([mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
+    triage sorts new items into urgent, worth mentioning or ignore, the
+    attention manager delivers at a lull, and she only reaches out on her own
+    between 9am and 7pm (`NUDGE_HOURS`). New sources join as webhooks; there is
+    no polling watcher (the old W1) or separate quiet-hours step (the old W3).
+13. Relevance and awareness triggers (interests step 8 below).
+14. Home Assistant, starting with its demo devices (waiting on devices at home).
+15. Awareness W4: expectations from memory tasks.
+16. Camera and screen awareness (waiting on devices at home).
+17. Emotions (nothing depends on it, so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-17. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+18. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-18. Dashboard editing (for example removing a wrong memory), with a detail view
+19. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-19. Release.
+20. Release.
 
 *After 1.0:* local models.
 
@@ -2152,38 +2157,31 @@ features it helps check, and package last.
   profile picture. Small, and needed before 1.0 so each person's Cora can have
   her own picture without the command line.
 
-- **Awareness (background producers):** one generic, config-driven watcher rather
-  than a process per service. Each watch entry names an MCP tool, its arguments,
-  the field that identifies an item, and how often to poll; read positions are
-  stored, and servers that support resource subscriptions push instead. Polling
-  costs no model tokens; only new items are batched into a cheap triage call
-  (urgent, worth mentioning, or ignore), and the results become observations on
-  the event bus. The attention manager offers urgent items at a lull and groups
-  the rest into one short digest. Each source is opted in and set to off, digest
-  only, or may interrupt, with quiet hours and an off switch for all initiative.
-  In Standby she is off the clock: watchers keep polling and holding items, and
-  she gets a "while you were away" digest on reconnect. Later, expectations from
-  memory tasks (such as waiting to hear back from someone) can raise an item's
-  urgency. Messaging Cora herself over Signal is a separate interface (see
-  Signal below), not an awareness notification. Steps: W1 watcher and stored read
-  positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
-  and off switch, with per-source settings and quiet hours editable in the app
-  rather than a config file; W4 expectations. Camera, screen, and home sensor
-  awareness are covered separately below.
+- **Awareness (background producers):** built on webhooks rather than polling.
+  Outside services push to the listener inside Cora
+  ([mail/webhook.py](mail/webhook.py)), which publishes events on the event bus;
+  new items are batched into a cheap triage call (urgent, worth mentioning, or
+  ignore, as [mail/triage.py](mail/triage.py) does for mail); urgent items reach
+  the person at any hour, and the rest wait for one digest the next time they
+  talk. Anything else she raises on her own stays within 9am to 7pm
+  (`NUDGE_HOURS`). A new source is a new kind of webhook on the same listener,
+  not a new watcher. Still to come: W4, expectations from memory tasks (such as
+  waiting to hear back from someone) raising an item's urgency. Messaging Cora
+  herself over Signal is a separate interface (see Signal below), not an
+  awareness notification. Camera, screen, and home sensor awareness are covered
+  separately below.
 - **Environmental awareness:** background producers with their own local models
   watching the screen, camera, and home sensors (such as the front door camera
   or whether the garage is open). Each feeds a local model that decides whether
   anything interesting is happening, and only worthwhile events are proposed to
-  the attention manager, the same path as findings and MCP awareness. Local
+  the attention manager, the same path as findings and webhook awareness. Local
   models keep raw images and video on the machine; only short descriptions
-  reach Cora-prime. Home Assistant is a strong candidate for most of this
-  through its MCP server, giving one connection two uses: tools for Cora to
-  check and control the home when asked, and a watch entry for the generic MCP
-  watcher so changes (such as the garage opening) become awareness events.
-  Rather than polling, awareness can use Home Assistant's WebSocket API: one
-  long-lived connection subscribed to chosen entities or triggers, which pushes
-  changes immediately. MCP stays for control tools; this makes Home Assistant a
-  small dedicated producer rather than a generic watch entry. After Cora has
+  reach Cora-prime. Home Assistant is a strong candidate for most of this:
+  its MCP server gives Cora tools to check and control the home when asked,
+  and its automations can call Cora's webhook listener so changes (such as the
+  garage opening) become awareness events, the same as mail. Its WebSocket API
+  (one long-lived connection subscribed to chosen entities) is the alternative
+  if webhooks prove too limited. After Cora has
   been closed, she reads current states (and history for short events such as a
   doorbell press) to catch up. Users choose which devices she watches from a
   list in the services screen.
@@ -2358,6 +2356,49 @@ real pages within limits; reaching out to the person when something excites her;
 asking to sign up to sites she'd like an account on (the first small wish she can
 act on, always with the person's yes); and the identity reflection that would take
 in what she experiences.
+
+**Decided (1 November 2026):**
+
+- She holds at most **3 desires** at once (held or being pursued), with a few
+  more **candidates** forming behind them.
+- A desire **fades over a few weeks** unless something reinforces it, and one
+  that fades away is let go, never deleted (the history stays).
+- She **pursues a desire on her own** when it only needs what she can already do
+  (browsing, her email, her calendar, signing up with your yes), and **asks you
+  for help** when it needs you.
+- She **reaches out to you whenever she wants**, like a friend or colleague
+  would: desires can start a conversation, not just shape what she brings up.
+  Anything she does in the world still goes through the usual approvals, and
+  reaching out stays within `NUDGE_HOURS`.
+
+**Steps:**
+
+1. [x] **D1 Storage and rules:** a `desires` table (description, motivation,
+   strength snapshot, status: candidate, held, pursuing, fulfilled or let go),
+   an append-only `desire_events` history with reasons and progress notes, and
+   the interests, findings or conversations each one grew from
+   (`desire_sources`), in migration 0039. Pure rules in
+   [subconscious/desires/desire_rules.py](subconscious/desires/desire_rules.py):
+   a new desire is a candidate at 0.3 and is held once reinforced to 0.45 (two
+   full reinforcements) while she holds fewer than 3; at most 5 candidates; a
+   10-day half-life, so a held desire nothing reinforces is let go after about
+   three weeks (absences count at most 21 days). Deliberate changes: pursue,
+   pause, fulfil, let go. `python -m subconscious.desires.desire_store` lists
+   them. No model yet, and nothing settles them on a schedule until D2.
+2. [ ] **D2 Forming desires:** the daily reflection may propose a desire growing
+   from a strong interest or recent experience (never from a fixed list), and
+   reinforces, revises or lets go of existing ones.
+3. [ ] **D3 Knowing her desires:** held desires reach her at each connect, a
+   `recall_desire` tool says why she wants something, and a Desires box on the
+   dashboard.
+4. [ ] **D4 Pursuing:** for a desire she can pursue herself, she plans and takes
+   concrete next steps in her idle time with the tools she already has, noting
+   progress. Her "site I'd like an account on" wish becomes the first of these.
+5. [ ] **D5 Reaching out:** she starts a conversation about a desire (sharing
+   progress, or asking for help when it needs you), by voice when Active or on
+   Signal, within `NUDGE_HOURS`. Taking part is always your choice.
+6. [ ] **D6 Reflection:** what happened while pursuing a desire feeds her
+   memories, identity and interests, closing the loop, and can fulfil it.
 
 #### Self — complete
 
