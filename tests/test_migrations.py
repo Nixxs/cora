@@ -113,6 +113,11 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0031_create_webhook_settings.sql",
             "0032_add_email_channel.sql",
             "0033_add_deadline_notes.sql",
+            "0034_interest_tangents_and_origin.sql",
+            "0035_wandering_and_reach_outs.sql",
+            "0036_add_browsed_explorations.sql",
+            "0037_create_sign_ups.sql",
+            "0038_sign_up_mail_and_wishes.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

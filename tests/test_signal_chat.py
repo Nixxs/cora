@@ -12,7 +12,7 @@ from uuid import uuid4
 import httpx2
 from PIL import Image
 
-import app as app_module
+import app_areas.signal_chats
 from backend_chat import SIGNAL_EXCLUDED
 from greeting import signal_hook
 from messaging.container import ATTACHMENTS, delete_attachments
@@ -260,7 +260,6 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.linked_app(app)
             app.conversation.log_entries.append("Cora: Earlier, by voice")
-            app.confirming_tools = frozenset({"github__create_issue"})
             records = []
             app.conversation.record_message = lambda role, text, channel: records.append((role, text, channel))
             app.on_signal_message(incoming("Where are my keys?"))
@@ -346,7 +345,7 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             # Saved and shown only as marked, like a pasted image; the description isn't kept.
             self.assertEqual(records[0], ("user", "[image] Can I claim this? [1 attachment, not opened]", "signal"))
             self.assertFalse(any("$42" in str(entry) for entry in app.conversation.log_entries))
-            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg", "def456.pdf"])
+            app_areas.signal_chats.delete_attachments.assert_awaited_once_with(["abc123.jpg", "def456.pdf"])
             self.assertTrue(any(entry.endswith("Read 1 Signal image(s) for Cora.") for entry in app.activity.entries))
 
     async def test_a_withheld_image_reaches_her_only_as_a_note_and_is_deleted(self):
@@ -364,7 +363,7 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
                 image_seen_content(WITHHELD_IMAGE),
             ])
             self.assertEqual(records[0], ("user", "[image withheld] hey", "signal"))
-            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
+            app_areas.signal_chats.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
             entries = app.activity.entries
             self.assertTrue(any(entry.endswith("Withheld 1 explicit, gory or abusive Signal image(s) from Cora.") for entry in entries))
             self.assertFalse(any("Read 1 Signal image" in entry for entry in entries))
@@ -377,7 +376,7 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             await self.settle(app, pilot)
             content = app.backend_chat.reply.await_args.kwargs["content"]
             self.assertEqual(content, [{"type": "input_text", "text": "Look [1 attachment, not opened]"}])
-            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
+            app_areas.signal_chats.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
             self.assertNotIn("private", "\n".join(app.activity.entries))
 
     async def test_a_strangers_attachment_is_deleted_unopened(self):
@@ -388,7 +387,7 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             await self.settle(app, pilot)
             app.signal.client.attachment.assert_not_awaited()
             app.backend_chat.reply.assert_not_called()
-            app_module.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
+            app_areas.signal_chats.delete_attachments.assert_awaited_once_with(["abc123.jpg"])
 
     async def test_leftover_attachments_are_cleared_before_listening(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -396,7 +395,7 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             app.learn_signal_ids = AsyncMock()
             app.sync_signal_receiver = MagicMock()
             await app.listen_on_signal()
-            app_module.clear_attachments.assert_awaited_once()
+            app_areas.signal_chats.clear_attachments.assert_awaited_once()
             app.sync_signal_receiver.assert_called_once()
 
     async def test_listening_follows_whether_her_account_is_linked(self):

@@ -11,7 +11,7 @@ from ui.chat_widgets import ChatMarkdown, SelectableRichLog
 class ChatSelectionTests(unittest.IsolatedAsyncioTestCase):
     async def test_blue_code_and_drag_to_copy(self):
         with patch.object(CoraApp, "connect_to_cora", return_value=None), \
-                patch("app.sys.platform", "win32"), patch("app.pyperclip.copy") as copy:
+                patch("app_areas.chat.sys.platform", "win32"), patch("app_areas.chat.pyperclip.copy") as copy:
             app = CoraApp()
             async with app.run_test(size=(100, 35)) as pilot:
                 await pilot.pause()

@@ -9,6 +9,7 @@ from textual.widgets import Button
 
 from app import CoraApp
 from live import CoraLive
+from cora_clock import frozen_monotonic
 from test_inactivity import idle_app
 from test_keyboard_persistence import running_app
 from test_reconnect import backend_event, restarting_app
@@ -285,7 +286,7 @@ class StandbyFarewellTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(app.inactivity.alert_worker.is_cancelled)
             exit_app.assert_called_once()
 
-    @patch("app.monotonic", return_value=1000)
+    @frozen_monotonic(1000)
     async def test_actual_mocked_live_close_after_heads_up_preserves_local_state(self, clock):
         with patch.dict("os.environ", {"CORA_STANDBY_FAREWELL": "1", "CORA_IDLE_TIMEOUT_SECONDS": "300"}):
             async with restarting_app() as (app, pilot, connections, speakers, started):

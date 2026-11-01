@@ -13,8 +13,10 @@ from sqlalchemy.orm import Session
 
 from storage.models import InterestExplorationRecord
 from subconscious.interests.exploration_store import (
-    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, ExplorationStore, mention_limits,
+    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, REACH_OUT_FRESH_FOR, SIGN_UP_WISH_FRESH_FOR, WANDER_AREAS,
+    ExplorationStore, ReachOut, SignUpWish, mention_limits,
 )
+from subconscious.interests.interest_store import WANDERING, Spark
 from subconscious.interests.interest_strength import HALF_LIFE
 import test_interest_store as interest_tests
 
@@ -44,10 +46,14 @@ class ExplorationValidationTests(unittest.TestCase):
             for reaction in ("", " ", "x" * 501, 5):
                 with self.subTest(reaction=reaction), self.assertRaises(ValueError):
                     store.finish(uuid4(), *FINDING, now=NOW, reaction=reaction)
+            for changes in ({"topic": " "}, {"topic": "x" * 201}, {"reach_out": (" ", "why")},
+                            {"reach_out": ("x" * 601, "why")}, {"reach_out": ("Look!", "")}):
+                with self.subTest(changes=changes), self.assertRaises(ValueError):
+                    store.finish(uuid4(), *FINDING, now=NOW, **changes)
             naive = datetime(2026, 10, 15)
             for call in (lambda: store.start_next(now=naive), lambda: store.fail(uuid4(), now=naive),
                          lambda: store.finish(uuid4(), *FINDING, now=naive),
-                         lambda: store.claim_mention(now=naive)):
+                         lambda: store.claim_mention(now=naive), lambda: store.claim_reach_out(now=naive)):
                 with self.assertRaises(ValueError):
                     call()
             for limit in (0, LIST_LIMIT + 1, True, 1.0):
@@ -74,8 +80,14 @@ class ExplorationValidationTests(unittest.TestCase):
 class ExplorationStoreDatabaseTests(unittest.TestCase):
     setUpClass = classmethod(interest_tests.summary_tests.SummaryDatabaseTests.setUpClass.__func__)
 
+    # Wandering every third attempt is tested on its own; elsewhere she wanders only with no interest to explore.
+    wander_every = 100
+
     def setUp(self):
         interest_tests.InterestStoreDatabaseTests.setUp(self)
+        patcher = patch("subconscious.interests.exploration_store.WANDER_EVERY", getattr(self, "wander_every", 100))
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.explorations = ExplorationStore(self.engine)
         self.interest = self.interests.spawn(*interest_tests.spawn_args(), now=NOW)
 
@@ -155,18 +167,23 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         second = self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
         self.interests.reinforce(second.id, 0.15, "Stronger", now=NOW)
         order = [self.explorations.start_next(now=NOW + timedelta(hours=hours)) for hours in (0, 6.1, 12.2)]
-        # Strongest unexplored first, then the other, then both are cooling down.
-        self.assertEqual([result.reason for result in order], ["started", "started", "no eligible interest"])
+        # Strongest unexplored first, then the other, then both are cooling down, so she wanders.
+        self.assertEqual([result.reason for result in order], ["started", "started", "started"])
         self.assertEqual([result.interest.id for result in order[:2]], [second.id, self.interest.id])
+        self.assertIsNone(order[2].interest)
+        self.assertEqual((order[2].exploration.kind, order[2].exploration.interest_id), ("wander", None))
         self.assertEqual(order[0].interest.title, "Second")
         self.assertEqual(self.start(NOW + timedelta(hours=24, seconds=1)).interest_id, second.id)
 
     def test_dormant_and_faded_interests_are_never_explored(self):
         later = NOW + 2 * HALF_LIFE  # 0.2 decays to 0.05: still stored as emerging, but faded
-        self.assertEqual(self.explorations.start_next(now=later).reason, "no eligible interest")
-        self.interests.settle_all(later)  # now stored as dormant
-        self.assertEqual(self.explorations.start_next(now=later).reason, "no eligible interest")
-        self.assertEqual(self.attempts(), [])
+        start = self.explorations.start_next(now=later)
+        # With nothing to explore she wanders instead, and a faded interest isn't one to wander away from.
+        self.assertIsNone(start.interest)
+        self.assertEqual(start.wander.interests, ())
+        self.interests.settle_all(later + timedelta(hours=6, seconds=1))  # now stored as dormant
+        self.assertIsNone(self.explorations.start_next(now=later + timedelta(hours=6, seconds=1)).interest)
+        self.assertEqual([record.kind for record in self.attempts()], ["wander", "wander"])
 
     def test_abandoned_running_attempts_fail_but_still_count(self):
         started = self.start()
@@ -293,6 +310,119 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         thread.join(5)
         self.assertEqual([result.reason for result in results], ["too soon"])
         self.assertEqual(len(self.attempts()), 1)
+
+
+@unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")
+class WanderDatabaseTests(unittest.TestCase):
+    setUpClass = classmethod(interest_tests.summary_tests.SummaryDatabaseTests.setUpClass.__func__)
+    setUp, start, attempts = (ExplorationStoreDatabaseTests.setUp, ExplorationStoreDatabaseTests.start,
+                              ExplorationStoreDatabaseTests.attempts)
+    wander_every = 3
+
+    def test_every_third_attempt_wanders(self):
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        starts = [self.explorations.start_next(now=NOW + timedelta(hours=6.1 * n)) for n in range(3)]
+        self.assertEqual([start.exploration.kind for start in starts], ["interest", "interest", "wander"])
+        self.assertEqual(sorted(starts[2].wander.interests), ["Old mechanical design", "Second", "Third"])
+        # The day after, two attempts since the last wander are interests again.
+        self.assertEqual(self.start(NOW + timedelta(hours=24, seconds=1)).kind, "interest")
+
+    def test_wanders_alternate_between_her_tangents_and_somewhere_random(self):
+        source = self.start()
+        # A tangent that is already one of her interests is never wandered into.
+        self.explorations.finish(source.id, *FINDING, now=NOW, tangents=[
+            (self.interest.title.upper(), "Already mine"), ("Tuning forks", "Tuned by ear"),
+        ])
+        # The interest cools down for a day, so these are wanders.
+        first = self.explorations.start_next(now=NOW + timedelta(hours=6.1))
+        self.assertEqual(first.wander.tangent, ("Tuning forks", "Tuned by ear"))
+        self.assertEqual(first.wander.noticed_while, self.interest.title)
+        self.assertEqual(first.exploration.topic, "Tuning forks")
+        # A tangent wander keeps the tangent's title.
+        found = self.explorations.finish(first.exploration.id, "Forks ring at one pitch", [], [],
+                                         now=NOW + timedelta(hours=7), topic="Something else", tangents=[
+                                             ("Church bells", "Bells are tuned too"),
+                                         ])
+        self.assertEqual((found.kind, found.topic, found.interest_id), ("wander", "Tuning forks", None))
+
+        second = self.explorations.start_next(now=NOW + timedelta(hours=12.2))
+        self.assertIsNone(second.wander.tangent)
+        self.assertIn(second.wander.area, WANDER_AREAS)
+        self.assertEqual(second.wander.recent, ("Tuning forks",))
+        with self.assertRaisesRegex(ValueError, "needs a topic"):
+            self.explorations.finish(second.exploration.id, "Keepers lived alone", [], [], now=NOW + timedelta(hours=13))
+        self.explorations.finish(second.exploration.id, "Keepers lived alone", [], [], now=NOW + timedelta(hours=13),
+                                 topic="Lighthouse keepers")
+
+        # Next, a tangent again: the newest unused one, here found while wandering.
+        self.assertEqual(self.start(NOW + timedelta(hours=24, seconds=1)).kind, "interest")
+        third = self.explorations.start_next(now=NOW + timedelta(hours=30.2))
+        self.assertEqual(third.wander.tangent, ("Church bells", "Bells are tuned too"))
+        self.assertEqual(third.wander.noticed_while, "Tuning forks")
+        self.assertEqual(third.wander.recent, ("Lighthouse keepers", "Tuning forks"))
+
+    def test_wanders_are_sparks_and_can_be_mentioned_by_their_topic(self):
+        self.explorations.finish(self.start().id, *FINDING, now=NOW)
+        wander = self.explorations.start_next(now=NOW + timedelta(hours=6.1)).exploration
+        later = NOW + timedelta(hours=7)
+        self.explorations.finish(wander.id, "Keepers lived alone", [], [], now=later, topic="Lighthouse keepers",
+                                 reaction="Lonely, but I envy the quiet.", tangents=[("Fresnel lenses", "Clever")])
+        self.assertEqual(self.interests.read_sparks(now=later), (
+            Spark(wander.id, "Lighthouse keepers", "Lonely, but I envy the quiet.", WANDERING),
+            Spark(wander.id, "Fresnel lenses", "Clever", f"{WANDERING}: Lighthouse keepers"),
+        ))
+        mention = self.explorations.claim_mention(now=later)
+        self.assertEqual((mention.interest_title, mention.finding), ("Lighthouse keepers", "Keepers lived alone"))
+
+    def finish_with(self, message, now, **changes):
+        return self.explorations.finish(self.start(now).id, *FINDING, now=now, reach_out=(message, "I want to"),
+                                        **changes)
+
+    def test_reaching_out_happens_once_a_day_while_fresh(self):
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        older = self.finish_with("Did you know forks ring?", NOW)
+        newer = self.finish_with("Bells are tuned by shaving them!", NOW + timedelta(hours=6.1))
+        claimed = self.explorations.claim_reach_out(now=NOW + timedelta(hours=7))
+        self.assertEqual(claimed, ReachOut(newer.id, "Second", "Bells are tuned by shaving them!", "I want to",
+                                           NOW + timedelta(hours=7)))
+        # One a day, and one she reached out about is never raised in conversation as well.
+        self.assertIsNone(self.explorations.claim_reach_out(now=NOW + timedelta(hours=8)))
+        self.assertEqual(self.explorations.claim_mention(now=NOW + timedelta(hours=8)).exploration_id, older.id)
+        # The older one went stale before the next day's turn.
+        self.assertIsNone(self.explorations.claim_reach_out(now=NOW + REACH_OUT_FRESH_FOR + timedelta(seconds=1)))
+
+    def test_a_released_reach_out_can_go_again(self):
+        found = self.finish_with("Look at this!", NOW)
+        claimed = self.explorations.claim_reach_out(now=NOW)
+        self.assertTrue(self.explorations.release_reach_out(claimed))
+        self.assertFalse(self.explorations.release_reach_out(claimed))
+        again = self.explorations.claim_reach_out(now=NOW + timedelta(minutes=1))
+        self.assertEqual(again.exploration_id, found.id)
+        self.assertFalse(self.explorations.release_reach_out(claimed))  # an old claim never undoes a newer one
+
+    def test_a_site_she_would_like_is_taken_to_the_person_once_a_day_while_fresh(self):
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        older = self.finish_with("Forks!", NOW, sign_up=("https://forks.example.com", "Forks club", "To chat"))
+        self.assertEqual(older.sign_up, ("https://forks.example.com", "Forks club", "To chat"))
+        newer = self.finish_with("Bells!", NOW + timedelta(hours=6.1),
+                                 sign_up=(" https://bells.example.org ", " Bell ringers' forum ", "To learn ringing"))
+        claimed = self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=7))
+        self.assertEqual(claimed, SignUpWish(newer.id, "Second", "https://bells.example.org",
+                                             "Bell ringers' forum", "To learn ringing"))
+        # One a day, and each only once.
+        self.assertIsNone(self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=8)))
+        self.assertEqual(self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=31)).exploration_id, older.id)
+        self.assertIsNone(self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=56)))
+        with self.assertRaises(ValueError):
+            self.finish_with("No!", NOW + timedelta(hours=12.2), topic="Owls",
+                             sign_up=("forum.example.com", "Forum", "Owls"))
+
+    def test_a_stale_sign_up_wish_is_never_asked(self):
+        self.finish_with("Forks!", NOW, sign_up=("https://forks.example.com", "Forks club", "To chat"))
+        self.assertIsNone(self.explorations.claim_sign_up_wish(now=NOW + SIGN_UP_WISH_FRESH_FOR + timedelta(seconds=1)))
 
 
 if __name__ == "__main__":

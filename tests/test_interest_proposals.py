@@ -3,7 +3,7 @@ import unittest
 from uuid import uuid4
 
 from subconscious.interests.interest_proposals import Proposal, Reinforcement, Spawn, validate_proposal
-from subconscious.interests.interest_store import Interest, NewMemory
+from subconscious.interests.interest_store import Interest, NewMemory, Spark
 
 NOW = datetime(2026, 10, 15, 9, tzinfo=timezone.utc)
 CAR = Interest(uuid4(), "Old mechanical design", "Why older machines were built as they were",
@@ -21,12 +21,15 @@ def reinforcement(**changes):
 def spawn(**changes):
     row = {"title": "Wedding customs", "description": "How weddings differ between cultures",
            "why_emerged": "Nick's sister is getting married", "reason": "Upcoming family wedding",
-           "parent_interest_id": None, "memory_ids": [str(WEDDING.id)]}
+           "parent_interest_id": None, "memory_ids": [str(WEDDING.id)], "exploration_ids": []}
     return row | changes
 
 
+SWIFTS = Spark(uuid4(), "Swift migration", "They sleep on the wing", "Old mechanical design")
+
+
 def check(reinforce=(), new=None):
-    return validate_proposal({"reinforce": list(reinforce), "spawn": new}, [CAR], [WEDDING, CARBY])
+    return validate_proposal({"reinforce": list(reinforce), "spawn": new}, [CAR], [WEDDING, CARBY], [SWIFTS])
 
 
 class ValidProposalTests(unittest.TestCase):
@@ -43,12 +46,21 @@ class ValidProposalTests(unittest.TestCase):
             "Wedding customs", "How weddings differ between cultures", "Nick's sister is getting married",
             "Upcoming family wedding", CAR.id, (WEDDING.id, CARBY.id),
         ))
+        self.assertEqual(proposal.spawn.origin, "conversation")
+
+    def test_a_spawn_from_her_own_spark_alone_is_her_own(self):
+        proposal = check(new=spawn(title="Swift migration", memory_ids=[], exploration_ids=[str(SWIFTS.exploration_id)]))
+        self.assertEqual(proposal.spawn.exploration_ids, (SWIFTS.exploration_id,))
+        self.assertEqual(proposal.spawn.origin, "own")
+        # With something from the person too, it's theirs as well.
+        both = check(new=spawn(exploration_ids=[str(SWIFTS.exploration_id)]))
+        self.assertEqual(both.spawn.origin, "conversation")
 
 
 class InvalidProposalTests(unittest.TestCase):
     def assertRejected(self, payload):
         with self.assertRaises(ValueError):
-            validate_proposal(payload, [CAR], [WEDDING, CARBY])
+            validate_proposal(payload, [CAR], [WEDDING, CARBY], [SWIFTS])
 
     def test_bad_shapes_are_rejected(self):
         for payload in (
@@ -80,6 +92,8 @@ class InvalidProposalTests(unittest.TestCase):
             spawn(title=""), spawn(title="x" * 201), spawn(description=None), spawn(why_emerged=" "),
             spawn(title="  old   MECHANICAL design "), spawn(parent_interest_id=str(uuid4())),
             spawn(memory_ids=[]), spawn(memory_ids=[str(uuid4())]),
+            spawn(memory_ids=[], exploration_ids=[str(uuid4())]), spawn(exploration_ids=str(SWIFTS.exploration_id)),
+            {k: v for k, v in spawn().items() if k != "exploration_ids"},
         ):
             with self.subTest(row=row):
                 self.assertRejected({"reinforce": [], "spawn": row})

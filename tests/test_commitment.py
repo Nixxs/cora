@@ -65,7 +65,7 @@ class HoldingAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_only_a_reply_that_commits_you_is_asked_about(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.ready(app, pilot, commits=False)
-            with patch("app.check_commitment", self.check):
+            with patch("app_areas.signal_chats.check_commitment", self.check):
                 self.assertEqual(await app.hold_commitment("Sarah", "What suits?", "brief", "hi"), ("What suits?", None, ""))
             app.ask_person_approval.assert_not_awaited()
             self.assertEqual(self.check.call_args.kwargs["model"], "small")
@@ -73,7 +73,7 @@ class HoldingAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_your_yes_sends_it_and_anything_else_sends_a_holding_line(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.ready(app, pilot)
-            with patch("app.check_commitment", self.check):
+            with patch("app_areas.signal_chats.check_commitment", self.check):
                 self.assertEqual(await app.hold_commitment("Sarah", REPLY, "brief", "hi"),
                                  (REPLY, APPROVED, "confirms Tuesday 4pm at $70"))
                 shown = app.ask_person_approval.await_args.args[2]
@@ -90,7 +90,7 @@ class HoldingAppTests(unittest.IsolatedAsyncioTestCase):
             sarah = MagicMock(id=uuid4())
             sarah.name = "Sarah"
             app.persistence.load_task_briefs.return_value = "[]"
-            with patch("app.check_commitment", self.check):
+            with patch("app_areas.signal_chats.check_commitment", self.check):
                 text = await app.review_client_reply(sarah, [], REPLY)
             self.assertEqual(text, "Let me check with Nick and come back to you.")
             app.tell_person.assert_awaited_once()
@@ -110,7 +110,7 @@ class HoldingAppTests(unittest.IsolatedAsyncioTestCase):
             sent = datetime(2026, 10, 30, 9, tzinfo=timezone.utc)
             thread = EmailThread(uuid4(), uuid4(), "Book a lesson", "info@school.example", "School", "Times", "c1", sent)
             new = [MailMessage("m2", "", "info@school.example", "Re", sent + timedelta(minutes=5), "Tuesday 4pm, $70?")]
-            with patch("app.check_commitment", self.check):
+            with patch("app_areas.signal_chats.check_commitment", self.check):
                 await app.answer_email_party(thread, "cora@intelligis.io", new, new)
             app.mailbox.reply.assert_awaited_once_with(
                 "m2", "info@school.example", None, "Let me check with Nick and come back to you.\n\nCora")
@@ -126,7 +126,7 @@ class AskingTests(unittest.IsolatedAsyncioTestCase):
             app.signal_settings = SignalSettings(True, CORA, NICK)
             app.signal.client = MagicMock()
             app.signal.client.send = AsyncMock()
-            with patch("app.APPROVAL_SECONDS", 0.05):
+            with patch("app_areas.signal_chats.APPROVAL_SECONDS", 0.05):
                 self.assertEqual(await app.ask_person_approval("a reply to Sarah", "that commits you", {"to": "Sarah"}),
                                  TIMED_OUT)
             self.assertIn("Reply YES", app.signal.client.send.await_args.args[2])

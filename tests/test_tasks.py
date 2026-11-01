@@ -14,7 +14,7 @@ from psycopg import sql
 from sqlalchemy import select, text, update
 from sqlalchemy.orm import Session
 
-import app as app_module
+import app_areas.tasks
 from backend_chat import BackendRoute
 from messaging.setup import LINKED, SignalStatus
 from migrate import apply_migrations, database_settings
@@ -134,7 +134,7 @@ class TaskCheckAppTests(unittest.IsolatedAsyncioTestCase):
 
     async def check(self, app, pilot, quiet=(), stale=(), hours=range(0, 24), unsettled=()):
         app.persistence.load_task_checks.return_value = (list(quiet), list(stale), list(unsettled), [])
-        with patch.object(app_module, "NUDGE_HOURS", hours):
+        with patch("app_areas.tasks.NUDGE_HOURS", hours):
             app.check_tasks()
             for _ in range(3):
                 await pilot.pause()
@@ -234,7 +234,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(frozenset(app.tools.names()) - route.excluded,
                              {"search_memory", "close_task", "check_calendar", "send_signal_message", "send_email"})
             self.assertIsNotNone(route.ask_approval)
-            self.assertEqual(route.approval_seconds, app_module.APPROVAL_SECONDS)
+            self.assertEqual(route.approval_seconds, app_areas.tasks.APPROVAL_SECONDS)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
             # Once told, it waits on the person unless someone is still to answer.
             app.persistence.task_needs_person.assert_called_once_with(
@@ -267,7 +267,7 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Reply YES", sent[0])
             self.assertEqual(sent[1], "Sarah can't do it. I asked about Karene, but didn't hear back from you.")
             self.assertEqual(app.signal_approvals, {})
-            app.persistence.task_needs_person.assert_called_once_with(task_id, app_module.COORDINATOR_LAPSED, False)
+            app.persistence.task_needs_person.assert_called_once_with(task_id, app_areas.tasks.COORDINATOR_LAPSED, False)
 
     async def test_one_request_waits_on_signal_at_a_time_and_your_yes_answers_the_one_shown(self):
         async with keyboard_tests.running_app() as (app, pilot):

@@ -74,6 +74,12 @@ class EmailControls:
     # Her plain-text signature, added below each new email (not replies). Empty forgets it.
     signature: str = ""
     save_signature: Callable[[str], None] = lambda signature: None
+    # Her one password for sites she signs up to; it is never shown, only replaced or forgotten (empty).
+    has_sign_up_password: bool = False
+    save_sign_up_password: Callable[[str], None] = lambda password: None
+    # The name she signs up with, her own choice; empty goes back to "Cora".
+    sign_up_name: str = "Cora"
+    save_sign_up_name: Callable[[str], None] = lambda name: None
 
 
 @dataclass
@@ -118,6 +124,16 @@ EMAIL_PERSON_HELP = (
 EMAIL_SIGNATURE_HELP = (
     "Her signature for new emails, in plain text. Outlook's own signature isn't added to mail she "
     "sends, so paste a copy here. Replies in a thread go without it, as in Outlook."
+)
+EMAIL_SIGN_UP_HELP = (
+    "Cora's sign-up password: the one password she uses for every site she signs up to (with your "
+    "yes each time), so you can sign in for her too. Not her Microsoft password; at least 12 characters. "
+    "It's kept in the system credential store and never shown to the model."
+)
+EMAIL_SIGN_UP_NAME_HELP = (
+    "Her full name, such as a surname she chose (Cora Vale): she signs up with it, and introduces herself "
+    "with it as your PA when she writes to people for you. Where a form asks for first and last names, "
+    "she splits it. Leave empty for just Cora."
 )
 EMAIL_TENANT_HELP = (
     "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
@@ -199,9 +215,14 @@ def status_line(status: ServiceStatus, enabled: bool) -> Text:
 
 def tool_label(tool) -> Text:
     text = Text(tool.name, style="bold #e0e6ef")
-    # The server's own label, a hint only. Anything not marked read-only asks the person each time.
-    text.append("  read-only" if tool.read_only else "  changes things · asks you first",
-                style="#8fcf8f" if tool.read_only else "#d7a06a")
+    # The server's own label, a hint only. Anything not marked read-only asks the person each time,
+    # unless the catalogue lets it run without asking.
+    if tool.read_only:
+        text.append("  read-only", style="#8fcf8f")
+    elif tool.unasked:
+        text.append("  runs without asking", style="#8fcf8f")
+    else:
+        text.append("  changes things · asks you first", style="#d7a06a")
     summary = tool.description.splitlines()[0] if tool.description else ""
     if summary:
         text.append(f"\n{summary}", style="#8f98a8")
@@ -320,6 +341,18 @@ class ModelSettingsScreen(ModalScreen):
             yield Label(EMAIL_SIGNATURE_HELP, classes="model-settings-label service-help")
             yield TextArea(self.email.signature, id="email-signature", soft_wrap=True)
             yield Button("Save signature", id="email-save-signature")
+            yield Label(EMAIL_SIGN_UP_HELP, classes="model-settings-label service-help")
+            yield Input(
+                id="email-sign-up-password", password=True,
+                placeholder="password saved · type to replace" if self.email.has_sign_up_password
+                else "at least 12 characters",
+            )
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save sign-up password", id="email-save-sign-up-password")
+                yield Button("Forget", id="email-forget-sign-up-password")
+            yield Label(EMAIL_SIGN_UP_NAME_HELP, classes="model-settings-label service-help")
+            yield Input(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora")
+            yield Button("Save her name", id="email-save-sign-up-name")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
@@ -347,13 +380,15 @@ class ModelSettingsScreen(ModalScreen):
         with Vertical(classes="service-details", id=f"service-details-{service.id}"):
             yield Static(id=f"service-reason-{service.id}", classes="service-reason")
             yield Label(service.token_help, classes="model-settings-label service-help")
-            yield Input(
-                password=True, id=f"service-token-{service.id}",
-                placeholder="token saved · paste to replace" if service.id in self.services.has_token else "paste a token",
-            )
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save token", id=f"service-save-{service.id}")
-                yield Button("Forget token", id=f"service-forget-{service.id}")
+            # A local service runs on this PC and has no token to save.
+            if service.needs_token:
+                yield Input(
+                    password=True, id=f"service-token-{service.id}",
+                    placeholder="token saved · paste to replace" if service.id in self.services.has_token else "paste a token",
+                )
+                with Horizontal(classes="service-buttons"):
+                    yield Button("Save token", id=f"service-save-{service.id}")
+                    yield Button("Forget token", id=f"service-forget-{service.id}")
             yield Static(id=f"service-tools-heading-{service.id}", classes="service-tools-heading")
             # Filled with one row per tool once connected.
             yield VerticalScroll(classes="service-tools", id=f"service-tools-{service.id}")
@@ -469,8 +504,8 @@ class ModelSettingsScreen(ModalScreen):
         # Finish removing the old rows first, so the new ones can reuse their ids.
         await listing.remove_children()
         listing.display = bool(tools)
-        # Read-only tools first, then those that ask the person each time.
-        ordered = sorted(tools, key=lambda tool: (not tool.read_only, tool.name))
+        # Tools that run without asking first, then those that ask the person each time.
+        ordered = sorted(tools, key=lambda tool: (tool.asks_first, tool.name))
         # Switch ids use positions: tool names come from the server and may not be valid ids.
         self.tool_switches[service_id] = [tool.name for tool in ordered]
         await listing.mount_all(
@@ -521,7 +556,7 @@ class ModelSettingsScreen(ModalScreen):
         # The switch also reports changes made here, such as turning back off below.
         if event.value == (service_id in self.services.enabled):
             return
-        if event.value and service_id not in self.services.has_token:
+        if event.value and SERVICES[service_id].needs_token and service_id not in self.services.has_token:
             self.notify(f"Save a {SERVICES[service_id].title} token first.", severity="warning")
             event.switch.value = False
             return
@@ -593,6 +628,16 @@ class ModelSettingsScreen(ModalScreen):
         self.email.save_app(field_.value, self.query_one("#email-tenant", Input).value)
         field_.value = ""
 
+    def save_sign_up_password(self) -> None:
+        field_ = self.query_one("#email-sign-up-password", Input)
+        if not field_.value.strip():
+            self.notify("Type her sign-up password first.", severity="warning")
+            return
+        # Straight to the credential store; the field never keeps it.
+        self.email.save_sign_up_password(field_.value)
+        field_.value = ""
+        field_.placeholder = "password saved · type to replace"
+
     def save_webhook_address(self) -> None:
         url = self.query_one("#webhooks-url", Input).value
         if not url.strip():
@@ -626,6 +671,13 @@ class ModelSettingsScreen(ModalScreen):
             self.email.save_person(self.query_one("#email-person", Input).value)
         elif button == "email-save-signature":
             self.email.save_signature(self.query_one("#email-signature", TextArea).text)
+        elif button == "email-save-sign-up-password":
+            self.save_sign_up_password()
+        elif button == "email-save-sign-up-name":
+            self.email.save_sign_up_name(self.query_one("#email-sign-up-name", Input).value)
+        elif button == "email-forget-sign-up-password":
+            self.email.save_sign_up_password("")
+            self.query_one("#email-sign-up-password", Input).placeholder = "at least 12 characters"
         elif button == "email-sign-in":
             self.email.sign_in()
         elif button == "email-sign-out":

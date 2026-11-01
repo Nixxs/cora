@@ -1,3 +1,4 @@
+import app_areas.tasks
 """Her calendar (C1): read through Graph in UTC, shown in local time, with its own sign-in check."""
 
 from datetime import date, datetime, timedelta, timezone
@@ -180,8 +181,7 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
     async def test_offered_to_her_chats_and_the_coordinator_with_a_calendar_token(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.assertIn("check_calendar", [schema["name"] for schema in app.live.tool_schemas()])
-            import app as app_module
-            self.assertIn("check_calendar", app_module.COORDINATOR_TOOLS)
+            self.assertIn("check_calendar", app_areas.tasks.COORDINATOR_TOOLS)
             app.email_account.token.return_value = "tok"
             self.assertEqual(app.calendar.get_token(), "tok")
             app.email_account.token.assert_called_with(CALENDAR_SCOPES)

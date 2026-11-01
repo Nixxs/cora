@@ -89,6 +89,15 @@ class EvidenceDatabaseTests(unittest.TestCase):
         first = read_experiences(self.engine, after=None, now=NOW).experiences
         self.assertEqual(first[0].evidence, Evidence("interest_event", before))  # never reflected: all
 
+    def test_a_wander_is_an_experience_of_its_own(self):
+        at = NOW - timedelta(hours=2)
+        with Session(self.engine) as session, session.begin():
+            record = InterestExplorationRecord(kind="wander", topic="Lighthouse keepers", status="found",
+                                               started_at=at, finished_at=at, finding="Keepers lived alone")
+            session.add(record)
+        [wander] = read_experiences(self.engine, after=NOW - timedelta(days=1), now=NOW).experiences
+        self.assertEqual(dict(wander.details), {"wandered_into": "Lighthouse keepers", "finding": "Keepers lived alone"})
+
     def test_a_full_batch_stops_between_timestamps_and_the_rest_waits(self):
         start = NOW - timedelta(days=1)
         ids = [self.event(start + timedelta(minutes=n)) for n in range(MAX_EXPERIENCES - 1)]

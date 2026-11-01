@@ -1,4 +1,4 @@
-"""Evolve Cora's interests from new memories, at most once a day.
+"""Evolve Cora's interests from new memories and her own sparks, at most once a day.
 
 Usage: python -m subconscious.interests.evolve_interests [--dry-run]
 """
@@ -31,23 +31,34 @@ def evolve_interests(
     if last is not None and now - last < EVOLVE_EVERY:
         return None
     batch = store.read_new_memories()
-    if not batch.memories:
-        if store.advance_memory_cursor(batch):
-            return "Passed over duplicate memories."
-        return "Waiting for memories to finish processing." if batch.waiting else "No new memories."
-    if len(batch.memories) < MIN_NEW_MEMORIES and not batch.more:
-        return f"Waiting for more memories ({len(batch.memories)} of {MIN_NEW_MEMORIES})."
+    # Her own sparks don't wait for the person: with any, the cycle runs on whatever memories there are.
+    sparks = store.read_sparks(now=now)
+    if not sparks:
+        if not batch.memories:
+            if store.advance_memory_cursor(batch):
+                return "Passed over duplicate memories."
+            return "Waiting for memories to finish processing." if batch.waiting else "No new memories."
+        if len(batch.memories) < MIN_NEW_MEMORIES and not batch.more:
+            return f"Waiting for more memories ({len(batch.memories)} of {MIN_NEW_MEMORIES})."
     interests = store.list_interests(include_dormant=True)
-    proposal = propose_interests(client, model, interests, batch.memories, now=now)
-    evolution = store.apply_evolution(batch, proposal, now=now)
+    proposal = propose_interests(client, model, interests, batch.memories, now=now, sparks=sparks)
+    evolution = store.apply_evolution(batch, proposal, now=now, sparks=sparks)
     if evolution is None:
-        return "Memory cursor moved during the cycle; nothing changed."
+        return "Memories or sparks were used by another cycle; nothing changed."
     changes = [f"reinforced {interest.title}" for interest in evolution.reinforced]
     if evolution.spawned is not None:
-        changes.append(f"new interest {evolution.spawned.title}")
+        own = " (her own)" if evolution.spawned.origin == "own" else ""
+        changes.append(f"new interest {evolution.spawned.title}{own}")
     if evolution.refused:
         changes.append(f"{evolution.refused} refused (live interests full)")
-    return f"Evolved from {len(batch.memories)} memories: {'; '.join(changes) or 'no changes'}."
+    return f"Evolved from {sources(batch.memories, sparks)}: {'; '.join(changes) or 'no changes'}."
+
+
+def sources(memories, sparks) -> str:
+    parts = [f"{len(memories)} memories"] if memories or not sparks else []
+    if sparks:
+        parts.append(f"{len(sparks)} of her own sparks")
+    return " and ".join(parts)
 
 
 def run_interest_cycle(*, should_stop: Callable[[], bool]) -> str | None:
@@ -71,21 +82,23 @@ def run_interest_cycle(*, should_stop: Callable[[], bool]) -> str | None:
 def preview_interests(store: InterestStore, client: OpenAI, model: str = BACKEND_MODEL, *, now: datetime) -> str:
     """Show what the model would change for the next batch, saving nothing."""
     batch = store.read_new_memories()
-    if not batch.memories:
-        return "No new memories."
+    sparks = store.read_sparks(now=now)
+    if not batch.memories and not sparks:
+        return "No new memories or sparks."
     interests = store.list_interests(include_dormant=True)
-    return describe_proposal(propose_interests(client, model, interests, batch.memories, now=now),
-                             interests, len(batch.memories))
+    proposal = propose_interests(client, model, interests, batch.memories, now=now, sparks=sparks)
+    return describe_proposal(proposal, interests, sources(batch.memories, sparks))
 
 
-def describe_proposal(proposal: Proposal, interests: list[Interest], memory_count: int) -> str:
+def describe_proposal(proposal: Proposal, interests: list[Interest], source: str) -> str:
     titles = {interest.id: interest.title for interest in interests}
-    lines = [f"Proposal from {memory_count} memories (not saved):"]
+    lines = [f"Proposal from {source} (not saved):"]
     for change in proposal.reinforcements:
         lines.append(f"+{change.delta:.2f} {titles[change.interest_id]}: {change.reason}")
     if proposal.spawn is not None:
         spawn = proposal.spawn
-        lines += [f"new: {spawn.title}", f"     {spawn.description}", f"     why: {spawn.why_emerged}"]
+        own = " (her own)" if spawn.origin == "own" else ""
+        lines += [f"new: {spawn.title}{own}", f"     {spawn.description}", f"     why: {spawn.why_emerged}"]
     if len(lines) == 1:
         lines.append("no changes")
     return "\n".join(lines)

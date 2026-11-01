@@ -82,12 +82,14 @@ def interest_changes(session: Session, after: datetime | None, until: datetime) 
 
 def findings(session: Session, after: datetime | None, until: datetime) -> list[Experience]:
     exploration = InterestExplorationRecord
-    rows = session.execute(window(select(exploration, InterestRecord.title).join(
+    rows = session.execute(window(select(exploration, InterestRecord.title).outerjoin(
         InterestRecord, InterestRecord.id == exploration.interest_id,
     ).where(exploration.status == "found"), exploration.finished_at, after, until))
     experiences = []
     for record, title in rows:
-        details = {"interest": title, "finding": record.finding}
+        # A wander belongs to no interest.
+        details = {"interest": title} if title is not None else {"wandered_into": record.topic}
+        details["finding"] = record.finding
         if record.reaction is not None:
             details["your_reaction"] = record.reaction
         experiences.append(Experience("exploration", record.id, record.finished_at, details))

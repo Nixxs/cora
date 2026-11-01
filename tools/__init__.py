@@ -27,10 +27,17 @@ from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, val
 from .send_signal_message import SendSignalMessageTool, SCHEMA as SIGNAL_SCHEMA, validate_arguments as validate_signal_arguments
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
+from .request_sign_up import (
+    RequestSignUpTool, SCHEMA as SIGN_UP_SCHEMA, validate_arguments as validate_sign_up_arguments,
+)
 
 
 async def _not_set_up(*args, **kwargs):
     raise RuntimeError("Signal messaging is not wired up")
+
+
+async def _no_sign_ups(url):
+    return None, "Signing up isn't available here."
 
 
 def create_tool_registry(
@@ -40,7 +47,7 @@ def create_tool_registry(
     signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
     task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
-    calendar_changed=lambda: None,
+    calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -91,4 +98,6 @@ def create_tool_registry(
     ):
         tool = tool_type(get_connection, is_closing, write_debug, get_calendar, confirm, calendar_changed)
         registry.register(schema, validate, tool.handle)
+    sign_up = RequestSignUpTool(get_connection, is_closing, write_debug, check_sign_up, confirm, begin_sign_up)
+    registry.register(SIGN_UP_SCHEMA, validate_sign_up_arguments, sign_up.handle)
     return registry

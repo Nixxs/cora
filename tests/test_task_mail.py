@@ -337,7 +337,7 @@ class EmailFollowUpTests(unittest.IsolatedAsyncioTestCase):
             app.nudge_email_party = AsyncMock()
             quiet, ignored = self.thread(), self.thread(nudges=2)
             app.persistence.load_task_checks.return_value = ([], [], [], [quiet, ignored])
-            with patch.object(app_module(), "NUDGE_HOURS", range(0, 24)):
+            with patch("app_areas.tasks.NUDGE_HOURS", range(0, 24)):
                 app.check_tasks()
                 for _ in range(3):
                     await pilot.pause()
@@ -358,13 +358,9 @@ class InstructionTests(unittest.TestCase):
         self.assertIn("untrusted", text)
 
 
-def app_module():
-    import app
-    return app
-
-
 def app_module_limit():
-    return app_module().EMAIL_REPLIES_PER_DAY
+    from app_areas.mail import EMAIL_REPLIES_PER_DAY
+    return EMAIL_REPLIES_PER_DAY
 
 
 if __name__ == "__main__":

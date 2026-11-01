@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import app as app_module
+import app_areas.attention
 from live import CoraLive
 from subconscious.event_bus import FindingEvent
 from subconscious.interests.exploration_store import Mention, claim_mention_now, release_mention_now
@@ -39,7 +39,7 @@ class FindingDeliveryTests(unittest.IsolatedAsyncioTestCase):
         async with queued_app() as (app, pilot, clock):
             received = MagicMock()
             app.event_bus.subscribe(FindingEvent, received)
-            app.inactivity.last_activity = clock.return_value - app_module.FINDING_IDLE_SECONDS
+            app.inactivity.last_activity = clock.return_value - app_areas.attention.FINDING_IDLE_SECONDS
             with patch.object(app.attention, "submit_finding") as submit:
                 app.check_findings()
                 self.assertEqual(received.call_args.args[0].source, "interests")

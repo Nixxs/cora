@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from subconscious.interests.evolve_interests import EVOLVE_EVERY, evolve_interests, preview_interests, run_interest_cycle
 from subconscious.interests.interest_proposals import Proposal, Reinforcement, Spawn
-from subconscious.interests.interest_store import Evolution, InterestStore, MemoryBatch, NewMemory
+from subconscious.interests.interest_store import Evolution, InterestStore, MemoryBatch, NewMemory, Spark
 import test_interest_proposals as proposal_tests
 import test_keyboard_persistence as keyboard_tests
 
@@ -26,6 +26,7 @@ class EvolveInterestsTests(unittest.TestCase):
         self.store = MagicMock(spec=InterestStore)
         self.store.last_evolved_at.return_value = None
         self.store.read_new_memories.return_value = batch()
+        self.store.read_sparks.return_value = ()
         self.store.list_interests.return_value = [CAR]
         self.store.apply_evolution.return_value = Evolution((CAR,), None, 0)
         self.client = MagicMock()
@@ -39,9 +40,23 @@ class EvolveInterestsTests(unittest.TestCase):
     def test_a_due_cycle_proposes_and_applies_atomically(self):
         self.assertEqual(self.evolve(), "Evolved from 3 memories: reinforced Old mechanical design.")
         self.store.list_interests.assert_called_once_with(include_dormant=True)
-        self.propose.assert_called_once_with(self.client, "chosen-model", [CAR], MEMORIES, now=NOW)
-        self.store.apply_evolution.assert_called_once_with(batch(), self.propose.return_value, now=NOW)
+        self.propose.assert_called_once_with(self.client, "chosen-model", [CAR], MEMORIES, now=NOW, sparks=())
+        self.store.apply_evolution.assert_called_once_with(batch(), self.propose.return_value, now=NOW, sparks=())
         self.store.advance_memory_cursor.assert_not_called()
+
+    def test_her_own_sparks_run_the_cycle_without_waiting_for_memories(self):
+        sparks = (Spark(uuid4(), "Swift migration", "They sleep on the wing.", "Old mechanical design"),)
+        self.store.read_sparks.return_value = sparks
+        self.store.read_new_memories.return_value = batch(())
+        spawned = replace(CAR, title="Swift migration", origin="own")
+        self.store.apply_evolution.return_value = Evolution((), spawned, 0)
+        self.assertEqual(self.evolve(), "Evolved from 1 of her own sparks: new interest Swift migration (her own).")
+        self.propose.assert_called_once_with(self.client, "chosen-model", [CAR], (), now=NOW, sparks=sparks)
+        self.store.apply_evolution.assert_called_once_with(
+            batch(()), self.propose.return_value, now=NOW, sparks=sparks)
+        # With a couple of memories too, they're used together rather than waiting for a third.
+        self.store.read_new_memories.return_value = batch(MEMORIES[:2])
+        self.assertTrue(self.evolve().startswith("Evolved from 2 memories and 1 of her own sparks"))
 
     def test_runs_at_most_once_per_24_hours(self):
         self.store.last_evolved_at.return_value = NOW - EVOLVE_EVERY + timedelta(seconds=1)
@@ -83,7 +98,7 @@ class EvolveInterestsTests(unittest.TestCase):
         self.store.apply_evolution.return_value = Evolution((), None, 0)
         self.assertEqual(self.evolve(), "Evolved from 3 memories: no changes.")
         self.store.apply_evolution.return_value = None
-        self.assertEqual(self.evolve(), "Memory cursor moved during the cycle; nothing changed.")
+        self.assertEqual(self.evolve(), "Memories or sparks were used by another cycle; nothing changed.")
 
     def test_model_errors_propagate_without_saving(self):
         self.propose.side_effect = ValueError("bad output")
@@ -163,7 +178,7 @@ class AppInterestWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_writes_each_new_outcome_once_off_the_ui_thread(self):
         async with keyboard_tests.running_app() as (app, pilot):
             outcomes = iter(("Interest cycle stopped (APIConnectionError).",) * 2 + (None, "No new memories."))
-            with patch("app.run_interest_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
+            with patch("app_areas.background.run_interest_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
                 for _ in range(4):
                     app.check_interests()
                     await asyncio.wait_for(app.interest_worker.wait(), 5)

@@ -153,7 +153,7 @@ class PersonEmailAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Sorry", app.mailbox.reply.await_args.args[3])
 
     def test_a_late_email_says_when_it_was_sent_and_attachments_stay_closed(self):
-        from app import person_email_text
+        from app_areas.mail import person_email_text
         text = person_email_text(inbox(minutes_ago=90, attachments=True), datetime.now(timezone.utc))
         self.assertTrue(text.startswith("[sent "))
         self.assertIn("1 hour ago", text)

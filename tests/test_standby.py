@@ -11,6 +11,7 @@ from openai.types.live.delegation_created_event import DelegationCreatedEvent
 from textual.widgets import Button, Static
 
 from devices.speaker import Speaker
+from cora_clock import frozen_monotonic
 from test_keyboard_persistence import running_app
 from test_reconnect import backend_event, restarting_app
 from ui.composer import ChatComposer
@@ -257,7 +258,7 @@ class StandbyTests(unittest.IsolatedAsyncioTestCase):
             app.live.speaker = speaker
             silence = base64.b64encode(bytes(960)).decode("ascii")
             with patch("devices.speaker.sd.RawOutputStream"), \
-                    patch("app.monotonic", return_value=100.0), \
+                    frozen_monotonic(100.0), \
                     patch.object(app, "reconnect_live", return_value=None) as transition:
                 try:
                     speaker.play(silence)

@@ -1,3 +1,4 @@
+import app_areas.mail
 """Her other new mail (T4b-2): sorted by one cheap call; urgent now, the rest of note in one digest."""
 
 from datetime import datetime, timezone
@@ -77,13 +78,12 @@ class SortingAppTests(unittest.IsolatedAsyncioTestCase):
             await app.workers.wait_for_complete()
 
     async def sort(self, app, mails):
-        import app as app_module
-        original = app_module.triage_mail
-        app_module.triage_mail = MagicMock(return_value=self.sorted_mail)
+        original = app_areas.mail.triage_mail
+        app_areas.mail.triage_mail = MagicMock(return_value=self.sorted_mail)
         try:
             await app.sort_new_mail(mails)
         finally:
-            sorter, app_module.triage_mail = app_module.triage_mail, original
+            sorter, app_areas.mail.triage_mail = app_areas.mail.triage_mail, original
         return sorter
 
     async def test_urgent_reaches_you_now_worth_mentioning_waits_and_the_rest_is_read(self):
@@ -104,13 +104,12 @@ class SortingAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_a_failed_sort_leaves_the_mail_for_next_time(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.ready(app, pilot, [])
-            import app as app_module
-            original = app_module.triage_mail
-            app_module.triage_mail = MagicMock(side_effect=ValueError("no"))
+            original = app_areas.mail.triage_mail
+            app_areas.mail.triage_mail = MagicMock(side_effect=ValueError("no"))
             try:
                 await app.sort_new_mail([mail("a")])
             finally:
-                app_module.triage_mail = original
+                app_areas.mail.triage_mail = original
             self.assertEqual(app.mail_sorted, set())
             app.mailbox.mark_read.assert_not_awaited()
 

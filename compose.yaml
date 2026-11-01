@@ -34,6 +34,25 @@ services:
     volumes:
       - signal-data:/var/lib/signal-cli
 
+  # Cora's browser (optional), the Browser service in Settings > Services. While it's switched on,
+  # Cora runs one with `docker compose run` and talks to it over stdin/stdout; it's removed, with
+  # everything it wrote, when switched off or when she quits. Nothing to `up`.
+  browser:
+    # Headless Chromium as a non-root user (with tini); the container is its sandbox.
+    image: mcr.microsoft.com/playwright/mcp:v0.0.83
+    profiles: ["browser"]
+    command: ["--isolated", "--image-responses", "omit"]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    pids_limit: 512
+    # Chromium needs more shared memory than Docker's 64 MB default.
+    shm_size: 1gb
+    # Its own network: it reaches the web, but not the database or Signal by name.
+    networks: [browser]
+
 volumes:
   database-data:
   signal-data:
+
+networks:
+  browser:

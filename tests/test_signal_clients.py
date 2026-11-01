@@ -27,7 +27,8 @@ from storage.signal_settings_store import SignalSettings
 from subconscious.impressions.impression_store import HeadsUp
 from subconscious.relationship.appraisal_store import AppraisalStore
 from ui.model_settings import ModelSettingsScreen
-import app as app_module
+import app_areas.reaching_you
+import app_areas.signal_chats
 import test_keyboard_persistence as keyboard_tests
 
 CORA = "+61400000001"
@@ -105,7 +106,7 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.load_heads_ups.return_value = [heads_up]
             app.deliver_heads_ups()
             await self.settle(app, pilot)
-            text = app_module.heads_up_text(heads_up)
+            text = app_areas.reaching_you.heads_up_text(heads_up)
             self.assertTrue(text.startswith("Heads up: Royce was rude in our chat on Tuesday 27 Oct"))
             self.assertTrue(text.endswith("He called me useless twice."))
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, text)
@@ -133,7 +134,7 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             await self.settle(app, pilot)
             # Queued for Live to say in a quiet moment; a second round doesn't queue it again.
             [message] = [item for item in app.attention.pending if hasattr(item, "fallback")]
-            self.assertEqual(message.text, app_module.heads_up_text(heads_up))
+            self.assertEqual(message.text, app_areas.reaching_you.heads_up_text(heads_up))
             app.deliver_heads_ups()
             await self.settle(app, pilot)
             self.assertEqual(len(app.attention.pending), 1)
@@ -148,12 +149,12 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.linked_app(app)
             sarah = app.signal_clients[SARAH]
-            for _ in range(app_module.SIGNAL_CONCERNS_PER_DAY):
+            for _ in range(app_areas.signal_chats.SIGNAL_CONCERNS_PER_DAY):
                 self.assertIsNone(await app.raise_client_concern(sarah.id, "Sarah", "She threatened her neighbour."))
             app.signal.client.send.assert_awaited_with(
                 CORA, NICK, "Heads up about Sarah, in our chat just now: She threatened her neighbour.")
             self.assertIn("already raised", await app.raise_client_concern(sarah.id, "Sarah", "Again"))
-            self.assertEqual(app.signal.client.send.await_count, app_module.SIGNAL_CONCERNS_PER_DAY)
+            self.assertEqual(app.signal.client.send.await_count, app_areas.signal_chats.SIGNAL_CONCERNS_PER_DAY)
 
     async def test_after_she_ends_a_chat_their_messages_are_saved_but_not_answered(self):
         async with keyboard_tests.running_app() as (app, pilot):
