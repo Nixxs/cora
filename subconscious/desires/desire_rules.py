@@ -10,8 +10,11 @@ A desire starts as a candidate and becomes held once reinforced past HELD_THRESH
 she holds fewer than MAX_HELD; candidates waiting behind those are capped too.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
+from uuid import UUID
 
+from subconscious.identity.identity_rules import Evidence
 from subconscious.interests.interest_strength import effective_strength, validate_strength
 
 INITIAL_STRENGTH = 0.3
@@ -28,6 +31,11 @@ STATUSES = ("candidate", "held", "pursuing", "fulfilled", "let_go")
 LIVE = ("candidate", "held", "pursuing")
 HELD = ("held", "pursuing")
 ENDED = ("fulfilled", "let_go")
+
+# What one daily reflection may do: at most one new desire, a few reinforcements, one let go.
+ACTIONS = ("form", "reinforce", "let_go")
+MAX_PER_REFLECTION = {"form": 1, "reinforce": 3, "let_go": 1}
+REINFORCE_DELTAS = {"some": 0.075, "strong": MAX_REINFORCE_DELTA}
 
 # Status changes she (or a later step) makes on purpose: event kind -> (allowed from, to).
 CHANGES = {
@@ -96,3 +104,16 @@ def validate_count(count: int) -> None:
     if isinstance(count, bool) or not isinstance(count, int) or count < 0:
         raise ValueError("Desire count must be a non-negative integer")
 
+
+
+@dataclass(frozen=True)
+class Change:
+    """One change a reflection proposes; the store re-checks it against the rules before applying it."""
+    action: str  # one of ACTIONS
+    note: str  # why
+    desire_id: UUID | None = None  # reinforce and let_go
+    description: str | None = None  # form
+    motivation: str | None = None  # form
+    strength: str | None = None  # reinforce: a key of REINFORCE_DELTAS
+    interest_ids: tuple[UUID, ...] = ()  # form: interests it grew from
+    evidence: tuple[Evidence, ...] = ()  # experiences it grew from (form) or that renew it (reinforce)

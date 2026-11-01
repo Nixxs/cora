@@ -441,7 +441,7 @@ finish and incur its separate charges while the local app remains open.
 **Cora-prime** is the Live voice model plus its delegation backend: the part of
 Cora you actually talk to. Everything else (memory extraction, summaries,
 embeddings, duplicate, correction and fade checks, conversation appraisals, interest evolution,
-interest exploration, and identity reflection) runs as **separate background
+interest exploration, identity reflection, and desire reflection) runs as **separate background
 processes that make their own API calls**. Relationship updates are plain code
 with no API call.
 
@@ -494,7 +494,9 @@ rate limits.
 - **App timers** (while the app runs, cheap when nothing is due): interest
   evolution every 10 minutes (a cycle at most once a day), exploration every 10
   minutes (only in Standby or after 10 minutes without conversation), identity
-  reflection every 10 minutes (at most once a day), and a lull check for findings
+  reflection every 10 minutes (at most once a day), desire reflection every 10
+  minutes (at most once a day; desires are settled each day it's due, even with
+  too little new to reflect on), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
   `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
@@ -510,7 +512,7 @@ migration 0015, so run `python migrate.py` once after updating):
 | --- | --- | --- |
 | Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
 | Memory | Memory extraction and conversation summaries | The next background memory pass |
-| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
+| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity and desire reflection | Each process's next run |
 | Duplicate check and small jobs | Memory duplicate, correction and fade checks, and future small jobs | The next background memory pass |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list
@@ -2384,10 +2386,29 @@ in what she experiences.
    10-day half-life, so a held desire nothing reinforces is let go after about
    three weeks (absences count at most 21 days). Deliberate changes: pursue,
    pause, fulfil, let go. `python -m subconscious.desires.desire_store` lists
-   them. No model yet, and nothing settles them on a schedule until D2.
-2. [ ] **D2 Forming desires:** the daily reflection may propose a desire growing
-   from a strong interest or recent experience (never from a fixed list), and
-   reinforces, revises or lets go of existing ones.
+   them.
+2. [x] **D2 Forming desires:** a daily desire reflection
+   ([subconscious/desires/reflect_desires.py](subconscious/desires/reflect_desires.py),
+   on the Relationship, interests and identity model) reads the same experiences
+   as the identity reflection (interest changes, findings with her reactions,
+   conversation summaries; at least three new ones), but only the newest 30
+   since it last ran, since desires are about what draws her now (a backlog,
+   such as her first reflection or days with Cora closed, is skipped rather
+   than worked through), alongside her live
+   desires, live interests and held traits. It may form one candidate citing
+   what it grew from (never from a fixed list), reinforce up to three desires
+   ('some' 0.075 or 'strong' 0.15) citing what renewed them, and let one go.
+   The store re-checks each change (no second copy of a desire she already
+   has, the caps, one change per desire) and applies them with the fading in
+   one transaction (migration 0040 adds its `desire_worker_state`); the outcome
+   goes to Activity under Desires. To change wording, she lets one go and forms
+   another.
+
+   ```powershell
+   python -m subconscious.desires.reflect_desires --dry-run  # show the proposal, save nothing
+   python -m subconscious.desires.reflect_desires            # reflect and save (at most once a day)
+   python -m subconscious.desires.desire_store               # list her desires
+   ```
 3. [ ] **D3 Knowing her desires:** held desires reach her at each connect, a
    `recall_desire` tool says why she wants something, and a Desires box on the
    dashboard.

@@ -72,6 +72,8 @@ load_dotenv()
 INTEREST_CHECK_SECONDS = 10 * 60
 # Same cheap check for identity: the store's 24-hour gate decides when she really reflects.
 IDENTITY_CHECK_SECONDS = 10 * 60
+# And for desires: the store's 24-hour gate decides when she really reflects on what she wants.
+DESIRE_CHECK_SECONDS = 10 * 60
 # The store's limits (6h gap, 3 a day) decide how often she really explores.
 EXPLORE_CHECK_SECONDS = 10 * 60
 # Offer a finding only into a lull this long, well before the default 5-minute standby.
@@ -184,6 +186,8 @@ class CoraApp(
         self.interest_outcome = None
         self.identity_worker = None
         self.identity_outcome = None
+        self.desire_worker = None
+        self.desire_outcome = None
         self.exploration_worker = None
         # Signing up to a site (one at a time); explorations leave the browser to it.
         self.sign_up_worker = None
@@ -417,6 +421,7 @@ class CoraApp(
         self.observation_timer = self.set_interval(0.5, self.check_observations)
         self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)
         self.identity_timer = self.set_interval(IDENTITY_CHECK_SECONDS, self.check_identity)
+        self.desire_timer = self.set_interval(DESIRE_CHECK_SECONDS, self.check_desires)
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
         self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
         self.background_round_timer = self.set_interval(BACKGROUND_ROUND_SECONDS, self.background_round)
@@ -454,6 +459,7 @@ class CoraApp(
         self.observation_timer.stop()
         self.interest_timer.stop()
         self.identity_timer.stop()
+        self.desire_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
         self.background_round_timer.stop()
@@ -567,6 +573,7 @@ class CoraApp(
         self.observation_timer.stop()
         self.interest_timer.stop()
         self.identity_timer.stop()
+        self.desire_timer.stop()
         self.exploration_timer.stop()
         self.finding_timer.stop()
         self.background_round_timer.stop()
@@ -600,6 +607,8 @@ class CoraApp(
                 self.interest_worker.cancel()
             if self.identity_worker is not None and not self.identity_worker.is_finished:
                 self.identity_worker.cancel()
+            if self.desire_worker is not None and not self.desire_worker.is_finished:
+                self.desire_worker.cancel()
             if self.exploration_worker is not None and not self.exploration_worker.is_finished:
                 self.exploration_worker.cancel()
             if self.attention.worker is not None and not self.attention.worker.is_finished:

@@ -10,11 +10,12 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from storage.models import DesireRecord, InterestExplorationRecord, InterestRecord
+from storage.models import DesireRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord
 from subconscious.desires.desire_rules import (
-    INITIAL_STRENGTH, LET_GO_THRESHOLD, MAX_CANDIDATES, MAX_HELD, MAX_REINFORCE_DELTA,
+    REINFORCE_DELTAS, Change, INITIAL_STRENGTH, LET_GO_THRESHOLD, MAX_CANDIDATES, MAX_HELD, MAX_REINFORCE_DELTA,
 )
 from subconscious.desires.desire_store import FADE_NOTE, DesireStore, Sources
+from subconscious.identity.identity_rules import Evidence
 from subconscious.interests.interest_strength import reinforce
 import test_conversation_summaries as summary_tests
 
@@ -54,7 +55,8 @@ class DesireStoreDatabaseTests(unittest.TestCase):
     def setUp(self):
         # Only in the disposable DB created above. Children before parents.
         with self.engine.begin() as connection:
-            for table in ("desire_sources", "desire_events", "desires", "interest_explorations", "interests"):
+            for table in ("desire_worker_state", "desire_sources", "desire_events", "desires",
+                          "interest_explorations", "interest_events", "interests"):
                 connection.execute(text(f"DELETE FROM public.{table}"))
         summary_tests.SummaryDatabaseTests.setUp(self)
         self.desires = DesireStore(self.engine)
@@ -167,6 +169,44 @@ class DesireStoreDatabaseTests(unittest.TestCase):
         after = self.desires.reinforce(desire.id, 0.15, "Thought of it again", now=NOW + timedelta(days=10))
         self.assertAlmostEqual(after.strength, reinforce(INITIAL_STRENGTH / 2, 0.15))
         self.assertEqual(after.status, "candidate")
+
+    def test_a_reflection_settles_applies_what_the_rules_allow_and_stamps_how_far_it_read(self):
+        with Session(self.engine) as session, session.begin():
+            interest = InterestRecord(title="Forests", description="Old-growth forests", why_emerged="Came up",
+                                      strength=0.5, strength_at=NOW, status="active")
+            session.add(interest)
+            session.flush()
+            spawn = InterestEventRecord(interest_id=interest.id, kind="spawn", strength_after=0.2, reason="Came up")
+            session.add(spawn)
+            session.flush()
+            interest_id, spawn_id = interest.id, spawn.id
+        stale = self.desires.form(*form_args("To learn the cello"), now=NOW - timedelta(days=21))
+        wanted = self.desires.form(*form_args(), now=NOW)
+        renewed = (Evidence("interest_event", spawn_id),)
+        changes = [
+            Change("form", "Grew from forests", description="To see a redwood", motivation="I want to",
+                   evidence=renewed),
+            Change("form", "Again", description="  to walk through an OLD-GROWTH forest ", motivation="Same",
+                   evidence=renewed),
+            Change("reinforce", "Read more", desire_id=wanted.id, strength="strong", evidence=renewed),
+            Change("let_go", "Changed my mind", desire_id=wanted.id),
+            Change("reinforce", "Too late", desire_id=stale.id, strength="some", evidence=renewed),
+        ]
+        until = NOW - timedelta(minutes=5)
+        self.assertEqual(self.desires.apply_reflection(changes, read_after=None, read_until=until, now=NOW), [
+            None, "she already wants this", None, "only one change per desire in a reflection",
+            "it is already let go",
+        ])
+        self.assertEqual(self.desires.last_reflected_at(), until)
+        self.assertEqual(self.kinds(stale.id), ["form", "fade"])
+        self.assertAlmostEqual(self.desires.list_desires()[0].strength,
+                               reinforce(INITIAL_STRENGTH, REINFORCE_DELTAS["strong"]))
+        [formed] = [d for d in self.desires.list_desires() if d.description == "To see a redwood"]
+        # The interest change it cited counts as that interest.
+        self.assertEqual(self.desires.sources(formed.id), Sources((interest_id,)))
+        # A reflection that started from an older stamp saves nothing.
+        self.assertIsNone(self.desires.apply_reflection([], read_after=None, read_until=NOW, now=NOW))
+        self.assertEqual(self.desires.last_reflected_at(), until)
 
     def test_database_rejects_inconsistent_rows(self):
         cases = (

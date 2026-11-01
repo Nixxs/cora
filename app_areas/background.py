@@ -1,4 +1,4 @@
-"""Background jobs: backups, memory, interests, identity, exploring and reaching out: part of CoraApp (see app.py)."""
+"""Background jobs: backups, memory, interests, identity, desires, exploring and reaching out: part of CoraApp (see app.py)."""
 
 import asyncio
 from datetime import datetime
@@ -11,6 +11,7 @@ from backup import BackupError, daily_backup_due, run_backup
 from services.connection import CONNECTED
 from services.tools import result_text
 from services.web_guard import refused_address
+from subconscious.desires.reflect_desires import run_desire_cycle
 from subconscious.identity.reflect_identity import run_identity_cycle
 from subconscious.interests.evolve_interests import run_interest_cycle
 from subconscious.interests.exploration_store import claim_reach_out_now, release_reach_out_now
@@ -27,7 +28,7 @@ BROWSER_CALL_SECONDS = 70
 
 
 class BackgroundMixin:
-    """Background jobs: backups, memory, interests, identity, exploring and reaching out."""
+    """Background jobs: backups, memory, interests, identity, desires, exploring and reaching out."""
 
     @work(group="database-startup")
     async def check_interrupted_conversations(self) -> None:
@@ -119,6 +120,19 @@ class BackgroundMixin:
         if outcome is not None and outcome != self.identity_outcome:
             self.identity_outcome = outcome
             self.call_from_thread(self.activity.write, outcome, "Identity")
+
+    def check_desires(self) -> None:
+        if self.closing or (self.desire_worker is not None and not self.desire_worker.is_finished):
+            return
+        self.desire_worker = self.reflect_desires()
+
+    @work(thread=True, group="desires", exit_on_error=False)
+    def reflect_desires(self) -> None:
+        worker = get_current_worker()
+        outcome = run_desire_cycle(should_stop=lambda: self.closing or worker.is_cancelled)
+        if outcome is not None and outcome != self.desire_outcome:
+            self.desire_outcome = outcome
+            self.call_from_thread(self.activity.write, outcome, "Desires")
 
     def can_explore(self) -> bool:
         if self.closing or self.reconnecting:

@@ -17,13 +17,18 @@ from uuid import UUID
 
 from dotenv import load_dotenv
 from sqlalchemy import Engine, func, select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from storage.database import build_engine
-from storage.models import DesireEventRecord, DesireRecord, DesireSourceRecord
-from subconscious.desires.desire_rules import (
-    ENDED, HELD, INITIAL_STRENGTH, MAX_REINFORCE_DELTA, can_form, changed, current_strength, promoted, settle,
+from storage.models import (
+    DesireEventRecord, DesireRecord, DesireSourceRecord, DesireWorkerStateRecord, InterestEventRecord,
 )
+from subconscious.desires.desire_rules import (
+    ACTIONS, ENDED, HELD, INITIAL_STRENGTH, LIVE, MAX_REINFORCE_DELTA, REINFORCE_DELTAS, Change, can_form,
+    changed, current_strength, promoted, settle,
+)
+from subconscious.identity.identity_rules import EVIDENCE_SOURCES
 from subconscious.interests.interest_strength import reinforce as reinforced
 
 DESCRIPTION_MAX_CHARS = 300
@@ -71,6 +76,35 @@ def clean_text(value: str, name: str, max_chars: int = TEXT_MAX_CHARS) -> str:
     return value
 
 
+def clean_change(change: Change) -> Change:
+    """Check a reflection's change is well formed; whether it's allowed is decided when applying it."""
+    if change.action not in ACTIONS:
+        raise ValueError("Unknown desire action")
+    note = clean_text(change.note, "note")
+    if any(item.source not in EVIDENCE_SOURCES for item in change.evidence):
+        raise ValueError("Unknown experience source")
+    if change.action == "form":
+        if change.desire_id is not None or change.strength is not None:
+            raise ValueError("A new desire has no id or strength")
+        if not change.interest_ids and not change.evidence:
+            raise ValueError("A new desire must say what it grew from")
+        return Change("form", note, description=clean_text(change.description, "description", DESCRIPTION_MAX_CHARS),
+                      motivation=clean_text(change.motivation, "motivation"),
+                      interest_ids=change.interest_ids, evidence=change.evidence)
+    if change.desire_id is None or change.description is not None or change.motivation is not None \
+            or change.interest_ids:
+        raise ValueError(f"To {change.action.replace('_', ' ')} a desire, give only its id, why and support")
+    if change.action == "reinforce":
+        if change.strength not in REINFORCE_DELTAS:
+            raise ValueError("Unknown reinforcement strength")
+        if not change.evidence:
+            raise ValueError("A reinforcement must cite what renewed it")
+    elif change.strength is not None or change.evidence:
+        raise ValueError("Letting go takes only an id and why")
+    return Change(change.action, note, desire_id=change.desire_id, strength=change.strength,
+                  evidence=change.evidence)
+
+
 def validate_now(now: datetime) -> None:
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise ValueError("now must be a timezone-aware datetime")
@@ -87,6 +121,10 @@ def snapshot(record: DesireRecord) -> Desire:
         record.id, record.description, record.motivation, record.strength, record.strength_at, record.status,
         record.created_at, record.last_reinforced_at, record.ended_at,
     )
+
+
+def same_wish(left: str, right: str) -> bool:
+    return " ".join(left.casefold().split()) == " ".join(right.casefold().split())
 
 
 class DesireStore:
@@ -136,15 +174,7 @@ class DesireStore:
             self._lock(session)
             if not can_form(self._count(session, now, ("candidate",))):
                 return None
-            record = DesireRecord(
-                description=description, motivation=motivation, strength=INITIAL_STRENGTH,
-                strength_at=now, status="candidate",
-            )
-            session.add(record)
-            session.flush()
-            self._add_event(session, record.id, "form", None, record.strength, note)
-            session.add_all(self._source_records(record.id, sources))
-            return snapshot(record)
+            return snapshot(self._form(session, description, motivation, note, now, sources))
 
     def reinforce(self, desire_id: UUID, delta: float, note: str, *, now: datetime) -> Desire:
         """Settle then reinforce; a candidate strong enough becomes held when there is room.
@@ -157,15 +187,8 @@ class DesireStore:
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             self._lock(session)
             record = self._settled(session, desire_id, now)
-            if record.status in ENDED:
-                return snapshot(record)
-            after = reinforced(record.strength, delta)
-            self._add_event(session, record.id, "reinforce", record.strength, after, note)
-            record.strength, record.last_reinforced_at = after, now
-            status = promoted(record.status, after, self._count(session, now, HELD, exclude_id=record.id))
-            if status != record.status:
-                self._add_event(session, record.id, "hold", after, after, HOLD_NOTE)
-                record.status = status
+            if record.status not in ENDED:
+                self._reinforce(session, record, delta, note, now)
             return snapshot(record)
 
     def change(self, desire_id: UUID, kind: str, note: str, *, now: datetime) -> Desire:
@@ -179,12 +202,8 @@ class DesireStore:
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             self._lock(session)
             record = self._settled(session, desire_id, now)
-            if record.status == "let_go":
-                return snapshot(record)
-            record.status = changed(kind, record.status)
-            if record.status in ENDED:
-                record.ended_at = max(now, record.created_at)
-            self._add_event(session, record.id, kind, record.strength, record.strength, note)
+            if record.status != "let_go":
+                self._change(session, record, kind, note, now)
             return snapshot(record)
 
     def note_progress(self, desire_id: UUID, note: str, *, now: datetime) -> Desire:
@@ -206,11 +225,93 @@ class DesireStore:
         validate_now(now)
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             self._lock(session)
-            records = list(session.scalars(select(DesireRecord).where(
-                DesireRecord.status.not_in(ENDED)).order_by(DesireRecord.id)))
-            for record in records:
-                self._settle(session, record, now)
-            return [snapshot(record) for record in records]
+            return [snapshot(record) for record in self._settle_all(session, now)]
+
+    def last_reflected_at(self) -> datetime | None:
+        with Session(self.engine) as session:
+            state = session.get(DesireWorkerStateRecord, 1)
+            return None if state is None else state.last_reflected_at
+
+    def apply_reflection(
+        self, changes: Iterable[Change], *, read_after: datetime | None, read_until: datetime, now: datetime,
+    ) -> list[str | None] | None:
+        """Settle every desire, apply a reflection's changes and stamp it, in ONE transaction.
+
+        `read_after` is the last_reflected_at the reflection started from and `read_until` how
+        far it read; that becomes the new last_reflected_at. Returns, for each change in order,
+        None if applied or why it was not; or None, saving nothing, if another reflection moved
+        last_reflected_at first.
+        """
+        changes = [clean_change(change) for change in changes]
+        validate_now(now)
+        validate_now(read_until)
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            self._lock(session)
+            session.execute(insert(DesireWorkerStateRecord).values(id=1).on_conflict_do_nothing())
+            state = session.get(DesireWorkerStateRecord, 1, with_for_update=True)
+            if state.last_reflected_at != read_after:
+                return None
+            self._settle_all(session, now)
+            problems, touched = [], set()
+            for change in changes:
+                problem = self._apply(session, change, now, touched)
+                problems.append(problem)
+                if problem is None and change.desire_id is not None:
+                    touched.add(change.desire_id)
+            state.last_reflected_at, state.updated_at = read_until, func.current_timestamp()
+            return problems
+
+    def _apply(self, session: Session, change: Change, now: datetime, touched: set[UUID]) -> str | None:
+        """Apply one reflection change if the rules allow it; otherwise say why not."""
+        if change.action == "form":
+            live = session.scalars(select(DesireRecord.description).where(DesireRecord.status.in_(LIVE)))
+            if any(same_wish(description, change.description) for description in live):
+                return "she already wants this"
+            if not can_form(self._count(session, now, ("candidate",))):
+                return "the candidate cap is full"
+            self._form(session, change.description, change.motivation, change.note, now,
+                       self._sources(session, change))
+            return None
+        if change.desire_id in touched:
+            return "only one change per desire in a reflection"
+        record = session.get(DesireRecord, change.desire_id)
+        if record is None:
+            return "no such desire"
+        if record.status not in LIVE:
+            return f"it is already {record.status.replace('_', ' ')}"
+        if change.action == "reinforce":
+            self._reinforce(session, record, REINFORCE_DELTAS[change.strength], change.note, now)
+        else:
+            self._change(session, record, "let_go", change.note, now)
+        return None
+
+    def _form(
+        self, session: Session, description: str, motivation: str, note: str, now: datetime, sources: Sources,
+    ) -> DesireRecord:
+        record = DesireRecord(
+            description=description, motivation=motivation, strength=INITIAL_STRENGTH,
+            strength_at=now, status="candidate",
+        )
+        session.add(record)
+        session.flush()
+        self._add_event(session, record.id, "form", None, record.strength, note)
+        session.add_all(self._source_records(record.id, sources))
+        return record
+
+    def _reinforce(self, session: Session, record: DesireRecord, delta: float, note: str, now: datetime) -> None:
+        after = reinforced(record.strength, delta)
+        self._add_event(session, record.id, "reinforce", record.strength, after, note)
+        record.strength, record.last_reinforced_at = after, now
+        status = promoted(record.status, after, self._count(session, now, HELD, exclude_id=record.id))
+        if status != record.status:
+            self._add_event(session, record.id, "hold", after, after, HOLD_NOTE)
+            record.status = status
+
+    def _change(self, session: Session, record: DesireRecord, kind: str, note: str, now: datetime) -> None:
+        record.status = changed(kind, record.status)
+        if record.status in ENDED:
+            record.ended_at = max(now, record.created_at)
+        self._add_event(session, record.id, kind, record.strength, record.strength, note)
 
     def _settled(self, session: Session, desire_id: UUID, now: datetime) -> DesireRecord:
         record = session.get(DesireRecord, desire_id)
@@ -218,6 +319,13 @@ class DesireStore:
             raise LookupError("Desire does not exist")
         self._settle(session, record, now)
         return record
+
+    def _settle_all(self, session: Session, now: datetime) -> list[DesireRecord]:
+        records = list(session.scalars(select(DesireRecord).where(
+            DesireRecord.status.not_in(ENDED)).order_by(DesireRecord.id)))
+        for record in records:
+            self._settle(session, record, now)
+        return records
 
     def _settle(self, session: Session, record: DesireRecord, now: datetime) -> None:
         if record.status in ENDED:
@@ -237,6 +345,18 @@ class DesireStore:
             1 for record in records
             if record.id != exclude_id
             and settle(record.strength, record.strength_at, record.status, now)[1] != "let_go"
+        )
+
+    @staticmethod
+    def _sources(session: Session, change: Change) -> Sources:
+        """What a new desire grew from; an interest change it cites counts as that interest."""
+        interest_events = [item.id for item in change.evidence if item.source == "interest_event"]
+        from_events = session.scalars(select(InterestEventRecord.interest_id).where(
+            InterestEventRecord.id.in_(interest_events))).all() if interest_events else []
+        return Sources(
+            (*change.interest_ids, *from_events),
+            tuple(item.id for item in change.evidence if item.source == "exploration"),
+            tuple(item.id for item in change.evidence if item.source == "conversation"),
         )
 
     @staticmethod

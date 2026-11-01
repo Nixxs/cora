@@ -999,3 +999,17 @@ class DesireSourceRecord(Base):
             ondelete="RESTRICT",
         ),
     )
+
+
+class DesireWorkerStateRecord(Base):
+    """At most one row: when Cora last reflected on what she wants."""
+
+    __tablename__ = "desire_worker_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="desire_worker_state_singleton_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1, server_default="1")
+    last_reflected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

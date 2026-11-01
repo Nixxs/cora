@@ -42,8 +42,15 @@ class ExperienceBatch:
     more: bool  # stopped at the limit, so more experiences wait for the next reflection
 
 
-def read_experiences(engine: Engine, *, after: datetime | None, now: datetime) -> ExperienceBatch:
-    """Experiences after `after` (all if None) up to a little before `now`, oldest first."""
+def read_experiences(
+    engine: Engine, *, after: datetime | None, now: datetime, newest: bool = False,
+) -> ExperienceBatch:
+    """Experiences after `after` (all if None) up to a little before `now`, oldest first.
+
+    With `newest`, a backlog beyond the limit is skipped rather than read over later
+    reflections: the newest experiences are returned (still oldest first) and `until` is
+    the end of the window, so `more` is always False.
+    """
     validate_now(now)
     if after is not None:
         validate_now(after)
@@ -51,9 +58,11 @@ def read_experiences(engine: Engine, *, after: datetime | None, now: datetime) -
     if after is not None and after >= until:
         return ExperienceBatch((), after, False)
     with Session(engine) as session:
-        found = [*interest_changes(session, after, until), *findings(session, after, until),
-                 *conversations(session, after, until)]
+        found = [*interest_changes(session, after, until, newest), *findings(session, after, until, newest),
+                 *conversations(session, after, until, newest)]
     found.sort(key=lambda item: (item.at, item.source, item.id))
+    if newest:
+        return ExperienceBatch(tuple(found[-MAX_EXPERIENCES:]), until, False)
     if len(found) <= MAX_EXPERIENCES:
         return ExperienceBatch(tuple(found), until, False)
     # Stop between timestamps, so experiences sharing one are never split across reflections.
@@ -63,28 +72,32 @@ def read_experiences(engine: Engine, *, after: datetime | None, now: datetime) -
     return ExperienceBatch(tuple(kept), kept[-1].at, True)
 
 
-def window(query, column, after: datetime | None, until: datetime):
+def window(query, column, after: datetime | None, until: datetime, newest: bool = False):
     query = query.where(column <= until)
     if after is not None:
         query = query.where(column > after)
     # One more than the limit from each source is enough to know whether the merge was cut.
-    return query.order_by(column).limit(MAX_EXPERIENCES + 1)
+    return query.order_by(column.desc() if newest else column).limit(MAX_EXPERIENCES + 1)
 
 
-def interest_changes(session: Session, after: datetime | None, until: datetime) -> list[Experience]:
+def interest_changes(
+    session: Session, after: datetime | None, until: datetime, newest: bool = False,
+) -> list[Experience]:
     event = InterestEventRecord
     rows = session.execute(window(select(event, InterestRecord.title).join(
-        InterestRecord, InterestRecord.id == event.interest_id), event.created_at, after, until))
+        InterestRecord, InterestRecord.id == event.interest_id), event.created_at, after, until, newest))
     return [Experience("interest_event", record.id, record.created_at, {
         "interest": title, "change": record.kind, "reason": record.reason,
     }) for record, title in rows]
 
 
-def findings(session: Session, after: datetime | None, until: datetime) -> list[Experience]:
+def findings(
+    session: Session, after: datetime | None, until: datetime, newest: bool = False,
+) -> list[Experience]:
     exploration = InterestExplorationRecord
     rows = session.execute(window(select(exploration, InterestRecord.title).outerjoin(
         InterestRecord, InterestRecord.id == exploration.interest_id,
-    ).where(exploration.status == "found"), exploration.finished_at, after, until))
+    ).where(exploration.status == "found"), exploration.finished_at, after, until, newest))
     experiences = []
     for record, title in rows:
         # A wander belongs to no interest.
@@ -96,8 +109,10 @@ def findings(session: Session, after: datetime | None, until: datetime) -> list[
     return experiences
 
 
-def conversations(session: Session, after: datetime | None, until: datetime) -> list[Experience]:
+def conversations(
+    session: Session, after: datetime | None, until: datetime, newest: bool = False,
+) -> list[Experience]:
     summary = ConversationSummaryRecord
-    records = session.scalars(window(select(summary), summary.created_at, after, until))
+    records = session.scalars(window(select(summary), summary.created_at, after, until, newest))
     return [Experience("conversation", record.conversation_id, record.created_at, {"summary": record.text})
             for record in records]
