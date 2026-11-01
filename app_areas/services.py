@@ -101,7 +101,6 @@ class ServicesMixin:
                 confirm=self.confirmations.ask if tool.asks_first else None,
             )
             self.tools.register(schema, validate_service_arguments, handler.handle)
-        self.confirming_tools = frozenset(name for name, (_, tool, _) in wanted.items() if tool.asks_first)
         if current != set(wanted):
             self.service_tools_changed = True
 

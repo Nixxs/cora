@@ -2320,6 +2320,45 @@ sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending wor
 and provide separate camera privacy controls. Cross-process transport can be added
 when needed; it is not required for these first in-process workers.
 
+#### Desires — the next stage (not built)
+
+From Nick's notes ("Evolving from an AI Assistant to an Autonomous AI Personality",
+28 October 2026). The aim isn't a more efficient assistant but to see whether an AI
+can develop a persistent, evolving identity through its own interests,
+experiences, relationships and desires: build the systems that let her
+personality and preferences grow through experience, rather than programming who
+she should be. That makes no claim about consciousness; it's an experiment in
+autonomous behaviour.
+
+**Interests versus desires.** An interest is something she finds worth looking
+into; a desire is a future state or experience she'd like to pursue. Interest:
+nature and forests. Desire: to experience a forest. Goal: go with the person on a
+hike, through a phone's camera and microphone. Experience: watching, asking and
+talking along the way. Reflection: what mattered goes into her memories, identity
+and interests.
+
+**The progression** is Curiosity → Interest → Desire → Goal → Experience →
+Reflection, and reflection can spark new interests or desires, so it loops. It is
+never mandatory: she can hold an interest without wanting anything from it.
+
+**A desire** would have a description and motivation, the interests or experiences
+it grew from, priority and persistence, feasibility and dependencies, the help or
+permissions it needs, progress and fulfilment, and links to other desires. The
+model proposes candidates from her own identity and experiences, never from a
+fixed list, within rules in code, as interests and traits already work.
+
+**Asking for help.** She can ask her people to help fulfil a desire (the hike
+above), and what she experiences with them shapes what she wants next: a two-way
+relationship. Taking part is always voluntary, and cameras, microphones,
+purchases and anything done outside stay behind the person's permission.
+
+**What's already in place to build on:** interests that come from her own
+exploring as well as conversations, with tangents, pull and wandering; browsing
+real pages within limits; reaching out to the person when something excites her;
+asking to sign up to sites she'd like an account on (the first small wish she can
+act on, always with the person's yes); and the identity reflection that would take
+in what she experiences.
+
 #### Self — complete
 
 After interests, a separate background worker was added to maintain Cora's

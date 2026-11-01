@@ -260,7 +260,6 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.linked_app(app)
             app.conversation.log_entries.append("Cora: Earlier, by voice")
-            app.confirming_tools = frozenset({"github__create_issue"})
             records = []
             app.conversation.record_message = lambda role, text, channel: records.append((role, text, channel))
             app.on_signal_message(incoming("Where are my keys?"))

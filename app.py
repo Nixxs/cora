@@ -333,8 +333,6 @@ class CoraApp(
         self.signal_last_message_at: float | None = None
         # Signal messages answered at launch, before the opening greeting, which follows on from them.
         self.signal_launch_exchanges: list[tuple[str, str]] = []
-        # Service tools that ask for approval: the pop-up is on the desk, so Signal leaves them out.
-        self.confirming_tools: frozenset[str] = frozenset()
         # Recent long replies from service tools, so Cora can read their later pages.
         self.service_results = ResultCache()
         # Tool calls that change things wait here for the person's answer.
