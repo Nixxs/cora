@@ -121,6 +121,7 @@ async def running_app(persistence=None):
             patch("app_areas.background.run_exploration_cycle", return_value=None), \
             background_models_stubbed(), \
             patch("services.credentials.keyring"), \
+            patch("sign_ups.password.keyring") as sign_up_keyring, \
             patch("app.EmailAccount"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
             patch("app_areas.signal_chats.delete_attachments", AsyncMock()), patch("app_areas.signal_chats.clear_attachments", AsyncMock()), \
@@ -132,6 +133,7 @@ async def running_app(persistence=None):
             app.email_account.tenant.return_value = ""
             app.email_account.person_address.return_value = ""
             app.email_account.signature.return_value = ""
+            sign_up_keyring.get_password.return_value = None
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
@@ -143,6 +145,7 @@ async def running_app(persistence=None):
                 persistence.load_people_context.return_value = ""
                 persistence.load_client_people_context.return_value = ""
                 persistence.load_tasks_context.return_value = ""
+                persistence.load_sign_ups_context.return_value = ""
                 persistence.load_task_briefs.return_value = ""
                 persistence.task_coordination.return_value = None
                 persistence.load_relationship_values.return_value = None

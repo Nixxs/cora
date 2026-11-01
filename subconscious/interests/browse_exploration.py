@@ -82,6 +82,11 @@ BLOCKS = frozenset({"paragraph", "heading", "listitem", "row", "blockquote", "te
 # Controls and furniture: nothing to read without clicking.
 SKIPPED = frozenset({"button", "searchbox", "textbox", "combobox", "checkbox", "radio", "slider", "switch",
                      "menuitem", "tab", "img", "option", "spinbutton"})
+# With controls shown (signing up), each is a line of its own with its ref, and these states.
+REF = re.compile(r"\[ref=([^\]]+)\]")
+STATES = ("checked", "disabled", "expanded", "selected", "pressed")
+# A long list (countries, years) shows its first few options only.
+OPTIONS_SHOWN = 12
 
 
 def guard(url: str) -> str | None:
@@ -124,10 +129,23 @@ def unwrapped(address: str) -> str:
     return real if real.startswith(("http://", "https://")) else address
 
 
-def readable(snapshot: str) -> str:
-    """The page as plain lines of text with [link](address)es, from its main heading on if it has one."""
+def control_line(role: str, name: str, text: str, attrs: str) -> str:
+    """A control as she sees it when signing up, such as [textbox "Email": cora@example.com ref=e12]."""
+    ref = REF.search(attrs)
+    states = [state for state in STATES if f"[{state}" in attrs]
+    return (f'[{role} "{name}"' + (f": {text}" if text else "") + "".join(f" {state}" for state in states)
+            + (f" ref={ref.group(1)}" if ref else "") + "]")
+
+
+def readable(snapshot: str, controls: bool = False) -> str:
+    """The page as plain lines of text with [link](address)es, from its main heading on if it has one.
+
+    With controls (signing up): the whole page, each control on a line of its own, and every
+    control and link carrying the ref that clicking or typing needs.
+    """
     lines, current, main = [], [], None
     link = None  # index in current of the link waiting for its address
+    link_ref, options = "", 0
 
     def end_line():
         nonlocal current
@@ -143,12 +161,25 @@ def readable(snapshot: str) -> str:
             if link is not None and not address.startswith(("#", "javascript:")):
                 name = current[link]
                 current[link] = f"[{name}]({address})" if name else address
+            if link is not None:
+                current[link] += link_ref
             link = None
             continue
         node = NODE.match(raw)
         if node is None:
             continue
         role, name, text = node.group("role"), unquote(node.group("name")), unquote(node.group("text"))
+        attrs = node.group("attrs") or ""
+        options = options + 1 if role == "option" else 0
+        if controls and role in SKIPPED and role != "img":
+            if options > OPTIONS_SHOWN:
+                if options == OPTIONS_SHOWN + 1:
+                    lines.append("  (more options: select one by its text)")
+                continue
+            end_line()
+            link = None
+            lines.append(("  " if role == "option" else "") + control_line(role, name, text, attrs))
+            continue
         if role in SKIPPED:
             continue
         if role in BLOCKS:
@@ -164,20 +195,22 @@ def readable(snapshot: str) -> str:
         if role == "link":
             current.append(name or text)
             link = len(current) - 1
+            ref = REF.search(attrs) if controls else None
+            link_ref = f" ref={ref.group(1)}" if ref else ""
             continue
         if text:
             current.append(text)
     end_line()
-    return "\n".join(lines[main or 0:])
+    return "\n".join(lines if controls else lines[main or 0:])
 
 
-def page_text(snapshot: str) -> str:
+def page_text(snapshot: str, controls: bool = False) -> str:
     """What she reads of a page: its address and title, then its text, cut at PAGE_MAX_CHARS."""
     address, title = PAGE_URL.search(snapshot), PAGE_TITLE.search(snapshot)
     head = [f"Address: {address.group(1)}"] if address else []
     if title:
         head.append(f"Title: {title.group(1).strip()}")
-    text = "\n".join(head + [readable(snapshot)])
+    text = "\n".join(head + [readable(snapshot, controls)])
     if len(text) > PAGE_MAX_CHARS:
         text = text[:PAGE_MAX_CHARS] + "\n… (the rest of the page isn't shown)"
     return text
@@ -189,6 +222,10 @@ class Session:
     pages: int = 0
     current: str | None = None
     opened: list[str] = field(default_factory=list)  # pages she read, in order: her possible sources
+
+    @property
+    def out_of_room(self) -> bool:
+        return self.pages >= MAX_PAGES
 
     def run(self, name: str, arguments: str) -> str:
         try:
@@ -243,23 +280,29 @@ def drop_old_pages(items: list[dict], page_items: list[int]) -> None:
 
 
 def browse(client, model: str, instructions: str, data: dict, schema: dict, name: str,
-           browser: BrowserAccess, *, clock: Callable[[], float] = monotonic) -> tuple[dict, set[str], int]:
-    """Browse until she writes up her finding; returns (payload, pages she opened, pages read)."""
-    session = Session(browser)
+           browser: BrowserAccess, *, clock: Callable[[], float] = monotonic, session=None, tools: list = TOOLS,
+           max_calls: int = MAX_CALLS, seconds: float = BROWSE_SECONDS,
+           out_of_room: str = OUT_OF_ROOM) -> tuple[dict, set[str], int]:
+    """Browse until she writes up her finding; returns (payload, pages she opened, pages read).
+
+    session runs her tool calls (a Session by default, with tools to match): run(name, arguments)
+    gives each result, out_of_room ends browsing, and opened and pages are what she read.
+    """
+    session = session or Session(browser)
     items = [{"type": "message", "role": "user",
               "content": [{"type": "input_text", "text": json.dumps(data, ensure_ascii=False)}]}]
     page_items: list[int] = []
-    deadline, calls, told = clock() + BROWSE_SECONDS, 0, False
+    deadline, calls, told = clock() + seconds, 0, False
     try:
-        for _ in range(MAX_CALLS + 2):
-            done = (calls >= MAX_CALLS or session.pages >= MAX_PAGES or clock() >= deadline
+        for _ in range(max_calls + 2):
+            done = (calls >= max_calls or session.out_of_room or clock() >= deadline
                     or not browser.keep_going())
             if done and not told:
                 items.append({"type": "message", "role": "user",
-                              "content": [{"type": "input_text", "text": OUT_OF_ROOM}]})
+                              "content": [{"type": "input_text", "text": out_of_room}]})
                 told = True
             response = client.responses.create(
-                model=model, instructions=instructions, input=items, tools=TOOLS,
+                model=model, instructions=instructions, input=items, tools=tools,
                 tool_choice="none" if done else "auto", parallel_tool_calls=False, store=False,
                 # Without storage, reasoning is handed back encrypted so tool rounds keep it.
                 include=["reasoning.encrypted_content"],

@@ -30,6 +30,11 @@ RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 
 # A task's dot: blue while it waits on others, amber once it waits on the person.
 TASK_STATUS_STYLES = {"open": "#7fb8d8", "waiting": "#7fb8d8", "needs_person": "#e0b45c"}
+# A sign-up's dot, and how its state reads.
+SIGN_UP_STYLES = {"done": "#8fc49a", "signing_up": "#7fb8d8", "confirm_email": "#7fb8d8", "blocked": "#e0b45c",
+                  "failed": "#d27a7a"}
+SIGN_UP_STATES = {"done": "signed up", "signing_up": "signing up", "confirm_email": "confirm email",
+                  "blocked": "blocked", "failed": "failed"}
 # A task's latest step is cut to this, so one long message doesn't fill the box.
 STEP_PREVIEW_CHARS = 120
 
@@ -109,6 +114,19 @@ def task_lines(tasks, now) -> Text:
                 step = step[:STEP_PREVIEW_CHARS - 1] + "…"
             lines.append(f"\n  ↳ {step}", style=TRACK_STYLE)
     return lines or Text("no open tasks", style=TRACK_STYLE)
+
+
+def sign_up_lines(sign_ups, now) -> Text:
+    """Her latest sign-ups: the site, how it stands and when she asked."""
+    lines = Text()
+    for index, sign_up in enumerate(sign_ups):
+        lines.append(("\n" if index else "") + "● ", style=SIGN_UP_STYLES.get(sign_up.status, LABEL_STYLE))
+        lines.append(sign_up.site)
+        state = SIGN_UP_STATES.get(sign_up.status, sign_up.status)
+        if sign_up.blocked_by:
+            state += f" ({sign_up.blocked_by.replace('_', ' ')})"
+        lines.append(f"  {state} · {ago(sign_up.asked_at, now)}", style=LABEL_STYLE)
+    return lines
 
 
 class DashboardScreen(Screen):
@@ -208,6 +226,8 @@ class DashboardScreen(Screen):
                     # Scrolls, so every open task can be read.
                     with VerticalScroll(id="tasks-scroll"):
                         yield Static(id="task-list")
+                        yield Static("sign-ups", id="sign-up-label", classes="dashboard-label")
+                        yield Static(id="sign-up-list")
                 with Vertical(id="context-box", classes="dashboard-box"):
                     yield Static("connect to measure", id="context-placeholder")
                     # Each item's share of its model's startup context; scrolls if the box is short.
@@ -298,6 +318,8 @@ class DashboardScreen(Screen):
         # Text, so brackets in a goal or a step are not read as markup.
         self.query_one("#task-list", Static).update(task_lines(self.snapshot.tasks, now))
         self.query_one("#tasks-box").border_subtitle = f"{len(self.snapshot.tasks)} open" if self.snapshot.tasks else ""
+        self.query_one("#sign-up-label").display = bool(self.snapshot.sign_ups)
+        self.query_one("#sign-up-list", Static).update(sign_up_lines(self.snapshot.sign_ups, now))
         width = max(map(len, self.snapshot.last_runs), default=0)
         runs = Text()
         for index, (job, then) in enumerate(self.snapshot.last_runs.items()):

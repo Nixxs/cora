@@ -15,7 +15,7 @@ class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
                  set_self_image_context=lambda context: None, set_people_context=lambda context: None,
-                 set_tasks_context=lambda context: None,
+                 set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
                  set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
@@ -26,6 +26,7 @@ class ConversationPersistence:
         self.set_self_image_context = set_self_image_context
         self.set_people_context = set_people_context
         self.set_tasks_context = set_tasks_context
+        self.set_sign_ups_context = set_sign_ups_context
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
         self.set_delegation_model = set_delegation_model
@@ -228,6 +229,20 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_tasks_context(context)
+
+        # Her sign-ups, so she knows which accounts she has and which are stuck.
+        if self.is_closing():
+            return
+        self.set_sign_ups_context("")
+        try:
+            context = await self.call_database(self.storage.load_sign_ups_context)
+        except Exception as error:
+            self.write_activity(
+                f"Sign-ups load failed ({type(error).__name__}); connecting without them.", "Sign-ups unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_sign_ups_context(context)
 
         # The chosen delegation model loads last; if it fails Cora connects with the default.
         if self.is_closing():

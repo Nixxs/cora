@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from memory.store import MemoryStore
 from storage.conversation_store import ConversationStore
 from storage.task_store import TaskStore, TaskView
+from sign_ups.store import SignUp, SignUpStore
 from storage.models import (
     ConversationSummaryRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
     InterestExplorationRecord, InterestWorkerStateRecord, MemoryRecord, RelationshipEventRecord,
@@ -77,6 +78,8 @@ class DashboardSnapshot:
     traits: tuple[Trait, ...]
     # Open tasks, oldest first, each with its parties' next checks.
     tasks: tuple[TaskView, ...] = ()
+    # Her latest sign-ups the person said yes to, newest first.
+    sign_ups: tuple[SignUp, ...] = ()
 
 
 def last_runs(engine: Engine) -> dict[str, datetime | None]:
@@ -150,4 +153,5 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         message_days=tuple(ConversationStore(engine).daily_message_counts(now, CALENDAR_DAYS)),
         traits=tuple(IdentityStore(engine).list_traits()),
         tasks=tuple(TaskStore(engine).open_tasks()),
+        sign_ups=tuple(SignUpStore(engine).recent()),
     )

@@ -74,6 +74,12 @@ class EmailControls:
     # Her plain-text signature, added below each new email (not replies). Empty forgets it.
     signature: str = ""
     save_signature: Callable[[str], None] = lambda signature: None
+    # Her one password for sites she signs up to; it is never shown, only replaced or forgotten (empty).
+    has_sign_up_password: bool = False
+    save_sign_up_password: Callable[[str], None] = lambda password: None
+    # The name she signs up with, her own choice; empty goes back to "Cora".
+    sign_up_name: str = "Cora"
+    save_sign_up_name: Callable[[str], None] = lambda name: None
 
 
 @dataclass
@@ -118,6 +124,15 @@ EMAIL_PERSON_HELP = (
 EMAIL_SIGNATURE_HELP = (
     "Her signature for new emails, in plain text. Outlook's own signature isn't added to mail she "
     "sends, so paste a copy here. Replies in a thread go without it, as in Outlook."
+)
+EMAIL_SIGN_UP_HELP = (
+    "Cora's sign-up password: the one password she uses for every site she signs up to (with your "
+    "yes each time), so you can sign in for her too. Not her Microsoft password; at least 12 characters. "
+    "It's kept in the system credential store and never shown to the model."
+)
+EMAIL_SIGN_UP_NAME_HELP = (
+    "The name she signs up with, such as a surname she chose (Cora Vale). Where a form asks for first "
+    "and last names, she splits it. Leave empty for just Cora."
 )
 EMAIL_TENANT_HELP = (
     "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
@@ -325,6 +340,18 @@ class ModelSettingsScreen(ModalScreen):
             yield Label(EMAIL_SIGNATURE_HELP, classes="model-settings-label service-help")
             yield TextArea(self.email.signature, id="email-signature", soft_wrap=True)
             yield Button("Save signature", id="email-save-signature")
+            yield Label(EMAIL_SIGN_UP_HELP, classes="model-settings-label service-help")
+            yield Input(
+                id="email-sign-up-password", password=True,
+                placeholder="password saved · type to replace" if self.email.has_sign_up_password
+                else "at least 12 characters",
+            )
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save sign-up password", id="email-save-sign-up-password")
+                yield Button("Forget", id="email-forget-sign-up-password")
+            yield Label(EMAIL_SIGN_UP_NAME_HELP, classes="model-settings-label service-help")
+            yield Input(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora")
+            yield Button("Save sign-up name", id="email-save-sign-up-name")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
@@ -600,6 +627,16 @@ class ModelSettingsScreen(ModalScreen):
         self.email.save_app(field_.value, self.query_one("#email-tenant", Input).value)
         field_.value = ""
 
+    def save_sign_up_password(self) -> None:
+        field_ = self.query_one("#email-sign-up-password", Input)
+        if not field_.value.strip():
+            self.notify("Type her sign-up password first.", severity="warning")
+            return
+        # Straight to the credential store; the field never keeps it.
+        self.email.save_sign_up_password(field_.value)
+        field_.value = ""
+        field_.placeholder = "password saved · type to replace"
+
     def save_webhook_address(self) -> None:
         url = self.query_one("#webhooks-url", Input).value
         if not url.strip():
@@ -633,6 +670,13 @@ class ModelSettingsScreen(ModalScreen):
             self.email.save_person(self.query_one("#email-person", Input).value)
         elif button == "email-save-signature":
             self.email.save_signature(self.query_one("#email-signature", TextArea).text)
+        elif button == "email-save-sign-up-password":
+            self.save_sign_up_password()
+        elif button == "email-save-sign-up-name":
+            self.email.save_sign_up_name(self.query_one("#email-sign-up-name", Input).value)
+        elif button == "email-forget-sign-up-password":
+            self.email.save_sign_up_password("")
+            self.query_one("#email-sign-up-password", Input).placeholder = "at least 12 characters"
         elif button == "email-sign-in":
             self.email.sign_in()
         elif button == "email-sign-out":

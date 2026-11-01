@@ -236,7 +236,7 @@ Its top right mirrors the chat's connection button, showing **● active** or
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, ✦ before one of her own (sparked by her exploring, not by you), and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
-| tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. |
+| tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. Below the tasks, her latest sign-ups: each site, how it stands (signed up, confirm email, blocked and by what, failed) and when she asked. |
 | context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
 | background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
 
@@ -607,10 +607,17 @@ description says so). Opening pages, going back, tabs, closing, clicking, hoveri
 typing, filling in fields, choosing options and pressing keys run without asking,
 though the server doesn't mark them read-only (`unasked_tools` in the catalogue;
 Settings labels them "runs without asking"), so a flight or shop search just
-works. They're limited by a rule in their own tool descriptions: never enter your
+works. Her instructions say when to reach for it: web search for general and
+current information, the browser for what only a site's own live pages or search
+can tell (fares or prices for exact dates, availability, stock), running the
+site's own search rather than quoting advertised prices. The same overview of
+what she can do (email, calendar, tasks, services, sign-ups) is in the backend
+instructions every written reply uses, so your Signal and email chats know it as
+well as voice does. They're limited by a rule in their own tool descriptions: never enter your
 personal details (name, address, email, phone, date of birth), payment details or
 passwords, and never click or fill in a booking, order, payment, message or
-sign-up; she stops and tells you instead. That's an instruction she follows, not
+sign-up; she stops and tells you instead (for an account of her own she uses
+`request_sign_up`; see [Signing up to sites](#signing-up-to-sites)). That's an instruction she follows, not
 a hard block; the browser holding no logins, cookies or card details is what
 keeps a mistake contained. Uploads and the other remaining tools ask first, as
 above. Running her own JavaScript in the page (`browser_run_code_unsafe`,
@@ -1060,6 +1067,68 @@ New mail arrives as a `MailArrivedEvent` on Cora's event bus
 subscribes: for now that's the task mail check, and later her awareness of the rest
 of her inbox.
 
+### Signing up to sites
+
+Cora can sign up to a site for an account of her own (a forum, a community, a
+free service) when she genuinely wants one, but only with your yes each time.
+She asks with `request_sign_up` ([tools/request_sign_up.py](tools/request_sign_up.py)):
+the site, what it is and why she wants it, and that it means agreeing to its
+terms. You're asked like her other approvals: the pop-up at your desk, or YES in
+your Signal chat when that's where you're talking. With your yes she signs up in
+the background and you hear how it went, by voice or on Signal.
+
+**What it needs.** Her email set up (she signs up with her own address), the
+Browser service on with `browser_click`, `browser_type` and `browser_select_option`
+switched on, and her **sign-up password**: one password, entered under Settings >
+Services > **Email** (**Save sign-up password**), that she uses for every site.
+It's kept in the system credential store, never shown in Settings, and never
+reaches the model: she types `{password}` and it's swapped in on its way to the
+browser, and taken out of anything the browser shows back. Use a password of
+its own (at least 12 characters), not her Microsoft password. One password means
+you can sign in as her anywhere, or finish a sign-up she couldn't, without
+looking anything up, and there's nothing per site to manage.
+
+**Her name.** She signs up as just "Cora" unless you give the name she chose
+under the same section (**Save sign-up name**), such as "Cora Vale". It's a
+setting rather than code, since it's hers and may change. Where a form asks for
+first and last names, she splits it.
+
+**What holds whatever she decides** (in code, [sign_ups/session.py](sign_ups/session.py)):
+the session stays on the approved site (a page or a click that leads anywhere
+else, such as "Sign in with Google", is closed and refused). A site is its
+registered name under the Public Suffix List (`publicsuffixlist`, in
+`requirements.txt`, which carries its own copy): `cockburn.wa.gov.au`, never all
+of `wa.gov.au`, and each `github.io` site on its own. Every address
+passes the same check as all her browsing. She types only her own details: your
+name, email address and Signal number are refused, and so is anything that looks
+like a card number. A page asking for card details ends the session. Limits: 30
+actions and five minutes. Pages reach her as text with each control (fields,
+buttons, checkboxes) and its ref, which is what she clicks and types with. Her
+instructions add: subscribe when the newsletter or mailing list is the thing she
+asked for, but untick anything extra (other newsletters, offers, partners' marketing); never give a phone number,
+postal address, date of birth or payment details, and never start anything paid.
+
+**When she's stuck.** A captcha, a phone check, a card, personal details she
+mustn't give or anything else she can't get past ends it as blocked, and she
+asks you to sign her up yourself with her email and her sign-up password,
+giving the address of the page she stopped on. Nothing is retried automatically.
+Invisible captchas (reCAPTCHA v3) score her headless browser low on many sites,
+so expect this often; getting past them isn't attempted.
+
+**Limits and records.** One account per site (asking again for a site she has, or
+is signing up to, is refused before you're asked), at most three requests a day,
+and one sign-up at a time; an exploration using the browser stops and writes up
+as soon as a sign-up needs it. Each request is saved in `sign_ups` (migration
+0037): site, what, why, your answer and how it went (signing up, confirm email,
+done, blocked by what, or failed, with her note). A sign-up cut short by closing
+the app counts as failed after 15 minutes. The dashboard lists her latest under
+the tasks, leaving out ones you declined; Activity logs each step under
+**Sign-up**. She knows them too: the same list reaches her as its own section
+(her sign-ups, not tasks) at each voice connect and in your Signal, email and
+desk chats, never a contact's, so she can say which accounts she has and which
+are stuck. Opening the confirmation email a site sends is next (4b); for now a
+site that asks for one is recorded as "confirm email".
+
 ### Cora's calendar
 
 Her Outlook calendar comes with her email, from the same sign-in: hers, never yours.
@@ -1220,7 +1289,7 @@ looking into something else). Both steps below are background processes with the
 own API calls. The prompts ask for breadth (nature, history, places, people, art,
 food, craft, science…): being an AI is not a lens for everything, and topics are
 not to be recast as lessons for AI or assistants. (Run `python migrate.py` once
-after updating, for migrations 0034 to 0036.)
+after updating, for migrations 0034 to 0037.)
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
    cycle is due. A cycle reads new memories from the person's messages that have finished
@@ -1383,7 +1452,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | Location | Responsibility |
 | --- | --- |
 | [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
-| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, and background jobs. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, background jobs, and sign-ups. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
@@ -1395,6 +1464,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
+| [sign_ups/](sign_ups/) | Signing up to sites for accounts of her own: her one sign-up password in the credential store, the browser session that stays on the approved site, and the `sign_ups` records. |
 | [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
@@ -1520,6 +1590,10 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   context box showing how full each model's context window is and what fills it.
 - Images: paste a screenshot into the chat, let her look at your screen (with an
   off switch in Settings), and see pictures she picks from the web.
+- Signing up to sites for accounts of her own, with your yes each time: one
+  sign-up password, a browser session held to that site and her own details, and
+  asking you to finish it when a captcha or phone check stops her. Next (4b):
+  opening confirmation emails, and sign-up wishes from her exploring.
 
 ### Next priorities
 

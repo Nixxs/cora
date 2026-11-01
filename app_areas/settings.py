@@ -7,6 +7,7 @@ from textual import work
 from ui.model_settings import EmailControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls
 from services.catalogue import SERVICES
 from services.credentials import get_token
+from sign_ups import password as passwords
 
 
 class SettingsMixin:
@@ -35,6 +36,8 @@ class SettingsMixin:
             email_tenant = await asyncio.to_thread(self.email_account.tenant)
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
             self.email_signature = await asyncio.to_thread(self.email_account.signature)
+            has_sign_up_password = bool(await asyncio.to_thread(passwords.sign_up_password))
+            self.sign_up_name = await asyncio.to_thread(passwords.sign_up_name)
         except Exception as error:
             self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
             self.notify("Could not load model settings. Check Activity.", severity="error")
@@ -55,7 +58,7 @@ class SettingsMixin:
                     add_client=self.add_signal_client, remove_client=self.remove_signal_client,
                     enabled=self.signal_settings.enabled, person_number=self.signal_settings.allowed_number,
                 ),
-                email=self.make_email_controls(has_email_app, email_tenant),
+                email=self.make_email_controls(has_email_app, email_tenant, has_sign_up_password),
                 webhooks=self.make_webhook_controls(),
             ), callback=self.settings_closed)
 
@@ -72,12 +75,15 @@ class SettingsMixin:
         )
         return self.webhook_controls
 
-    def make_email_controls(self, has_client_id: bool, tenant: str = "") -> EmailControls:
+    def make_email_controls(self, has_client_id: bool, tenant: str = "",
+                            has_sign_up_password: bool = False) -> EmailControls:
         self.email_controls = EmailControls(
             status=lambda: self.email_status, save_app=self.save_email_app,
             sign_in=self.sign_in_email, sign_out=self.sign_out_email, has_client_id=has_client_id, tenant=tenant,
             person_address=self.email_person, save_person=self.save_email_person,
             signature=self.email_signature, save_signature=self.save_email_signature,
+            has_sign_up_password=has_sign_up_password, save_sign_up_password=self.save_sign_up_password,
+            sign_up_name=self.sign_up_name, save_sign_up_name=self.save_sign_up_name,
         )
         return self.email_controls
 

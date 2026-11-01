@@ -17,6 +17,7 @@ from .signal_settings_store import SignalSettings, SignalSettingsStore
 from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
 from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
+from sign_ups.store import SignUp, SignUpStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
 from subconscious.interests.interest_store import InterestStore
@@ -209,6 +210,23 @@ class KeyboardPersistence:
 
     def save_service_tool(self, service: str, tool: str, enabled: bool) -> None:
         ServiceSettingsStore(self._get_store().engine).set_tool_enabled(service, tool, enabled)
+
+    def sign_up_holding(self, site: str) -> SignUp | None:
+        return SignUpStore(self._get_store().engine).holding(site, datetime.now(timezone.utc))
+
+    def sign_ups_asked_today(self) -> int:
+        return SignUpStore(self._get_store().engine).asked_today(datetime.now(timezone.utc))
+
+    def record_sign_up(self, site: str, url: str, what: str, why: str, status: str) -> SignUp:
+        return SignUpStore(self._get_store().engine).record(site, url, what, why, status, datetime.now(timezone.utc))
+
+    def load_sign_ups_context(self) -> str:
+        return SignUpStore(self._get_store().engine).context()
+
+    def finish_sign_up(self, sign_up_id: UUID, status: str, blocked_by: str | None, note: str | None) -> None:
+        SignUpStore(self._get_store().engine).finish(
+            sign_up_id, status, datetime.now(timezone.utc), blocked_by=blocked_by, note=note,
+        )
 
     def load_last_talked_at(self) -> datetime | None:
         return self._get_store().last_message_time(self.conversation_id)

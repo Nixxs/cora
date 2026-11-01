@@ -9,11 +9,13 @@ ROOT = Path(__file__).resolve().parent.parent
 # Clicking and typing in the browser run without asking, so these limits go with them.
 TYPING_RULE = (
     "Fine for searches, dates and filters. Never enter the person's personal details (name, address, "
-    "email, phone, date of birth), payment details or passwords, and never fill in a booking, order, "
-    "payment or sign-up: stop and tell the person what it needs instead."
+    "email, phone, date of birth), payment details or passwords, and never fill in a booking, order or "
+    "payment: stop and tell the person what it needs instead. To sign up somewhere for yourself, use "
+    "request_sign_up, never these tools."
 )
 CLICK_RULE = (
-    "Never click to book, buy, pay, send, post or sign up: stop and tell the person what it would do instead."
+    "Never click to book, buy, pay, send, post or sign up: stop and tell the person what it would do instead "
+    "(for an account of your own, use request_sign_up)."
 )
 
 

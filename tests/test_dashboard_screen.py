@@ -155,6 +155,7 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.ConversationStore") as conversations, \
                 patch("storage.dashboard_snapshot.IdentityStore") as identity, \
                 patch("storage.dashboard_snapshot.TaskStore") as tasks, \
+                patch("storage.dashboard_snapshot.SignUpStore") as sign_ups, \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -166,8 +167,10 @@ class DashboardSnapshotTests(unittest.TestCase):
             conversations.return_value.daily_message_counts.return_value = [3, 0]
             identity.return_value.list_traits.return_value = ["trait"]
             tasks.return_value.open_tasks.return_value = ["task"]
+            sign_ups.return_value.recent.return_value = ["sign-up"]
             snapshot = read_dashboard_snapshot("engine", now)
         self.assertEqual(snapshot.traits, ("trait",))
+        self.assertEqual(snapshot.sign_ups, ("sign-up",))
         self.assertEqual(snapshot.tasks, ("task",))
         conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
         self.assertEqual(snapshot.message_days, (3, 0))

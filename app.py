@@ -61,6 +61,7 @@ from app_areas.email_account import EmailAccountMixin
 from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
 from app_areas.background import BackgroundMixin
+from app_areas.sign_ups import SignUpsMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -88,7 +89,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, BackgroundMixin, App,
+    WebhooksMixin, BackgroundMixin, SignUpsMixin, App,
 ):
 
     live_trace = None
@@ -166,6 +167,7 @@ class CoraApp(
             set_relationship_context=lambda context: setattr(self.live, "relationship_context", context),
             set_people_context=lambda context: setattr(self.live, "people_context", context),
             set_tasks_context=lambda context: setattr(self.live, "tasks_context", context),
+            set_sign_ups_context=lambda context: setattr(self.live, "sign_ups_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             write_activity=self.activity.write,
@@ -182,6 +184,10 @@ class CoraApp(
         self.identity_worker = None
         self.identity_outcome = None
         self.exploration_worker = None
+        # Signing up to a site (one at a time); explorations leave the browser to it.
+        self.sign_up_worker = None
+        # The name she signs up with (Settings > Services > Email).
+        self.sign_up_name = "Cora"
         self.exploration_outcome = None
         self.reach_out_worker = None
         self.closing = False
@@ -250,6 +256,7 @@ class CoraApp(
             find_email_thread=self.find_email_thread, email_signature=lambda: self.email_signature,
             get_calendar=lambda: self.calendar, calendar_changed=lambda: self.refresh_calendar(),
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
+            check_sign_up=self.check_sign_up, begin_sign_up=self.begin_sign_up,
         )
         # Live never sees client-only tools such as pass_on.
         self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)

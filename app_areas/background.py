@@ -133,18 +133,20 @@ class BackgroundMixin:
         self.check_reach_out()
         if not self.can_explore() or (
             self.exploration_worker is not None and not self.exploration_worker.is_finished
-        ):
+        ) or self.signing_up():
             return
         self.exploration_worker = self.explore_interest(self.exploration_browser(asyncio.get_running_loop()))
 
-    def exploration_browser(self, loop) -> BrowserAccess | None:
+    def exploration_browser(self, loop, needs: frozenset[str] = BROWSER_TOOLS, keep_going=None,
+                            title: str = "Exploration") -> BrowserAccess | None:
         """Her own browser for exploring, while the Browser service is connected with the tools it needs.
 
         Its calls come from the exploration thread and run here on the app's loop. She stops
-        browsing (and writes up) as soon as you're back or the app closes.
+        browsing (and writes up) as soon as you're back, a sign-up needs the browser or the app
+        closes. A sign-up borrows it with its own tools, keep_going and Activity title.
         """
         status = self.services.status("playwright")
-        if status.state != CONNECTED or not BROWSER_TOOLS <= {tool.name for tool in status.tools}:
+        if status.state != CONNECTED or not needs <= {tool.name for tool in status.tools}:
             return None
 
         def on_loop(coroutine, timeout):
@@ -156,11 +158,11 @@ class BackgroundMixin:
 
         def on_page(url):
             if not self.closing:
-                self.call_from_thread(self.activity.write, f"Browsing {url}", "Exploration")
+                self.call_from_thread(self.activity.write, f"Browsing {url}", title)
 
         return BrowserAccess(
             call, refuse=lambda url: on_loop(refused_address(url), 30), on_page=on_page,
-            keep_going=lambda: self.can_explore(),
+            keep_going=keep_going or (lambda: self.can_explore() and not self.signing_up()),
         )
 
     def check_reach_out(self) -> None:

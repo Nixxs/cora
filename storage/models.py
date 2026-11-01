@@ -852,3 +852,40 @@ class ServiceToolRecord(Base):
     service: Mapped[str] = mapped_column(Text, primary_key=True)
     tool: Mapped[str] = mapped_column(Text, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+class SignUpRecord(Base):
+    """A site Cora asked to sign up to, for an account of her own, and how it went."""
+
+    __tablename__ = "sign_ups"
+    __table_args__ = (
+        CheckConstraint("btrim(site) <> '' AND char_length(site) <= 253", name="sign_ups_site_check"),
+        CheckConstraint("url LIKE 'http%' AND char_length(url) <= 2000", name="sign_ups_url_check"),
+        CheckConstraint("btrim(what) <> '' AND char_length(what) <= 300", name="sign_ups_what_check"),
+        CheckConstraint("btrim(why) <> '' AND char_length(why) <= 500", name="sign_ups_why_check"),
+        CheckConstraint(
+            "status IN ('declined', 'timed_out', 'signing_up', 'confirm_email', 'done', 'blocked', 'failed')",
+            name="sign_ups_status_check",
+        ),
+        CheckConstraint(
+            "(blocked_by IS NOT NULL) = (status = 'blocked') AND (blocked_by IS NULL OR blocked_by IN "
+            "('captcha', 'phone', 'payment', 'personal_details', 'other'))",
+            name="sign_ups_blocked_by_check",
+        ),
+        CheckConstraint("note IS NULL OR char_length(note) <= 1000", name="sign_ups_note_check"),
+        Index("sign_ups_one_account_per_site_idx", "site", unique=True,
+              postgresql_where=sql_text("status IN ('signing_up', 'confirm_email', 'done')")),
+        Index("sign_ups_asked_at_idx", "asked_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    site: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text)
+    what: Mapped[str] = mapped_column(Text)
+    why: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    blocked_by: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
