@@ -1,3 +1,4 @@
+import app_areas.tasks
 """Emailing from Cora's own address (E2): always approved first, optionally starting or joining a task."""
 
 import json
@@ -201,9 +202,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
     async def test_offered_where_you_talk_with_her_and_to_the_coordinator_only_with_signal_approval(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.assertIn("send_email", [schema["name"] for schema in app.live.tool_schemas()])
-            import app as app_module
-            self.assertNotIn("send_email", app_module.COORDINATOR_TOOLS)
-            self.assertIn("send_email", app_module.COORDINATOR_SEND_TOOLS)
+            self.assertNotIn("send_email", app_areas.tasks.COORDINATOR_TOOLS)
+            self.assertIn("send_email", app_areas.tasks.COORDINATOR_SEND_TOOLS)
 
 
 if __name__ == "__main__":

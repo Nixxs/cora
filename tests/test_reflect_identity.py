@@ -143,7 +143,7 @@ class AppIdentityWorkerTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             outcomes = iter(("Identity reflection stopped (APIConnectionError).",) * 2 + (
                 None, "Reflected on 3 experiences: formed tendency at 0.3: I explain by example."))
-            with patch("app.run_identity_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
+            with patch("app_areas.background.run_identity_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
                 for _ in range(4):
                     app.check_identity()
                     await asyncio.wait_for(app.identity_worker.wait(), 5)

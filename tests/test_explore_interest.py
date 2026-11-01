@@ -11,13 +11,14 @@ from uuid import uuid4
 
 from openai.types.responses import Response
 
-import app as app_module
+import app_areas.background
 from subconscious.interests.exploration_store import Exploration, ExplorationStore, ReachOut, Start, Wander
 from subconscious.interests.explore_interest import (
     EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, WANDER_INSTRUCTIONS, WANDER_SCHEMA, Discovery, explore, explore_next,
     run_exploration_cycle, wander,
 )
 from subconscious.interests.interest_store import Interest
+from cora_clock import frozen_monotonic
 import test_exploration_store as exploration_tests
 import test_interest_store as interest_tests
 import test_keyboard_persistence as keyboard_tests
@@ -347,8 +348,8 @@ class RunExplorationCycleTests(unittest.TestCase):
 class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_explores_only_in_standby_or_after_a_quiet_spell(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            quiet = app.inactivity.last_activity + app_module.EXPLORE_IDLE_SECONDS
-            with patch("app.monotonic", return_value=quiet - 1):
+            quiet = app.inactivity.last_activity + app_areas.background.EXPLORE_IDLE_SECONDS
+            with frozen_monotonic(quiet - 1):
                 self.assertFalse(app.can_explore())  # Not connected and not in standby.
                 app.live.ready = True
                 self.assertFalse(app.can_explore())  # Talking recently.
@@ -358,7 +359,7 @@ class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(app.can_explore())  # Waking up.
                 app.reconnecting = False
                 app.standby = False
-            with patch("app.monotonic", return_value=quiet):
+            with frozen_monotonic(quiet):
                 self.assertTrue(app.can_explore())
                 with patch.object(app, "live_transition_blockers", return_value=["typed submission"]):
                     self.assertFalse(app.can_explore())
@@ -386,7 +387,7 @@ class AppExplorationWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_writes_each_new_outcome_once_off_the_ui_thread(self):
         async with keyboard_tests.running_app() as (app, pilot):
             outcomes = iter(("Not exploring: too soon.",) * 2 + (None, "Explored Sailing: nothing new found."))
-            with patch("app.run_exploration_cycle", side_effect=lambda should_stop, browser: next(outcomes)) as cycle, \
+            with patch("app_areas.background.run_exploration_cycle", side_effect=lambda should_stop, browser: next(outcomes)) as cycle, \
                     patch.object(app, "can_explore", return_value=True):
                 for _ in range(4):
                     app.check_exploration()
@@ -408,7 +409,7 @@ class AppReachOutTests(unittest.IsolatedAsyncioTestCase):
             running = MagicMock(is_finished=False)
             with patch.object(app, "reach_out", return_value=running) as start, \
                     patch.object(app, "can_explore", return_value=False):
-                with patch.object(app_module, "NUDGE_HOURS", range(0, 24)):
+                with patch("app_areas.background.NUDGE_HOURS", range(0, 24)):
                     app.check_exploration()
                     start.assert_not_called()  # neither by voice nor on Signal
                     with patch.object(app, "signal_reaches_person", return_value=True):
@@ -420,14 +421,14 @@ class AppReachOutTests(unittest.IsolatedAsyncioTestCase):
                         app.check_exploration()
                     self.assertEqual(start.call_count, 2)
                 running.is_finished = True
-                with patch.object(app_module, "NUDGE_HOURS", range(0)), \
+                with patch("app_areas.background.NUDGE_HOURS", range(0)), \
                         patch.object(app, "signal_reaches_person", return_value=True):
                     app.check_exploration()  # at night it waits
                 self.assertEqual(start.call_count, 2)
 
     async def run_reach_out(self, app, claimed=REACH_OUT):
-        with patch("app.claim_reach_out_now", return_value=claimed), \
-                patch("app.release_reach_out_now") as release:
+        with patch("app_areas.background.claim_reach_out_now", return_value=claimed), \
+                patch("app_areas.background.release_reach_out_now") as release:
             await asyncio.wait_for(app.reach_out().wait(), 5)
             await app.workers.wait_for_complete()
         return release
@@ -450,8 +451,8 @@ class AppReachOutTests(unittest.IsolatedAsyncioTestCase):
             release = await self.run_reach_out(app)
             release.assert_called_once_with(REACH_OUT)
             app.tell_person = AsyncMock()
-            with patch("app.release_reach_out_now") as release:
-                with patch("app.claim_reach_out_now", return_value=REACH_OUT):
+            with patch("app_areas.background.release_reach_out_now") as release:
+                with patch("app_areas.background.claim_reach_out_now", return_value=REACH_OUT):
                     await asyncio.wait_for(app.reach_out().wait(), 5)
                 app.tell_person.await_args.kwargs["undelivered"]()  # Live couldn't say it and Signal failed
                 await app.workers.wait_for_complete()

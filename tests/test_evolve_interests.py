@@ -178,7 +178,7 @@ class AppInterestWorkerTests(unittest.IsolatedAsyncioTestCase):
     async def test_worker_writes_each_new_outcome_once_off_the_ui_thread(self):
         async with keyboard_tests.running_app() as (app, pilot):
             outcomes = iter(("Interest cycle stopped (APIConnectionError).",) * 2 + (None, "No new memories."))
-            with patch("app.run_interest_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
+            with patch("app_areas.background.run_interest_cycle", side_effect=lambda should_stop: next(outcomes)) as cycle:
                 for _ in range(4):
                     app.check_interests()
                     await asyncio.wait_for(app.interest_worker.wait(), 5)

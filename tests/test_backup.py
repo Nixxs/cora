@@ -109,12 +109,12 @@ class DailyBackupAppTests(unittest.TestCase):
         return CoraApp.__new__(CoraApp)  # back_up_if_due needs no running app
 
     def test_nothing_happens_when_no_backup_is_due(self):
-        with patch("app.daily_backup_due", return_value=False), patch("app.run_backup") as run:
+        with patch("app_areas.background.daily_backup_due", return_value=False), patch("app_areas.background.run_backup") as run:
             self.assertIsNone(self.app().back_up_if_due())
         run.assert_not_called()
 
     def test_a_due_backup_is_the_database_only_and_says_where_it_went(self):
-        with patch("app.daily_backup_due", return_value=True),                 patch("app.run_backup", return_value=([Path("cora-database-x.dump")], Path("E:/Backups"))) as run:
+        with patch("app_areas.background.daily_backup_due", return_value=True),                 patch("app_areas.background.run_backup", return_value=([Path("cora-database-x.dump")], Path("E:/Backups"))) as run:
             message, summary = self.app().back_up_if_due()
         run.assert_called_once_with(include_signal=False)
         self.assertEqual(summary, "Backup saved")
@@ -122,8 +122,8 @@ class DailyBackupAppTests(unittest.TestCase):
         self.assertIn("copied to", message)
 
     def test_failures_say_why_without_anything_private(self):
-        with patch("app.daily_backup_due", return_value=True),                 patch("app.run_backup", side_effect=backup.BackupError("Docker is not installed or not on PATH")):
+        with patch("app_areas.background.daily_backup_due", return_value=True),                 patch("app_areas.background.run_backup", side_effect=backup.BackupError("Docker is not installed or not on PATH")):
             self.assertEqual(self.app().back_up_if_due(),
                              ("Daily backup failed: Docker is not installed or not on PATH", "Backup failed"))
-        with patch("app.daily_backup_due", return_value=True),                 patch("app.run_backup", side_effect=OSError("C:/private/path")):
+        with patch("app_areas.background.daily_backup_due", return_value=True),                 patch("app_areas.background.run_backup", side_effect=OSError("C:/private/path")):
             self.assertEqual(self.app().back_up_if_due(), ("Daily backup failed (OSError).", "Backup failed"))

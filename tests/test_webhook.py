@@ -281,7 +281,7 @@ class WebhookAppWiringTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.ready(app, pilot)
             app.check_task_mail = MagicMock()
-            with patch.object(app_module(), "MAIL_NOTIFY_SECONDS", 0.05):
+            with patch("app_areas.mail.MAIL_NOTIFY_SECONDS", 0.05):
                 for _ in range(3):
                     app.on_mail_webhook()
                 await asyncio.sleep(0.2)
@@ -323,7 +323,7 @@ class WebhookAppWiringTests(unittest.IsolatedAsyncioTestCase):
             listening, detail, subscribed = app.webhook_controls.status() if app.webhook_controls else                 app.make_webhook_controls().status()
             self.assertIn("Calendar: Microsoft tells Cora", detail)
             app.refresh_calendar = MagicMock()
-            with patch.object(app_module(), "MAIL_NOTIFY_SECONDS", 0.05):
+            with patch("app_areas.webhooks.MAIL_NOTIFY_SECONDS", 0.05):
                 for _ in range(3):
                     app.on_calendar_webhook()
                 await asyncio.sleep(0.2)

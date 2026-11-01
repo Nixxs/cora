@@ -552,7 +552,7 @@ service switched on, MCP stays off entirely.
    every time, as below. Each tool
    reaches Cora as `github__<tool>` at her next connect: closing Settings
    reconnects Live once if it is Active and a tool changed. At launch, Live waits
-   up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app.py](app.py)) for
+   up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app_areas/services.py](app_areas/services.py)) for
    services to connect so their tools are in the first session; a slower service
    joins at the next connect.
 
@@ -776,7 +776,7 @@ the way a professional talks with a client:
   or if Live goes to Standby first, it comes on Signal and appears in your
   desktop chat and conversation. It reaches only you, so it needs no approval;
   each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY` in
-  [app.py](app.py)). It's never offered at the desk, in Live or in your own
+  [app_areas/reaching_you.py](app_areas/reaching_you.py)). It's never offered at the desk, in Live or in your own
   chat.
 - **Passing things on to them.** A share check in the background memory pass (after the
   fade check, on the small-jobs model; migration 0024) asks of each of *your*
@@ -1382,7 +1382,8 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 
 | Location | Responsibility |
 | --- | --- |
-| [app.py](app.py) | Application orchestration, background work, and shutdown. |
+| [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, and background jobs. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
@@ -1882,7 +1883,7 @@ features it helps check, and package last.
        are saved on `impression_updates` (migration 0027) with when they were
        reported, so each goes once; one not yet delivered is retried each
        hourly round. Reaching the person goes through `tell_person` in
-       [app.py](app.py): a message queued with the attention manager when Live
+       [app_areas/reaching_you.py](app_areas/reaching_you.py): a message queued with the attention manager when Live
        is Active, withdrawn and sent on Signal if Live goes to Standby first,
        or straight on Signal otherwise. Tasks (T2) will use the same route.
 
@@ -1936,7 +1937,7 @@ features it helps check, and package last.
   - *Coordinator:* a report starts a turn in the person's context with the whole task,
     which decides the next step (web search for instructors, draft the email,
     add them as a party) or tells the person. Only it starts new contact.
-    Built in T2b (`coordinate_task` in [app.py](app.py)): the turn sees the
+    Built in T2b (`coordinate_task` in [app_areas/tasks.py](app_areas/tasks.py)): the turn sees the
     task's goal, every party's brief and word, and its latest steps, and may
     search the web and memory and use `close_task`. A report never
     closes a task by itself. Once the person is told, the task waits on them
@@ -1964,10 +1965,10 @@ features it helps check, and package last.
     threads, nudges and bounces, as with Signal (E1 built: [mail/](mail/),
     `check_email`; E2 built: `send_email` in [tools/send_email.py](tools/send_email.py),
     each email approved in full, and email parties in migration 0030 with their
-    name and thread; E3a built: the mail check in `read_task_mail` ([app.py](app.py)),
+    name and thread; E3a built: the mail check in `read_task_mail` ([app_areas/mail.py](app_areas/mail.py)),
     `Mailbox.thread` and `Mailbox.reply`, each thread read up to its latest message
     in `last_heard_at`; E4 built: `nudge_email_party` and `read_bounces` in
-    [app.py](app.py), `Mailbox.bounces` matching failure reports by subject, and
+    [app_areas/tasks.py](app_areas/tasks.py) and [app_areas/mail.py](app_areas/mail.py), `Mailbox.bounces` matching failure reports by subject, and
     `quiet_email_parties` / `email_nudge_due` in the task store). Email strangers (such as an instructor) are
     only allowed within a task: their mail is untrusted data, can't start
     anything new, gets only the brief's scope, and once the task closes their
@@ -1998,7 +1999,7 @@ features it helps check, and package last.
     saved in their one conversation, so the other side knows. Everything
     passed on from a contact's chat (`pass_on`, with or without a task) goes
     the same way, replacing `tell_nick`'s always-Signal send (built: `tell_person`
-    in [app.py](app.py)).
+    in [app_areas/reaching_you.py](app_areas/reaching_you.py)).
   - *Steps:* T1 tasks and Signal parties (built: `tasks`, `task_parties` and
     `task_steps` in migration 0028 and [storage/task_store.py](storage/task_store.py),
     the optional `task` on `send_signal_message`, the brief in that contact's

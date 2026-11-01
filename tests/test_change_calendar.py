@@ -1,3 +1,4 @@
+import app_areas.tasks
 """Changing her calendar (C2): each event made, changed or cancelled is approved first, showing who's told."""
 
 from datetime import datetime, timedelta, timezone
@@ -263,9 +264,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             names = [schema["name"] for schema in app.live.tool_schemas()]
             for name in ("create_event", "update_event", "cancel_event", "forward_event"):
                 self.assertIn(name, names)
-            import app as app_module
             self.assertFalse({"create_event", "update_event", "cancel_event"}
-                             & (app_module.COORDINATOR_TOOLS | app_module.COORDINATOR_SEND_TOOLS))
+                             & (app_areas.tasks.COORDINATOR_TOOLS | app_areas.tasks.COORDINATOR_SEND_TOOLS))
 
 
 if __name__ == "__main__":

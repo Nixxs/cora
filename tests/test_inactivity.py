@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from inactivity import InactivityController, read_idle_timeout
 from devices.speaker import Speaker
+from cora_clock import frozen_monotonic
 from test_keyboard_persistence import running_app
 from test_reconnect import backend_event, restarting_app
 from ui.composer import ChatComposer
@@ -20,7 +21,7 @@ async def idle_app():
             app.idle_standby_timer.stop()
             app.live.ready = True
             app.connection_worker = None
-            with patch("app.monotonic", return_value=1000) as clock:
+            with frozen_monotonic(1000) as clock:
                 yield app, pilot, clock
 
 
@@ -382,7 +383,7 @@ class InactivityTests(unittest.IsolatedAsyncioTestCase):
                 await app.on_unmount()
                 self.assertEqual(stop.call_count, 2)
 
-    @patch("app.monotonic", return_value=1000)
+    @frozen_monotonic(1000)
     async def test_automatic_close_preserves_state_and_manual_resume_gets_full_grace(self, clock):
         with patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": "300"}):
             async with restarting_app() as (app, pilot, connections, speakers, started):
