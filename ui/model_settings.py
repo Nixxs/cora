@@ -131,8 +131,9 @@ EMAIL_SIGN_UP_HELP = (
     "It's kept in the system credential store and never shown to the model."
 )
 EMAIL_SIGN_UP_NAME_HELP = (
-    "The name she signs up with, such as a surname she chose (Cora Vale). Where a form asks for first "
-    "and last names, she splits it. Leave empty for just Cora."
+    "Her full name, such as a surname she chose (Cora Vale): she signs up with it, and introduces herself "
+    "with it as your PA when she writes to people for you. Where a form asks for first and last names, "
+    "she splits it. Leave empty for just Cora."
 )
 EMAIL_TENANT_HELP = (
     "For a work or school account (Microsoft 365, outlook.office.com): her organisation's domain, "
@@ -351,7 +352,7 @@ class ModelSettingsScreen(ModalScreen):
                 yield Button("Forget", id="email-forget-sign-up-password")
             yield Label(EMAIL_SIGN_UP_NAME_HELP, classes="model-settings-label service-help")
             yield Input(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora")
-            yield Button("Save sign-up name", id="email-save-sign-up-name")
+            yield Button("Save her name", id="email-save-sign-up-name")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):

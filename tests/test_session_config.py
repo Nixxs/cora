@@ -39,7 +39,8 @@ class SessionConfigTests(unittest.TestCase):
             self.assertIn("unless the person asks how memory works", instructions)
 
     def test_default_settings_and_prompts(self):
-        config = build_session_config([])
+        # Without her name, so only the fixed prompts; the introduction rule is tested with sign-ups.
+        config = build_session_config([], own_name="")
         self.assertEqual(config["model"], "gpt-live-1")
         self.assertEqual(config["instructions"], LIVE_INSTRUCTIONS)
         self.assertEqual(config["delegation"]["type"], "responses")

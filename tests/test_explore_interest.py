@@ -34,9 +34,9 @@ FINDING = {"finding": "Carburettors were tuned by ear and feel.",
            "reaction": "I love that mechanics trusted their ears; it feels oddly musical.",
            "pull": "some", "next_questions": ["Why did fuel injection replace them?"],
            "tangents": [{"title": "Tuning forks and piano tuners", "why": "Tuning by ear sounds like music."}],
-           "reach_out": None, "sources": [SEARCHED]}
+           "reach_out": None, "sign_up": None, "sources": [SEARCHED]}
 NOTHING = {"finding": None, "reaction": None, "pull": "none", "next_questions": [], "tangents": [],
-           "reach_out": None, "sources": []}
+           "reach_out": None, "sign_up": None, "sources": []}
 
 
 def explore_response(payload, *, status="completed", refusal=False):
@@ -137,6 +137,10 @@ class ExploreTests(unittest.TestCase):
             ({**FINDING, "reach_out": {"message": "Look!"}}, {}),
             ({**FINDING, "reach_out": {"message": " ", "why": "Thrilled"}}, {}),
             ({**FINDING, "reach_out": {"message": "x" * 601, "why": "Thrilled"}}, {}),
+            ({key: value for key, value in FINDING.items() if key != "sign_up"}, {}),
+            ({**FINDING, "sign_up": {"site_url": "https://forum.example.com"}}, {}),
+            ({**FINDING, "sign_up": {"site_url": "forum.example.com", "what": "Forum", "why": "Owls"}}, {}),
+            ({**FINDING, "sign_up": {"site_url": "https://forum.example.com", "what": " ", "why": "Owls"}}, {}),
             ({**FINDING, "topic": "Not for an interest"}, {}),
         ):
             with self.subTest(payload=payload, changes=changes):
@@ -149,6 +153,15 @@ class ExploreTests(unittest.TestCase):
         self.assertEqual(explore(self.client, "m", INTEREST, []).reach_out,
                          ("Mechanics tuned engines by ear!", "Delighted"))
         for phrase in ("reach_out: almost always null", "human perspective", "never a task for them"):
+            self.assertIn(phrase, EXPLORE_INSTRUCTIONS)
+            self.assertIn(phrase, WANDER_INSTRUCTIONS)
+
+    def test_a_site_she_would_like_an_account_on_is_kept_cleaned(self):
+        self.set_output({**FINDING, "sign_up": {"site_url": " https://forum.example.com/join ",
+                                                "what": " A carburettor forum ", "why": "To ask old mechanics"}})
+        self.assertEqual(explore(self.client, "m", INTEREST, []).sign_up,
+                         ("https://forum.example.com/join", "A carburettor forum", "To ask old mechanics"))
+        for phrase in ("sign_up: almost always null", "The person is asked first", "nothing paid"):
             self.assertIn(phrase, EXPLORE_INSTRUCTIONS)
             self.assertIn(phrase, WANDER_INSTRUCTIONS)
 
@@ -231,7 +244,7 @@ class ExploreNextTests(unittest.TestCase):
             self.attempt.id, FINDING["finding"], tuple(FINDING["next_questions"]), (SEARCHED,), now=ENDED,
             reaction=FINDING["reaction"],
             tangents=(("Tuning forks and piano tuners", "Tuning by ear sounds like music."),), pull="some",
-            topic=None, reach_out=None,
+            topic=None, reach_out=None, sign_up=None,
         )
         self.store.fail.assert_not_called()
         # Her pull goes to the interest she explored, once the finding is saved.
@@ -256,16 +269,20 @@ class ExploreNextTests(unittest.TestCase):
     def test_a_wander_saves_its_topic_and_strengthens_no_interest(self):
         attempt = Exploration(uuid4(), None, "running", NOW, None, None, (), (), kind="wander")
         self.store.start_next.return_value = Start("started", attempt, wander=RANDOM)
+        wish = ("https://keepers.example.org/join", "A keepers' society", "To read their logbooks")
         self.client.responses.create.return_value = explore_response(
-            {**WANDERED, "reach_out": {"message": "Keepers!", "why": "Thrilled"}},
+            {**WANDERED, "reach_out": {"message": "Keepers!", "why": "Thrilled"},
+             "sign_up": {"site_url": wish[0], "what": wish[1], "why": wish[2]}},
         )
         self.store.finish.return_value = replace(earlier(), interest_id=None, kind="wander",
-                                                 topic="Lighthouse keepers", reach_out=("Keepers!", "Thrilled"))
+                                                 topic="Lighthouse keepers", reach_out=("Keepers!", "Thrilled"),
+                                                 sign_up=wish)
         outcome = self.explore_next(now=NOW, clock=lambda: ENDED)
         self.assertEqual(outcome, "Wandered into Lighthouse keepers: saved a finding "
-                                  "(1 sources, wants to tell you about it).")
+                                  "(1 sources, wants to tell you about it, would like to sign up to a site).")
         self.assertEqual(self.store.finish.call_args.kwargs["topic"], "Lighthouse keepers")
         self.assertEqual(self.store.finish.call_args.kwargs["reach_out"], ("Keepers!", "Thrilled"))
+        self.assertEqual(self.store.finish.call_args.kwargs["sign_up"], wish)
         self.store.list_recent.assert_not_called()
         self.interests.pull.assert_not_called()
         self.client.responses.create.return_value = explore_response({**NOTHING, "topic": ""})

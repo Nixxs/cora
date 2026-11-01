@@ -351,11 +351,13 @@ class Bounce:
 
 def signed(text: str, signature: str, name: str = "Cora") -> str:
     """Her message with the signature below it. When the signature starts with her name, a last line
-    that is only her name is dropped, so she isn't signed twice."""
+    that is only her name (Cora, or her full name, such as Cora Vale) is dropped, so she isn't signed twice."""
     if not signature:
         return text
     lines = text.rstrip().split("\n")
-    if (len(lines) > 1 and lines[-1].strip(" -–—").lower() == name.lower()
+    last = lines[-1].strip(" -–—").lower()
+    first = signature.strip().split("\n", 1)[0].strip().lower()
+    if (len(lines) > 1 and last.startswith(name.lower()) and first.startswith(last)
             and signature.lower().startswith(name.lower())):
         lines.pop()
     return "\n".join(lines).rstrip() + "\n\n" + signature

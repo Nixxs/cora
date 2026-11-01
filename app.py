@@ -169,6 +169,7 @@ class CoraApp(
             set_tasks_context=lambda context: setattr(self.live, "tasks_context", context),
             set_sign_ups_context=lambda context: setattr(self.live, "sign_ups_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
+            set_own_name=lambda name: setattr(self.live, "own_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
@@ -186,8 +187,8 @@ class CoraApp(
         self.exploration_worker = None
         # Signing up to a site (one at a time); explorations leave the browser to it.
         self.sign_up_worker = None
-        # The name she signs up with (Settings > Services > Email).
-        self.sign_up_name = "Cora"
+        # Taking a sign-up she'd like, from her exploring, to the person.
+        self.sign_up_wish_worker = None
         self.exploration_outcome = None
         self.reach_out_worker = None
         self.closing = False

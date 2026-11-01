@@ -37,7 +37,7 @@ class SettingsMixin:
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
             self.email_signature = await asyncio.to_thread(self.email_account.signature)
             has_sign_up_password = bool(await asyncio.to_thread(passwords.sign_up_password))
-            self.sign_up_name = await asyncio.to_thread(passwords.sign_up_name)
+            self.live.own_name = await asyncio.to_thread(passwords.sign_up_name)
         except Exception as error:
             self.activity.write(f"Model settings load failed ({type(error).__name__}).", "Model settings error")
             self.notify("Could not load model settings. Check Activity.", severity="error")
@@ -83,7 +83,7 @@ class SettingsMixin:
             person_address=self.email_person, save_person=self.save_email_person,
             signature=self.email_signature, save_signature=self.save_email_signature,
             has_sign_up_password=has_sign_up_password, save_sign_up_password=self.save_sign_up_password,
-            sign_up_name=self.sign_up_name, save_sign_up_name=self.save_sign_up_name,
+            sign_up_name=self.live.own_name, save_sign_up_name=self.save_sign_up_name,
         )
         return self.email_controls
 

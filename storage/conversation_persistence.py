@@ -16,7 +16,7 @@ class ConversationPersistence:
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
                  set_self_image_context=lambda context: None, set_people_context=lambda context: None,
                  set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
-                 set_person_name, set_delegation_model, write_activity, notify):
+                 set_own_name=lambda name: None, set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
         self.is_closing = is_closing
@@ -29,6 +29,7 @@ class ConversationPersistence:
         self.set_sign_ups_context = set_sign_ups_context
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
+        self.set_own_name = set_own_name
         self.set_delegation_model = set_delegation_model
         self.write_activity = write_activity
         self.notify = notify
@@ -108,6 +109,17 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_person_name(name)
+
+        # Her own full name, as she introduces herself to others (Settings > Services > Email).
+        if self.is_closing():
+            return
+        try:
+            own_name = await asyncio.to_thread(self.storage.load_own_name)
+        except Exception as error:
+            self.write_activity(f"Her name didn't load ({type(error).__name__}); she's just Cora for now.", "Name")
+        else:
+            if not self.is_closing():
+                self.set_own_name(own_name)
 
         if self.is_closing():
             return

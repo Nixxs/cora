@@ -253,7 +253,8 @@ class TasksMixin:
                 content=[{"type": "input_text", "text": NUDGE_NOTE.format(task_id=party.task_id)}], history=history,
                 sections=await self.client_sections(client), model=self.live.delegation_model,
                 route=BackendRoute(excluded=frozenset(self.tools.names())),
-                extra_instructions=client_chat_instructions(client.name, self.live.person_name),
+                extra_instructions=client_chat_instructions(client.name, self.live.person_name,
+                                                            self.live.own_name),
             )
             if not text or self.closing:
                 return
@@ -289,7 +290,8 @@ class TasksMixin:
                 history=[email_history_item(message, own) for message in messages if not is_bounce(message)],
                 sections=await self.email_party_sections(thread), model=self.live.delegation_model,
                 route=BackendRoute(excluded=frozenset(self.tools.names())),
-                extra_instructions=email_party_instructions(who, thread.address, self.live.person_name),
+                extra_instructions=email_party_instructions(who, thread.address, self.live.person_name,
+                                                            self.live.own_name),
             )).strip()
             if not text or NO_REPLY in text or self.closing:
                 return

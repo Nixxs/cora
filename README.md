@@ -1029,8 +1029,20 @@ which is in `requirements.txt`. Approvals still show the Markdown she wrote.
 Microsoft Graph, so paste a plain-text copy under Settings > Services > **Email**
 (**Save signature**). It goes below each new email she starts, and you see it in
 the approval. Replies in a thread go without it, as Outlook's "new messages only"
-setting would. If the signature starts with her name, her own "Cora" sign-off is
-dropped so she isn't signed twice.
+setting would. If the signature starts with her name, her own sign-off ("Cora", or
+her full name such as "Cora Vale") is dropped so she isn't signed twice.
+
+**How she introduces herself.** When she writes to anyone for you (an email, a
+Signal message to a contact, a contact's chat or a task's email thread), she
+writes as your PA would (`introduction_rule` in [session_config.py](session_config.py)).
+To someone who doesn't know you, such as a business, she goes straight to the
+enquiry, says she's a PA arranging it for someone only where that helps ("for my
+employer's partner"), and uses names only when the reader needs them. To someone
+who knows you, she says she's your PA. She signs off with her first name and
+lets your signature add the rest (such as "PA | Intelligis.io"); her full name
+from Settings is there for when one is needed. Being an AI isn't the headline, so
+she doesn't volunteer it, but she never denies it: asked directly whether she's
+an AI or a person, she says plainly that she's an AI.
 
 **Emailing Cora yourself.** Enter your own address under Settings > Services >
 **Email** (**Save your address**). Email from it then works like your Signal chat:
@@ -1088,10 +1100,11 @@ its own (at least 12 characters), not her Microsoft password. One password means
 you can sign in as her anywhere, or finish a sign-up she couldn't, without
 looking anything up, and there's nothing per site to manage.
 
-**Her name.** She signs up as just "Cora" unless you give the name she chose
-under the same section (**Save sign-up name**), such as "Cora Vale". It's a
-setting rather than code, since it's hers and may change. Where a form asks for
-first and last names, she splits it.
+**Her name.** She's just "Cora" unless you give the name she chose under the
+same section (**Save her name**), such as "Cora Vale". It's a setting rather than
+code, since it's hers and may change. She signs up with it (where a form asks for
+first and last names, she splits it), and introduces herself with it when she
+writes to people for you; see [Cora's email](#coras-email).
 
 **What holds whatever she decides** (in code, [sign_ups/session.py](sign_ups/session.py)):
 the session stays on the approved site (a page or a click that leads anywhere
@@ -1126,8 +1139,39 @@ the tasks, leaving out ones you declined; Activity logs each step under
 **Sign-up**. She knows them too: the same list reaches her as its own section
 (her sign-ups, not tasks) at each voice connect and in your Signal, email and
 desk chats, never a contact's, so she can say which accounts she has and which
-are stuck. Opening the confirmation email a site sends is next (4b); for now a
-site that asks for one is recorded as "confirm email".
+are stuck.
+
+**Mail from the site** ([sign_ups/mail.py](sign_ups/mail.py)). Before her new
+mail is sorted, mail from the site of a sign-up waiting for its confirmation, or
+blocked, in the last 30 days, settles it. Only mail Microsoft verified counts as
+the site's: DMARC passing for the From domain, which must belong to that site
+(`news@mail.cockburn.wa.gov.au` is `cockburn.wa.gov.au`'s). If it has a
+confirmation link, she opens it in her guarded browser (the same address check
+as all her browsing, just opening it, nothing clicked or typed, and the tab is
+closed after), the sign-up is done, and that email is marked read rather than
+sorted. The link is picked in code, never by a model reading the email: one whose
+address says confirm, verify, activate or opt-in, or failing that whose words just
+before it do, and never an unsubscribe, preferences or help link. A blocked
+sign-up is done as soon as any verified mail from its site arrives, since that
+means you finished it for her; that mail is sorted as usual. A confirmation she
+can't open yet (her browser busy signing up or exploring) waits, unread, for the
+next mail check; with the browser off it's sorted like other mail and the
+sign-up keeps waiting. A confirmation email that hasn't come two days after she
+signed up is mentioned to you once (the hourly round). A site that sends its mail
+through a mailing service (its From address on the service's domain) can't be
+matched to the site, so its sign-up stays as it was.
+
+**Sites she comes across.** An exploration or wander can, rarely, carry a sign-up
+wish: a free site where an account of her own would let her keep following
+something (a forum, a community, a newsletter), what it is and why she wants it.
+It's taken to you in the daytime (9:00 to 19:00) while fresh (two days), at most
+one a day, only when you can answer (Live Active, or Signal linked), and never
+while she's signing up. You're asked the same way as background approvals: YES on
+Signal when it's linked, otherwise the pop-up, with the site, what, why and the
+interest or wander it came from. A yes goes through the usual sign-up with all
+its checks; a wish that can't be asked (she has an account there, say) is set
+aside with a note in Activity. Each wish is asked about once, whatever the
+answer. Saved with the exploration (migration 0038).
 
 ### Cora's calendar
 
@@ -1289,7 +1333,7 @@ looking into something else). Both steps below are background processes with the
 own API calls. The prompts ask for breadth (nature, history, places, people, art,
 food, craft, science…): being an AI is not a lens for everything, and topics are
 not to be recast as lessons for AI or assistants. (Run `python migrate.py` once
-after updating, for migrations 0034 to 0037.)
+after updating, for migrations 0034 to 0038.)
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
    cycle is due. A cycle reads new memories from the person's messages that have finished
@@ -1355,6 +1399,10 @@ after updating, for migrations 0034 to 0037.)
    Signal isn't linked and Live isn't Active it waits, and if it goes stale the
    finding can still come up in conversation as usual (step 5). One she has sent
    isn't raised again in conversation. Activity logs each under **Reach out**.
+
+   **Signing up.** Just as rarely, an exploration can carry a sign-up wish: a free
+   site where an account of her own would let her keep following it. It's taken to
+   you once, in the daytime; see [Signing up to sites](#signing-up-to-sites).
 
    **Browsing.** While the Browser service is connected (see
    [Connecting services](#connecting-services)), up to two attempts a day browse
@@ -1592,8 +1640,9 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
   off switch in Settings), and see pictures she picks from the web.
 - Signing up to sites for accounts of her own, with your yes each time: one
   sign-up password, a browser session held to that site and her own details, and
-  asking you to finish it when a captcha or phone check stops her. Next (4b):
-  opening confirmation emails, and sign-up wishes from her exploring.
+  asking you to finish it when a captcha or phone check stops her; confirmation
+  emails opened from her inbox, and sites she'd like an account on, from her
+  exploring.
 
 ### Next priorities
 

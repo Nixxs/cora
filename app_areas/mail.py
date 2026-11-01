@@ -254,6 +254,11 @@ class MailMixin:
                and mail.sender_address not in (own, self.email_person)][:TRIAGE_MAX]
         if not new:
             return
+        # A site's mail settles her sign-up there first; a confirmation she opened isn't sorted.
+        kept = await self.settle_sign_ups_by_mail(new)
+        new = [mail for mail in new if mail.id not in kept]
+        if not new:
+            return
         try:
             models = await self.conversation_persistence.call_database(self.persistence.load_models)
             sorted_mail = await asyncio.to_thread(triage_mail, new, model=models["utility"])
@@ -468,7 +473,8 @@ class MailMixin:
                 excluded=frozenset(self.tools.names()) - {"pass_on"},
                 email_party=(thread.party_id, thread.task_id, who),
             ),
-            extra_instructions=email_party_instructions(who, thread.address, self.live.person_name),
+            extra_instructions=email_party_instructions(who, thread.address, self.live.person_name,
+                                                        self.live.own_name),
         )
 
     async def find_email_thread(self, task_id, address: str) -> str | None:

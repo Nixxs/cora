@@ -72,6 +72,12 @@ REACH_OUT_DAILY_LIMIT = 1
 REACH_OUT_FRESH_FOR = timedelta(days=2)
 # Of the daily attempts, at most this many browse real pages; the rest use web search.
 BROWSE_DAILY_LIMIT = 2
+# A site she'd like an account on, taken to the person (who says yes or no) while fresh, once a day at most.
+SIGN_UP_URL_MAX_CHARS = 2000
+SIGN_UP_WHAT_MAX_CHARS = 300
+SIGN_UP_WHY_MAX_CHARS = 500
+SIGN_UP_WISH_DAILY_LIMIT = 1
+SIGN_UP_WISH_FRESH_FOR = timedelta(days=2)
 
 
 def mention_limits(warmth: float) -> tuple[timedelta, int]:
@@ -102,6 +108,7 @@ class Exploration:
     topic: str | None = None  # what a wander was about
     reach_out: tuple[str, str] | None = None  # (message, why): for the person, if it excited her
     browsed: bool = False  # with her own browser rather than web search
+    sign_up: tuple[str, str, str] | None = None  # (url, what, why): a site she'd like an account on
 
 
 @dataclass(frozen=True)
@@ -121,6 +128,15 @@ class ReachOut:
     message: str
     why: str
     reached_out_at: datetime
+
+
+@dataclass(frozen=True)
+class SignUpWish:
+    exploration_id: UUID
+    topic: str  # the interest or wander it came from
+    url: str
+    what: str
+    why: str
 
 
 @dataclass(frozen=True)
@@ -147,6 +163,7 @@ def snapshot(record: InterestExplorationRecord) -> Exploration:
         tuple((tangent["title"], tangent["why"]) for tangent in record.tangents or ()), record.pull,
         record.kind or "interest", record.topic,
         None if record.reach_out is None else (record.reach_out, record.reach_out_why), bool(record.browsed),
+        None if record.sign_up_url is None else (record.sign_up_url, record.sign_up_what, record.sign_up_why),
     )
 
 
@@ -167,6 +184,15 @@ def clean_tangents(tangents: Iterable[tuple[str, str]]) -> list[dict]:
 def clean_reach_out(reach_out: tuple[str, str]) -> tuple[str, str]:
     message, why = reach_out
     return clean_text(message, "reach out", REACH_OUT_MAX_CHARS), clean_text(why, "reach out why", REACTION_MAX_CHARS)
+
+
+def clean_sign_up(sign_up: tuple[str, str, str]) -> tuple[str, str, str]:
+    url, what, why = sign_up
+    url = clean_text(url, "sign-up address", SIGN_UP_URL_MAX_CHARS)
+    if urlsplit(url).scheme not in ("http", "https") or not urlsplit(url).hostname:
+        raise ValueError("A sign-up needs a web address")
+    return (url, clean_text(what, "sign-up what", SIGN_UP_WHAT_MAX_CHARS),
+            clean_text(why, "sign-up why", SIGN_UP_WHY_MAX_CHARS))
 
 
 def clean_questions(questions: Iterable[str]) -> list[str]:
@@ -319,6 +345,7 @@ class ExplorationStore:
         self, exploration_id: UUID, finding: str, next_questions: Iterable[str], sources: Iterable[str],
         *, now: datetime, reaction: str | None = None, tangents: Iterable[tuple[str, str]] = (),
         pull: str | None = None, topic: str | None = None, reach_out: tuple[str, str] | None = None,
+        sign_up: tuple[str, str, str] | None = None,
     ) -> Exploration | None:
         """Record what was found; None if the attempt is no longer running.
 
@@ -336,6 +363,8 @@ class ExplorationStore:
             topic = clean_text(topic, "topic", TITLE_MAX_CHARS)
         if reach_out is not None:
             reach_out = clean_reach_out(reach_out)
+        if sign_up is not None:
+            sign_up = clean_sign_up(sign_up)
         validate_now(now)
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             record = self._running(session, exploration_id)
@@ -349,6 +378,7 @@ class ExplorationStore:
             record.next_questions, record.sources = next_questions, sources
             record.tangents, record.pull = tangents, pull
             record.reach_out, record.reach_out_why = reach_out or (None, None)
+            record.sign_up_url, record.sign_up_what, record.sign_up_why = sign_up or (None, None, None)
             record.finished_at = max(now, record.started_at)
             return snapshot(record)
 
@@ -442,6 +472,34 @@ class ExplorationStore:
             ).values(reached_out_at=None).execution_options(synchronize_session=False))
             return result.rowcount == 1
 
+    def claim_sign_up_wish(self, *, now: datetime) -> SignUpWish | None:
+        """Mark her newest fresh, unasked sign-up wish as taken to the person, if the daily limit allows.
+
+        Claimed once, whatever comes of it: the person's yes or no decides, and a wish that can't be
+        asked (she has an account there already, say) isn't asked again.
+        """
+        validate_now(now)
+        attempts = InterestExplorationRecord
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            session.execute(text("LOCK TABLE public.interest_explorations IN SHARE ROW EXCLUSIVE MODE"))
+            recent = session.scalars(select(attempts.sign_up_asked_at).where(
+                attempts.sign_up_asked_at > now - timedelta(hours=24),
+            )).all()
+            if len(recent) >= SIGN_UP_WISH_DAILY_LIMIT:
+                return None
+            row = session.execute(select(attempts, InterestRecord.title).outerjoin(
+                InterestRecord, InterestRecord.id == attempts.interest_id,
+            ).where(
+                attempts.status == "found", attempts.sign_up_url.is_not(None), attempts.sign_up_asked_at.is_(None),
+                attempts.finished_at > now - SIGN_UP_WISH_FRESH_FOR,
+            ).order_by(attempts.finished_at.desc(), attempts.id.desc()).limit(1)).first()
+            if row is None:
+                return None
+            record, title = row
+            record.sign_up_asked_at = now
+            return SignUpWish(record.id, title or record.topic, record.sign_up_url, record.sign_up_what,
+                              record.sign_up_why)
+
     def list_recent(self, limit: int = 10, *, interest_id: UUID | None = None) -> list[Exploration]:
         """Newest attempts first, optionally for one interest."""
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= LIST_LIMIT:
@@ -497,5 +555,13 @@ def release_reach_out_now(reach_out: ReachOut) -> bool:
     engine = build_engine()
     try:
         return ExplorationStore(engine).release_reach_out(reach_out)
+    finally:
+        engine.dispose()
+
+
+def claim_sign_up_wish_now() -> SignUpWish | None:
+    engine = build_engine()
+    try:
+        return ExplorationStore(engine).claim_sign_up_wish(now=datetime.now(timezone.utc))
     finally:
         engine.dispose()

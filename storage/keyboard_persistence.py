@@ -17,6 +17,7 @@ from .signal_settings_store import SignalSettings, SignalSettingsStore
 from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
 from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
+from sign_ups.password import sign_up_name
 from sign_ups.store import SignUp, SignUpStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
@@ -134,6 +135,10 @@ class KeyboardPersistence:
     def load_relationship_values(self) -> RelationshipValues | None:
         return RelationshipStore(self._get_store().engine).current_values(now=datetime.now(timezone.utc))
 
+    def load_own_name(self) -> str:
+        """Her full name from the credential store (not the database), as she introduces herself."""
+        return sign_up_name()
+
     def load_person_name(self) -> str | None:
         person = PeopleStore(self._get_store().engine).current_person()
         return person.display_name if person is not None else None
@@ -219,6 +224,15 @@ class KeyboardPersistence:
 
     def record_sign_up(self, site: str, url: str, what: str, why: str, status: str) -> SignUp:
         return SignUpStore(self._get_store().engine).record(site, url, what, why, status, datetime.now(timezone.utc))
+
+    def sign_ups_awaiting_mail(self) -> list[SignUp]:
+        return SignUpStore(self._get_store().engine).awaiting_mail(datetime.now(timezone.utc))
+
+    def sign_up_settled_by_mail(self, sign_up_id: UUID, note: str) -> bool:
+        return SignUpStore(self._get_store().engine).settled_by_mail(sign_up_id, datetime.now(timezone.utc), note)
+
+    def claim_stalled_sign_ups(self) -> list[SignUp]:
+        return SignUpStore(self._get_store().engine).claim_stalled(datetime.now(timezone.utc))
 
     def load_sign_ups_context(self) -> str:
         return SignUpStore(self._get_store().engine).context()

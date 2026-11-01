@@ -68,6 +68,14 @@ class SignatureTests(unittest.TestCase):
         self.assertEqual(signed("Cora", SIGNATURE), "Cora\n\n" + SIGNATURE)
         self.assertEqual(signed("Thanks,\nCora", ""), "Thanks,\nCora")
 
+    def test_her_full_name_isnt_signed_twice_either(self):
+        signature = "Cora Vale\nPA to Nick | Intelligis.io"
+        for sign_off in ("Cora Vale", "Cora", "— Cora Vale"):
+            self.assertEqual(signed(f"Thanks!\n\n{sign_off}", signature), "Thanks!\n\n" + signature)
+        # A different sign-off, or a signature with another name first, is left alone.
+        self.assertEqual(signed("Thanks!\n\nCora Vale", "Intelligis.io"), "Thanks!\n\nCora Vale\n\nIntelligis.io")
+        self.assertEqual(signed("Thanks!\n\nCora Vale", "Cora\nPA"), "Thanks!\n\nCora Vale\n\nCora\nPA")
+
     def test_it_is_saved_tidied_checked_and_forgotten(self):
         saved = {}
         with patch.object(account.keyring, "set_password", lambda s, a, v: saved.update({a: v})), \

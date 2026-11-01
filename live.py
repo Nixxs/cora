@@ -47,6 +47,8 @@ class CoraLive:
         self.tasks_context = ""
         # Her sign-ups and how each stands.
         self.sign_ups_context = ""
+        # Her full name, as she introduces herself to others (Settings).
+        self.own_name = "Cora"
         # Her coming week, kept fresh by the app from her calendar.
         self.calendar_context = ""
         self.relationship_context = ""
@@ -86,7 +88,7 @@ class CoraLive:
                         self_image_context=self.self_image_context,
                         relationship_context=self.relationship_context, people_context=self.people_context,
                         tasks_context=self.tasks_context, calendar_context=self.calendar_context,
-                        sign_ups_context=self.sign_ups_context,
+                        sign_ups_context=self.sign_ups_context, own_name=self.own_name,
                     )
                     config = config_from_sections(
                         self.tool_schemas(), sections, self.conversation_history, self.delegation_model,

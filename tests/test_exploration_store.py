@@ -13,8 +13,8 @@ from sqlalchemy.orm import Session
 
 from storage.models import InterestExplorationRecord
 from subconscious.interests.exploration_store import (
-    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, REACH_OUT_FRESH_FOR, WANDER_AREAS, ExplorationStore,
-    ReachOut, mention_limits,
+    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, REACH_OUT_FRESH_FOR, SIGN_UP_WISH_FRESH_FOR, WANDER_AREAS,
+    ExplorationStore, ReachOut, SignUpWish, mention_limits,
 )
 from subconscious.interests.interest_store import WANDERING, Spark
 from subconscious.interests.interest_strength import HALF_LIFE
@@ -401,6 +401,28 @@ class WanderDatabaseTests(unittest.TestCase):
         again = self.explorations.claim_reach_out(now=NOW + timedelta(minutes=1))
         self.assertEqual(again.exploration_id, found.id)
         self.assertFalse(self.explorations.release_reach_out(claimed))  # an old claim never undoes a newer one
+
+    def test_a_site_she_would_like_is_taken_to_the_person_once_a_day_while_fresh(self):
+        for title in ("Second", "Third"):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        older = self.finish_with("Forks!", NOW, sign_up=("https://forks.example.com", "Forks club", "To chat"))
+        self.assertEqual(older.sign_up, ("https://forks.example.com", "Forks club", "To chat"))
+        newer = self.finish_with("Bells!", NOW + timedelta(hours=6.1),
+                                 sign_up=(" https://bells.example.org ", " Bell ringers' forum ", "To learn ringing"))
+        claimed = self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=7))
+        self.assertEqual(claimed, SignUpWish(newer.id, "Second", "https://bells.example.org",
+                                             "Bell ringers' forum", "To learn ringing"))
+        # One a day, and each only once.
+        self.assertIsNone(self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=8)))
+        self.assertEqual(self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=31)).exploration_id, older.id)
+        self.assertIsNone(self.explorations.claim_sign_up_wish(now=NOW + timedelta(hours=56)))
+        with self.assertRaises(ValueError):
+            self.finish_with("No!", NOW + timedelta(hours=12.2), topic="Owls",
+                             sign_up=("forum.example.com", "Forum", "Owls"))
+
+    def test_a_stale_sign_up_wish_is_never_asked(self):
+        self.finish_with("Forks!", NOW, sign_up=("https://forks.example.com", "Forks club", "To chat"))
+        self.assertIsNone(self.explorations.claim_sign_up_wish(now=NOW + SIGN_UP_WISH_FRESH_FOR + timedelta(seconds=1)))
 
 
 if __name__ == "__main__":

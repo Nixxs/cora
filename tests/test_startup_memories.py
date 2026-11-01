@@ -174,13 +174,14 @@ class StartupMemoryUnitTests(unittest.TestCase):
         original = deepcopy(schemas)
         with patch("session_config.datetime") as clock:
             clock.now.return_value = datetime(2026, 10, 13, 23, 59, tzinfo=timezone.utc)
-            default = build_session_config(schemas)
-            self.assertEqual(default, build_session_config(schemas, ""))
+            # Without her name (the introduction rule), nothing is added to either prompt.
+            default = build_session_config(schemas, own_name="")
+            self.assertEqual(default, build_session_config(schemas, "", own_name=""))
             self.assertEqual(default["instructions"].encode(), LIVE_INSTRUCTIONS.encode())
             self.assertEqual(default["delegation"]["responses"]["instructions"].encode(),
                              BACKEND_INSTRUCTIONS.encode())
             clock.now.assert_not_called()
-            config = build_session_config(schemas, PRIOR_CONTEXT)
+            config = build_session_config(schemas, PRIOR_CONTEXT, own_name="")
             clock.now.assert_called_once_with(timezone.utc)
             suffix = config["instructions"][len(LIVE_INSTRUCTIONS):]
             self.assertEqual(config["delegation"]["responses"]["instructions"], BACKEND_INSTRUCTIONS + suffix)

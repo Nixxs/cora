@@ -13,9 +13,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from textual.widgets import Button, Input
 
-from mail.account import EmailStatus, READY
+from mail.account import EmailStatus, InboxMail, READY
+from services.connection import CONNECTED, ServiceStatus, ServiceTool
+from sign_ups.mail import confirmation_link, verified_site
+from subconscious.interests.exploration_store import SignUpWish
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
-from session_config import BACKEND_INSTRUCTIONS
+from session_config import BACKEND_INSTRUCTIONS, client_chat_instructions, email_party_instructions
 from sign_ups.password import (
     NAME_ACCOUNT, PASSWORD_ACCOUNT, save_sign_up_name, save_sign_up_password, sign_up_name, sign_up_password,
 )
@@ -25,7 +28,8 @@ from sign_ups.session import (
 )
 from sign_ups.sites import on_site, site_of
 from sign_ups.store import (
-    BLOCKED, CONFIRM_EMAIL, DAILY_LIMIT, DONE, FAILED, SIGNING_UP, STALE_AFTER, SignUpStore,
+    BLOCKED, CONFIRM_EMAIL, DAILY_LIMIT, DONE, FAILED, MAIL_WAIT, SIGNING_UP, STALE_AFTER, STALLED_AFTER, SignUp,
+    SignUpStore,
 )
 from subconscious.interests.browse_exploration import BrowserAccess
 from tools.request_sign_up import NOT_DONE, RequestSignUpTool, validate_arguments
@@ -381,6 +385,27 @@ class AppSignUpTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.load_client_people_context.return_value = ""
             self.assertNotIn("sign_ups", await app.client_sections(client))
 
+    async def test_she_writes_as_your_pa_naturally_and_is_honest_if_asked(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.persistence.load_own_name.return_value = "Cora Vale"
+            app.persistence.load_person_name.return_value = "Nick"
+            introduction = (await app.person_sections())["introduction"]
+            self.assertEqual(app.live.own_name, "Cora Vale")
+        # Straight to the point with strangers; names only where the reader needs them.
+        self.assertIn("go straight to what you're asking", introduction)
+        self.assertIn("use names only when the reader needs them", introduction)
+        self.assertIn('say you\'re "Nick"\'s PA', introduction)
+        self.assertIn('Sign off with your first name, "Cora"', introduction)
+        self.assertIn('Your full name is "Cora Vale"', introduction)
+        self.assertIn("don't volunteer it, but never deny it", introduction)
+        self.assertIn("say plainly that you're an AI", introduction)
+        # Contacts' chats and task email threads say the same.
+        for instructions in (client_chat_instructions("Sarah", "Nick", "Cora Vale"),
+                             email_party_instructions("Sarah", "s@example.com", "Nick", "Cora Vale")):
+            self.assertIn("you're their PA", instructions)
+            self.assertIn("say plainly that you're an AI", instructions)
+        self.assertIn('signed off as "Cora"', email_party_instructions("Sarah", "s@example.com", "Nick", "Cora Vale"))
+
     def test_her_instructions_say_what_she_can_do_and_when_the_browser_beats_web_search(self):
         for words in ("send email from your own inbox", "request_sign_up", "fares or prices for exact dates",
                       "Run the site's own search rather than quoting advertised prices"):
@@ -420,7 +445,180 @@ class AppSignUpTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 await app.workers.wait_for_complete()
             save.assert_called_once_with("Cora Vale")
-            self.assertEqual((app.sign_up_name, app.email_controls.sign_up_name), ("Cora Vale", "Cora Vale"))
+            self.assertEqual((app.live.own_name, app.email_controls.sign_up_name), ("Cora Vale", "Cora Vale"))
+
+
+COUNCIL = "cockburn.wa.gov.au"
+PASSED = "spf=pass; dkim=pass; dmarc=pass action=none header.from={domain};compauth=pass"
+
+
+def inbox(text="Thanks for subscribing.", sender=f"news@{COUNCIL}", authentication=None, mail_id="m1"):
+    domain = sender.rsplit("@", 1)[1]
+    return InboxMail(mail_id, "thread", "City news", sender, "Welcome", datetime(2026, 11, 2, tzinfo=timezone.utc),
+                     text, False, PASSED.format(domain=domain) if authentication is None else authentication)
+
+
+def awaiting(status=CONFIRM_EMAIL, site=COUNCIL):
+    return SignUp(uuid4(), site, f"https://www.{site}/newsletters", "Soundings newsletter", "Local news", status,
+                  "captcha" if status == BLOCKED else None, None, datetime(2026, 11, 1, tzinfo=timezone.utc), None)
+
+
+class SignUpMailTests(unittest.TestCase):
+    def test_only_mail_microsoft_verified_counts_as_the_sites(self):
+        self.assertEqual(verified_site(inbox()), COUNCIL)
+        self.assertEqual(verified_site(inbox(sender=f"no-reply@mail.{COUNCIL}")), COUNCIL)
+        self.assertIsNone(verified_site(inbox(authentication="dmarc=fail header.from=cockburn.wa.gov.au")))
+        self.assertIsNone(verified_site(inbox(authentication=PASSED.format(domain="evil.com"))))
+        self.assertIsNone(verified_site(inbox(authentication="")))
+
+    def test_the_confirmation_link_is_picked_by_its_address_or_the_words_before_it(self):
+        mailchimp = "https://cockburn.us1.list-manage.com/subscribe/confirm?u=1&id=2"
+        self.assertEqual(confirmation_link(f"Yes, subscribe me to this list.\n{mailchimp}\nThanks"), mailchimp)
+        self.assertEqual(confirmation_link("Click below.\nVerify my email <https://site.com/a/b?t=abc>."),
+                         "https://site.com/a/b?t=abc")
+        # Unsubscribe and help links never count, though tokens in a query can spell anything.
+        self.assertEqual(confirmation_link("Confirm here https://site.com/unsubscribe?x=1 or "
+                                           "https://site.com/confirm?t=xxHELPyy"), "https://site.com/confirm?t=xxHELPyy")
+        self.assertIsNone(confirmation_link("This week's news: https://site.com/news/42"))
+        self.assertIsNone(confirmation_link("Questions? https://site.com/help/confirming-your-account"))
+
+
+class AppSignUpMailTests(unittest.IsolatedAsyncioTestCase):
+    def ready(self, app, *waiting, opened=None):
+        app.persistence.sign_ups_awaiting_mail.return_value = list(waiting)
+        app.persistence.sign_up_settled_by_mail.return_value = True
+        app.open_confirmation = AsyncMock(return_value=opened)
+        app.mark_mail_read = AsyncMock()
+
+    async def test_a_confirmation_from_the_site_is_opened_kept_from_sorting_and_settles_it(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            record = awaiting()
+            self.ready(app, record)
+            mail = inbox("Please confirm: https://www.cockburn.wa.gov.au/confirm?t=1")
+            self.assertEqual(await app.settle_sign_ups_by_mail([mail, inbox(sender="a@b.com", mail_id="m2")]), {"m1"})
+            app.open_confirmation.assert_awaited_once_with("https://www.cockburn.wa.gov.au/confirm?t=1")
+            app.persistence.sign_up_settled_by_mail.assert_called_once_with(record.id, "Confirmed from the site's email.")
+            app.mark_mail_read.assert_awaited_once_with("m1")
+            self.assertIn("m1", app.mail_sorted)
+            self.assertIn(f"Sign-up to {COUNCIL}: done.", "\n".join(app.activity.entries))
+
+    async def test_any_mail_from_a_blocked_sites_means_the_person_finished_it(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            record = awaiting(BLOCKED)
+            self.ready(app, record)
+            # Sorted as usual: it's their newsletter, not a confirmation.
+            self.assertEqual(await app.settle_sign_ups_by_mail([inbox("This week's news")]), set())
+            app.open_confirmation.assert_not_awaited()
+            app.persistence.sign_up_settled_by_mail.assert_called_once()
+            self.assertIn("finished it", app.persistence.sign_up_settled_by_mail.call_args.args[1])
+
+    async def test_unverified_mail_or_another_sites_settles_nothing(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.ready(app, awaiting(BLOCKED))
+            forged = inbox("Confirm: https://www.cockburn.wa.gov.au/confirm", authentication="dmarc=fail")
+            self.assertEqual(await app.settle_sign_ups_by_mail([forged, inbox(sender="news@perth.wa.gov.au")]), set())
+            app.open_confirmation.assert_not_awaited()
+            app.persistence.sign_up_settled_by_mail.assert_not_called()
+
+    async def test_a_busy_browser_leaves_the_confirmation_for_the_next_check(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.ready(app, awaiting(), opened="busy")
+            mail = inbox("Confirm: https://www.cockburn.wa.gov.au/confirm")
+            self.assertEqual(await app.settle_sign_ups_by_mail([mail]), {"m1"})
+            app.persistence.sign_up_settled_by_mail.assert_not_called()
+            self.assertNotIn("m1", app.mail_sorted)
+            # When it can't be opened at all, it's sorted like any other mail and the sign-up waits.
+            app.open_confirmation.return_value = "her browser is off."
+            self.assertEqual(await app.settle_sign_ups_by_mail([mail]), set())
+            app.persistence.sign_up_settled_by_mail.assert_not_called()
+            self.assertIn("Couldn't open cockburn.wa.gov.au's confirmation link: her browser is off.",
+                          "\n".join(app.activity.entries))
+
+    async def test_confirmations_she_opened_are_left_out_of_sorting(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.email_status = EmailStatus(state=READY, address="cora@intelligis.io")
+            app.persistence.load_models.return_value = {"utility": "small"}
+            confirm, other = inbox(mail_id="m1"), inbox(sender="sarah@example.com", mail_id="m2")
+            app.settle_sign_ups_by_mail = AsyncMock(return_value={"m1"})
+            with patch("app_areas.mail.triage_mail", return_value=[]) as triage:
+                await app.sort_new_mail([confirm, other])
+            self.assertEqual(triage.call_args.args[0], [other])
+
+    async def test_a_confirmation_link_opens_in_her_guarded_browser_and_the_tab_closes(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            tools = tuple(ServiceTool(name, "", False, {}) for name in ("browser_navigate", "browser_snapshot",
+                                                                         "browser_close"))
+            page = MagicMock(content=[MagicMock(type="text", text="- Page URL: https://www.cockburn.wa.gov.au/ok")],
+                             is_error=False)
+            app.services.call_tool = AsyncMock(return_value=page)
+            with patch.object(app.services, "status", return_value=ServiceStatus(CONNECTED, None, tools)):
+                self.assertIsNone(await app.open_confirmation("https://www.cockburn.wa.gov.au/confirm?t=1"))
+                self.assertEqual([call.args[1] for call in app.services.call_tool.await_args_list],
+                                 ["browser_navigate", "browser_snapshot", "browser_close"])
+                self.assertIsNotNone(await app.open_confirmation("http://192.168.1.1/confirm"))
+                app.sign_up_worker = MagicMock(is_finished=False)
+                self.assertEqual(await app.open_confirmation("https://www.cockburn.wa.gov.au/confirm"), "busy")
+            app.sign_up_worker = None
+            self.assertEqual(await app.open_confirmation("https://www.cockburn.wa.gov.au/confirm"),
+                             "her browser is off.")
+
+    async def test_a_confirmation_that_never_came_is_mentioned(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.email_status = EmailStatus(state=READY, address="cora@intelligis.io")
+            app.persistence.claim_stalled_sign_ups.return_value = [awaiting()]
+            app.tell_person = AsyncMock()
+            await asyncio.wait_for(app.check_stalled_sign_ups().wait(), 5)
+            told = app.tell_person.await_args.args[0]
+            self.assertIn(f"sign-up to {COUNCIL} is still waiting for its confirmation email", told)
+            self.assertIn("cora@intelligis.io", told)
+
+
+WISH = SignUpWish(uuid4(), "Lighthouse keepers", "https://keepers.example.org/join", "A keepers' society",
+                  "To read their logbooks")
+
+
+class AppSignUpWishTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_wish_is_taken_to_the_person_in_daytime_when_they_can_answer(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            running = MagicMock(is_finished=False)
+            with patch.object(app, "ask_sign_up_wish", return_value=running) as ask, \
+                    patch("app_areas.sign_ups.NUDGE_HOURS", range(0, 24)):
+                app.check_sign_up_wish()
+                ask.assert_not_called()  # neither by voice nor on Signal
+                with patch.object(app, "signal_reaches_person", return_value=True):
+                    app.check_sign_up_wish()
+                    app.check_sign_up_wish()  # one at a time
+                    ask.assert_called_once_with()
+                    running.is_finished = True
+                    app.sign_up_worker = MagicMock(is_finished=False)
+                    app.check_sign_up_wish()  # not while she's signing up
+                    self.assertEqual(ask.call_count, 1)
+                    app.sign_up_worker = None
+                    with patch("app_areas.sign_ups.NUDGE_HOURS", range(0)):
+                        app.check_sign_up_wish()  # at night it waits
+                    self.assertEqual(ask.call_count, 1)
+
+    async def test_the_person_is_asked_and_their_answer_goes_through_the_usual_sign_up(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.check_sign_up = AsyncMock(return_value=("keepers.example.org", None))
+            app.ask_person_approval = AsyncMock(return_value=APPROVED)
+            app.begin_sign_up = AsyncMock(return_value="")
+            with patch("app_areas.sign_ups.claim_sign_up_wish_now", return_value=WISH):
+                await asyncio.wait_for(app.ask_sign_up_wish().wait(), 5)
+            title, tool, shown = app.ask_person_approval.await_args.args
+            self.assertEqual((title, tool), ("Sign-up", "request_sign_up"))
+            self.assertEqual(shown["came from"], "her exploring (Lighthouse keepers)")
+            self.assertEqual(shown["why Cora wants it"], "To read their logbooks")
+            app.begin_sign_up.assert_awaited_once_with(WISH.url, "keepers.example.org", WISH.what, WISH.why, APPROVED)
+
+    async def test_a_wish_she_cant_ask_about_is_set_aside_without_asking(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.check_sign_up = AsyncMock(return_value=(None, "You already have an account on keepers.example.org."))
+            app.ask_person_approval = AsyncMock()
+            with patch("app_areas.sign_ups.claim_sign_up_wish_now", return_value=WISH):
+                await asyncio.wait_for(app.ask_sign_up_wish().wait(), 5)
+            app.ask_person_approval.assert_not_awaited()
+            self.assertIn("but didn't ask: You already have an account", "\n".join(app.activity.entries))
 
 
 @unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")
@@ -466,6 +664,39 @@ class SignUpStoreDatabaseTests(unittest.TestCase):
         self.assertIsNone(self.store.holding("birdforum.net", later))
         self.assertEqual(self.store.recent()[0].id, stuck.id)
         self.assertEqual(self.store.recent()[0].status, FAILED)
+
+    def started(self, site="birdforum.net", status=CONFIRM_EMAIL, at=None, **finish):
+        record = self.store.record(site, f"https://{site}/join", "Forum", "Owls", SIGNING_UP, at or self.now)
+        self.store.finish(record.id, status, at or self.now, **finish)
+        return record
+
+    def test_mail_settles_an_unconfirmed_or_blocked_sign_up_once(self):
+        unconfirmed = self.started()
+        blocked = self.started("owls.org", BLOCKED, blocked_by="captcha")
+        old = self.started("old.org", at=self.now - MAIL_WAIT - timedelta(minutes=1))
+        self.started("done.org", DONE)
+        self.assertEqual({item.id for item in self.store.awaiting_mail(self.now)}, {unconfirmed.id, blocked.id})
+        self.assertNotIn(old.id, {item.id for item in self.store.awaiting_mail(self.now)})
+        self.assertTrue(self.store.settled_by_mail(unconfirmed.id, self.now, "Confirmed from the site's email."))
+        self.assertFalse(self.store.settled_by_mail(unconfirmed.id, self.now, "Again"))
+        self.assertTrue(self.store.settled_by_mail(blocked.id, self.now, "The person finished it."))
+        done = {item.site: item for item in self.store.recent()}
+        self.assertEqual((done["birdforum.net"].status, done["birdforum.net"].note),
+                         (DONE, "Confirmed from the site's email."))
+        self.assertEqual((done["owls.org"].status, done["owls.org"].blocked_by), (DONE, None))
+        self.assertIsNotNone(done["owls.org"].finished_at)
+
+    def test_a_blocked_sign_up_isnt_settled_where_she_already_has_an_account(self):
+        blocked = self.started(status=BLOCKED, blocked_by="captcha")
+        self.started(status=DONE, at=self.now + timedelta(minutes=1))
+        self.assertFalse(self.store.settled_by_mail(blocked.id, self.now, "The person finished it."))
+
+    def test_a_confirmation_that_never_comes_is_told_once(self):
+        record = self.started()
+        self.assertEqual(self.store.claim_stalled(self.now + STALLED_AFTER - timedelta(minutes=1)), [])
+        later = self.now + STALLED_AFTER + timedelta(minutes=1)
+        self.assertEqual([item.id for item in self.store.claim_stalled(later)], [record.id])
+        self.assertEqual(self.store.claim_stalled(later + timedelta(days=1)), [])
 
 
 if __name__ == "__main__":

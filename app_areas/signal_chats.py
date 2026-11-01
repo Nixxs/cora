@@ -346,7 +346,7 @@ class SignalChatsMixin:
                 excluded=frozenset(self.tools.names()) - {"search_memory", *CLIENT_ONLY},
                 memory_scope=(client.id, client.name),
             ),
-            extra_instructions=client_chat_instructions(client.name, self.live.person_name),
+            extra_instructions=client_chat_instructions(client.name, self.live.person_name, self.live.own_name),
         )
 
     async def client_sections(self, client: Client) -> dict[str, str]:

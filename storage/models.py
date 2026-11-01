@@ -339,6 +339,13 @@ class InterestExplorationRecord(Base):
             "AND (reached_out_at IS NULL OR reach_out IS NOT NULL)",
             name="interest_explorations_reach_out_check",
         ),
+        CheckConstraint(
+            "(sign_up_url IS NULL) = (sign_up_what IS NULL) AND (sign_up_url IS NULL) = (sign_up_why IS NULL) "
+            "AND (sign_up_url IS NULL OR (sign_up_url LIKE 'http%' AND char_length(sign_up_url) <= 2000 "
+            "AND btrim(sign_up_what) <> '' AND char_length(sign_up_what) <= 300 "
+            "AND btrim(sign_up_why) <> '' AND char_length(sign_up_why) <= 500))",
+            name="interest_explorations_sign_up_check",
+        ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
         {"schema": "public"},
@@ -374,6 +381,11 @@ class InterestExplorationRecord(Base):
     reached_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Explored with her own browser rather than web search.
     browsed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_text("false"))
+    # A site she'd like an account on: its address, what it is and why; taken to the person at sign_up_asked_at.
+    sign_up_url: Mapped[str | None] = mapped_column(Text)
+    sign_up_what: Mapped[str | None] = mapped_column(Text)
+    sign_up_why: Mapped[str | None] = mapped_column(Text)
+    sign_up_asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class IdentityTraitRecord(Base):
@@ -889,3 +901,5 @@ class SignUpRecord(Base):
     asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When she told the person its confirmation email never came (once).
+    stalled_told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

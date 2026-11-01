@@ -90,6 +90,7 @@ class BackgroundMixin:
         if not self.closing:
             self.deliver_heads_ups()
             self.check_tasks()
+            self.check_stalled_sign_ups()
 
     def check_interests(self) -> None:
         # Single flight: a slow model call simply delays the next check.
@@ -131,6 +132,7 @@ class BackgroundMixin:
 
     def check_exploration(self) -> None:
         self.check_reach_out()
+        self.check_sign_up_wish()
         if not self.can_explore() or (
             self.exploration_worker is not None and not self.exploration_worker.is_finished
         ) or self.signing_up():

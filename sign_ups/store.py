@@ -1,7 +1,9 @@
 """Save each sign-up Cora asked for: the person's answer, and how signing up went.
 
 A site holds at most one account: a sign-up under way, waiting for its confirmation email or
-done. She may ask at most DAILY_LIMIT times a day, answered or not.
+done. She may ask at most DAILY_LIMIT times a day, answered or not. Mail from a site settles its
+sign-up: one waiting for confirmation is done once the link is opened, and a blocked one (which
+the person may have finished for her) is done once the site writes to her.
 """
 
 from dataclasses import dataclass
@@ -9,7 +11,8 @@ import json
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Engine, func, select, update
+from sqlalchemy import Engine, func, select, text, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from storage.models import SignUpRecord
@@ -28,6 +31,10 @@ STALE_AFTER = timedelta(minutes=15)
 LIST_LIMIT = 8
 # Her sign-ups as they reach her conversations.
 CONTEXT_MAX_CHARS = 2000
+# Mail from a site settles a blocked or unconfirmed sign-up this long after she asked.
+MAIL_WAIT = timedelta(days=30)
+# A confirmation email this late has probably gone astray; she tells the person once.
+STALLED_AFTER = timedelta(days=2)
 
 
 @dataclass(frozen=True)
@@ -128,3 +135,42 @@ class SignUpStore:
             kept.append(item)
             context = candidate
         return context
+
+    def awaiting_mail(self, now: datetime) -> list[SignUp]:
+        """Sign-ups that mail from their site would settle: waiting for confirmation, or blocked, lately."""
+        with Session(self.engine) as session:
+            records = session.scalars(
+                select(SignUpRecord).where(SignUpRecord.status.in_((CONFIRM_EMAIL, BLOCKED)),
+                                           SignUpRecord.asked_at > now - MAIL_WAIT)
+                .order_by(SignUpRecord.asked_at.desc())
+            ).all()
+            return [sign_up_view(record) for record in records]
+
+    def settled_by_mail(self, sign_up_id: UUID, now: datetime, note: str) -> bool:
+        """Done, from the site's own mail; False if it was settled already or another sign-up holds the site."""
+        note = " ".join(note.split())[:NOTE_MAX_CHARS]
+        try:
+            with Session(self.engine) as session, session.begin():
+                result = session.execute(
+                    update(SignUpRecord)
+                    .where(SignUpRecord.id == sign_up_id, SignUpRecord.status.in_((CONFIRM_EMAIL, BLOCKED)))
+                    .values(status=DONE, blocked_by=None, note=note, updated_at=now, finished_at=now)
+                    .execution_options(synchronize_session=False)
+                )
+                return result.rowcount == 1
+        except IntegrityError:
+            return False  # she already has an account there
+
+    def claim_stalled(self, now: datetime) -> list[SignUp]:
+        """Unconfirmed sign-ups whose email hasn't come for STALLED_AFTER, marked as told so each is told once."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(text("LOCK TABLE public.sign_ups IN SHARE ROW EXCLUSIVE MODE"))
+            records = session.scalars(
+                select(SignUpRecord).where(
+                    SignUpRecord.status == CONFIRM_EMAIL, SignUpRecord.stalled_told_at.is_(None),
+                    SignUpRecord.updated_at < now - STALLED_AFTER,
+                )
+            ).all()
+            for record in records:
+                record.stalled_told_at = now
+            return [sign_up_view(record) for record in records]
