@@ -6,8 +6,9 @@ status with a new `strength_at`) only during an evolution cycle or when an event
 touches an interest. Decay counts at most MAX_COUNTED_ELAPSED between settlements,
 so one long absence cannot erase an interest.
 
-Only conversation memories add strength. Cora's own exploration records findings
-but gives no strength, so an interest cannot keep itself alive without the user.
+Conversation memories add most strength. Cora's own pull after exploring adds a
+little too, but never beyond PULL_CEILING, so something she cares about can stay
+alive a while on its own without ever outweighing what grows from the person.
 """
 
 from datetime import datetime, timedelta
@@ -18,8 +19,13 @@ ACTIVE_THRESHOLD = 0.25  # emerging/dormant interests become active at or above 
 DORMANT_THRESHOLD = 0.1  # emerging/active interests become dormant below this
 HALF_LIFE = timedelta(days=7)
 MAX_COUNTED_ELAPSED = timedelta(days=14)
-MAX_LIVE_INTERESTS = 5  # emerging + active; dormant interests do not count
+MAX_LIVE_INTERESTS = 8  # emerging + active; dormant interests do not count
+# Of those, how many may be her own (sparked by her exploring), so neither kind crowds out the other.
+MAX_OWN_LIVE_INTERESTS = 4
 MAX_REINFORCE_DELTA = 0.15  # largest single reinforcement the store accepts
+# How much her own pull after exploring adds, and the strength it can never lift an interest past.
+PULL_DELTAS = {"none": 0.0, "some": 0.03, "strong": 0.06}
+PULL_CEILING = 0.6
 
 STATUSES = ("emerging", "active", "dormant")
 
@@ -51,6 +57,13 @@ def reinforce(strength: float, delta: float) -> float:
     validate_strength(strength)
     validate_strength(delta)
     return strength + delta * (1 - strength)
+
+
+def pulled(strength: float, pull: str) -> float:
+    """Her own pull: a small reinforcement that stops at PULL_CEILING and never lowers strength."""
+    if pull not in PULL_DELTAS:
+        raise ValueError("Unknown pull")
+    return max(strength, min(reinforce(strength, PULL_DELTAS[pull]), PULL_CEILING))
 
 
 def next_status(status: str, strength: float) -> str:
@@ -87,8 +100,12 @@ def needs_room(status_before: str | None, status_after: str) -> bool:
     return status_after != "dormant" and status_before in (None, "dormant")
 
 
-def has_room(live_count: int) -> bool:
-    """Whether another interest may become live. Reinforcing a live interest never needs room."""
-    if isinstance(live_count, bool) or not isinstance(live_count, int) or live_count < 0:
-        raise ValueError("Live interest count must be a non-negative integer")
-    return live_count < MAX_LIVE_INTERESTS
+def has_room(live_count: int, own_count: int | None = None) -> bool:
+    """Whether another interest may become live; own_count when it is one of her own.
+
+    Reinforcing a live interest never needs room.
+    """
+    for count in (live_count, own_count):
+        if count is not None and (isinstance(count, bool) or not isinstance(count, int) or count < 0):
+            raise ValueError("Live interest count must be a non-negative integer")
+    return live_count < MAX_LIVE_INTERESTS and (own_count is None or own_count < MAX_OWN_LIVE_INTERESTS)

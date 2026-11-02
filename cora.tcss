@@ -237,7 +237,7 @@ Screen > .screen--selection {
 
 /* Just tall enough for the relationship box's contents; narrower than this pans instead. */
 #dashboard-middle > .dashboard-box {
-    width: 25%;
+    width: 20%;
     height: 16;
     min-width: 34;
 }
@@ -319,11 +319,37 @@ Screen > .screen--selection {
     color: #8f98a8;
 }
 
-/* Shown at the voice box's top right while Live is in standby. */
+/* At the voice box's top right: shows the connection state as the chat does and presses the same button. */
 #dashboard-standby {
     width: auto;
-    padding: 0 1;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0;
+    line-pad: 1;
+    border: none;
+    background: transparent;
+    text-style: none;
+    color: #8f98a8;
+}
+
+#dashboard-standby:hover, #dashboard-standby:focus {
+    background: #202838;
+    color: #e0e6ef;
+    text-style: none;
+}
+
+#dashboard-standby.state-active {
+    color: #8fcca6;
+}
+
+#dashboard-standby.state-standby {
     color: #a6acd8;
+}
+
+#dashboard-standby.state-connecting, #dashboard-standby.state-disconnecting {
+    color: #e0c080;
 }
 
 #voice-header-fill, #voice-controls-fill {
@@ -454,6 +480,16 @@ Screen > .screen--selection {
 }
 
 #identity-traits {
+    height: auto;
+    color: #d0d6e0;
+}
+
+#desires-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#desire-list {
     height: auto;
     color: #d0d6e0;
 }

@@ -9,10 +9,14 @@ from sqlalchemy.orm import Session
 from memory.store import MemoryStore
 from storage.conversation_store import ConversationStore
 from storage.task_store import TaskStore, TaskView
+from sign_ups.store import SignUp, SignUpStore
 from storage.models import (
-    ConversationSummaryRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
+    ConversationSummaryRecord, DesireWorkerStateRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
     InterestExplorationRecord, InterestWorkerStateRecord, MemoryRecord, RelationshipEventRecord,
 )
+from subconscious.desires import reflect_desires
+from subconscious.desires.desire_rules import current_strength, settle as settle_desire
+from subconscious.desires.desire_store import DesireStore
 from subconscious.identity.identity_rules import Trait
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.identity.reflect_identity import REFLECT_EVERY
@@ -29,6 +33,8 @@ HISTORY_LIMIT = 200
 # An interest reinforced (or spawned) this recently counts as rising; otherwise it is
 # only decaying, so it counts as falling.
 RISING_WINDOW = timedelta(days=3)
+# Before an interest of her own: one sparked by her exploring, not by the person.
+OWN_MARK = "✦"
 
 # A year of weeks, more than the widest conversations heatmap will show.
 CALENDAR_DAYS = 7 * 53
@@ -44,6 +50,7 @@ LAST_RUN_COLUMNS = {
     "interests": InterestWorkerStateRecord.last_evolved_at,
     "exploration": InterestExplorationRecord.started_at,
     "identity": IdentityWorkerStateRecord.last_reflected_at,
+    "desires": DesireWorkerStateRecord.last_reflected_at,
 }
 
 
@@ -75,6 +82,10 @@ class DashboardSnapshot:
     traits: tuple[Trait, ...]
     # Open tasks, oldest first, each with its parties' next checks.
     tasks: tuple[TaskView, ...] = ()
+    # Her latest sign-ups the person said yes to, newest first.
+    sign_ups: tuple[SignUp, ...] = ()
+    # (wish, strength faded to the load time, status) for each live desire, strongest first.
+    desires: tuple[tuple[str, float, str], ...] = ()
 
 
 def last_runs(engine: Engine) -> dict[str, datetime | None]:
@@ -95,12 +106,23 @@ def next_due(engine: Engine, runs: dict[str, datetime | None]) -> dict[str, date
         if len(starts) == DAILY_LIMIT:
             # A full day's attempts: wait for the oldest of them to leave the 24 hours.
             exploration = max(exploration, starts[-1] + timedelta(hours=24))
-    evolved, reflected = runs["interests"], runs["identity"]
+    evolved, reflected, wished = runs["interests"], runs["identity"], runs["desires"]
     return {
         "interests": evolved + EVOLVE_EVERY if evolved else None,
         "exploration": exploration,
         "identity": reflected + REFLECT_EVERY if reflected else None,
+        "desires": wished + reflect_desires.REFLECT_EVERY if wished else None,
     }
+
+
+def live_desires(engine: Engine, now: datetime) -> tuple[tuple[str, float, str], ...]:
+    """Live desires faded to now (read-time only, nothing saved), strongest first."""
+    live = []
+    for desire in DesireStore(engine).list_desires():
+        if settle_desire(desire.strength, desire.strength_at, desire.status, now)[1] != "let_go":
+            live.append((desire.description, current_strength(desire.strength, desire.strength_at, now),
+                         desire.status))
+    return tuple(sorted(live, key=lambda item: item[1], reverse=True))
 
 
 def live_interests(engine: Engine, now: datetime) -> tuple[
@@ -109,16 +131,20 @@ def live_interests(engine: Engine, now: datetime) -> tuple[
     """The live interests, strongest first, and the newest finding on any of them."""
     store = InterestStore(engine)
     live = {}
+    titles = {}
     for interest in store.list_interests():
         # Read-time settling only, like Cora's startup context; nothing is saved.
         strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
         if status != "dormant":
             grown_at = interest.last_reinforced_at or interest.created_at
-            live[interest.id] = (interest.title, strength, now - grown_at <= RISING_WINDOW)
+            titles[interest.id] = interest.title
+            # Her own interests, sparked by her exploring rather than by the person, are marked.
+            shown = f"{OWN_MARK} {interest.title}" if interest.origin == "own" else interest.title
+            live[interest.id] = (shown, strength, now - grown_at <= RISING_WINDOW)
     findings = store.latest_findings(list(live)) if live else {}
     # Each finding is (text, found_at); keep the most recently found.
     newest = max(findings.items(), key=lambda item: item[1][1], default=None)
-    latest = (live[newest[0]][0], newest[1][0]) if newest else None
+    latest = (titles[newest[0]], newest[1][0]) if newest else None
     return tuple(sorted(live.values(), key=lambda item: item[1], reverse=True)), latest
 
 
@@ -144,4 +170,6 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         message_days=tuple(ConversationStore(engine).daily_message_counts(now, CALENDAR_DAYS)),
         traits=tuple(IdentityStore(engine).list_traits()),
         tasks=tuple(TaskStore(engine).open_tasks()),
+        sign_ups=tuple(SignUpStore(engine).recent()),
+        desires=live_desires(engine, now),
     )

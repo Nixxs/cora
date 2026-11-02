@@ -12,7 +12,7 @@ from sqlalchemy import (
     Uuid,
 )
 from sqlalchemy import text as sql_text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 MEMORY_EMBEDDING_MODEL = "text-embedding-3-small"
@@ -199,6 +199,7 @@ class InterestRecord(Base):
         CheckConstraint(
             "parent_interest_id IS NULL OR parent_interest_id <> id", name="interests_parent_check",
         ),
+        CheckConstraint("origin IN ('conversation', 'own')", name="interests_origin_check"),
         {"schema": "public"},
     )
 
@@ -214,6 +215,8 @@ class InterestRecord(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # 'conversation': sparked by the person; 'own': by something she came across exploring.
+    origin: Mapped[str] = mapped_column(Text, default="conversation", server_default="conversation")
 
 
 class InterestEventRecord(Base):
@@ -309,13 +312,53 @@ class InterestExplorationRecord(Base):
             "reaction IS NULL OR (status = 'found' AND btrim(reaction) <> '' AND char_length(reaction) <= 500)",
             name="interest_explorations_reaction_check",
         ),
+        CheckConstraint(
+            "jsonb_typeof(tangents) = 'array' AND jsonb_array_length(tangents) <= 2 "
+            "AND (status = 'found' OR jsonb_array_length(tangents) = 0)",
+            name="interest_explorations_tangents_check",
+        ),
+        CheckConstraint(
+            "pull IS NULL OR (status = 'found' AND pull IN ('none', 'some', 'strong'))",
+            name="interest_explorations_pull_check",
+        ),
+        CheckConstraint(
+            "kind IN ('interest', 'wander', 'pursuit') AND (kind = 'interest') = (interest_id IS NOT NULL) "
+            "AND (kind = 'pursuit') = (desire_id IS NOT NULL)",
+            name="interest_explorations_kind_check",
+        ),
+        CheckConstraint(
+            "(kind <> 'interest' OR topic IS NULL) AND (kind = 'wander' OR wandered_from IS NULL) "
+            "AND (topic IS NULL OR (btrim(topic) <> '' "
+            "AND char_length(topic) <= CASE WHEN kind = 'pursuit' THEN 300 ELSE 200 END)) "
+            "AND (kind = 'interest' OR status <> 'found' OR topic IS NOT NULL) "
+            "AND (kind <> 'pursuit' OR topic IS NOT NULL)",
+            name="interest_explorations_topic_check",
+        ),
+        CheckConstraint(
+            "(reach_out IS NULL) = (reach_out_why IS NULL) "
+            "AND (reach_out IS NULL OR (status = 'found' AND btrim(reach_out) <> '' "
+            "AND char_length(reach_out) <= 600 AND btrim(reach_out_why) <> '' "
+            "AND char_length(reach_out_why) <= 500)) "
+            "AND (reached_out_at IS NULL OR reach_out IS NOT NULL)",
+            name="interest_explorations_reach_out_check",
+        ),
+        CheckConstraint(
+            "(sign_up_url IS NULL) = (sign_up_what IS NULL) AND (sign_up_url IS NULL) = (sign_up_why IS NULL) "
+            "AND (sign_up_url IS NULL OR (sign_up_url LIKE 'http%' AND char_length(sign_up_url) <= 2000 "
+            "AND btrim(sign_up_what) <> '' AND char_length(sign_up_what) <= 300 "
+            "AND btrim(sign_up_why) <> '' AND char_length(sign_up_why) <= 500))",
+            name="interest_explorations_sign_up_check",
+        ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
+        Index("interest_explorations_desire_id_started_at_idx", "desire_id", "started_at",
+              postgresql_where=sql_text("desire_id IS NOT NULL")),
         {"schema": "public"},
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
-    interest_id: Mapped[UUID] = mapped_column(
+    # None for a wander, which isn't tied to any interest.
+    interest_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("public.interests.id", name="interest_explorations_interest_id_fkey", ondelete="RESTRICT"),
     )
     status: Mapped[str] = mapped_column(Text)
@@ -326,6 +369,32 @@ class InterestExplorationRecord(Base):
     sources: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list)
     mentioned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reaction: Mapped[str | None] = mapped_column(Text)
+    # Up to two other things she noticed and would like to look into: {"title", "why"} each.
+    tangents: Mapped[list[dict]] = mapped_column(JSONB, default=list, server_default=sql_text("'[]'::jsonb"))
+    pull: Mapped[str | None] = mapped_column(Text)  # none, some or strong: how much she wants to keep going
+    sparks_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    kind: Mapped[str] = mapped_column(Text, default="interest", server_default="interest")  # 'wander' or 'pursuit'
+    topic: Mapped[str | None] = mapped_column(Text)  # what a wander was about, or the wish a pursuit was for
+    # The exploration whose tangent a wander followed.
+    wandered_from: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.interest_explorations.id", name="interest_explorations_wandered_from_fkey",
+                   ondelete="RESTRICT"),
+    )
+    # A message for the person when something really excited her, and why; sent at reached_out_at.
+    reach_out: Mapped[str | None] = mapped_column(Text)
+    reach_out_why: Mapped[str | None] = mapped_column(Text)
+    reached_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Explored with her own browser rather than web search.
+    browsed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=sql_text("false"))
+    # A site she'd like an account on: its address, what it is and why; taken to the person at sign_up_asked_at.
+    sign_up_url: Mapped[str | None] = mapped_column(Text)
+    sign_up_what: Mapped[str | None] = mapped_column(Text)
+    sign_up_why: Mapped[str | None] = mapped_column(Text)
+    sign_up_asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The desire a pursuit step was for.
+    desire_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desires.id", name="interest_explorations_desire_id_fkey", ondelete="RESTRICT"),
+    )
 
 
 class IdentityTraitRecord(Base):
@@ -424,7 +493,7 @@ class IdentityEventEvidenceRecord(Base):
     __tablename__ = "identity_event_evidence"
     __table_args__ = (
         CheckConstraint(
-            "num_nonnulls(interest_event_id, exploration_id, conversation_id) = 1",
+            "num_nonnulls(interest_event_id, exploration_id, conversation_id, desire_event_id) = 1",
             name="identity_event_evidence_source_check",
         ),
         Index("identity_event_evidence_event_id_idx", "event_id"),
@@ -451,6 +520,10 @@ class IdentityEventEvidenceRecord(Base):
             "public.conversation_summaries.conversation_id", name="identity_event_evidence_conversation_id_fkey",
             ondelete="RESTRICT",
         ),
+    )
+    # A change to one of her desires (fulfilled, let go...), her own experience.
+    desire_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desire_events.id", name="identity_event_evidence_desire_event_id_fkey", ondelete="RESTRICT"),
     )
 
 
@@ -804,3 +877,162 @@ class ServiceToolRecord(Base):
     service: Mapped[str] = mapped_column(Text, primary_key=True)
     tool: Mapped[str] = mapped_column(Text, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+class SignUpRecord(Base):
+    """A site Cora asked to sign up to, for an account of her own, and how it went."""
+
+    __tablename__ = "sign_ups"
+    __table_args__ = (
+        CheckConstraint("btrim(site) <> '' AND char_length(site) <= 253", name="sign_ups_site_check"),
+        CheckConstraint("url LIKE 'http%' AND char_length(url) <= 2000", name="sign_ups_url_check"),
+        CheckConstraint("btrim(what) <> '' AND char_length(what) <= 300", name="sign_ups_what_check"),
+        CheckConstraint("btrim(why) <> '' AND char_length(why) <= 500", name="sign_ups_why_check"),
+        CheckConstraint(
+            "status IN ('declined', 'timed_out', 'signing_up', 'confirm_email', 'done', 'blocked', 'failed')",
+            name="sign_ups_status_check",
+        ),
+        CheckConstraint(
+            "(blocked_by IS NOT NULL) = (status = 'blocked') AND (blocked_by IS NULL OR blocked_by IN "
+            "('captcha', 'phone', 'payment', 'personal_details', 'other'))",
+            name="sign_ups_blocked_by_check",
+        ),
+        CheckConstraint("note IS NULL OR char_length(note) <= 1000", name="sign_ups_note_check"),
+        Index("sign_ups_one_account_per_site_idx", "site", unique=True,
+              postgresql_where=sql_text("status IN ('signing_up', 'confirm_email', 'done')")),
+        Index("sign_ups_asked_at_idx", "asked_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    site: Mapped[str] = mapped_column(Text)
+    url: Mapped[str] = mapped_column(Text)
+    what: Mapped[str] = mapped_column(Text)
+    why: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text)
+    blocked_by: Mapped[str | None] = mapped_column(Text)
+    note: Mapped[str | None] = mapped_column(Text)
+    asked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When she told the person its confirmation email never came (once).
+    stalled_told_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class DesireRecord(Base):
+    """Something Cora would like to do or experience; strength is a snapshot taken at strength_at."""
+
+    __tablename__ = "desires"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(description) <> '' AND char_length(description) <= 300", name="desires_description_check",
+        ),
+        CheckConstraint(
+            "btrim(motivation) <> '' AND char_length(motivation) <= 1000", name="desires_motivation_check",
+        ),
+        CheckConstraint("strength >= 0 AND strength <= 1", name="desires_strength_check"),
+        CheckConstraint(
+            "status IN ('candidate', 'held', 'pursuing', 'fulfilled', 'let_go')", name="desires_status_check",
+        ),
+        CheckConstraint(
+            "(status IN ('fulfilled', 'let_go')) = (ended_at IS NOT NULL) "
+            "AND (ended_at IS NULL OR ended_at >= created_at)",
+            name="desires_ended_check",
+        ),
+        CheckConstraint("adapted_from IS NULL OR adapted_from <> id", name="desires_adapted_from_check"),
+        Index("desires_status_idx", "status"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    description: Mapped[str] = mapped_column(Text)
+    motivation: Mapped[str] = mapped_column(Text)
+    strength: Mapped[float] = mapped_column(Double)
+    strength_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The desire this is a nearer version of, when the person offered it instead.
+    adapted_from: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desires.id", name="desires_adapted_from_fkey", ondelete="RESTRICT"),
+    )
+
+
+class DesireEventRecord(Base):
+    """Append-only history of a desire; note says why, or what happened."""
+
+    __tablename__ = "desire_events"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('form', 'reinforce', 'hold', 'pursue', 'pause', 'progress', 'fulfil', 'let_go', 'fade')",
+            name="desire_events_kind_check",
+        ),
+        CheckConstraint("strength_after >= 0 AND strength_after <= 1", name="desire_events_strength_check"),
+        CheckConstraint(
+            "(kind = 'form') = (strength_before IS NULL) "
+            "AND (strength_before IS NULL OR (strength_before >= 0 AND strength_before <= 1))",
+            name="desire_events_before_check",
+        ),
+        CheckConstraint("btrim(note) <> '' AND char_length(note) <= 1000", name="desire_events_note_check"),
+        Index("desire_events_desire_id_created_at_idx", "desire_id", "created_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    desire_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.desires.id", name="desire_events_desire_id_fkey", ondelete="RESTRICT"),
+    )
+    kind: Mapped[str] = mapped_column(Text)
+    strength_before: Mapped[float | None] = mapped_column(Double)
+    strength_after: Mapped[float] = mapped_column(Double)
+    note: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class DesireSourceRecord(Base):
+    """One thing a desire grew from: exactly one of an interest, a finding, a conversation or a desire's change."""
+
+    __tablename__ = "desire_sources"
+    __table_args__ = (
+        CheckConstraint(
+            "num_nonnulls(interest_id, exploration_id, conversation_id, desire_event_id) = 1",
+            name="desire_sources_source_check",
+        ),
+        Index("desire_sources_desire_id_idx", "desire_id"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    desire_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.desires.id", name="desire_sources_desire_id_fkey", ondelete="RESTRICT"),
+    )
+    interest_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.interests.id", name="desire_sources_interest_id_fkey", ondelete="RESTRICT"),
+    )
+    exploration_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.interest_explorations.id", name="desire_sources_exploration_id_fkey", ondelete="RESTRICT"),
+    )
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "public.conversation_summaries.conversation_id", name="desire_sources_conversation_id_fkey",
+            ondelete="RESTRICT",
+        ),
+    )
+    # A change to one of her desires (fulfilled, let go...), her own experience.
+    desire_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desire_events.id", name="desire_sources_desire_event_id_fkey", ondelete="RESTRICT"),
+    )
+
+
+class DesireWorkerStateRecord(Base):
+    """At most one row: when Cora last reflected on what she wants."""
+
+    __tablename__ = "desire_worker_state"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="desire_worker_state_singleton_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1, server_default="1")
+    last_reflected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))

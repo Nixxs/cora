@@ -53,7 +53,7 @@ class LiveGreetingTests(unittest.IsolatedAsyncioTestCase):
 class GreetingAppCase(unittest.IsolatedAsyncioTestCase):
     def prepare(self, app, *, loaded=True, hook_kind=None):
         self.choose_hook = self.enterContext(patch(
-            "app.choose_hook", side_effect=lambda options: hook_kind if hook_kind in options else None,
+            "app_areas.attention.choose_hook", side_effect=lambda options: hook_kind if hook_kind in options else None,
         ))
         app.conversation_persistence.last_talked_loaded = loaded
         app.conversation_persistence.last_talked_at = LAST
@@ -182,8 +182,8 @@ MENTION = Mention(uuid4(), "Tide pools", "Some anemones clone themselves.", LAST
 class FindingHookTests(GreetingAppCase):
     def prepare_finding(self, app, mention=MENTION):
         self.prepare(app, hook_kind="finding")
-        self.claim = self.enterContext(patch("app.claim_mention_now", return_value=mention))
-        self.release = self.enterContext(patch("app.release_mention_now"))
+        self.claim = self.enterContext(patch("app_areas.attention.claim_mention_now", return_value=mention))
+        self.release = self.enterContext(patch("app_areas.attention.release_mention_now"))
         app.persistence.load_last_summary.return_value = "We planned a garden."
         app.conversation_persistence.summaries_done.set()
 

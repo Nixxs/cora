@@ -15,8 +15,9 @@ class ConversationPersistence:
     def __init__(self, storage, *, schedule_save, is_closing,
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
                  set_self_image_context=lambda context: None, set_people_context=lambda context: None,
-                 set_tasks_context=lambda context: None,
-                 set_person_name, set_delegation_model, write_activity, notify):
+                 set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
+                 set_desire_context=lambda context: None,
+                 set_own_name=lambda name: None, set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
         self.is_closing = is_closing
@@ -26,8 +27,11 @@ class ConversationPersistence:
         self.set_self_image_context = set_self_image_context
         self.set_people_context = set_people_context
         self.set_tasks_context = set_tasks_context
+        self.set_sign_ups_context = set_sign_ups_context
+        self.set_desire_context = set_desire_context
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
+        self.set_own_name = set_own_name
         self.set_delegation_model = set_delegation_model
         self.write_activity = write_activity
         self.notify = notify
@@ -107,6 +111,17 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_person_name(name)
+
+        # Her own full name, as she introduces herself to others (Settings > Services > Email).
+        if self.is_closing():
+            return
+        try:
+            own_name = await asyncio.to_thread(self.storage.load_own_name)
+        except Exception as error:
+            self.write_activity(f"Her name didn't load ({type(error).__name__}); she's just Cora for now.", "Name")
+        else:
+            if not self.is_closing():
+                self.set_own_name(own_name)
 
         if self.is_closing():
             return
@@ -228,6 +243,34 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_tasks_context(context)
+
+        # Her sign-ups, so she knows which accounts she has and which are stuck.
+        if self.is_closing():
+            return
+        self.set_sign_ups_context("")
+        try:
+            context = await self.call_database(self.storage.load_sign_ups_context)
+        except Exception as error:
+            self.write_activity(
+                f"Sign-ups load failed ({type(error).__name__}); connecting without them.", "Sign-ups unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_sign_ups_context(context)
+
+        # What she'd like to do herself; without it she just doesn't mention her wishes.
+        if self.is_closing():
+            return
+        self.set_desire_context("")
+        try:
+            context = await self.call_database(self.storage.load_desire_context)
+        except Exception as error:
+            self.write_activity(
+                f"Desires load failed ({type(error).__name__}); connecting without them.", "Desires unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_desire_context(context)
 
         # The chosen delegation model loads last; if it fails Cora connects with the default.
         if self.is_closing():

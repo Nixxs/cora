@@ -1,5 +1,6 @@
 """Conversation history, transcript grouping, and written-answer display."""
 
+import re
 from urllib.parse import urlsplit
 
 from rich.text import Text
@@ -11,6 +12,79 @@ from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 SIGNAL_PREFIX = "You · Signal: "
 # And the emails they send her own address.
 EMAIL_PREFIX = "You · Email: "
+
+# Who is speaking, coloured so messages tell apart at a glance; the name stays as text too.
+SPEAKER_STYLES = {"Cora": "bold #7fbf73", "You": "bold #7fb8d8"}
+# A message's label, like "Cora:", "You · Signal:" or "Cora · on screen:".
+SPEAKER_LABEL = re.compile(r"(You|Cora)( · [^:\n]+)?:")
+
+
+def styled_entry(entry):
+    """A chat line with its speaker's label coloured; anything else is drawn as it is."""
+    if not isinstance(entry, str):
+        return entry
+    label = SPEAKER_LABEL.match(entry)
+    if label is None:
+        return entry
+    return Text.assemble((label.group(), SPEAKER_STYLES[label.group(1)]), entry[label.end():])
+
+
+# A written reply still arriving, and one that stopped before it finished.
+WRITING_LABEL = "Cora · writing…"
+INCOMPLETE_SUFFIX = " · incomplete"
+# Streamed text redraws the chat at most this often, not once per fragment.
+STREAM_REDRAW_SECONDS = 0.05
+
+
+class WrittenDraft:
+    """A written reply shown as it streams in: one message, updated in place, then finished or marked incomplete."""
+
+    def __init__(self, conversation: "Conversation", label: str, channel: str) -> None:
+        self.conversation = conversation
+        self.label = label
+        self.channel = channel
+        self.text = ""
+        # Where its label line sits; None until there is text to show. Entries are only ever
+        # appended, so this stays right while other messages arrive.
+        self.index = None
+        self.done = False
+
+    def update(self, text: str) -> None:
+        if self.done or (self.index is None and not text.strip()):
+            return
+        self.text = text
+        entries = self.conversation.log_entries
+        body = ChatMarkdown(text, code_theme="monokai")
+        if self.index is None:
+            entries.extend(["", f"{WRITING_LABEL}:", body, ""])
+            self.index = len(entries) - 3
+        else:
+            entries[self.index + 1] = body
+        self.conversation.schedule_redraw()
+
+    def finish(self, text: str) -> None:
+        """The whole reply: shown as its final Markdown, in place of what streamed."""
+        if self.done:
+            return
+        self.done = True
+        if self.index is None:
+            self.conversation.show_written_reply(text, label=self.label, channel=self.channel)
+            return
+        entries = self.conversation.log_entries
+        entries[self.index] = f"{self.label}:"
+        entries[self.index + 1] = ChatMarkdown(text, code_theme="monokai")
+        self.conversation.redraw_log()
+        if self.conversation.record_message is not None:
+            self.conversation.record_message("assistant", text, self.channel)
+
+    def fail(self) -> None:
+        """It stopped early: what was shown stays, marked incomplete, and is not saved as her reply."""
+        if self.done:
+            return
+        self.done = True
+        if self.index is not None:
+            self.conversation.log_entries[self.index] = f"{self.label}{INCOMPLETE_SUFFIX}:"
+            self.conversation.redraw_log()
 
 
 class Conversation:
@@ -27,6 +101,8 @@ class Conversation:
         self.written_item_ids = set()
         # Extra logs, such as the dashboard's chat box, that show the same conversation.
         self.mirrors = []
+        # A redraw waiting to show streamed text.
+        self.redraw_timer = None
 
     def add_mirror(self, output: RichLog) -> None:
         self.mirrors.append(output)
@@ -71,7 +147,7 @@ class Conversation:
         self.flush_transcript()
         self.log_entries.append(message)
         for output in (self.output, *self.mirrors):
-            output.write(message)
+            output.write(styled_entry(message))
 
     def append_transcript(self, speaker: str, delta: str) -> None:
         if not delta:
@@ -117,14 +193,22 @@ class Conversation:
                 self.record_message("user" if speaker == "You" else "assistant", text, "voice")
 
     def redraw_log(self) -> None:
+        if self.redraw_timer is not None:
+            self.redraw_timer.stop()
+            self.redraw_timer = None
         for output in (self.output, *self.mirrors):
             self.draw(output)
+
+    def schedule_redraw(self) -> None:
+        """Redraw soon, so fast streamed fragments share one redraw."""
+        if self.redraw_timer is None:
+            self.redraw_timer = self.set_timer(STREAM_REDRAW_SECONDS, self.redraw_log)
 
     def draw(self, output: RichLog) -> None:
         # RichLog.write adds lines, so redraw to update the active message.
         output.clear()
         for entry in self.log_entries:
-            output.write(entry, scroll_end=False)
+            output.write(styled_entry(entry), scroll_end=False)
         output.scroll_end(animate=False)
 
     def show_image(self, image, caption: str, page_url: str) -> None:
@@ -140,6 +224,10 @@ class Conversation:
         if self.record_message is not None:
             # The image is never saved; only the caption and its page.
             self.record_message("assistant", f"[image] {caption} ({page_url})", "screen")
+
+    def start_written_reply(self, label: str = "Cora · written", channel: str = "screen") -> WrittenDraft:
+        """A written reply to show as it streams in; nothing appears until its first text."""
+        return WrittenDraft(self, label, channel)
 
     def show_written_reply(self, text: str, label: str = "Cora · written", channel: str = "screen") -> None:
         """A reply from a chat without Live: there is no voice, so all of it is shown."""

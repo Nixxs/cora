@@ -118,7 +118,7 @@ class RelayAppTests(unittest.IsolatedAsyncioTestCase):
         async with keyboard_tests.running_app() as (app, pilot):
             await self.linked(app)
             royce, terry = uuid4(), uuid4()
-            from app import SIGNAL_RELAYS_PER_DAY
+            from app_areas.reaching_you import SIGNAL_RELAYS_PER_DAY
             for _ in range(SIGNAL_RELAYS_PER_DAY):
                 self.assertIsNone(await app.relay_to_person(royce, "Royce", "again"))
             self.assertIn("as much as you can for Royce today", await app.relay_to_person(royce, "Royce", "again"))

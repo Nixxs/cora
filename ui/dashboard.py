@@ -30,6 +30,14 @@ RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 
 # A task's dot: blue while it waits on others, amber once it waits on the person.
 TASK_STATUS_STYLES = {"open": "#7fb8d8", "waiting": "#7fb8d8", "needs_person": "#e0b45c"}
+# A sign-up's dot, and how its state reads.
+SIGN_UP_STYLES = {"done": "#8fc49a", "signing_up": "#7fb8d8", "confirm_email": "#7fb8d8", "blocked": "#e0b45c",
+                  "failed": "#d27a7a"}
+SIGN_UP_STATES = {"done": "signed up", "signing_up": "signing up", "confirm_email": "confirm email",
+                  "blocked": "blocked", "failed": "failed"}
+# A desire's strength: bright once she's working toward it, softer while held, dim while forming.
+DESIRE_STYLES = {"pursuing": "#e0b45c", "held": "#c9a86a"}
+DESIRE_STATES = {"pursuing": "pursuing", "held": "held", "candidate": "forming"}
 # A task's latest step is cut to this, so one long message doesn't fill the box.
 STEP_PREVIEW_CHARS = 120
 
@@ -42,6 +50,7 @@ BOX_TITLES = {
     "memories-box": "memories",
     "interests-box": "interests",
     "identity-box": "identity",
+    "desires-box": "desires",
     "conversations-box": "conversations",
     "tasks-box": "tasks",
     "context-box": "context",
@@ -111,10 +120,34 @@ def task_lines(tasks, now) -> Text:
     return lines or Text("no open tasks", style=TRACK_STYLE)
 
 
+def desire_lines(desires) -> Text:
+    """Each live desire: its strength and state, then its wish; ones still forming are dim."""
+    lines = Text()
+    for index, (wish, strength, status) in enumerate(desires):
+        style = DESIRE_STYLES.get(status, LABEL_STYLE)
+        lines.append(("\n\n" if index else "") + f"{strength:.0%} ", style=style)
+        lines.append(DESIRE_STATES[status], style=LABEL_STYLE)
+        lines.append("\n" + wish, style="" if status in DESIRE_STYLES else LABEL_STYLE)
+    return lines or Text("no desires yet", style=TRACK_STYLE)
+
+
+def sign_up_lines(sign_ups, now) -> Text:
+    """Her latest sign-ups: the site, how it stands and when she asked."""
+    lines = Text()
+    for index, sign_up in enumerate(sign_ups):
+        lines.append(("\n" if index else "") + "● ", style=SIGN_UP_STYLES.get(sign_up.status, LABEL_STYLE))
+        lines.append(sign_up.site)
+        state = SIGN_UP_STATES.get(sign_up.status, sign_up.status)
+        if sign_up.blocked_by:
+            state += f" ({sign_up.blocked_by.replace('_', ' ')})"
+        lines.append(f"  {state} · {ago(sign_up.asked_at, now)}", style=LABEL_STYLE)
+    return lines
+
+
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
-    def __init__(self, voice_bands, conversation, audio_status, load_snapshot, activity, context) -> None:
+    def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context) -> None:
         super().__init__()
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
         # or an empty tuple for silence.
@@ -122,6 +155,8 @@ class DashboardScreen(Screen):
         self.conversation = conversation
         # Owns the chat's mic and speaker buttons, which the voice box's toggles press.
         self.audio_status = audio_status
+        # The chat's connection button, which enters standby or resumes; the voice box's toggle presses it.
+        self.connection = connection
         # Reads a DashboardSnapshot off the UI thread; returns None if the database failed.
         self.load_snapshot = load_snapshot
         # The last good snapshot; a failed refresh keeps showing it.
@@ -136,12 +171,12 @@ class DashboardScreen(Screen):
         with Vertical(id="dashboard-panel"):
             with Horizontal(id="dashboard-top", classes="dashboard-row"):
                 with Vertical(id="voice-column"):
-                    # The box's top border, drawn as widgets so standby can show at its right.
+                    # The box's top border, drawn as widgets so the standby toggle can sit at its right.
                     with HorizontalGroup(id="voice-header"):
                         yield Static("╭─", classes="voice-line")
                         yield Static("voice", id="voice-title")
                         yield BorderLine(id="voice-header-fill")
-                        yield Static("○ standby", id="dashboard-standby")
+                        yield Button("○ disconnected", id="dashboard-standby")
                         yield Static("─╮", classes="voice-line")
                     # Cora's voice rises above the line and the person's hangs below it.
                     with Vertical(id="voice-box", classes="dashboard-box"):
@@ -197,6 +232,10 @@ class DashboardScreen(Screen):
                     # Scrolls, so every trait can be read in full.
                     with VerticalScroll(id="identity-scroll"):
                         yield Static(id="identity-traits")
+                with Vertical(id="desires-box", classes="dashboard-box"):
+                    # Scrolls, so every desire can be read in full.
+                    with VerticalScroll(id="desires-scroll"):
+                        yield Static(id="desire-list")
             # Pans sideways like the middle row once the boxes reach their minimum widths.
             with HorizontalScroll(id="dashboard-bottom", classes="dashboard-row", can_focus=False):
                 with Vertical(id="conversations-box", classes="dashboard-box"):
@@ -206,6 +245,8 @@ class DashboardScreen(Screen):
                     # Scrolls, so every open task can be read.
                     with VerticalScroll(id="tasks-scroll"):
                         yield Static(id="task-list")
+                        yield Static("sign-ups", id="sign-up-label", classes="dashboard-label")
+                        yield Static(id="sign-up-list")
                 with Vertical(id="context-box", classes="dashboard-box"):
                     yield Static("connect to measure", id="context-placeholder")
                     # Each item's share of its model's startup context; scrolls if the box is short.
@@ -289,6 +330,8 @@ class DashboardScreen(Screen):
             traits.append(trait.kind + ("" if held else " · forming"), style=LABEL_STYLE)
             traits.append("\n" + trait.statement, style="" if held else LABEL_STYLE)
         self.query_one("#identity-traits", Static).update(traits or Text("no traits yet", style=TRACK_STYLE))
+        # Text, so brackets in a wish are not read as markup.
+        self.query_one("#desire-list", Static).update(desire_lines(self.snapshot.desires))
         now = datetime.now(timezone.utc)
         heatmap = self.query_one("#conversation-days", CalendarHeatmap)
         heatmap.today_row = now.astimezone().weekday()
@@ -296,6 +339,8 @@ class DashboardScreen(Screen):
         # Text, so brackets in a goal or a step are not read as markup.
         self.query_one("#task-list", Static).update(task_lines(self.snapshot.tasks, now))
         self.query_one("#tasks-box").border_subtitle = f"{len(self.snapshot.tasks)} open" if self.snapshot.tasks else ""
+        self.query_one("#sign-up-label").display = bool(self.snapshot.sign_ups)
+        self.query_one("#sign-up-list", Static).update(sign_up_lines(self.snapshot.sign_ups, now))
         width = max(map(len, self.snapshot.last_runs), default=0)
         runs = Text()
         for index, (job, then) in enumerate(self.snapshot.last_runs.items()):
@@ -345,6 +390,7 @@ class DashboardScreen(Screen):
         chat_button = {
             "dashboard-speaker": self.audio_status.speaker,
             "dashboard-mic": self.audio_status.mic,
+            "dashboard-standby": self.connection,
         }.get(event.button.id)
         if chat_button is None:
             return
@@ -355,17 +401,25 @@ class DashboardScreen(Screen):
 
     def sync_audio_controls(self) -> None:
         live = self.audio_status.live
-        for button_id, chat_button, muted, labels in (
-            ("#dashboard-speaker", self.audio_status.speaker, live.speaker_muted, ("🔊 speaker", "🔇 muted")),
-            ("#dashboard-mic", self.audio_status.mic, live.microphone_muted, ("🎙 mic", "🎙 muted")),
+        # The connection shows its state as the chat does, like "● active" or "○ standby".
+        connection_label = str(self.connection.label).lower()
+        for button_id, chat_button, label, classes in (
+            ("#dashboard-speaker", self.audio_status.speaker,
+             "🔇 muted" if live.speaker_muted else "🔊 speaker", {"audio-muted": live.speaker_muted}),
+            ("#dashboard-mic", self.audio_status.mic,
+             "🎙 muted" if live.microphone_muted else "🎙 mic", {"audio-muted": live.microphone_muted}),
+            ("#dashboard-standby", self.connection, connection_label, {
+                f"state-{state}": self.connection.has_class(f"state-{state}")
+                for state in ("active", "standby", "connecting", "disconnecting")
+            }),
         ):
             button = self.query_one(button_id, Button)
-            label = labels[muted]
             if str(button.label) != label:
                 button.label = label
                 # Button.label repaints but does not invalidate its cached auto width.
                 button.refresh(layout=True)
-            button.set_class(muted, "audio-muted")
+            for name, on in classes.items():
+                button.set_class(on, name)
             button.tooltip = chat_button.tooltip
             button.disabled = chat_button.disabled
         summary = self.query_one("#dashboard-activity", Static)
@@ -374,7 +428,6 @@ class DashboardScreen(Screen):
             # Text, so brackets in an error summary are not read as markup.
             summary.update(Text(panel.title))
         summary.set_class(panel.has_class("activity-error"), "activity-error")
-        self.query_one("#dashboard-standby", Static).display = self.app.standby
 
     def sample_voice(self) -> None:
         speaker, mic = self.voice_bands()

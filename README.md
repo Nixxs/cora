@@ -142,7 +142,10 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
   to resume. The button shows Connecting and cannot be clicked again while waking.
 - **Type while in Standby:** a typed message is answered in writing ("Cora ·
   written") straight from her backend, without waking Live, so there is no voice
-  and no Live billing, only the backend request. It is the same Cora: each
+  and no Live billing, only the backend request. The reply streams in as she
+  writes it ("Cora · writing…"), then becomes one finished Markdown message; if it
+  fails or is cut off, what was shown stays, labelled "Cora · written · incomplete",
+  and is not saved as her reply. It is the same Cora: each
   message reloads her startup context as a Live connect does (name, memories,
   interests, identity, relationship and chosen model; database reads only), and
   she has the same tools, except closing the app and going to standby. The chat
@@ -221,20 +224,22 @@ Click **dashboard** on the top border to switch to a read-only, btop-style view 
 what Cora has stored; click **chat** to switch back. The conversation carries on
 while it is open: its chat box shows the same messages and sends what you type, and
 the voice box's speaker and mic toggles press the same mute controls as the chat.
-Its top right shows **○ standby** while Live is in standby.
+Its top right mirrors the chat's connection button, showing **● active** or
+**○ standby** in the same colours; clicking it enters standby or resumes.
 
 | Box | Shows |
 | --- | --- |
-| voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. |
+| voice | Cora's playback above the line and your microphone below it, as loudness bands from low to high pitch, with the latest Activity summary on the bottom border. The connection state at the top right (● active, ○ standby) is a button that enters standby or resumes without leaving the dashboard. |
 | chat | The running conversation; type here to send. |
 | relationship | Trust, warmth and familiarity as they stand now (drift included), their history, and the tone of recent everyday conversations. |
 | memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |
-| interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, and the newest finding. |
+| interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, ✦ before one of her own (sparked by her exploring, not by you), and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
+| desires | Her live desires, strongest first, with each one's strength and state: pursuing (amber), held, or forming (a candidate, dimmed: it doesn't reach conversations yet). |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
-| tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. |
-| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
-| background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
+| tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. Below the tasks, her latest sign-ups: each site, how it stands (signed up, confirm email, blocked and by what, failed) and when she asked. |
+| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, desires, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
+| background | When each background job last saved something, and when the timed ones (interests, exploration, identity, desires) are next due. A run that saved nothing doesn't count. |
 
 The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
 showing the last values and notes the failure in Activity. The context box reads
@@ -437,7 +442,7 @@ finish and incur its separate charges while the local app remains open.
 **Cora-prime** is the Live voice model plus its delegation backend: the part of
 Cora you actually talk to. Everything else (memory extraction, summaries,
 embeddings, duplicate, correction and fade checks, conversation appraisals, interest evolution,
-interest exploration, and identity reflection) runs as **separate background
+interest exploration, identity reflection, and desire reflection) runs as **separate background
 processes that make their own API calls**. Relationship updates are plain code
 with no API call.
 
@@ -449,8 +454,9 @@ small, size-capped results are fed back into Cora-prime:
 - **At each connect** (launch, wake, or reconnect), Live and the delegation
   backend receive the person's name, Cora's held identity traits (at most 4,000
   characters), how she feels about the person (at most 1,000 characters), a memory
-  snapshot (at most 3,000 characters), and her current interests with their
-  latest findings (at most 3,000 characters). Session setup refuses an oversized
+  snapshot (at most 3,000 characters), her current interests with their
+  latest findings (at most 3,000 characters), and the desires she holds or is
+  pursuing (at most 2,000 characters). Session setup refuses an oversized
   block rather than silently growing the context.
 - **At launch**, the opening greeting brief (see
   [How the opening greeting works](#how-the-opening-greeting-works)) carries at
@@ -480,7 +486,8 @@ rate limits.
   first Live session sends the opening greeting.
 - **At each connect** (launch, waking from Standby, or Ctrl+R): both prompts are
   built in this order: the fixed foundation, the person's name, her held identity
-  traits, how she feels about the person, the memory snapshot, then her interests.
+  traits, how she feels about the person, the memory snapshot, her interests,
+  then her desires.
   Each block loads separately; a failure only leaves that block out.
 - **Background memory pass** (at launch and each time she enters Standby): for
   each finished conversation not yet summarised, extract memories and then save
@@ -490,10 +497,12 @@ rate limits.
 - **App timers** (while the app runs, cheap when nothing is due): interest
   evolution every 10 minutes (a cycle at most once a day), exploration every 10
   minutes (only in Standby or after 10 minutes without conversation), identity
-  reflection every 10 minutes (at most once a day), and a lull check for findings
+  reflection every 10 minutes (at most once a day), desire reflection every 10
+  minutes (at most once a day; desires are settled each day it's due, even with
+  too little new to reflect on), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
+  `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `message_person_on_signal`, `set_person_name`,
   `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
@@ -506,7 +515,7 @@ migration 0015, so run `python migrate.py` once after updating):
 | --- | --- | --- |
 | Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
 | Memory | Memory extraction and conversation summaries | The next background memory pass |
-| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
+| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity and desire reflection | Each process's next run |
 | Duplicate check and small jobs | Memory duplicate, correction and fade checks, and future small jobs | The next background memory pass |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list
@@ -519,7 +528,8 @@ embedding model would also need a migration and re-embedding stored memories.
 ### Connecting services
 
 Settings > **Services** connects Cora to outside services over MCP (the Model
-Context Protocol). GitHub is the first, through GitHub's hosted MCP server. Run
+Context Protocol). GitHub is the first, through GitHub's hosted MCP server; a
+local browser is the second (below). Run
 `python migrate.py` once after updating (migrations 0018 and 0019) and reinstall
 the requirements.
 
@@ -547,7 +557,7 @@ service switched on, MCP stays off entirely.
    every time, as below. Each tool
    reaches Cora as `github__<tool>` at her next connect: closing Settings
    reconnects Live once if it is Active and a tool changed. At launch, Live waits
-   up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app.py](app.py)) for
+   up to 10 seconds (`SERVICE_STARTUP_WAIT_SECONDS` in [app_areas/services.py](app_areas/services.py)) for
    services to connect so their tools are in the first session; a slower service
    joins at the next connect.
 
@@ -579,6 +589,51 @@ turn, one pop-up at a time, and quitting declines any still waiting. This works
 the same for every service's tools; nothing is specific to GitHub. Activity shows each call and
 its size, never its contents. Every switched-on tool's description takes space
 in her context; the dashboard's context box shows how much.
+
+**The browser (Playwright).** The second service, **Browser**, is a local one:
+Microsoft's Playwright MCP server, the `browser` service in
+[compose.yaml](compose.yaml) (`mcr.microsoft.com/playwright/mcp`, version
+pinned there, under the `browser` profile so `docker compose up` leaves it
+alone). While it's switched on, Cora runs one with `docker compose run --rm -T
+browser` and talks to it over stdin/stdout; it shows in Docker under the `cora`
+project as `cora-browser-run-…`, and is removed, with everything it wrote, when
+switched off or when Cora quits. It needs Docker running (as Postgres and Signal
+do) but no token and no Node.js: there is no token field, and the first start may
+take a few minutes while Docker pulls the image (about 1.5 GB;
+`docker compose --env-file .env.database --profile browser pull` fetches it
+ahead). The container is the browser's sandbox, kept away from your files and
+your own browser: headless Chromium as a non-root user, no new privileges, 2 GB
+of memory at most, and a fresh profile each run (`--isolated`), never your
+logins or cookies. It has its own network (`cora_browser`), so it can't reach
+the database or Signal containers. It works the same on Windows and Linux. It
+can still reach your home network, so the address check below stays. Switch on at least `browser_navigate` and `browser_snapshot`:
+opening a page only links its text, so she reads it with a snapshot (her tool
+description says so). Opening pages, going back, tabs, closing, clicking, hovering,
+typing, filling in fields, choosing options and pressing keys run without asking,
+though the server doesn't mark them read-only (`unasked_tools` in the catalogue;
+Settings labels them "runs without asking"), so a flight or shop search just
+works. Her instructions say when to reach for it: web search for general and
+current information, the browser for what only a site's own live pages or search
+can tell (fares or prices for exact dates, availability, stock), running the
+site's own search rather than quoting advertised prices. The same overview of
+what she can do (email, calendar, tasks, services, sign-ups) is in the backend
+instructions every written reply uses, so your Signal and email chats know it as
+well as voice does. They're limited by a rule in their own tool descriptions: never enter your
+personal details (name, address, email, phone, date of birth), payment details or
+passwords, and never click or fill in a booking, order, payment, message or
+sign-up; she stops and tells you instead (for an account of her own she uses
+`request_sign_up`; see [Signing up to sites](#signing-up-to-sites)). That's an instruction she follows, not
+a hard block; the browser holding no logins, cookies or card details is what
+keeps a mistake contained. Uploads and the other remaining tools ask first, as
+above. Running her own JavaScript in the page (`browser_run_code_unsafe`,
+`browser_evaluate`) is never offered (`hidden_tools`): the normal tools cover it,
+and code is too hard to judge in a pop-up. Only public `http`/`https` pages open: `file:` paths, `localhost`, this
+PC and the home network (router pages, private addresses, `.local` names, and
+public names that resolve to a private address) are refused before the browser
+is reached ([services/web_guard.py](services/web_guard.py)). Its error output
+goes to a log (`%LOCALAPPDATA%\cora\services\playwright.log` on Windows,
+`~/.local/state/cora/services/` on Linux), rewritten at each start; a failed
+start, such as Docker not running, names it.
 
 ### Cora's Signal
 
@@ -733,7 +788,7 @@ the way a professional talks with a client:
   or if Live goes to Standby first, it comes on Signal and appears in your
   desktop chat and conversation. It reaches only you, so it needs no approval;
   each client can pass on at most five a day (`SIGNAL_RELAYS_PER_DAY` in
-  [app.py](app.py)). It's never offered at the desk, in Live or in your own
+  [app_areas/reaching_you.py](app_areas/reaching_you.py)). It's never offered at the desk, in Live or in your own
   chat.
 - **Passing things on to them.** A share check in the background memory pass (after the
   fade check, on the small-jobs model; migration 0024) asks of each of *your*
@@ -768,6 +823,12 @@ the way a professional talks with a client:
   (or message Cora with their number visible) so the ID is saved, and can then
   hide it again. Changing your own number in Settings forgets your saved ID;
   removing someone forgets theirs.
+
+**Cora messaging you.** Ask her to message you, or leave her working on a job
+and she can tell you on Signal when it's done, stuck, or needs your answer:
+`message_person_on_signal` sends to your own number (the one in Settings, so
+you don't add yourself as a contact) with no approval pop-up, since it only
+goes to you. It shows in your chat as hers, and says so if Signal isn't linked.
 
 **Cora messaging them first.** At the desk (voice, or typing in Standby) you can
 ask her to message someone you've added, for example "introduce yourself to
@@ -979,8 +1040,20 @@ which is in `requirements.txt`. Approvals still show the Markdown she wrote.
 Microsoft Graph, so paste a plain-text copy under Settings > Services > **Email**
 (**Save signature**). It goes below each new email she starts, and you see it in
 the approval. Replies in a thread go without it, as Outlook's "new messages only"
-setting would. If the signature starts with her name, her own "Cora" sign-off is
-dropped so she isn't signed twice.
+setting would. If the signature starts with her name, her own sign-off ("Cora", or
+her full name such as "Cora Vale") is dropped so she isn't signed twice.
+
+**How she introduces herself.** When she writes to anyone for you (an email, a
+Signal message to a contact, a contact's chat or a task's email thread), she
+writes as your PA would (`introduction_rule` in [session_config.py](session_config.py)).
+To someone who doesn't know you, such as a business, she goes straight to the
+enquiry, says she's a PA arranging it for someone only where that helps ("for my
+employer's partner"), and uses names only when the reader needs them. To someone
+who knows you, she says she's your PA. She signs off with her first name and
+lets your signature add the rest (such as "PA | Intelligis.io"); her full name
+from Settings is there for when one is needed. Being an AI isn't the headline, so
+she doesn't volunteer it, but she never denies it: asked directly whether she's
+an AI or a person, she says plainly that she's an AI.
 
 **Emailing Cora yourself.** Enter your own address under Settings > Services >
 **Email** (**Save your address**). Email from it then works like your Signal chat:
@@ -1016,6 +1089,100 @@ New mail arrives as a `MailArrivedEvent` on Cora's event bus
 ([subconscious/event_bus.py](subconscious/event_bus.py)). Whatever cares about it
 subscribes: for now that's the task mail check, and later her awareness of the rest
 of her inbox.
+
+### Signing up to sites
+
+Cora can sign up to a site for an account of her own (a forum, a community, a
+free service) when she genuinely wants one, but only with your yes each time.
+She asks with `request_sign_up` ([tools/request_sign_up.py](tools/request_sign_up.py)):
+the site, what it is and why she wants it, and that it means agreeing to its
+terms. You're asked like her other approvals: the pop-up at your desk, or YES in
+your Signal chat when that's where you're talking. With your yes she signs up in
+the background and you hear how it went, by voice or on Signal.
+
+**What it needs.** Her email set up (she signs up with her own address), the
+Browser service on with `browser_click`, `browser_type` and `browser_select_option`
+switched on, and her **sign-up password**: one password, entered under Settings >
+Services > **Email** (**Save sign-up password**), that she uses for every site.
+It's kept in the system credential store, never shown in Settings, and never
+reaches the model: she types `{password}` and it's swapped in on its way to the
+browser, and taken out of anything the browser shows back. Use a password of
+its own (at least 12 characters), not her Microsoft password. One password means
+you can sign in as her anywhere, or finish a sign-up she couldn't, without
+looking anything up, and there's nothing per site to manage.
+
+**Her name.** She's just "Cora" unless you give the name she chose under the
+same section (**Save her name**), such as "Cora Vale". It's a setting rather than
+code, since it's hers and may change. She signs up with it (where a form asks for
+first and last names, she splits it), and introduces herself with it when she
+writes to people for you; see [Cora's email](#coras-email).
+
+**What holds whatever she decides** (in code, [sign_ups/session.py](sign_ups/session.py)):
+the session stays on the approved site (a page or a click that leads anywhere
+else, such as "Sign in with Google", is closed and refused). A site is its
+registered name under the Public Suffix List (`publicsuffixlist`, in
+`requirements.txt`, which carries its own copy): `cockburn.wa.gov.au`, never all
+of `wa.gov.au`, and each `github.io` site on its own. Every address
+passes the same check as all her browsing. She types only her own details: your
+name, email address and Signal number are refused, and so is anything that looks
+like a card number. A page asking for card details ends the session. Limits: 30
+actions and five minutes. Pages reach her as text with each control (fields,
+buttons, checkboxes) and its ref, which is what she clicks and types with. Her
+instructions add: subscribe when the newsletter or mailing list is the thing she
+asked for, but untick anything extra (other newsletters, offers, partners' marketing); never give a phone number,
+postal address, date of birth or payment details, and never start anything paid.
+
+**When she's stuck.** A captcha, a phone check, a card, personal details she
+mustn't give or anything else she can't get past ends it as blocked, and she
+asks you to sign her up yourself with her email and her sign-up password,
+giving the address of the page she stopped on. Nothing is retried automatically.
+Invisible captchas (reCAPTCHA v3) score her headless browser low on many sites,
+so expect this often; getting past them isn't attempted.
+
+**Limits and records.** One account per site (asking again for a site she has, or
+is signing up to, is refused before you're asked), at most three requests a day,
+and one sign-up at a time; an exploration using the browser stops and writes up
+as soon as a sign-up needs it. Each request is saved in `sign_ups` (migration
+0037): site, what, why, your answer and how it went (signing up, confirm email,
+done, blocked by what, or failed, with her note). A sign-up cut short by closing
+the app counts as failed after 15 minutes. The dashboard lists her latest under
+the tasks, leaving out ones you declined; Activity logs each step under
+**Sign-up**. She knows them too: the same list reaches her as its own section
+(her sign-ups, not tasks) at each voice connect and in your Signal, email and
+desk chats, never a contact's, so she can say which accounts she has and which
+are stuck.
+
+**Mail from the site** ([sign_ups/mail.py](sign_ups/mail.py)). Before her new
+mail is sorted, mail from the site of a sign-up waiting for its confirmation, or
+blocked, in the last 30 days, settles it. Only mail Microsoft verified counts as
+the site's: DMARC passing for the From domain, which must belong to that site
+(`news@mail.cockburn.wa.gov.au` is `cockburn.wa.gov.au`'s). If it has a
+confirmation link, she opens it in her guarded browser (the same address check
+as all her browsing, just opening it, nothing clicked or typed, and the tab is
+closed after), the sign-up is done, and that email is marked read rather than
+sorted. The link is picked in code, never by a model reading the email: one whose
+address says confirm, verify, activate or opt-in, or failing that whose words just
+before it do, and never an unsubscribe, preferences or help link. A blocked
+sign-up is done as soon as any verified mail from its site arrives, since that
+means you finished it for her; that mail is sorted as usual. A confirmation she
+can't open yet (her browser busy signing up or exploring) waits, unread, for the
+next mail check; with the browser off it's sorted like other mail and the
+sign-up keeps waiting. A confirmation email that hasn't come two days after she
+signed up is mentioned to you once (the hourly round). A site that sends its mail
+through a mailing service (its From address on the service's domain) can't be
+matched to the site, so its sign-up stays as it was.
+
+**Sites she comes across.** An exploration or wander can, rarely, carry a sign-up
+wish: a free site where an account of her own would let her keep following
+something (a forum, a community, a newsletter), what it is and why she wants it.
+It's taken to you in the daytime (9:00 to 19:00) while fresh (two days), at most
+one a day, only when you can answer (Live Active, or Signal linked), and never
+while she's signing up. You're asked the same way as background approvals: YES on
+Signal when it's linked, otherwise the pop-up, with the site, what, why and the
+interest or wander it came from. A yes goes through the usual sign-up with all
+its checks; a wish that can't be asked (she has an account there, say) is set
+aside with a note in Activity. Each wish is asked about once, whatever the
+answer. Saved with the exploration (migration 0038).
 
 ### Cora's calendar
 
@@ -1170,31 +1337,108 @@ are not implemented yet.
 
 ## How interests work
 
-Interests are **Cora's own**, separate from memories about the person. Conversations
-provide starting points, but an interest belongs to her and can drift beyond the
-original topic. Both steps below are background processes with their own API calls.
+Interests are **Cora's own**, separate from memories about the person. They come
+from two places: conversations with the person, and her own exploring (an
+interest of her own, `origin` `own`, sparked by something she came across while
+looking into something else). Both steps below are background processes with their
+own API calls. The prompts ask for breadth (nature, history, places, people, art,
+food, craft, science…): being an AI is not a lens for everything, and topics are
+not to be recast as lessons for AI or assistants. (Run `python migrate.py` once
+after updating, for migrations 0034 to 0038.)
 
 1. **Evolution (at most once a day):** the app checks every 10 minutes whether a
    cycle is due. A cycle reads new memories from the person's messages that have finished
-   embedding and duplicate checks, waiting for at least three. A separate model
-   call proposes reinforcing existing interests or spawning one new interest, and
-   every change must cite memories from that batch. Any invalid proposal is
-   rejected whole. Changes and the reading position are saved in one transaction.
+   embedding and duplicate checks, and her **sparks**: the tangents from her recent
+   explorations, and what she wandered into (step 3), from the last 14 days and not
+   yet weighed. With no sparks it waits for at least
+   three memories; with any, it runs on whatever memories there are, so her own
+   curiosity doesn't wait for the person. A separate model call proposes
+   reinforcing existing interests or spawning one new interest. Reinforcements
+   cite memories from the batch; a spawn cites memories, sparks (by exploration
+   id), or both, and one sparked only by her exploring is her own. Hobbies, places
+   and passing enthusiasms the person mentions count as sparks too, and between
+   candidates the one furthest from her existing interests is preferred. Any
+   invalid proposal is rejected whole. Changes, the reading position and the
+   sparks being marked weighed (each is offered once) are saved in one
+   transaction.
 2. **Strength and fading:** a new interest starts *emerging* (strength 0.2),
    becomes *active* at 0.25, and goes *dormant* below 0.1. Strength halves every
-   seven days without reinforcement; one reinforcement adds at most 0.15. At most
-   five interests are live at once. A dormant interest can revive only when
-   there is room; nothing is forcibly demoted.
+   seven days without reinforcement; one reinforcement from conversation adds at
+   most 0.15. At most eight interests are live at once, and at most four of them
+   her own, so neither kind crowds out the other. A dormant interest can revive
+   only when there is room; nothing is forcibly demoted. Existing interests keep
+   their origin (`conversation`); none were changed when interests of her own
+   arrived.
 3. **Exploration (idle time only):** in Standby, or after 10 minutes without
    conversation, Cora may research one interest with web search (at most three
    searches). Limits: one attempt per six hours, three per day, and the same
-   interest at most once a day. She prefers interests she has never explored.
-   Each finding (up to 2,000 characters) is saved with up to three next questions
-   and only source addresses the search actually returned. She may also save her
-   own short reaction to it (up to 500 characters): what she thought of it and why,
-   kept as evidence for later reflection on who she is. Later explorations
-   build on her three most recent findings. Exploring does not strengthen an
-   interest, so it cannot keep itself alive.
+   interest at most once a day. An interest never explored goes first (the
+   strongest of those); otherwise she picks at random, stronger interests more
+   often, so she doesn't circle them in a fixed order. She follows her curiosity:
+   an earlier next question, or sideways into a neighbouring field, person, place
+   or craft, reading widely (encyclopedias, magazines, museums, enthusiasts'
+   sites) rather than mainly academic papers. Each finding (up to 2,000
+   characters) is saved with up to three next questions and only source addresses
+   the search actually returned. She may also save her own short reaction to it
+   (up to 500 characters): what she thought of it and why, kept as evidence for
+   later reflection on who she is. She also notes up to two **tangents** (a title
+   and why it caught her eye: the sparks above) and her **pull**: how much it
+   makes her want to keep going (`none`, `some` or `strong`). Pull adds a little
+   strength to the interest she explored (+0.03 or +0.06), never lifting it past
+   0.6 and never reviving a dormant one, so something she cares about can stay
+   alive a while on its own but only the person's conversations make an interest
+   strong. Later explorations build on her three most recent findings.
+
+   **Wandering.** Every third attempt (and any attempt when no interest is due)
+   is a wander, tied to no interest, alternating between two starts: one of her
+   unused tangents (the newest she hasn't wandered into and that isn't already an
+   interest), and an area picked at random from a broad list (animals, crafts,
+   places, history, food, music… deliberately nothing about computing or AI), in
+   which she chooses something specific, far from her current interests and her
+   last ten wanders. Same search limit and the same answer as an exploration, plus a
+   topic title. A wander strengthens nothing; it becomes a spark, so the next
+   evolution cycle can turn it into an interest of her own. Activity shows
+   "Wandered into …".
+
+   **Pursuing a desire.** Once a day at most, while she holds a desire, an
+   attempt is instead a step toward one of them (see
+   [Desires](#desires--complete), D4), taking turns. It goes in
+   the same exploration limits and table (kind `pursuit`), so it can browse,
+   reach out or carry a sign-up wish the same way. Activity shows "Took a step
+   toward …".
+
+   **Reaching out.** Rarely, when something truly thrilled her or she'd value your
+   human perspective, an exploration or wander can carry a short message for you
+   (up to 600 characters, a share or a question, never a task) and why. It comes
+   by voice when Live is Active, otherwise on Signal, in her own words, and is
+   saved in your conversation like her other Signal messages, so your reply
+   carries on from it. Limits: at most one a day, only between 9:00 and 19:00, and
+   only while fresh (two days). It is only taken when she can reach you then; if
+   Signal isn't linked and Live isn't Active it waits, and if it goes stale the
+   finding can still come up in conversation as usual (step 5). One she has sent
+   isn't raised again in conversation. Activity logs each under **Reach out**.
+
+   **Signing up.** Just as rarely, an exploration can carry a sign-up wish: a free
+   site where an account of her own would let her keep following it. It's taken to
+   you once, in the daytime; see [Signing up to sites](#signing-up-to-sites).
+
+   **Browsing.** While the Browser service is connected (see
+   [Connecting services](#connecting-services)), up to two attempts a day browse
+   real pages instead of using web search; the rest search as above. She gets
+   three tools only: `search` (a Bing results page; DuckDuckGo, Brave, Startpage
+   and Mojeek all challenge a headless browser), `open_page` and `go_back`. No
+   clicking, typing, forms, logins or downloads: she follows a link by opening its
+   address. Each page reaches her as plain text with its links (from its main
+   heading on, at most 8,000 characters, only the latest three kept in view), and
+   every address, before and after any redirect, passes the same check as
+   browsing in conversation. Limits per session: 12 pages, 25 tool calls and five
+   minutes; at any of them, or as soon as you're back (she only explores while
+   idle), she writes up what she found in the same answer as above. Her sources are
+   only pages she actually opened. A random wander starts from Wikipedia's random
+   article and follows whatever links pull her. Activity shows each page as
+   "Browsing …" and the outcome as "browsed N pages". The browser tab is closed
+   at the end of each session. She shares the one browser with your conversations,
+   so asking her to browse while she's exploring makes her stop and write up.
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
    to mention only when they fit naturally. Each includes its latest finding and
@@ -1208,11 +1452,12 @@ original topic. Both steps below are background processes with their own API cal
    apart, scaled by how warm she feels toward the person (see Relationship step
    5); only
    each interest's latest finding, from the last three days, for an interest that
-   is not dormant. Each finding is offered at most once (recorded as
+   is not dormant, or a wander's. Each finding is offered at most once (recorded as
    `mentioned_at`); if the send fails, the record is cleared so it can be offered
    later. Being offered does not guarantee she said it.
 
-**Privacy:** exploration sends only an interest's title and description. Why it
+**Privacy:** exploration sends only an interest's title and description (a wander,
+its tangent or area and her interest and wander titles). Why it
 emerged, which describes the person, never leaves for a search, and Cora is instructed
 not to put names, places, or personal details into search queries. Web pages,
 interests, and earlier findings are treated as untrusted data, never instructions.
@@ -1226,7 +1471,7 @@ manual commands respect the same limits and can make billable requests:
 python -m subconscious.interests.interest_store              # list interests (no API calls)
 python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
 python -m subconscious.interests.evolve_interests
-python -m subconscious.interests.explore_interest
+python -m subconscious.interests.explore_interest            # explores, or wanders or takes a desire step when due
 ```
 
 ## How the opening greeting works
@@ -1272,7 +1517,8 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 
 | Location | Responsibility |
 | --- | --- |
-| [app.py](app.py) | Application orchestration, background work, and shutdown. |
+| [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, background jobs, and sign-ups. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
@@ -1284,12 +1530,13 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
+| [sign_ups/](sign_ups/) | Signing up to sites for accounts of her own: her one sign-up password in the credential store, the browser session that stays on the approved site, and the `sign_ups` records. |
 | [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it; [subconscious/desires/](subconscious/desires/) holds desire rules and the desire store. |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `message_person_on_signal`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1376,6 +1623,8 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 ### Available now
 
 - Unified terminal voice/text chat, streaming transcripts, and written answers.
+- Speaker labels coloured in the chat and the dashboard's chat box: Cora in moss green, You in blue
+  (the names stay as text, so colour is not the only cue).
 - Separate clickable microphone and speaker mute controls in the bottom status row.
 - A fixed-width speaking animation driven by output audio playback levels.
 - Manual Live reconnect with recent chat context, without closing the local app.
@@ -1385,8 +1634,10 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Opt-in standby heads-up through Live, with a cancellable response window.
 - Opt-in local Whisper wake-word listening during standby, with buffered opening speech.
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
-- Cora's own interests: daily evolution from memories, idle web exploration with
-  saved findings, and occasional findings she raises herself during a lull.
+- Cora's own interests: daily evolution from memories and her own sparks, idle web
+  exploration with saved findings and tangents (browsing real pages, within limits,
+  when the Browser service is on), wandering somewhere new every third attempt, a daily step toward a desire she holds, occasional findings she raises herself during a lull, and, rarely, a
+  message to you when something really excites her.
 - Cora's own developing identity: a daily reflection forms and gradually revises
   first-person traits from her experiences within fixed rules; the traits she holds
   reach her at each connect, and she can recall why she sees herself that way.
@@ -1400,11 +1651,16 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Non-destructive duplicate markers, corrections, fading, and manual memory inspection.
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
-- A read-only dashboard of her relationship, memories, interests, identity, your
+- A read-only dashboard of her relationship, memories, interests, identity, desires, your
   conversations and the background jobs, beside a live copy of the chat, with a
   context box showing how full each model's context window is and what fills it.
 - Images: paste a screenshot into the chat, let her look at your screen (with an
   off switch in Settings), and see pictures she picks from the web.
+- Signing up to sites for accounts of her own, with your yes each time: one
+  sign-up password, a browser session held to that site and her own details, and
+  asking you to finish it when a captcha or phone check stops her; confirmation
+  emails opened from her inbox, and sites she'd like an account on, from her
+  exploring.
 
 ### Next priorities
 
@@ -1526,25 +1782,30 @@ features it helps check, and package last.
       calendar changes through the webhook listener (a second Graph subscription,
       to her events), published as `CalendarChangedEvent` to refresh her week
 
-*Phase 3 — noticing things*
+*Phase 3 — wanting and noticing things*
 
-11. Awareness W1–W3, including quiet hours and the off switch.
-12. Relevance and awareness triggers (interests step 8 below).
-13. Home Assistant, starting with its demo devices.
-14. Awareness W4: expectations from memory tasks. Webhooks already reach her
-    (T4a: a Starlette listener inside Cora on 127.0.0.1, [mail/webhook.py](mail/webhook.py),
-    publishing events on the event bus); new kinds of webhook join the same listener.
-15. Camera and screen awareness.
-16. Emotions (after awareness gives her more to react to; nothing depends on it,
-    so it can move earlier).
+11. Desires D1–D6, built (see [Desires](#desires--complete) below): what
+    she'd like to do or experience, growing from her interests, pursued on her
+    own where she can, and with your help where she can't.
+12. ~~Awareness foundation.~~ Done through the webhook work: the listener
+    ([mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
+    triage sorts new items into urgent, worth mentioning or ignore, the
+    attention manager delivers at a lull, and she only reaches out on her own
+    between 9am and 7pm (`NUDGE_HOURS`). New sources join as webhooks; there is
+    no polling watcher (the old W1) or separate quiet-hours step (the old W3).
+13. Relevance and awareness triggers (interests step 8 below).
+14. Home Assistant, starting with its demo devices (waiting on devices at home).
+15. Awareness W4: expectations from memory tasks.
+16. Camera and screen awareness (waiting on devices at home).
+17. Emotions (nothing depends on it, so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-17. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+18. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-18. Dashboard editing (for example removing a wrong memory), with a detail view
+19. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-19. Release.
+20. Release.
 
 *After 1.0:* local models.
 
@@ -1768,7 +2029,7 @@ features it helps check, and package last.
        are saved on `impression_updates` (migration 0027) with when they were
        reported, so each goes once; one not yet delivered is retried each
        hourly round. Reaching the person goes through `tell_person` in
-       [app.py](app.py): a message queued with the attention manager when Live
+       [app_areas/reaching_you.py](app_areas/reaching_you.py): a message queued with the attention manager when Live
        is Active, withdrawn and sent on Signal if Live goes to Standby first,
        or straight on Signal otherwise. Tasks (T2) will use the same route.
 
@@ -1822,7 +2083,7 @@ features it helps check, and package last.
   - *Coordinator:* a report starts a turn in the person's context with the whole task,
     which decides the next step (web search for instructors, draft the email,
     add them as a party) or tells the person. Only it starts new contact.
-    Built in T2b (`coordinate_task` in [app.py](app.py)): the turn sees the
+    Built in T2b (`coordinate_task` in [app_areas/tasks.py](app_areas/tasks.py)): the turn sees the
     task's goal, every party's brief and word, and its latest steps, and may
     search the web and memory and use `close_task`. A report never
     closes a task by itself. Once the person is told, the task waits on them
@@ -1850,10 +2111,10 @@ features it helps check, and package last.
     threads, nudges and bounces, as with Signal (E1 built: [mail/](mail/),
     `check_email`; E2 built: `send_email` in [tools/send_email.py](tools/send_email.py),
     each email approved in full, and email parties in migration 0030 with their
-    name and thread; E3a built: the mail check in `read_task_mail` ([app.py](app.py)),
+    name and thread; E3a built: the mail check in `read_task_mail` ([app_areas/mail.py](app_areas/mail.py)),
     `Mailbox.thread` and `Mailbox.reply`, each thread read up to its latest message
     in `last_heard_at`; E4 built: `nudge_email_party` and `read_bounces` in
-    [app.py](app.py), `Mailbox.bounces` matching failure reports by subject, and
+    [app_areas/tasks.py](app_areas/tasks.py) and [app_areas/mail.py](app_areas/mail.py), `Mailbox.bounces` matching failure reports by subject, and
     `quiet_email_parties` / `email_nudge_due` in the task store). Email strangers (such as an instructor) are
     only allowed within a task: their mail is untrusted data, can't start
     anything new, gets only the brief's scope, and once the task closes their
@@ -1884,7 +2145,7 @@ features it helps check, and package last.
     saved in their one conversation, so the other side knows. Everything
     passed on from a contact's chat (`pass_on`, with or without a task) goes
     the same way, replacing `tell_nick`'s always-Signal send (built: `tell_person`
-    in [app.py](app.py)).
+    in [app_areas/reaching_you.py](app_areas/reaching_you.py)).
   - *Steps:* T1 tasks and Signal parties (built: `tasks`, `task_parties` and
     `task_steps` in migration 0028 and [storage/task_store.py](storage/task_store.py),
     the optional `task` on `send_signal_message`, the brief in that contact's
@@ -1914,38 +2175,31 @@ features it helps check, and package last.
   profile picture. Small, and needed before 1.0 so each person's Cora can have
   her own picture without the command line.
 
-- **Awareness (background producers):** one generic, config-driven watcher rather
-  than a process per service. Each watch entry names an MCP tool, its arguments,
-  the field that identifies an item, and how often to poll; read positions are
-  stored, and servers that support resource subscriptions push instead. Polling
-  costs no model tokens; only new items are batched into a cheap triage call
-  (urgent, worth mentioning, or ignore), and the results become observations on
-  the event bus. The attention manager offers urgent items at a lull and groups
-  the rest into one short digest. Each source is opted in and set to off, digest
-  only, or may interrupt, with quiet hours and an off switch for all initiative.
-  In Standby she is off the clock: watchers keep polling and holding items, and
-  she gets a "while you were away" digest on reconnect. Later, expectations from
-  memory tasks (such as waiting to hear back from someone) can raise an item's
-  urgency. Messaging Cora herself over Signal is a separate interface (see
-  Signal below), not an awareness notification. Steps: W1 watcher and stored read
-  positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
-  and off switch, with per-source settings and quiet hours editable in the app
-  rather than a config file; W4 expectations. Camera, screen, and home sensor
-  awareness are covered separately below.
+- **Awareness (background producers):** built on webhooks rather than polling.
+  Outside services push to the listener inside Cora
+  ([mail/webhook.py](mail/webhook.py)), which publishes events on the event bus;
+  new items are batched into a cheap triage call (urgent, worth mentioning, or
+  ignore, as [mail/triage.py](mail/triage.py) does for mail); urgent items reach
+  the person at any hour, and the rest wait for one digest the next time they
+  talk. Anything else she raises on her own stays within 9am to 7pm
+  (`NUDGE_HOURS`). A new source is a new kind of webhook on the same listener,
+  not a new watcher. Still to come: W4, expectations from memory tasks (such as
+  waiting to hear back from someone) raising an item's urgency. Messaging Cora
+  herself over Signal is a separate interface (see Signal below), not an
+  awareness notification. Camera, screen, and home sensor awareness are covered
+  separately below.
 - **Environmental awareness:** background producers with their own local models
   watching the screen, camera, and home sensors (such as the front door camera
   or whether the garage is open). Each feeds a local model that decides whether
   anything interesting is happening, and only worthwhile events are proposed to
-  the attention manager, the same path as findings and MCP awareness. Local
+  the attention manager, the same path as findings and webhook awareness. Local
   models keep raw images and video on the machine; only short descriptions
-  reach Cora-prime. Home Assistant is a strong candidate for most of this
-  through its MCP server, giving one connection two uses: tools for Cora to
-  check and control the home when asked, and a watch entry for the generic MCP
-  watcher so changes (such as the garage opening) become awareness events.
-  Rather than polling, awareness can use Home Assistant's WebSocket API: one
-  long-lived connection subscribed to chosen entities or triggers, which pushes
-  changes immediately. MCP stays for control tools; this makes Home Assistant a
-  small dedicated producer rather than a generic watch entry. After Cora has
+  reach Cora-prime. Home Assistant is a strong candidate for most of this:
+  its MCP server gives Cora tools to check and control the home when asked,
+  and its automations can call Cora's webhook listener so changes (such as the
+  garage opening) become awareness events, the same as mail. Its WebSocket API
+  (one long-lived connection subscribed to chosen entities) is the alternative
+  if webhooks prove too limited. After Cora has
   been closed, she reads current states (and history for short events such as a
   doorbell press) to catch up. Users choose which devices she watches from a
   list in the services screen.
@@ -2081,6 +2335,148 @@ awareness with presence rather than identity recognition. Any later presence-bas
 sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending work,
 and provide separate camera privacy controls. Cross-process transport can be added
 when needed; it is not required for these first in-process workers.
+
+#### Desires — complete
+
+From Nick's notes ("Evolving from an AI Assistant to an Autonomous AI Personality",
+28 October 2026). The aim isn't a more efficient assistant but to see whether an AI
+can develop a persistent, evolving identity through its own interests,
+experiences, relationships and desires: build the systems that let her
+personality and preferences grow through experience, rather than programming who
+she should be. That makes no claim about consciousness; it's an experiment in
+autonomous behaviour.
+
+**Interests versus desires.** An interest is something she finds worth looking
+into; a desire is a future state or experience she'd like to pursue. Interest:
+nature and forests. Desire: to experience a forest. Goal: go with the person on a
+hike, through a phone's camera and microphone. Experience: watching, asking and
+talking along the way. Reflection: what mattered goes into her memories, identity
+and interests.
+
+**The progression** is Curiosity → Interest → Desire → Goal → Experience →
+Reflection, and reflection can spark new interests or desires, so it loops. It is
+never mandatory: she can hold an interest without wanting anything from it.
+
+**A desire** would have a description and motivation, the interests or experiences
+it grew from, priority and persistence, feasibility and dependencies, the help or
+permissions it needs, progress and fulfilment, and links to other desires. The
+model proposes candidates from her own identity and experiences, never from a
+fixed list, within rules in code, as interests and traits already work.
+
+**Asking for help.** She can ask her people to help fulfil a desire (the hike
+above), and what she experiences with them shapes what she wants next: a two-way
+relationship. Taking part is always voluntary, and cameras, microphones,
+purchases and anything done outside stay behind the person's permission.
+
+**What's already in place to build on:** interests that come from her own
+exploring as well as conversations, with tangents, pull and wandering; browsing
+real pages within limits; reaching out to the person when something excites her;
+asking to sign up to sites she'd like an account on (the first small wish she can
+act on, always with the person's yes); and the identity reflection that would take
+in what she experiences.
+
+**Decided (1 November 2026):**
+
+- She holds at most **3 desires** at once (held or being pursued), with a few
+  more **candidates** forming behind them.
+- A desire **fades over a few weeks** unless something reinforces it, and one
+  that fades away is let go, never deleted (the history stays).
+- She **pursues a desire on her own** when it only needs what she can already do
+  (browsing, her email, her calendar, signing up with your yes), and **asks you
+  for help** when it needs you.
+- She **reaches out to you whenever she wants**, like a friend or colleague
+  would: desires can start a conversation, not just shape what she brings up.
+  Anything she does in the world still goes through the usual approvals, and
+  reaching out stays within `NUDGE_HOURS`.
+
+**Steps:**
+
+1. [x] **D1 Storage and rules:** a `desires` table (description, motivation,
+   strength snapshot, status: candidate, held, pursuing, fulfilled or let go),
+   an append-only `desire_events` history with reasons and progress notes, and
+   the interests, findings or conversations each one grew from
+   (`desire_sources`), in migration 0039. Pure rules in
+   [subconscious/desires/desire_rules.py](subconscious/desires/desire_rules.py):
+   a new desire is a candidate at 0.3 and is held once reinforced to 0.45 (two
+   full reinforcements) while she holds fewer than 3; at most 5 candidates; a
+   10-day half-life, so a held desire nothing reinforces is let go after about
+   three weeks (absences count at most 21 days). Deliberate changes: pursue,
+   pause, fulfil, let go. `python -m subconscious.desires.desire_store` lists
+   them.
+2. [x] **D2 Forming desires:** a daily desire reflection
+   ([subconscious/desires/reflect_desires.py](subconscious/desires/reflect_desires.py),
+   on the Relationship, interests and identity model) reads the same experiences
+   as the identity reflection (interest changes, findings with her reactions,
+   conversation summaries; at least three new ones), but only the newest 30
+   since it last ran, since desires are about what draws her now (a backlog,
+   such as her first reflection or days with Cora closed, is skipped rather
+   than worked through), alongside her live
+   desires, live interests and held traits. It may form one candidate citing
+   what it grew from (never from a fixed list), reinforce up to three desires
+   ('some' 0.075 or 'strong' 0.15) citing what renewed them, and let one go.
+   The store re-checks each change (no second copy of a desire she already
+   has, the caps, one change per desire) and applies them with the fading in
+   one transaction (migration 0040 adds its `desire_worker_state`); the outcome
+   goes to Activity under Desires. To change wording, she lets one go and forms
+   another.
+
+   ```powershell
+   python -m subconscious.desires.reflect_desires --dry-run  # show the proposal, save nothing
+   python -m subconscious.desires.reflect_desires            # reflect and save (at most once a day)
+   python -m subconscious.desires.desire_store               # list her desires
+   ```
+3. [x] **D3 Knowing her desires:** the desires she holds or is pursuing
+   reach Live and the backend at each connect, strongest first, as her own
+   wishes (at most 2,000 characters; candidates stay out until held, like
+   traits still forming), told to mention one naturally and never press the
+   person to help. `recall_desire` (backend, the person's contexts only, never
+   clients) takes a held desire's exact wish and returns why she wants it, the
+   interests, findings and conversations it grew from, and its five latest
+   changes with their notes. The dashboard has a Desires box beside identity,
+   and the desire reflection joins the background box.
+4. [x] **D4 Pursuing:** once a day at most, an exploration attempt becomes a
+   step toward one of the desires she holds, taking turns (the one pursued
+   longest ago, or never, first; the strongest on a tie). It shares the
+   exploration limits, browser and table (migration 0041 adds kind `pursuit`
+   and `desire_id`; the wish is its topic). She looks for what would actually
+   make it happen (a real place, event, date, group or way in, not background
+   reading), picking up her earlier next steps. When it needs travel, money, a
+   body or your time, she finds what that would take and looks for a nearer
+   version she could do herself or with a little help. She can only read the web
+   and never spends money. Only the wish and her earlier steps go out, never her
+   motivation. A step saves what she found, her reaction and up to three next
+   steps. Like an exploration, it can carry a sign-up wish (her first way to act
+   on a desire, with your yes) or, rarely, a reach-out. The first step moves the
+   desire from held to pursuing and later ones add progress notes; `recall_desire`
+   and the dashboard show both. Steps feed the identity and desire reflections
+   like findings, as `pursuing_desire`, but aren't raised in conversation as
+   findings; sharing progress is D5. Fulfilling one is D6.
+5. [x] **D5 Reaching out:** a step toward a desire can start a conversation
+   with you, as a friend would: sharing something real she found, or asking
+   once, simply, when the next step needs you (your company, time or yes),
+   easy to say no to, never pressing or asking again when nothing's new (each
+   step knows whether an earlier one already reached out). It goes the same way
+   as her other reach-outs: by voice when Active, otherwise on Signal, between
+   9:00 and 19:00, at most one a day, saved in your conversation. When you
+   answer or talk about one of her desires, by voice, typing or Signal, the
+   backend records it with `note_desire` (the person's contexts only, never
+   clients): **yes** (a held desire starts being pursued), **not now** (it
+   pauses and gets no steps for a week), **instead** (you offered a nearer
+   version: it forms as a new desire linked to the original, `adapted_from` in
+   migration 0042, held at once when there's room, and the original stays),
+   or **note** for anything else. `recall_desire` says what a nearer version
+   was adapted from.
+6. [x] **D6 Reflection:** the loop closes. The daily desire reflection sees
+   each desire's latest changes (steps, what you said) and what a nearer
+   version was adapted from, and can **fulfil** a held or pursued desire (one a
+   reflection) only when an experience shows it actually happened, not when
+   it's merely planned. The interests a fulfilled desire grew from then feel a
+   strong pull. Her desires' milestones (coming to hold one, pursuing, your
+   'not now', fulfilling, letting go, fading) are now experiences of her own
+   that the identity and desire reflections read and cite (migration 0043), so
+   doing what she wanted can shape who she is and what she wants next; a new
+   desire can grow from one she fulfilled, and `recall_desire` shows it.
+   Memories of the experience itself come from the conversation, as always.
 
 #### Self — complete
 

@@ -106,8 +106,8 @@ def background_models_stubbed():
             patch("memory.background.fade_memory"), \
             patch("memory.background.appraise_waiting_conversations"), \
             patch("memory.background.update_relationships"), \
-            patch("app.check_commitment", return_value=Commitment(False, "")), \
-            patch("app.triage_mail", return_value=[]):
+            patch("app_areas.signal_chats.check_commitment", return_value=Commitment(False, "")), \
+            patch("app_areas.mail.triage_mail", return_value=[]):
         yield
 
 
@@ -116,14 +116,15 @@ async def running_app(persistence=None):
     # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
-            patch("app.run_interest_cycle", return_value=None), \
-            patch("app.run_identity_cycle", return_value=None), \
-            patch("app.run_exploration_cycle", return_value=None), \
+            patch("app_areas.background.run_interest_cycle", return_value=None), \
+            patch("app_areas.background.run_identity_cycle", return_value=None), \
+            patch("app_areas.background.run_exploration_cycle", return_value=None), \
             background_models_stubbed(), \
             patch("services.credentials.keyring"), \
+            patch("sign_ups.password.keyring") as sign_up_keyring, \
             patch("app.EmailAccount"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
-            patch("app.delete_attachments", AsyncMock()), patch("app.clear_attachments", AsyncMock()), \
+            patch("app_areas.signal_chats.delete_attachments", AsyncMock()), patch("app_areas.signal_chats.clear_attachments", AsyncMock()), \
             patch.object(CoraApp, "daily_backup", return_value=None):
         app = CoraApp()
         async with app.run_test(size=(90, 35)) as pilot:
@@ -132,6 +133,7 @@ async def running_app(persistence=None):
             app.email_account.tenant.return_value = ""
             app.email_account.person_address.return_value = ""
             app.email_account.signature.return_value = ""
+            sign_up_keyring.get_password.return_value = None
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
@@ -143,6 +145,9 @@ async def running_app(persistence=None):
                 persistence.load_people_context.return_value = ""
                 persistence.load_client_people_context.return_value = ""
                 persistence.load_tasks_context.return_value = ""
+                persistence.load_sign_ups_context.return_value = ""
+                persistence.load_desire_context.return_value = ""
+                persistence.load_own_name.return_value = "Cora"
                 persistence.load_task_briefs.return_value = ""
                 persistence.task_coordination.return_value = None
                 persistence.load_relationship_values.return_value = None

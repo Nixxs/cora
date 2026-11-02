@@ -89,6 +89,15 @@ class EvidenceDatabaseTests(unittest.TestCase):
         first = read_experiences(self.engine, after=None, now=NOW).experiences
         self.assertEqual(first[0].evidence, Evidence("interest_event", before))  # never reflected: all
 
+    def test_a_wander_is_an_experience_of_its_own(self):
+        at = NOW - timedelta(hours=2)
+        with Session(self.engine) as session, session.begin():
+            record = InterestExplorationRecord(kind="wander", topic="Lighthouse keepers", status="found",
+                                               started_at=at, finished_at=at, finding="Keepers lived alone")
+            session.add(record)
+        [wander] = read_experiences(self.engine, after=NOW - timedelta(days=1), now=NOW).experiences
+        self.assertEqual(dict(wander.details), {"wandered_into": "Lighthouse keepers", "finding": "Keepers lived alone"})
+
     def test_a_full_batch_stops_between_timestamps_and_the_rest_waits(self):
         start = NOW - timedelta(days=1)
         ids = [self.event(start + timedelta(minutes=n)) for n in range(MAX_EXPERIENCES - 1)]
@@ -105,6 +114,14 @@ class EvidenceDatabaseTests(unittest.TestCase):
         ids = {self.event(at) for _ in range(MAX_EXPERIENCES + 1)}
         batch = read_experiences(self.engine, after=None, now=NOW)
         self.assertEqual(({item.id for item in batch.experiences}, batch.until, batch.more), (ids, at, True))
+
+    def test_newest_skips_a_backlog_and_reads_through_the_window(self):
+        start = NOW - timedelta(days=2)
+        ids = [self.event(start + timedelta(minutes=n)) for n in range(MAX_EXPERIENCES + 5)]
+        newest = self.exploration(NOW - timedelta(hours=1))
+        batch = read_experiences(self.engine, after=None, now=NOW, newest=True)
+        self.assertEqual([item.id for item in batch.experiences], ids[6:] + [newest])
+        self.assertEqual((batch.until, batch.more), (NOW - COMMIT_MARGIN, False))
 
 
 if __name__ == "__main__":

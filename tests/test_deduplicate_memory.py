@@ -391,12 +391,20 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                  "0028_create_tasks.sql",
                  "0029_add_task_nudges.sql", "0030_add_email_parties.sql",
                  "0031_create_webhook_settings.sql", "0032_add_email_channel.sql",
-                 "0033_add_deadline_notes.sql"]
+                 "0033_add_deadline_notes.sql", "0034_interest_tangents_and_origin.sql",
+                 "0035_wandering_and_reach_outs.sql", "0036_add_browsed_explorations.sql",
+                 "0037_create_sign_ups.sql", "0038_sign_up_mail_and_wishes.sql",
+                 "0039_create_desires.sql", "0040_create_desire_worker_state.sql",
+                 "0041_desire_pursuits.sql", "0042_desire_adapted_from.sql",
+                 "0043_desire_events_as_evidence.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
+            connection.execute("ALTER TABLE public.interest_explorations DROP COLUMN desire_id")
+            connection.execute("ALTER TABLE public.identity_event_evidence DROP COLUMN desire_event_id")
+            connection.execute("DROP TABLE public.desire_worker_state, public.desire_sources, public.desire_events, public.desires")
             connection.execute("DROP TABLE public.task_steps, public.task_parties, public.tasks, "
                                "public.impression_updates, public.impressions")
             connection.execute("ALTER TABLE public.conversations DROP COLUMN person_id")
-            connection.execute("DROP TABLE public.webhook_settings, public.self_image,public.signal_settings, public.service_tools, public.service_settings, "
+            connection.execute("DROP TABLE public.sign_ups, public.webhook_settings, public.self_image,public.signal_settings, public.service_tools, public.service_settings, "
                                "public.model_settings, public.relationship_events, public.relationships, "
                                "public.interaction_appraisals, "
                                "public.identity_event_evidence, public.identity_event_traits, "

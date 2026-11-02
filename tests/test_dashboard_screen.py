@@ -128,12 +128,13 @@ class DashboardSnapshotTests(unittest.TestCase):
 
     def test_next_due_adds_each_cooldown_to_the_last_run(self):
         now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
-        runs = {"interests": now, "identity": None}
+        runs = {"interests": now, "identity": None, "desires": now}
         with patch("storage.dashboard_snapshot.Session") as session:
             scalars = session.return_value.__enter__.return_value.scalars.return_value
             scalars.all.return_value = []
             self.assertEqual(next_due("engine", runs), {
                 "interests": now + EVOLVE_EVERY, "exploration": None, "identity": None,
+                "desires": now + timedelta(hours=24),
             })
             # Two recent starts: only the gap after the newest applies.
             scalars.all.return_value = [now, now - timedelta(hours=7)]
@@ -155,6 +156,8 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.ConversationStore") as conversations, \
                 patch("storage.dashboard_snapshot.IdentityStore") as identity, \
                 patch("storage.dashboard_snapshot.TaskStore") as tasks, \
+                patch("storage.dashboard_snapshot.SignUpStore") as sign_ups, \
+                patch("storage.dashboard_snapshot.live_desires", return_value=(("To see a redwood", 0.5, "held"),)), \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -166,8 +169,11 @@ class DashboardSnapshotTests(unittest.TestCase):
             conversations.return_value.daily_message_counts.return_value = [3, 0]
             identity.return_value.list_traits.return_value = ["trait"]
             tasks.return_value.open_tasks.return_value = ["task"]
+            sign_ups.return_value.recent.return_value = ["sign-up"]
             snapshot = read_dashboard_snapshot("engine", now)
         self.assertEqual(snapshot.traits, ("trait",))
+        self.assertEqual(snapshot.sign_ups, ("sign-up",))
+        self.assertEqual(snapshot.desires, (("To see a redwood", 0.5, "held"),))
         self.assertEqual(snapshot.tasks, ("task",))
         conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
         self.assertEqual(snapshot.message_days, (3, 0))
@@ -369,24 +375,43 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(str(summary.render()), "Activity · Dashboard load failed [x]")
             self.assertTrue(summary.has_class("activity-error"))
 
-    async def test_voice_box_shows_standby_at_its_top_right(self):
+    async def test_voice_box_standby_toggle_at_its_top_right(self):
         async with keyboard_tests.running_app() as (app, pilot):
             await pilot.click("#view-button")
             await pilot.pause()
-            indicator = app.screen.query_one("#dashboard-standby", Static)
-            self.assertFalse(indicator.display)
-            app.standby = True
+            toggle = app.screen.query_one("#dashboard-standby", Button)
+            app.set_connection_state("active")
             await pilot.pause(0.3)
-            self.assertTrue(indicator.display)
             header = app.screen.query_one("#voice-header")
             # Just before the top right corner, on the same line as the box's title.
-            self.assertEqual(str(indicator.render()), "○ standby")
-            self.assertEqual(indicator.region.y, header.region.y)
-            self.assertEqual(indicator.region.right, header.region.right - 2)
+            self.assertEqual(str(toggle.label), "● active")
+            self.assertTrue(toggle.has_class("state-active"))
+            self.assertFalse(toggle.disabled)
+            self.assertEqual(toggle.tooltip, "Click to close Live and enter standby.")
+            self.assertEqual(toggle.region.y, header.region.y)
+            self.assertEqual(toggle.region.right, header.region.right - 2)
             self.assertEqual(app.screen.query_one("#voice-title", Static).region.x, header.region.x + 2)
-            app.standby = False
+            with patch.object(app, "action_standby") as standby:
+                await pilot.click("#dashboard-standby")
+                await pilot.pause()
+            standby.assert_called_once()
+            # The dashboard stays open.
+            self.assertIsInstance(app.screen, DashboardScreen)
+            app.standby = True
+            app.set_connection_state("standby")
             await pilot.pause(0.3)
-            self.assertFalse(indicator.display)
+            self.assertEqual(str(toggle.label), "○ standby")
+            self.assertTrue(toggle.has_class("state-standby"))
+            self.assertFalse(toggle.has_class("state-active"))
+            self.assertEqual(toggle.region.right, header.region.right - 2)
+            with patch.object(app, "action_reconnect") as reconnect:
+                await pilot.click("#dashboard-standby")
+                await pilot.pause()
+            reconnect.assert_called_once()
+            app.set_connection_state("disconnected")
+            await pilot.pause(0.3)
+            self.assertEqual(str(toggle.label), "○ disconnected")
+            self.assertTrue(toggle.disabled)
 
     async def test_snapshot_loads_on_open_and_a_failed_refresh_keeps_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -573,6 +598,33 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(colours[0], LABEL_STYLE)
             self.assertEqual(colours[2:], [LABEL_STYLE] * 3)
             self.assertEqual(text.spans[1].end, len("70% value"))
+
+    async def test_desires_box_lists_each_wish_and_dims_the_ones_still_forming(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            desires = screen.query_one("#desire-list", Static)
+            self.assertEqual(str(desires.render()), "no desires yet")
+            self.assertEqual(screen.query_one("#desires-box").border_title, "desires")
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
+                memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
+                message_days=(), traits=(),
+                desires=(("To watch a [b]court[/b] session", 0.62, "pursuing"),
+                         ("To see a redwood", 0.3, "candidate")),
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            text = desires.render()
+            # Brackets in a wish are shown as written, not read as markup.
+            self.assertEqual(str(text).splitlines(), [
+                "62% pursuing", "To watch a [b]court[/b] session", "", "30% forming", "To see a redwood",
+            ])
+            colours = [span.style.foreground.hex.lower() for span in text.spans if span.style.foreground]
+            self.assertNotEqual(colours[0], LABEL_STYLE)
+            self.assertEqual(colours[2:], [LABEL_STYLE] * 3)
 
     async def test_background_box_lists_when_each_job_last_ran_and_is_next_due(self):
         async with keyboard_tests.running_app() as (app, pilot):

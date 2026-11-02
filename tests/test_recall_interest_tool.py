@@ -103,7 +103,7 @@ class RecallInterestToolTests(unittest.IsolatedAsyncioTestCase):
         result = self.result()
         self.assertEqual(result["interest"], {
             "title": "How attention becomes curiosity", "description": "PRIVATE description",
-            "why_emerged": "PRIVATE reason", "status": "active", "since": "2026-10-16",
+            "why_emerged": "PRIVATE reason", "origin": "conversation", "status": "active", "since": "2026-10-16",
             "parent": "Attention",
         })
         self.assertEqual([finding["finding"] for finding in result["findings"]],

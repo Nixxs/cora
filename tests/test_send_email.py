@@ -1,3 +1,4 @@
+import app_areas.tasks
 """Emailing from Cora's own address (E2): always approved first, optionally starting or joining a task."""
 
 import json
@@ -66,6 +67,14 @@ class SignatureTests(unittest.TestCase):
         self.assertEqual(signed("Thanks,\nCora", "Intelligis.io"), "Thanks,\nCora\n\nIntelligis.io")
         self.assertEqual(signed("Cora", SIGNATURE), "Cora\n\n" + SIGNATURE)
         self.assertEqual(signed("Thanks,\nCora", ""), "Thanks,\nCora")
+
+    def test_her_full_name_isnt_signed_twice_either(self):
+        signature = "Cora Vale\nPA to Nick | Intelligis.io"
+        for sign_off in ("Cora Vale", "Cora", "— Cora Vale"):
+            self.assertEqual(signed(f"Thanks!\n\n{sign_off}", signature), "Thanks!\n\n" + signature)
+        # A different sign-off, or a signature with another name first, is left alone.
+        self.assertEqual(signed("Thanks!\n\nCora Vale", "Intelligis.io"), "Thanks!\n\nCora Vale\n\nIntelligis.io")
+        self.assertEqual(signed("Thanks!\n\nCora Vale", "Cora\nPA"), "Thanks!\n\nCora Vale\n\nCora\nPA")
 
     def test_it_is_saved_tidied_checked_and_forgotten(self):
         saved = {}
@@ -201,9 +210,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
     async def test_offered_where_you_talk_with_her_and_to_the_coordinator_only_with_signal_approval(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.assertIn("send_email", [schema["name"] for schema in app.live.tool_schemas()])
-            import app as app_module
-            self.assertNotIn("send_email", app_module.COORDINATOR_TOOLS)
-            self.assertIn("send_email", app_module.COORDINATOR_SEND_TOOLS)
+            self.assertNotIn("send_email", app_areas.tasks.COORDINATOR_TOOLS)
+            self.assertIn("send_email", app_areas.tasks.COORDINATOR_SEND_TOOLS)
 
 
 if __name__ == "__main__":
