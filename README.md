@@ -502,7 +502,7 @@ rate limits.
   too little new to reflect on), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `recall_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
+  `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
   `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
@@ -1530,7 +1530,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it; [subconscious/desires/](subconscious/desires/) holds desire rules and the desire store. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -2445,9 +2445,21 @@ in what she experiences.
    and the dashboard show both. Steps feed the identity and desire reflections
    like findings, as `pursuing_desire`, but aren't raised in conversation as
    findings; sharing progress is D5. Fulfilling one is D6.
-5. [ ] **D5 Reaching out:** she starts a conversation about a desire (sharing
-   progress, or asking for help when it needs you), by voice when Active or on
-   Signal, within `NUDGE_HOURS`. Taking part is always your choice.
+5. [x] **D5 Reaching out:** a step toward a desire can start a conversation
+   with you, as a friend would: sharing something real she found, or asking
+   once, simply, when the next step needs you (your company, time or yes),
+   easy to say no to, never pressing or asking again when nothing's new (each
+   step knows whether an earlier one already reached out). It goes the same way
+   as her other reach-outs: by voice when Active, otherwise on Signal, between
+   9:00 and 19:00, at most one a day, saved in your conversation. When you
+   answer or talk about one of her desires, by voice, typing or Signal, the
+   backend records it with `note_desire` (the person's contexts only, never
+   clients): **yes** (a held desire starts being pursued), **not now** (it
+   pauses and gets no steps for a week), **instead** (you offered a nearer
+   version: it forms as a new desire linked to the original, `adapted_from` in
+   migration 0042, held at once when there's room, and the original stays),
+   or **note** for anything else. `recall_desire` says what a nearer version
+   was adapted from.
 6. [ ] **D6 Reflection:** what happened while pursuing a desire feeds her
    memories, identity and interests, closing the loop, and can fulfil it.
 

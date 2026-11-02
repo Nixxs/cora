@@ -26,6 +26,9 @@ MAX_COUNTED_ELAPSED = timedelta(days=21)  # so one long absence cannot erase eve
 MAX_HELD = 3  # held + pursuing
 MAX_CANDIDATES = 5
 MAX_REINFORCE_DELTA = 0.15  # largest single reinforcement the store accepts
+# The person's answers when she asks about a desire. 'not now' rests it from her steps for a while.
+ANSWERS = ("yes", "not_now", "instead", "note")
+PAUSED_FOR = timedelta(days=7)
 
 STATUSES = ("candidate", "held", "pursuing", "fulfilled", "let_go")
 LIVE = ("candidate", "held", "pursuing")

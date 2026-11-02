@@ -120,7 +120,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                         [schema["name"] for schema in app.live.tool_schemas()
                          if schema["name"] != "random_number"],
                         ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                         "recall_self", "recall_desire", "look_at_screen", "show_web_image", "send_signal_message", "close_task", "check_email", "send_email", "check_calendar", "create_event", "update_event", "cancel_event", "forward_event", "request_sign_up", "echo", "other_tool"],
+                         "recall_self", "recall_desire", "note_desire", "look_at_screen", "show_web_image", "send_signal_message", "close_task", "check_email", "send_email", "check_calendar", "create_event", "update_event", "cancel_event", "forward_event", "request_sign_up", "echo", "other_tool"],
                     )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):

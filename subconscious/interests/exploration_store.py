@@ -18,8 +18,8 @@ from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from storage.database import build_engine
-from storage.models import DesireRecord, InterestExplorationRecord, InterestRecord
-from subconscious.desires.desire_rules import HELD, settle as settle_desire
+from storage.models import DesireEventRecord, DesireRecord, InterestExplorationRecord, InterestRecord
+from subconscious.desires.desire_rules import HELD, PAUSED_FOR, settle as settle_desire
 from subconscious.interests.interest_store import (
     SPARKS_FRESH_FOR, TITLE_MAX_CHARS, Interest, clean_text, snapshot as interest_snapshot, validate_now,
 )
@@ -328,7 +328,8 @@ class ExplorationStore:
     @staticmethod
     def _pursuit(session: Session, now: datetime) -> Pursuit | None:
         """The held desire to take a step toward, if one is due: the one pursued longest ago (or
-        never), the strongest on a tie; None within PURSUIT_EVERY of the last step."""
+        never), the strongest on a tie; None within PURSUIT_EVERY of the last step. One the
+        person said 'not now' to rests for PAUSED_FOR."""
         attempts = InterestExplorationRecord
         if session.scalar(select(func.count()).where(
             attempts.kind == "pursuit", attempts.started_at > now - PURSUIT_EVERY,
@@ -339,8 +340,13 @@ class ExplorationStore:
                 attempts.desire_id.is_not(None),
             ).group_by(attempts.desire_id),
         ).all())
+        paused = set(session.scalars(select(DesireEventRecord.desire_id).where(
+            DesireEventRecord.kind == "pause", DesireEventRecord.created_at > now - PAUSED_FOR,
+        )))
         held = []
         for desire in session.scalars(select(DesireRecord).where(DesireRecord.status.in_(HELD))):
+            if desire.id in paused:
+                continue
             strength, status = settle_desire(desire.strength, desire.strength_at, desire.status, now)
             if status != "let_go":  # faded, though nothing has settled it yet
                 held.append((last_pursued.get(desire.id), -strength, desire.created_at, desire.id, desire))

@@ -452,10 +452,14 @@ class WanderDatabaseTests(unittest.TestCase):
         # Then the other one, never pursued, before the stronger one again.
         self.assertEqual(self.start(NOW + timedelta(hours=24, seconds=1)).desire_id, weaker.id)
         self.assertEqual(self.start(NOW + timedelta(hours=48, seconds=2)).desire_id, stronger.id)
+        # One the person said 'not now' to rests from her steps.
+        desires.answer(weaker.id, "not_now", "Busy", now=NOW + timedelta(hours=48, seconds=3))
+        self.explorations.fail(self.start(NOW + timedelta(hours=54, seconds=5)).id, now=NOW + timedelta(hours=55))
+        self.assertEqual(self.start(NOW + timedelta(hours=72, seconds=4)).desire_id, stronger.id)
         # A desire she let go gets no step.
         for desire in (weaker, stronger):
             desires.change(desire.id, "let_go", "Moved on", now=NOW + timedelta(hours=49))
-        self.assertNotEqual(self.start(NOW + timedelta(hours=72, seconds=3)).kind, "pursuit")
+        self.assertNotEqual(self.start(NOW + timedelta(hours=96, seconds=5)).kind, "pursuit")
 
     def test_a_stale_sign_up_wish_is_never_asked(self):
         self.finish_with("Forks!", NOW, sign_up=("https://forks.example.com", "Forks club", "To chat"))

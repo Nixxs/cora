@@ -934,6 +934,7 @@ class DesireRecord(Base):
             "AND (ended_at IS NULL OR ended_at >= created_at)",
             name="desires_ended_check",
         ),
+        CheckConstraint("adapted_from IS NULL OR adapted_from <> id", name="desires_adapted_from_check"),
         Index("desires_status_idx", "status"),
         {"schema": "public"},
     )
@@ -947,6 +948,10 @@ class DesireRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The desire this is a nearer version of, when the person offered it instead.
+    adapted_from: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desires.id", name="desires_adapted_from_fkey", ondelete="RESTRICT"),
+    )
 
 
 class DesireEventRecord(Base):

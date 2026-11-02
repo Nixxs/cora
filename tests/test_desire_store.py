@@ -224,6 +224,51 @@ class DesireStoreDatabaseTests(unittest.TestCase):
         self.assertIsNone(self.desires.apply_reflection([], read_after=None, read_until=NOW, now=NOW))
         self.assertEqual(self.desires.last_reflected_at(), until)
 
+    def test_the_persons_yes_and_not_now_are_recorded(self):
+        desire = self.held()
+        later = NOW + timedelta(hours=1)
+        yes, nearer = self.desires.answer(desire.id, "yes", "They'll come along", now=later)
+        self.assertEqual((yes.status, nearer), ("pursuing", None))
+        self.assertEqual(self.desires.answer(desire.id, "note", "Maybe in spring", now=later)[0].status, "pursuing")
+        self.assertEqual(self.desires.answer(desire.id, "not_now", "Busy month", now=later)[0].status, "held")
+        # Not now while only held is noted all the same, so her steps rest.
+        self.assertEqual(self.desires.answer(desire.id, "not_now", "Still busy", now=later)[0].status, "held")
+        self.assertEqual([(event.kind, event.note) for event in self.desires.history(desire.id)[-4:]], [
+            ("pursue", "They'll come along"), ("progress", "Maybe in spring"),
+            ("pause", "Busy month"), ("pause", "Still busy"),
+        ])
+        for answer, instead in (("shrug", None), ("yes", ("To see a fern", "Why")), ("instead", None)):
+            with self.subTest(answer=answer), self.assertRaises(ValueError):
+                self.desires.answer(desire.id, answer, "x", now=later, instead=instead)
+        candidate = self.desires.form(*form_args("Still forming"), now=later)
+        with self.assertRaises(ValueError):
+            self.desires.answer(candidate.id, "yes", "x", now=later)
+
+    def test_something_offered_instead_becomes_a_nearer_desire_and_the_original_stays(self):
+        reef = self.held("To snorkel the Great Barrier Reef")
+        later = NOW + timedelta(hours=1)
+        original, nearer = self.desires.answer(
+            reef.id, "instead", "Can't fly north, offered Rottnest", now=later,
+            instead=("To snorkel at Rottnest Island", "Its reefs are close and I could see one with them"),
+        )
+        self.assertEqual((original.status, original.adapted_from), ("held", None))
+        self.assertEqual((nearer.description, nearer.status, nearer.adapted_from),
+                         ("To snorkel at Rottnest Island", "held", reef.id))
+        self.assertEqual(self.desires.history(reef.id)[-1].note, "Can't fly north, offered Rottnest")
+        self.assertEqual([event.kind for event in self.desires.history(nearer.id)], ["form", "reinforce", "hold"])
+        self.assertIn("Great Barrier Reef", self.desires.history(nearer.id)[0].note)
+        # Offered again, it is already wanted; nothing is recorded on the original either.
+        before = len(self.desires.history(reef.id))
+        with self.assertRaises(ValueError):
+            self.desires.answer(reef.id, "instead", "Again", now=later,
+                                instead=(" to snorkel at  rottnest island", "Why"))
+        self.assertEqual(len(self.desires.history(reef.id)), before)
+        # With all three held, a nearer version waits as a candidate.
+        self.held("To see a redwood")
+        _, waiting = self.desires.answer(reef.id, "instead", "Or a pool", now=later,
+                                         instead=("To swim in a reef pool", "Why"))
+        self.assertEqual(waiting.status, "candidate")
+
     def test_a_step_starts_pursuing_a_held_desire_then_notes_progress(self):
         desire = self.held()
         later = NOW + timedelta(hours=1)

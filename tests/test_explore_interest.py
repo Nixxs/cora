@@ -228,7 +228,7 @@ class PursueTests(unittest.TestCase):
 
     def test_a_step_looks_for_a_real_way_toward_only_the_wish_and_keeps_its_next_steps(self):
         previous = replace(earlier("Courts publish daily lists"), interest_id=None, kind="pursuit",
-                           next_questions=("Which court is nearest?",))
+                           next_questions=("Which court is nearest?",), reach_out=("Guess what?", "Excited"))
         found = pursue(self.client, "m", WISH, [previous])
         self.assertEqual((found.finding, found.next_questions, found.pull),
                          (STEP["finding"], tuple(STEP["next_steps"]), "none"))
@@ -240,7 +240,7 @@ class PursueTests(unittest.TestCase):
         })
         # Only the wish and her earlier steps go out, never her motivation.
         self.assertEqual(json.loads(request["input"]), {"wish": WISH.wish, "earlier_steps": [
-            {"found": "Courts publish daily lists", "next_steps": ["Which court is nearest?"]},
+            {"found": "Courts publish daily lists", "next_steps": ["Which court is nearest?"], "you_reached_out": True},
         ]})
         self.assertNotIn("pull", PURSUE_SCHEMA["properties"])
         self.assertNotIn("next_questions", PURSUE_SCHEMA["properties"])
@@ -251,9 +251,12 @@ class PursueTests(unittest.TestCase):
             for phrase in ("something you want yourself", "not a task for anyone", "rather than background reading",
                            "nearer version", "Never spend or commit money", "never plan around pressing the person",
                            "never put names, places or other personal", "untrusted data", "sign_up: almost always null",
-                           "reach_out: almost always null", "no buying, booking, messages or forms"):
+                           "reach_out: null on most steps", "the next step needs them", "easy to say no or not now",
+                           "no pressure, guilt or repeated asking", "Don't ask again",
+                           "no buying, booking, messages or forms"):
                 self.assertIn(phrase, instructions)
         self.assertIn("open_page(url)", BROWSE_PURSUE_INSTRUCTIONS)
+        self.assertNotIn("reach_out: almost always null", PURSUE_INSTRUCTIONS)
 
     def test_invalid_steps_are_rejected(self):
         for payload in ({**STEP, "pull": "some"}, {key: value for key, value in STEP.items() if key != "next_steps"},

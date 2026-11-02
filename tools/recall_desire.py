@@ -101,14 +101,19 @@ def _recall(wish: str) -> dict:
                 "note": NOT_FOUND_NOTE,
             }
         events = store.history(desire.id)
+        details = {
+            "wish": desire.description,
+            "why": desire.motivation,
+            "status": desire.status,
+            "formed_on": _date(desire.created_at),
+        }
+        if desire.adapted_from is not None:
+            # A nearer version the person offered instead of another wish.
+            details["adapted_from"] = next((item.description for item in store.list_desires(include_ended=True)
+                                            if item.id == desire.adapted_from), None)
         return {
             "status": "ok",
-            "desire": {
-                "wish": desire.description,
-                "why": desire.motivation,
-                "status": desire.status,
-                "formed_on": _date(desire.created_at),
-            },
+            "desire": details,
             "grew_from": _grew_from(store, desire.id),
             "changes": [{
                 "on": _date(event.created_at),

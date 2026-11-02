@@ -1,5 +1,6 @@
 """Desire recall tool boundaries; no real APIs or database."""
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import json
 from threading import get_ident
@@ -93,6 +94,15 @@ class RecallDesireToolTests(unittest.IsolatedAsyncioTestCase):
             call("Desire recall requested: call_id=call_desire", "Recalling a desire"),
             call("Desire recall complete: call_id=call_desire, status=ok", "Desire recall complete"),
         ])
+
+    async def test_a_nearer_version_says_what_it_was_adapted_from(self):
+        reef = desire("To snorkel the Great Barrier Reef")
+        self.held = replace(desire("To snorkel at Rottnest"), adapted_from=reef.id)
+        self.store.return_value.held_desires.return_value = [self.held]
+        self.store.return_value.list_desires.return_value = [reef, self.held]
+        await self.tool.handle("call_desire", {"wish": "To snorkel at Rottnest"})
+        self.assertEqual(self.result()["desire"]["adapted_from"], "To snorkel the Great Barrier Reef")
+        self.store.return_value.list_desires.assert_called_once_with(include_ended=True)
 
     async def test_an_unknown_wish_lists_the_held_ones(self):
         await self.tool.handle("call_desire", {"wish": "To learn the cello"})

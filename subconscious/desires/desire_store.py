@@ -26,7 +26,7 @@ from storage.models import (
     DesireEventRecord, DesireRecord, DesireSourceRecord, DesireWorkerStateRecord, InterestEventRecord,
 )
 from subconscious.desires.desire_rules import (
-    ACTIONS, ENDED, HELD, INITIAL_STRENGTH, LIVE, MAX_REINFORCE_DELTA, REINFORCE_DELTAS, Change, can_form,
+    ACTIONS, ANSWERS, ENDED, HELD, HELD_THRESHOLD, INITIAL_STRENGTH, LIVE, MAX_REINFORCE_DELTA, REINFORCE_DELTAS, Change, can_form,
     changed, current_strength, promoted, settle,
 )
 from subconscious.identity.identity_rules import EVIDENCE_SOURCES
@@ -50,6 +50,7 @@ class Desire:
     created_at: datetime
     last_reinforced_at: datetime | None
     ended_at: datetime | None
+    adapted_from: UUID | None = None  # the desire this is a nearer version of
 
 
 @dataclass(frozen=True)
@@ -121,7 +122,7 @@ def validate_delta(delta: float) -> None:
 def snapshot(record: DesireRecord) -> Desire:
     return Desire(
         record.id, record.description, record.motivation, record.strength, record.strength_at, record.status,
-        record.created_at, record.last_reinforced_at, record.ended_at,
+        record.created_at, record.last_reinforced_at, record.ended_at, record.adapted_from,
     )
 
 
@@ -261,6 +262,56 @@ class DesireStore:
                 self._add_event(session, record.id, "progress", record.strength, record.strength, note)
             return snapshot(record)
 
+    def answer(
+        self, desire_id: UUID, answer: str, note: str, *, now: datetime,
+        instead: tuple[str, str] | None = None,
+    ) -> tuple[Desire, Desire | None]:
+        """Record the person's answer about a desire she holds; returns it and any nearer version.
+
+        yes: they'll help, so a held desire starts being pursued (a pursued one notes it).
+        not_now: it pauses (a pursued one goes back to held), and gets no steps for PAUSED_FOR.
+        instead: they offered a nearer version, (wish, why). It forms as a new desire adapted from
+        this one, reinforced fully so it is held when there's room; this one stays, with the note.
+        note: anything else they said about it. Raises ValueError when it isn't held (or has faded)
+        or the nearer version can't form.
+        """
+        if answer not in ANSWERS:
+            raise ValueError("Unknown answer")
+        note = clean_text(note, "note")
+        if (answer == "instead") != (instead is not None):
+            raise ValueError("Only an offer of something instead has a nearer version")
+        if instead is not None:
+            instead = (clean_text(instead[0], "description", DESCRIPTION_MAX_CHARS),
+                       clean_text(instead[1], "motivation"))
+        validate_now(now)
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            self._lock(session)
+            record = self._settled(session, desire_id, now)
+            if record.status not in HELD:
+                raise ValueError(f"It is {record.status.replace('_', ' ')}, not one she holds")
+            nearer = None
+            if answer == "yes" and record.status == "held":
+                self._change(session, record, "pursue", note, now)
+            elif answer == "not_now":
+                if record.status == "pursuing":
+                    self._change(session, record, "pause", note, now)
+                else:
+                    self._add_event(session, record.id, "pause", record.strength, record.strength, note)
+            else:
+                self._add_event(session, record.id, "progress", record.strength, record.strength, note)
+            if instead is not None:
+                live = session.scalars(select(DesireRecord.description).where(DesireRecord.status.in_(LIVE)))
+                if any(same_wish(description, instead[0]) for description in live):
+                    raise ValueError("She already wants this")
+                nearer = self._form(session, *instead, f"Offered instead of: {record.description}", now, Sources())
+                nearer.adapted_from = record.id
+                # Offered by the person, it is held at once when there's room.
+                self._reinforce(session, nearer, MAX_REINFORCE_DELTA, note, now, floor=HELD_THRESHOLD)
+                if nearer.status == "candidate" and not can_form(
+                        self._count(session, now, ("candidate",)) - 1):
+                    raise ValueError("No room for another desire")
+            return snapshot(record), None if nearer is None else snapshot(nearer)
+
     def settle_all(self, now: datetime) -> list[Desire]:
         """Save faded strength for every live desire, letting go of any that faded away."""
         validate_now(now)
@@ -339,8 +390,10 @@ class DesireStore:
         session.add_all(self._source_records(record.id, sources))
         return record
 
-    def _reinforce(self, session: Session, record: DesireRecord, delta: float, note: str, now: datetime) -> None:
-        after = reinforced(record.strength, delta)
+    def _reinforce(self, session: Session, record: DesireRecord, delta: float, note: str, now: datetime,
+                   floor: float = 0.0) -> None:
+        """floor: the least it ends at, such as enough to be held when the person offered it."""
+        after = max(reinforced(record.strength, delta), floor)
         self._add_event(session, record.id, "reinforce", record.strength, after, note)
         record.strength, record.last_reinforced_at = after, now
         status = promoted(record.status, after, self._count(session, now, HELD, exclude_id=record.id))

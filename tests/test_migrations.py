@@ -121,6 +121,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0039_create_desires.sql",
             "0040_create_desire_worker_state.sql",
             "0041_desire_pursuits.sql",
+            "0042_desire_adapted_from.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])
