@@ -1,8 +1,9 @@
 """Ask the model how Cora's recent experiences shape what she'd like to do or experience."""
 
-from collections.abc import Sequence
-from datetime import datetime
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timezone
 import json
+from uuid import UUID
 
 from openai import OpenAI
 
@@ -10,7 +11,7 @@ from subconscious.desires.desire_proposals import CHANGE_FIELDS, desire_refs, in
 from subconscious.desires.desire_rules import (
     ACTIONS, MAX_PER_REFLECTION, REINFORCE_DELTAS, Change, current_strength,
 )
-from subconscious.desires.desire_store import Desire
+from subconscious.desires.desire_store import Desire, DesireEvent
 from subconscious.identity.identity_evidence import Experience
 from subconscious.identity.identity_proposals import experience_refs
 from subconscious.interests.interest_store import Interest
@@ -22,11 +23,14 @@ DESIRE_INSTRUCTIONS = (
     "is something she finds worth looking into; a desire is a future state or experience she'd "
     "like to pursue (interest: forests; desire: to walk through an old-growth forest). You are "
     "given her current desires (a candidate is still forming, a held one she really wants, a "
-    "pursuing one she is working toward), her live interests, the traits she holds about "
-    "herself, and what she has experienced since she last reflected: changes to her interests, "
-    "findings from exploring them with her reaction, and summaries of conversations. Return the "
-    f"requested JSON with at most {MAX_PER_REFLECTION['form']} form, "
-    f"{MAX_PER_REFLECTION['reinforce']} reinforce and {MAX_PER_REFLECTION['let_go']} let_go, each "
+    "pursuing one she is working toward), each with its latest changes (steps she took, what "
+    "her person said) and, for a nearer version her person offered, what it was adapted from; "
+    "her live interests, the traits she holds about herself, and what she has experienced "
+    "since she last reflected: changes to her interests, findings from exploring them with her "
+    "reaction (a pursuing_desire finding is a step toward one), summaries of conversations, and "
+    "what happened to her desires. Return the requested JSON with at most "
+    f"{MAX_PER_REFLECTION['form']} form, {MAX_PER_REFLECTION['reinforce']} reinforce, "
+    f"{MAX_PER_REFLECTION['fulfil']} fulfil and {MAX_PER_REFLECTION['let_go']} let_go, each "
     "on a different desire. Doing nothing is normal: an interest doesn't have to become a desire, "
     "and most reflections form nothing new. Form a desire only when her experiences show a real "
     "pull toward something specific she would do, make, experience or share; never pick from a "
@@ -47,7 +51,12 @@ DESIRE_INSTRUCTIONS = (
     "a desire when the experiences renew it: "
     "strength 'strong' when an experience points straight at it, 'some' when it only touches it; "
     "give its desire_id and the evidence_ids that renew it, with description, motivation null and "
-    "interest_ids empty. Let a desire go only when experiences show she no longer wants it, with "
+    "interest_ids empty. Fulfil a held or pursuing desire only when an experience shows it "
+    "actually happened (she went, made, joined or shared it, usually told in a conversation), "
+    "not when it is merely planned, agreed or nearly done: give its desire_id, the evidence_ids "
+    "that show it happened and the reason, with the other fields null or empty. Something she "
+    "fulfilled can grow into a new desire later, citing it. Let a desire go only when "
+    "experiences show she no longer wants it, with "
     "only desire_id and reason set (the other fields null or empty). Never form a desire about "
     "controlling, keeping or being needed by anyone, about the person's own choices, or born of "
     "guilt, neediness or possessiveness; nothing harmful, illegal, deceptive or that spends "
@@ -72,14 +81,32 @@ DESIRE_SCHEMA = {
 }
 
 
+RECENT_CHANGES = 3
+
+
+def story(desire: Desire, events: Sequence[DesireEvent], everything: Mapping[UUID, Desire]) -> dict:
+    """What the reflection sees of one desire's history: its latest changes, and its origin."""
+    shown = {"recent_changes": [{
+        "change": event.kind, "note": event.note, "on": event.created_at.astimezone(timezone.utc).date().isoformat(),
+    } for event in [event for event in events if event.kind != "form"][-RECENT_CHANGES:]]}
+    if desire.adapted_from in everything:
+        shown["adapted_from"] = everything[desire.adapted_from].description
+    return shown
+
+
 def propose_desires(
     client: OpenAI, model: str, desires: Sequence[Desire], interests: Sequence[Interest],
     traits: Sequence[str], experiences: Sequence[Experience], *, now: datetime,
+    histories: Mapping[UUID, Sequence[DesireEvent]] | None = None, everything: Sequence[Desire] = (),
 ) -> list[Change]:
     """Return well-formed changes; the store still decides which are allowed.
 
     `desires` are her live desires and `interests` her live ones; `traits` the statements she holds.
+    `histories` holds each desire's events, oldest first; `everything` all her desires, ended
+    ones too, to name what a nearer version was adapted from.
     """
+    histories = histories or {}
+    everything = {desire.id: desire for desire in everything}
     if not experiences:
         raise ValueError("Desire reflection needs at least one experience")
     data = json.dumps({
@@ -87,6 +114,7 @@ def propose_desires(
             "id": ref, "description": desire.description, "motivation": desire.motivation,
             "status": desire.status,
             "strength": round(current_strength(desire.strength, desire.strength_at, now), 2),
+            **story(desire, histories.get(desire.id, ()), everything),
         } for ref, desire in desire_refs(desires).items()],
         "interests": [{
             "id": ref, "title": interest.title, "description": interest.description,

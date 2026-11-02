@@ -68,6 +68,7 @@ class Sources:
     interest_ids: tuple[UUID, ...] = ()
     exploration_ids: tuple[UUID, ...] = ()
     conversation_ids: tuple[UUID, ...] = ()
+    desire_event_ids: tuple[UUID, ...] = ()  # changes to other desires, such as fulfilling one
 
 
 def clean_text(value: str, name: str, max_chars: int = TEXT_MAX_CHARS) -> str:
@@ -102,6 +103,11 @@ def clean_change(change: Change) -> Change:
             raise ValueError("Unknown reinforcement strength")
         if not change.evidence:
             raise ValueError("A reinforcement must cite what renewed it")
+    elif change.action == "fulfil":
+        if change.strength is not None:
+            raise ValueError("Fulfilling takes an id, why and what showed it happened")
+        if not change.evidence:
+            raise ValueError("A fulfilment must cite what showed it happened")
     elif change.strength is not None or change.evidence:
         raise ValueError("Letting go takes only an id and why")
     return Change(change.action, note, desire_id=change.desire_id, strength=change.strength,
@@ -186,6 +192,7 @@ class DesireStore:
             tuple(row.interest_id for row in rows if row.interest_id is not None),
             tuple(row.exploration_id for row in rows if row.exploration_id is not None),
             tuple(row.conversation_id for row in rows if row.conversation_id is not None),
+            tuple(row.desire_event_id for row in rows if row.desire_event_id is not None),
         )
 
     def form(
@@ -373,6 +380,10 @@ class DesireStore:
             return f"it is already {record.status.replace('_', ' ')}"
         if change.action == "reinforce":
             self._reinforce(session, record, REINFORCE_DELTAS[change.strength], change.note, now)
+        elif change.action == "fulfil":
+            if record.status not in HELD:
+                return "only a desire she holds can be fulfilled"
+            self._change(session, record, "fulfil", change.note, now)
         else:
             self._change(session, record, "let_go", change.note, now)
         return None
@@ -451,6 +462,7 @@ class DesireStore:
             (*change.interest_ids, *from_events),
             tuple(item.id for item in change.evidence if item.source == "exploration"),
             tuple(item.id for item in change.evidence if item.source == "conversation"),
+            tuple(item.id for item in change.evidence if item.source == "desire_event"),
         )
 
     @staticmethod
@@ -461,6 +473,8 @@ class DesireStore:
             yield DesireSourceRecord(desire_id=desire_id, exploration_id=exploration_id)
         for conversation_id in sorted(set(sources.conversation_ids)):
             yield DesireSourceRecord(desire_id=desire_id, conversation_id=conversation_id)
+        for event_id in sorted(set(sources.desire_event_ids)):
+            yield DesireSourceRecord(desire_id=desire_id, desire_event_id=event_id)
 
     @staticmethod
     def _lock(session: Session) -> None:

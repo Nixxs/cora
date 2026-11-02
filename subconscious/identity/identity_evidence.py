@@ -1,7 +1,8 @@
 """Read what Cora has experienced since she last reflected: the evidence a reflection may cite.
 
-Three sources, matching identity_rules.EVIDENCE_SOURCES: changes to her interests,
-findings from exploring them (with her own reaction), and conversation summaries.
+Four sources, matching identity_rules.EVIDENCE_SOURCES: changes to her interests,
+findings from exploring them (with her own reaction), conversation summaries, and the
+milestones of her desires (coming to want one, pursuing, pausing, fulfilling, letting go).
 Raw memories are never read; they are the person's facts, not her experience.
 """
 
@@ -13,11 +14,16 @@ from uuid import UUID
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
-from storage.models import ConversationSummaryRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord
+from storage.models import (
+    ConversationSummaryRecord, DesireEventRecord, DesireRecord, InterestEventRecord, InterestExplorationRecord,
+    InterestRecord,
+)
 from subconscious.identity.identity_rules import Evidence
 from subconscious.interests.interest_store import validate_now
 
 MAX_EXPERIENCES = 30
+# A desire's milestones; forming is a reflection's own output, and progress notes repeat its steps.
+DESIRE_MILESTONES = ("hold", "pursue", "pause", "fulfil", "let_go", "fade")
 # Rows are stamped when their transaction starts, so a slow save can commit a row
 # older than one already read. Reading only up to a little before now lets it land.
 COMMIT_MARGIN = timedelta(minutes=5)
@@ -59,7 +65,7 @@ def read_experiences(
         return ExperienceBatch((), after, False)
     with Session(engine) as session:
         found = [*interest_changes(session, after, until, newest), *findings(session, after, until, newest),
-                 *conversations(session, after, until, newest)]
+                 *conversations(session, after, until, newest), *desire_changes(session, after, until, newest)]
     found.sort(key=lambda item: (item.at, item.source, item.id))
     if newest:
         return ExperienceBatch(tuple(found[-MAX_EXPERIENCES:]), until, False)
@@ -121,3 +127,15 @@ def conversations(
     records = session.scalars(window(select(summary), summary.created_at, after, until, newest))
     return [Experience("conversation", record.conversation_id, record.created_at, {"summary": record.text})
             for record in records]
+
+
+def desire_changes(
+    session: Session, after: datetime | None, until: datetime, newest: bool = False,
+) -> list[Experience]:
+    event = DesireEventRecord
+    rows = session.execute(window(select(event, DesireRecord.description).join(
+        DesireRecord, DesireRecord.id == event.desire_id,
+    ).where(event.kind.in_(DESIRE_MILESTONES)), event.created_at, after, until, newest))
+    return [Experience("desire_event", record.id, record.created_at, {
+        "desire": description, "change": record.kind, "note": record.note,
+    }) for record, description in rows]

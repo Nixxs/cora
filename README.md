@@ -502,7 +502,7 @@ rate limits.
   too little new to reflect on), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
+  `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `message_person_on_signal`, `set_person_name`,
   `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
@@ -823,6 +823,12 @@ the way a professional talks with a client:
   (or message Cora with their number visible) so the ID is saved, and can then
   hide it again. Changing your own number in Settings forgets your saved ID;
   removing someone forgets theirs.
+
+**Cora messaging you.** Ask her to message you, or leave her working on a job
+and she can tell you on Signal when it's done, stuck, or needs your answer:
+`message_person_on_signal` sends to your own number (the one in Settings, so
+you don't add yourself as a contact) with no approval pop-up, since it only
+goes to you. It shows in your chat as hers, and says so if Signal isn't linked.
 
 **Cora messaging them first.** At the desk (voice, or typing in Standby) you can
 ask her to message someone you've added, for example "introduce yourself to
@@ -1396,7 +1402,7 @@ after updating, for migrations 0034 to 0038.)
 
    **Pursuing a desire.** Once a day at most, while she holds a desire, an
    attempt is instead a step toward one of them (see
-   [Desires](#desires--the-next-stage-not-built), D4), taking turns. It goes in
+   [Desires](#desires--complete), D4), taking turns. It goes in
    the same exploration limits and table (kind `pursuit`), so it can browse,
    reach out or carry a sign-up wish the same way. Activity shows "Took a step
    toward …".
@@ -1530,7 +1536,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it; [subconscious/desires/](subconscious/desires/) holds desire rules and the desire store. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `message_person_on_signal`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1778,9 +1784,9 @@ features it helps check, and package last.
 
 *Phase 3 — wanting and noticing things*
 
-11. Desires D1–D6, next (see [Desires](#desires--the-next-stage-not-built)
-    below): what she'd like to do or experience, growing from her interests,
-    pursued on her own where she can, and with your help where she can't.
+11. Desires D1–D6, built (see [Desires](#desires--complete) below): what
+    she'd like to do or experience, growing from her interests, pursued on her
+    own where she can, and with your help where she can't.
 12. ~~Awareness foundation.~~ Done through the webhook work: the listener
     ([mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
     triage sorts new items into urgent, worth mentioning or ignore, the
@@ -2330,7 +2336,7 @@ sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending wor
 and provide separate camera privacy controls. Cross-process transport can be added
 when needed; it is not required for these first in-process workers.
 
-#### Desires — the next stage (not built)
+#### Desires — complete
 
 From Nick's notes ("Evolving from an AI Assistant to an Autonomous AI Personality",
 28 October 2026). The aim isn't a more efficient assistant but to see whether an AI
@@ -2460,8 +2466,17 @@ in what she experiences.
    migration 0042, held at once when there's room, and the original stays),
    or **note** for anything else. `recall_desire` says what a nearer version
    was adapted from.
-6. [ ] **D6 Reflection:** what happened while pursuing a desire feeds her
-   memories, identity and interests, closing the loop, and can fulfil it.
+6. [x] **D6 Reflection:** the loop closes. The daily desire reflection sees
+   each desire's latest changes (steps, what you said) and what a nearer
+   version was adapted from, and can **fulfil** a held or pursued desire (one a
+   reflection) only when an experience shows it actually happened, not when
+   it's merely planned. The interests a fulfilled desire grew from then feel a
+   strong pull. Her desires' milestones (coming to hold one, pursuing, your
+   'not now', fulfilling, letting go, fading) are now experiences of her own
+   that the identity and desire reflections read and cite (migration 0043), so
+   doing what she wanted can shape who she is and what she wants next; a new
+   desire can grow from one she fulfilled, and `recall_desire` shows it.
+   Memories of the experience itself come from the conversation, as always.
 
 #### Self — complete
 

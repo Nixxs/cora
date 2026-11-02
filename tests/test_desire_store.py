@@ -11,7 +11,11 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from storage.models import DesireRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord
+from storage.models import (
+    DesireEventRecord, DesireRecord, InterestEventRecord, InterestExplorationRecord, InterestRecord,
+)
+from subconscious.desires.desire_rules import Change
+from subconscious.identity.identity_evidence import read_experiences
 from subconscious.desires.desire_rules import (
     REINFORCE_DELTAS, Change, INITIAL_STRENGTH, LET_GO_THRESHOLD, MAX_CANDIDATES, MAX_HELD, MAX_REINFORCE_DELTA,
 )
@@ -268,6 +272,37 @@ class DesireStoreDatabaseTests(unittest.TestCase):
         _, waiting = self.desires.answer(reef.id, "instead", "Or a pool", now=later,
                                          instead=("To swim in a reef pool", "Why"))
         self.assertEqual(waiting.status, "candidate")
+
+    def test_a_reflection_fulfils_only_a_held_desire_and_new_ones_can_grow_from_it(self):
+        desire = self.held()
+        candidate = self.desires.form(*form_args("Still forming"), now=NOW)
+        self.desires.take_step(desire.id, "Found a walk", now=NOW)
+        later = NOW + timedelta(days=1)
+        seen = read_experiences(self.engine, after=None, now=datetime.now(timezone.utc) + timedelta(minutes=10))
+        milestones = [item for item in seen.experiences if item.source == "desire_event"]
+        # Coming to hold it and starting to pursue it; forming and progress notes are not milestones.
+        self.assertEqual([item.details["change"] for item in milestones], ["hold", "pursue"])
+        self.assertEqual(milestones[1].details, {"desire": desire.description, "change": "pursue", "note": "Found a walk"})
+        cited = (Evidence("desire_event", milestones[1].id),)
+        problems = self.desires.apply_reflection([
+            Change("fulfil", "We walked it on Saturday", desire_id=desire.id, evidence=cited),
+            Change("fulfil", "Not yet", desire_id=candidate.id, evidence=cited),
+        ], read_after=None, read_until=later, now=later)
+        self.assertEqual(problems, [None, "only a desire she holds can be fulfilled"])
+        self.assertEqual(self.kinds(desire.id)[-1], "fulfil")
+        self.assertEqual({item.id: item.status for item in self.desires.list_desires(include_ended=True)}[desire.id],
+                         "fulfilled")
+        fulfilment = self.desires.history(desire.id)[-1]
+        # What happened can seed what she wants next.
+        with Session(self.engine) as session:
+            fulfil_id = session.scalar(select(DesireEventRecord.id).where(
+                DesireEventRecord.desire_id == desire.id, DesireEventRecord.kind == "fulfil"))
+        self.assertEqual(fulfilment.note, "We walked it on Saturday")
+        grown = self.desires.form(*form_args("To walk a longer trail"), now=later,
+                                  sources=Sources(desire_event_ids=(fulfil_id,)))
+        self.assertEqual(self.desires.sources(grown.id).desire_event_ids, (fulfil_id,))
+        [origin] = _grew_from(self.desires, grown.id)
+        self.assertEqual((origin["desire"], origin["change"]), (desire.description, "fulfil"))
 
     def test_a_step_starts_pursuing_a_held_desire_then_notes_progress(self):
         desire = self.held()

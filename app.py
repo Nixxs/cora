@@ -263,6 +263,7 @@ class CoraApp(
             get_calendar=lambda: self.calendar, calendar_changed=lambda: self.refresh_calendar(),
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
             check_sign_up=self.check_sign_up, begin_sign_up=self.begin_sign_up,
+            signal_reaches_person=self.signal_reaches_person, message_person=self.tell_person_on_signal,
         )
         # Live never sees client-only tools such as pass_on.
         self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)

@@ -41,7 +41,8 @@ SCHEMA = {
         "to you. To ask another contact for a task that's already open, give its task_id and "
         "goal null. Before starting a task, ask the person for any details you know you'll need "
         "(such as an address, a budget or times that suit them), since they may not think to "
-        "say. Otherwise task is null."
+        "say. Otherwise task is null. To message the person themselves, use "
+        "message_person_on_signal instead."
     ),
     "parameters": {
         "type": "object",

@@ -2,7 +2,8 @@ from dataclasses import replace
 from datetime import timedelta
 import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, call, patch
 
 from subconscious.desires import reflect_desires as reflect
 from subconscious.desires.desire_rules import Change
@@ -39,12 +40,35 @@ class ReflectDesiresTests(unittest.TestCase):
             reflect.reflect_desires(self.store, self.client, "chosen-model", now=NOW),
             "Reflected on 3 experiences: reinforced (some): To walk through an old-growth forest; "
             "1 refused (the candidate cap is full); faded: To learn the cello.")
-        self.propose.assert_called_once_with(self.client, "chosen-model", [self.held], ["interest"],
-                                             ["I like old machines."], self.batch.experiences, now=NOW)
+        self.propose.assert_called_once_with(
+            self.client, "chosen-model", [self.held], ["interest"], ["I like old machines."], self.batch.experiences,
+            now=NOW, histories={self.held.id: self.store.history.return_value},
+            everything=self.store.list_desires.return_value)
+        self.store.list_desires.assert_any_call(include_ended=True)
         self.store.apply_reflection.assert_called_once_with(
             [self.reinforce, self.form], read_after=None, read_until=self.batch.until, now=NOW)
         # What draws her now: a backlog is skipped, not worked through.
         reflect.read_experiences.assert_called_once_with(self.store.engine, after=None, now=NOW, newest=True)
+
+    def test_a_fulfilled_desire_pulls_the_interests_it_grew_from(self):
+        fulfil = Change("fulfil", "We went", desire_id=self.held.id, evidence=(Evidence("conversation", self.found[2].id),))
+        self.propose.return_value = [fulfil]
+        self.store.apply_reflection.return_value = [None]
+        forests, trees = object(), object()
+        self.store.sources.return_value = SimpleNamespace(interest_ids=(forests, trees, forests))
+        with patch.object(reflect, "InterestStore") as interests:
+            self.assertEqual(reflect.reflect_desires(self.store, self.client, now=NOW),
+                             "Reflected on 3 experiences: fulfilled: To walk through an old-growth forest; "
+                             "faded: To learn the cello.")
+        self.store.sources.assert_called_once_with(self.held.id)
+        self.assertEqual(interests.return_value.pull.call_args_list,
+                         [call(forests, "strong", now=NOW), call(trees, "strong", now=NOW)])
+        # A refused fulfilment pulls nothing.
+        self.store.apply_reflection.return_value = ["only a desire she holds can be fulfilled"]
+        self.store.last_reflected_at.return_value = None
+        with patch.object(reflect, "InterestStore") as interests:
+            reflect.reflect_desires(self.store, self.client, now=NOW)
+        interests.return_value.pull.assert_not_called()
 
     def test_waits_a_day_but_still_settles_when_there_is_too_little_to_reflect_on(self):
         self.store.last_reflected_at.return_value = NOW - timedelta(hours=23)

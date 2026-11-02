@@ -5,6 +5,9 @@ first reflection, or days with Cora closed) is skipped rather than worked throug
 it is due, her desires are settled first (so ones nothing reinforced fade), even
 when there is too little new to reflect on.
 
+A desire fulfilled closes the loop: the interests it grew from feel a strong pull, and what
+happened becomes an experience her identity and later desires can grow from.
+
 Usage: python -m subconscious.desires.reflect_desires [--dry-run]
 """
 
@@ -45,16 +48,34 @@ def reflect_desires(
     if waiting is not None:
         store.settle_all(now)
         return f"{waiting}{faded}"
+    everything = store.list_desires(include_ended=True)
     desires = live(store.list_desires(), now)
-    changes = propose_desires(client, model, desires, *what_she_has(store), batch.experiences, now=now)
+    changes = propose_desires(client, model, desires, *what_she_has(store), batch.experiences, now=now,
+                              histories=histories(store, desires), everything=everything)
     problems = store.apply_reflection(changes, read_after=last, read_until=batch.until, now=now)
     if problems is None:
         return "Another reflection ran first; nothing changed."
+    fulfilled = [change.desire_id for change, problem in zip(changes, problems)
+                 if problem is None and change.action == "fulfil"]
+    if fulfilled:
+        pull_interests(store, fulfilled, now)
     applied = [describe_change(change, desires) for change, problem in zip(changes, problems) if problem is None]
     refused = [problem for problem in problems if problem is not None]
     if refused:
         applied.append(f"{len(refused)} refused ({'; '.join(refused)})")
     return f"Reflected on {len(batch.experiences)} experiences: {'; '.join(applied) or 'no changes'}{faded}."
+
+
+def histories(store: DesireStore, desires: list[Desire]) -> dict:
+    return {desire.id: store.history(desire.id) for desire in desires}
+
+
+def pull_interests(store: DesireStore, fulfilled: list, now: datetime) -> None:
+    """The interests a fulfilled desire grew from feel a strong pull (live ones only, within their ceiling)."""
+    interests = InterestStore(store.engine)
+    for desire_id in fulfilled:
+        for interest_id in dict.fromkeys(store.sources(desire_id).interest_ids):
+            interests.pull(interest_id, "strong", now=now)
 
 
 def waiting_for(batch: ExperienceBatch) -> str | None:
@@ -108,7 +129,9 @@ def preview_desires(store: DesireStore, client: OpenAI, model: str = BACKEND_MOD
     if not batch.experiences:
         return "No new experiences."
     desires = live(store.list_desires(), now)
-    changes = propose_desires(client, model, desires, *what_she_has(store), batch.experiences, now=now)
+    changes = propose_desires(client, model, desires, *what_she_has(store), batch.experiences, now=now,
+                              histories=histories(store, desires),
+                              everything=store.list_desires(include_ended=True))
     lines = [f"Proposal from {len(batch.experiences)} experiences (not saved; the rules are checked on saving):"]
     for change in changes:
         lines += [describe_change(change, desires), f"     why: {change.note}"]
@@ -125,6 +148,8 @@ def describe_change(change: Change, desires: list[Desire]) -> str:
     desire = next(desire for desire in desires if desire.id == change.desire_id)
     if change.action == "reinforce":
         return f"reinforced ({change.strength}): {desire.description}"
+    if change.action == "fulfil":
+        return f"fulfilled: {desire.description}"
     return f"let go: {desire.description}"
 
 

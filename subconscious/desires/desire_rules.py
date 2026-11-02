@@ -36,8 +36,8 @@ HELD = ("held", "pursuing")
 ENDED = ("fulfilled", "let_go")
 
 # What one daily reflection may do: at most one new desire, a few reinforcements, one let go.
-ACTIONS = ("form", "reinforce", "let_go")
-MAX_PER_REFLECTION = {"form": 1, "reinforce": 3, "let_go": 1}
+ACTIONS = ("form", "reinforce", "fulfil", "let_go")
+MAX_PER_REFLECTION = {"form": 1, "reinforce": 3, "fulfil": 1, "let_go": 1}
 REINFORCE_DELTAS = {"some": 0.075, "strong": MAX_REINFORCE_DELTA}
 
 # Status changes she (or a later step) makes on purpose: event kind -> (allowed from, to).

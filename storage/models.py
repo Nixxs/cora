@@ -493,7 +493,7 @@ class IdentityEventEvidenceRecord(Base):
     __tablename__ = "identity_event_evidence"
     __table_args__ = (
         CheckConstraint(
-            "num_nonnulls(interest_event_id, exploration_id, conversation_id) = 1",
+            "num_nonnulls(interest_event_id, exploration_id, conversation_id, desire_event_id) = 1",
             name="identity_event_evidence_source_check",
         ),
         Index("identity_event_evidence_event_id_idx", "event_id"),
@@ -520,6 +520,10 @@ class IdentityEventEvidenceRecord(Base):
             "public.conversation_summaries.conversation_id", name="identity_event_evidence_conversation_id_fkey",
             ondelete="RESTRICT",
         ),
+    )
+    # A change to one of her desires (fulfilled, let go...), her own experience.
+    desire_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desire_events.id", name="identity_event_evidence_desire_event_id_fkey", ondelete="RESTRICT"),
     )
 
 
@@ -986,12 +990,13 @@ class DesireEventRecord(Base):
 
 
 class DesireSourceRecord(Base):
-    """One thing a desire grew from: exactly one of an interest, a finding or a conversation."""
+    """One thing a desire grew from: exactly one of an interest, a finding, a conversation or a desire's change."""
 
     __tablename__ = "desire_sources"
     __table_args__ = (
         CheckConstraint(
-            "num_nonnulls(interest_id, exploration_id, conversation_id) = 1", name="desire_sources_source_check",
+            "num_nonnulls(interest_id, exploration_id, conversation_id, desire_event_id) = 1",
+            name="desire_sources_source_check",
         ),
         Index("desire_sources_desire_id_idx", "desire_id"),
         {"schema": "public"},
@@ -1012,6 +1017,10 @@ class DesireSourceRecord(Base):
             "public.conversation_summaries.conversation_id", name="desire_sources_conversation_id_fkey",
             ondelete="RESTRICT",
         ),
+    )
+    # A change to one of her desires (fulfilled, let go...), her own experience.
+    desire_event_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desire_events.id", name="desire_sources_desire_event_id_fkey", ondelete="RESTRICT"),
     )
 
 

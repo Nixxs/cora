@@ -8,7 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from storage.database import build_engine
-from storage.models import ConversationSummaryRecord, InterestExplorationRecord, InterestRecord
+from storage.models import (
+    ConversationSummaryRecord, DesireEventRecord, DesireRecord, InterestExplorationRecord, InterestRecord,
+)
 from subconscious.desires.desire_store import DESCRIPTION_MAX_CHARS, DesireStore
 
 RECALLED_EVENTS = 5
@@ -79,10 +81,15 @@ def _grew_from(store: DesireStore, desire_id) -> list[dict]:
             exploration.id.in_(sources.exploration_ids))).all() if sources.exploration_ids else []
         talks = session.execute(select(summary.text, summary.created_at).where(
             summary.conversation_id.in_(sources.conversation_ids))).all() if sources.conversation_ids else []
+        changes = session.execute(select(DesireRecord.description, DesireEventRecord.kind, DesireEventRecord.created_at)
+                                  .join(DesireRecord, DesireRecord.id == DesireEventRecord.desire_id)
+                                  .where(DesireEventRecord.id.in_(sources.desire_event_ids))).all() \
+            if sources.desire_event_ids else []
     return [
         *({"interest": title} for title in sorted(interests)),
         *({"finding": _preview(finding), "on": _date(at)} for finding, at in findings if finding),
         *({"conversation": _preview(text), "on": _date(at)} for text, at in talks),
+        *({"desire": wish, "change": kind, "on": _date(at)} for wish, kind, at in changes),
     ]
 
 
