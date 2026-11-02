@@ -1,6 +1,7 @@
 """Validation plus opt-in disposable PostgreSQL tests; never reset personal data."""
 
 from datetime import datetime, timedelta, timezone
+import json
 import os
 import unittest
 from unittest.mock import MagicMock, patch
@@ -14,9 +15,11 @@ from storage.models import DesireRecord, InterestEventRecord, InterestExploratio
 from subconscious.desires.desire_rules import (
     REINFORCE_DELTAS, Change, INITIAL_STRENGTH, LET_GO_THRESHOLD, MAX_CANDIDATES, MAX_HELD, MAX_REINFORCE_DELTA,
 )
-from subconscious.desires.desire_store import FADE_NOTE, DesireStore, Sources
+from session_config import instruction_sections
+from subconscious.desires.desire_store import DESIRE_CONTEXT_MAX_CHARS, FADE_NOTE, DesireStore, Sources
 from subconscious.identity.identity_rules import Evidence
 from subconscious.interests.interest_strength import reinforce
+from tools.recall_desire import _grew_from
 import test_conversation_summaries as summary_tests
 
 NOW = datetime(2026, 11, 1, 9, tzinfo=timezone.utc)
@@ -46,6 +49,19 @@ class DesireStoreValidationTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     call()
             session.assert_not_called()
+
+
+class DesirePromptTests(unittest.TestCase):
+    def test_her_desires_come_last_as_her_own_wishes_and_are_capped(self):
+        context = '[{"wish": "To see a redwood", "why": "I want to", "status": "held"}]'
+        sections = instruction_sections(interest_context="[]", desire_context=context)
+        self.assertEqual(list(sections), ["interests", "desires"])
+        self.assertIn("your own wishes", sections["desires"])
+        self.assertIn("don't press the person to help", sections["desires"])
+        self.assertTrue(sections["desires"].endswith(context))
+        self.assertNotIn("desires", instruction_sections())
+        with self.assertRaises(ValueError):
+            instruction_sections(desire_context="x" * (DESIRE_CONTEXT_MAX_CHARS + 1))
 
 
 @unittest.skipUnless(os.environ.get("CORA_RUN_DB_TESTS") == "1", "Set CORA_RUN_DB_TESTS=1 for database tests")
@@ -207,6 +223,46 @@ class DesireStoreDatabaseTests(unittest.TestCase):
         # A reflection that started from an older stamp saves nothing.
         self.assertIsNone(self.desires.apply_reflection([], read_after=None, read_until=NOW, now=NOW))
         self.assertEqual(self.desires.last_reflected_at(), until)
+
+    def test_only_held_and_pursued_desires_reach_her_strongest_first_and_within_the_cap(self):
+        self.assertEqual(self.desires.get_startup_context(now=NOW), "")
+        self.desires.form(*form_args("Still forming"), now=NOW)
+        weaker = self.held("To see a redwood", now=NOW - timedelta(days=5))
+        stronger = self.held()
+        self.desires.change(stronger.id, "pursue", "Found a walk", now=NOW)
+        self.assertEqual([d.id for d in self.desires.held_desires(now=NOW)], [stronger.id, weaker.id])
+        context = json.loads(self.desires.get_startup_context(now=NOW))
+        self.assertEqual(context, [
+            {"wish": stronger.description, "why": stronger.motivation, "status": "pursuing"},
+            {"wish": "To see a redwood", "why": weaker.motivation, "status": "held"},
+        ])
+        # A whole record that doesn't fit is left out rather than cut.
+        self.held("To " + "x" * 290)
+        with patch("subconscious.desires.desire_store.DESIRE_CONTEXT_MAX_CHARS", 400):
+            self.assertEqual(len(json.loads(self.desires.get_startup_context(now=NOW))), 1)
+        # Faded ones are gone, even before anything settles them.
+        self.assertEqual(self.desires.get_startup_context(now=NOW + timedelta(days=60)), "")
+
+    def test_recall_shows_the_interests_findings_and_conversations_a_desire_grew_from(self):
+        with Session(self.engine) as session, session.begin():
+            interest = InterestRecord(title="Forests", description="Old-growth forests", why_emerged="Came up",
+                                      strength=0.5, strength_at=NOW, status="active")
+            session.add(interest)
+            session.flush()
+            finding = InterestExplorationRecord(interest_id=interest.id, status="found", started_at=NOW,
+                                                finished_at=NOW, finding="Some trees are " + "very " * 100 + "old")
+            session.add(finding)
+            session.flush()
+            interest_id, finding_id = interest.id, finding.id
+        self.store.close_conversation(self.conversation_id)
+        self.store.save_summary(self.conversation_id, "We talked about forests.")
+        desire = self.desires.form(*form_args(), now=NOW, sources=Sources(
+            (interest_id,), (finding_id,), (self.conversation_id,)))
+        grew_from = _grew_from(self.desires, desire.id)
+        self.assertEqual(grew_from[0], {"interest": "Forests"})
+        self.assertEqual(len(grew_from[1]["finding"]), 300)
+        self.assertTrue(grew_from[1]["finding"].endswith("…"))
+        self.assertEqual(grew_from[2]["conversation"], "We talked about forests.")
 
     def test_database_rejects_inconsistent_rows(self):
         cases = (

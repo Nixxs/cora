@@ -237,7 +237,7 @@ Screen > .screen--selection {
 
 /* Just tall enough for the relationship box's contents; narrower than this pans instead. */
 #dashboard-middle > .dashboard-box {
-    width: 25%;
+    width: 20%;
     height: 16;
     min-width: 34;
 }
@@ -480,6 +480,16 @@ Screen > .screen--selection {
 }
 
 #identity-traits {
+    height: auto;
+    color: #d0d6e0;
+}
+
+#desires-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#desire-list {
     height: auto;
     color: #d0d6e0;
 }

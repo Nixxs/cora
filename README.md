@@ -235,10 +235,11 @@ Its top right mirrors the chat's connection button, showing **● active** or
 | memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, ✦ before one of her own (sparked by her exploring, not by you), and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
+| desires | Her live desires, strongest first, with each one's strength and state: pursuing (amber), held, or forming (a candidate, dimmed: it doesn't reach conversations yet). |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
 | tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. Below the tasks, her latest sign-ups: each site, how it stands (signed up, confirm email, blocked and by what, failed) and when she asked. |
-| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
-| background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
+| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, desires, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
+| background | When each background job last saved something, and when the timed ones (interests, exploration, identity, desires) are next due. A run that saved nothing doesn't count. |
 
 The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
 showing the last values and notes the failure in Activity. The context box reads
@@ -453,8 +454,9 @@ small, size-capped results are fed back into Cora-prime:
 - **At each connect** (launch, wake, or reconnect), Live and the delegation
   backend receive the person's name, Cora's held identity traits (at most 4,000
   characters), how she feels about the person (at most 1,000 characters), a memory
-  snapshot (at most 3,000 characters), and her current interests with their
-  latest findings (at most 3,000 characters). Session setup refuses an oversized
+  snapshot (at most 3,000 characters), her current interests with their
+  latest findings (at most 3,000 characters), and the desires she holds or is
+  pursuing (at most 2,000 characters). Session setup refuses an oversized
   block rather than silently growing the context.
 - **At launch**, the opening greeting brief (see
   [How the opening greeting works](#how-the-opening-greeting-works)) carries at
@@ -484,7 +486,8 @@ rate limits.
   first Live session sends the opening greeting.
 - **At each connect** (launch, waking from Standby, or Ctrl+R): both prompts are
   built in this order: the fixed foundation, the person's name, her held identity
-  traits, how she feels about the person, the memory snapshot, then her interests.
+  traits, how she feels about the person, the memory snapshot, her interests,
+  then her desires.
   Each block loads separately; a failure only leaves that block out.
 - **Background memory pass** (at launch and each time she enters Standby): for
   each finished conversation not yet summarised, extract memories and then save
@@ -499,7 +502,7 @@ rate limits.
   too little new to reflect on), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
+  `recall_self`, `recall_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
   `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
@@ -1520,7 +1523,7 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
 | [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it; [subconscious/desires/](subconscious/desires/) holds desire rules and the desire store. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1635,7 +1638,7 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Non-destructive duplicate markers, corrections, fading, and manual memory inspection.
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
-- A read-only dashboard of her relationship, memories, interests, identity, your
+- A read-only dashboard of her relationship, memories, interests, identity, desires, your
   conversations and the background jobs, beside a live copy of the chat, with a
   context box showing how full each model's context window is and what fills it.
 - Images: paste a screenshot into the chat, let her look at your screen (with an
@@ -2409,9 +2412,15 @@ in what she experiences.
    python -m subconscious.desires.reflect_desires            # reflect and save (at most once a day)
    python -m subconscious.desires.desire_store               # list her desires
    ```
-3. [ ] **D3 Knowing her desires:** held desires reach her at each connect, a
-   `recall_desire` tool says why she wants something, and a Desires box on the
-   dashboard.
+3. [x] **D3 Knowing her desires:** the desires she holds or is pursuing
+   reach Live and the backend at each connect, strongest first, as her own
+   wishes (at most 2,000 characters; candidates stay out until held, like
+   traits still forming), told to mention one naturally and never press the
+   person to help. `recall_desire` (backend, the person's contexts only, never
+   clients) takes a held desire's exact wish and returns why she wants it, the
+   interests, findings and conversations it grew from, and its five latest
+   changes with their notes. The dashboard has a Desires box beside identity,
+   and the desire reflection joins the background box.
 4. [ ] **D4 Pursuing:** for a desire she can pursue herself, she plans and takes
    concrete next steps in her idle time with the tools she already has, noting
    progress. Her "site I'd like an account on" wish becomes the first of these.

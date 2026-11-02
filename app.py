@@ -170,6 +170,7 @@ class CoraApp(
             set_people_context=lambda context: setattr(self.live, "people_context", context),
             set_tasks_context=lambda context: setattr(self.live, "tasks_context", context),
             set_sign_ups_context=lambda context: setattr(self.live, "sign_ups_context", context),
+            set_desire_context=lambda context: setattr(self.live, "desire_context", context),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_own_name=lambda name: setattr(self.live, "own_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),

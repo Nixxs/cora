@@ -19,6 +19,7 @@ from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_argum
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
+from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
@@ -62,6 +63,8 @@ def create_tool_registry(
     registry.register(NAME_SCHEMA, validate_name_arguments, name.handle)
     recall_self = RecallSelfTool(get_connection, is_closing, write_debug)
     registry.register(SELF_SCHEMA, validate_self_arguments, recall_self.handle)
+    recall_desire = RecallDesireTool(get_connection, is_closing, write_debug)
+    registry.register(DESIRE_SCHEMA, validate_desire_arguments, recall_desire.handle)
     random_number = RandomNumberTool(get_connection, is_closing, write_debug)
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)

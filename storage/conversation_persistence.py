@@ -16,6 +16,7 @@ class ConversationPersistence:
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
                  set_self_image_context=lambda context: None, set_people_context=lambda context: None,
                  set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
+                 set_desire_context=lambda context: None,
                  set_own_name=lambda name: None, set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
@@ -27,6 +28,7 @@ class ConversationPersistence:
         self.set_people_context = set_people_context
         self.set_tasks_context = set_tasks_context
         self.set_sign_ups_context = set_sign_ups_context
+        self.set_desire_context = set_desire_context
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
         self.set_own_name = set_own_name
@@ -255,6 +257,20 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_sign_ups_context(context)
+
+        # What she'd like to do herself; without it she just doesn't mention her wishes.
+        if self.is_closing():
+            return
+        self.set_desire_context("")
+        try:
+            context = await self.call_database(self.storage.load_desire_context)
+        except Exception as error:
+            self.write_activity(
+                f"Desires load failed ({type(error).__name__}); connecting without them.", "Desires unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_desire_context(context)
 
         # The chosen delegation model loads last; if it fails Cora connects with the default.
         if self.is_closing():

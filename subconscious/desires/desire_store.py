@@ -11,6 +11,7 @@ Run `python -m subconscious.desires.desire_store` to list her desires.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 from math import isfinite
 import sys
 from uuid import UUID
@@ -33,6 +34,7 @@ from subconscious.interests.interest_strength import reinforce as reinforced
 
 DESCRIPTION_MAX_CHARS = 300
 TEXT_MAX_CHARS = 1000
+DESIRE_CONTEXT_MAX_CHARS = 2000
 FADE_NOTE = "Faded without anything reinforcing it"
 HOLD_NOTE = "Wanted it enough to hold on to"
 
@@ -141,6 +143,29 @@ class DesireStore:
                 DesireRecord.strength.desc(), DesireRecord.created_at, DesireRecord.id,
             ))
             return [snapshot(record) for record in records]
+
+    def get_startup_context(self, *, now: datetime) -> str:
+        """Held and pursued desires as bounded JSON, strongest first; read-only.
+
+        Candidates are still forming, so they stay out, as traits still forming do. Whole
+        records only: one that doesn't fit is left out rather than cut.
+        """
+        selected, context = [], ""
+        for desire in self.held_desires(now=now):
+            record = {"wish": desire.description, "why": desire.motivation, "status": desire.status}
+            candidate = json.dumps([*selected, record], ensure_ascii=False)
+            if len(candidate) <= DESIRE_CONTEXT_MAX_CHARS:
+                selected.append(record)
+                context = candidate
+        return context
+
+    def held_desires(self, *, now: datetime) -> list[Desire]:
+        """Held and pursued desires that haven't faded by now, strongest first."""
+        validate_now(now)
+        held = [desire for desire in self.list_desires() if desire.status in HELD
+                and settle(desire.strength, desire.strength_at, desire.status, now)[1] != "let_go"]
+        return sorted(held, key=lambda desire: current_strength(desire.strength, desire.strength_at, now),
+                      reverse=True)
 
     def history(self, desire_id: UUID) -> list[DesireEvent]:
         """A desire's events, oldest first."""

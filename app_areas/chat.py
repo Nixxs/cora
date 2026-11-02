@@ -87,7 +87,8 @@ class ChatMixin:
             self_image_context=self.live.self_image_context,
             relationship_context=self.live.relationship_context, people_context=self.live.people_context,
             tasks_context=self.live.tasks_context, calendar_context=self.live.calendar_context,
-            sign_ups_context=self.live.sign_ups_context, own_name=self.live.own_name,
+            sign_ups_context=self.live.sign_ups_context, desire_context=self.live.desire_context,
+            own_name=self.live.own_name,
         )
 
     @work(group="text-chat")
