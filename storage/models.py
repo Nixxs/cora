@@ -322,13 +322,16 @@ class InterestExplorationRecord(Base):
             name="interest_explorations_pull_check",
         ),
         CheckConstraint(
-            "kind IN ('interest', 'wander') AND (kind = 'interest') = (interest_id IS NOT NULL)",
+            "kind IN ('interest', 'wander', 'pursuit') AND (kind = 'interest') = (interest_id IS NOT NULL) "
+            "AND (kind = 'pursuit') = (desire_id IS NOT NULL)",
             name="interest_explorations_kind_check",
         ),
         CheckConstraint(
-            "(kind = 'wander' OR (topic IS NULL AND wandered_from IS NULL)) "
-            "AND (topic IS NULL OR (btrim(topic) <> '' AND char_length(topic) <= 200)) "
-            "AND (kind = 'interest' OR status <> 'found' OR topic IS NOT NULL)",
+            "(kind <> 'interest' OR topic IS NULL) AND (kind = 'wander' OR wandered_from IS NULL) "
+            "AND (topic IS NULL OR (btrim(topic) <> '' "
+            "AND char_length(topic) <= CASE WHEN kind = 'pursuit' THEN 300 ELSE 200 END)) "
+            "AND (kind = 'interest' OR status <> 'found' OR topic IS NOT NULL) "
+            "AND (kind <> 'pursuit' OR topic IS NOT NULL)",
             name="interest_explorations_topic_check",
         ),
         CheckConstraint(
@@ -348,6 +351,8 @@ class InterestExplorationRecord(Base):
         ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
+        Index("interest_explorations_desire_id_started_at_idx", "desire_id", "started_at",
+              postgresql_where=sql_text("desire_id IS NOT NULL")),
         {"schema": "public"},
     )
 
@@ -368,8 +373,8 @@ class InterestExplorationRecord(Base):
     tangents: Mapped[list[dict]] = mapped_column(JSONB, default=list, server_default=sql_text("'[]'::jsonb"))
     pull: Mapped[str | None] = mapped_column(Text)  # none, some or strong: how much she wants to keep going
     sparks_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    kind: Mapped[str] = mapped_column(Text, default="interest", server_default="interest")  # or 'wander'
-    topic: Mapped[str | None] = mapped_column(Text)  # what a wander was about
+    kind: Mapped[str] = mapped_column(Text, default="interest", server_default="interest")  # 'wander' or 'pursuit'
+    topic: Mapped[str | None] = mapped_column(Text)  # what a wander was about, or the wish a pursuit was for
     # The exploration whose tangent a wander followed.
     wandered_from: Mapped[UUID | None] = mapped_column(
         ForeignKey("public.interest_explorations.id", name="interest_explorations_wandered_from_fkey",
@@ -386,6 +391,10 @@ class InterestExplorationRecord(Base):
     sign_up_what: Mapped[str | None] = mapped_column(Text)
     sign_up_why: Mapped[str | None] = mapped_column(Text)
     sign_up_asked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The desire a pursuit step was for.
+    desire_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.desires.id", name="interest_explorations_desire_id_fkey", ondelete="RESTRICT"),
+    )
 
 
 class IdentityTraitRecord(Base):

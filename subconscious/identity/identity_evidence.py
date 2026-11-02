@@ -100,8 +100,13 @@ def findings(
     ).where(exploration.status == "found"), exploration.finished_at, after, until, newest))
     experiences = []
     for record, title in rows:
-        # A wander belongs to no interest.
-        details = {"interest": title} if title is not None else {"wandered_into": record.topic}
+        # A wander belongs to no interest; a pursuit belongs to the desire whose wish is its topic.
+        if title is not None:
+            details = {"interest": title}
+        elif record.kind == "pursuit":
+            details = {"pursuing_desire": record.topic}
+        else:
+            details = {"wandered_into": record.topic}
         details["finding"] = record.finding
         if record.reaction is not None:
             details["your_reaction"] = record.reaction

@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend_chat import (
-    MAX_ROUNDS, STANDBY_EXCLUDED, TOOL_NO_RESULT, TOOL_REFUSED, BackendChat, BackendRoute,
+    MAX_ROUNDS, OUT_OF_ROUNDS, STANDBY_EXCLUDED, TOOL_NO_RESULT, TOOL_REFUSED, BackendChat, BackendRoute,
 )
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
 from tools.registry import ToolRegistry
@@ -201,8 +201,18 @@ class BackendChatTests(unittest.IsolatedAsyncioTestCase):
         await self.reply([[call(name="close_app")], [message("I can't do that here.")]])
         self.assertEqual(self.client.requests[1]["input"][-1]["output"], TOOL_REFUSED)
 
-    async def test_too_many_tool_rounds_gives_up(self):
+    async def test_out_of_tool_rounds_she_answers_with_tools_off(self):
         outputs = [[call(call_id=f"call_{n}")] for n in range(MAX_ROUNDS)]
+        text = await self.reply([*outputs, [message("Here's what I found so far.")]])
+        self.assertEqual(text, "Here's what I found so far.")
+        self.assertEqual(len(self.client.requests), MAX_ROUNDS + 1)
+        self.assertEqual({request["tool_choice"] for request in self.client.requests[:-1]}, {"auto"})
+        final = self.client.requests[-1]
+        self.assertEqual(final["tool_choice"], "none")
+        self.assertEqual(final["input"][-1], {"type": "message", "role": "developer", "content": OUT_OF_ROUNDS})
+
+    async def test_a_tool_call_even_with_tools_off_gives_up(self):
+        outputs = [[call(call_id=f"call_{n}")] for n in range(MAX_ROUNDS + 1)]
         with self.assertRaises(RuntimeError):
             await self.reply(outputs)
 

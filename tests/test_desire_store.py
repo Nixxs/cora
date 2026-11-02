@@ -224,6 +224,20 @@ class DesireStoreDatabaseTests(unittest.TestCase):
         self.assertIsNone(self.desires.apply_reflection([], read_after=None, read_until=NOW, now=NOW))
         self.assertEqual(self.desires.last_reflected_at(), until)
 
+    def test_a_step_starts_pursuing_a_held_desire_then_notes_progress(self):
+        desire = self.held()
+        later = NOW + timedelta(hours=1)
+        self.assertEqual(self.desires.take_step(desire.id, "Found a walk", now=later).status, "pursuing")
+        self.assertEqual(self.desires.take_step(desire.id, "Found a date", now=later).status, "pursuing")
+        history = self.desires.history(desire.id)
+        self.assertEqual([(event.kind, event.note) for event in history[-2:]],
+                         [("pursue", "Found a walk"), ("progress", "Found a date")])
+        # Strength is unchanged by a step, and an ended desire takes none.
+        self.assertEqual(history[-1].strength_after, history[-1].strength_before)
+        self.desires.change(desire.id, "fulfil", "Went", now=later)
+        self.assertEqual(self.desires.take_step(desire.id, "Too late", now=later).status, "fulfilled")
+        self.assertEqual(self.kinds(desire.id)[-1], "fulfil")
+
     def test_only_held_and_pursued_desires_reach_her_strongest_first_and_within_the_cap(self):
         self.assertEqual(self.desires.get_startup_context(now=NOW), "")
         self.desires.form(*form_args("Still forming"), now=NOW)
@@ -239,9 +253,12 @@ class DesireStoreDatabaseTests(unittest.TestCase):
         # A whole record that doesn't fit is left out rather than cut.
         self.held("To " + "x" * 290)
         with patch("subconscious.desires.desire_store.DESIRE_CONTEXT_MAX_CHARS", 400):
-            self.assertEqual(len(json.loads(self.desires.get_startup_context(now=NOW))), 1)
-        # Faded ones are gone, even before anything settles them.
-        self.assertEqual(self.desires.get_startup_context(now=NOW + timedelta(days=60)), "")
+            kept = [record["wish"] for record in json.loads(self.desires.get_startup_context(now=NOW))]
+            self.assertEqual(kept, [stronger.description, "To see a redwood"])
+        # Faded ones are gone, even before anything settles them (an absence counts at most 21 days).
+        self.desires.settle_all(NOW + timedelta(days=20))
+        self.assertNotEqual(self.desires.get_startup_context(now=NOW + timedelta(days=20)), "")
+        self.assertEqual(self.desires.get_startup_context(now=NOW + timedelta(days=40)), "")
 
     def test_recall_shows_the_interests_findings_and_conversations_a_desire_grew_from(self):
         with Session(self.engine) as session, session.begin():

@@ -245,6 +245,22 @@ class DesireStore:
             self._add_event(session, record.id, "progress", record.strength, record.strength, note)
             return snapshot(record)
 
+    def take_step(self, desire_id: UUID, note: str, *, now: datetime) -> Desire:
+        """A step she took toward a held desire: the first starts pursuing it, later ones note progress.
+
+        A desire that ended meanwhile (or faded) is returned unchanged.
+        """
+        note = clean_text(note, "note")
+        validate_now(now)
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            self._lock(session)
+            record = self._settled(session, desire_id, now)
+            if record.status == "held":
+                self._change(session, record, "pursue", note, now)
+            elif record.status == "pursuing":
+                self._add_event(session, record.id, "progress", record.strength, record.strength, note)
+            return snapshot(record)
+
     def settle_all(self, now: datetime) -> list[Desire]:
         """Save faded strength for every live desire, letting go of any that faded away."""
         validate_now(now)

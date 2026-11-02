@@ -268,7 +268,8 @@ class InterestStore:
                 why = record.reaction or record.finding[:TEXT_MAX_CHARS]
                 sparks.append(Spark(record.id, record.topic, why, WANDERING))
                 title = f"{WANDERING}: {record.topic}"
-            sparks += [Spark(record.id, tangent["title"], tangent["why"], title) for tangent in record.tangents]
+            sparks += [Spark(record.id, tangent["title"], tangent["why"], title or record.topic)
+                       for tangent in record.tangents]
         return tuple(sparks)
 
     def pull(self, interest_id: UUID, pull: str, *, now: datetime) -> Interest | None:

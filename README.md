@@ -1394,6 +1394,13 @@ after updating, for migrations 0034 to 0038.)
    evolution cycle can turn it into an interest of her own. Activity shows
    "Wandered into …".
 
+   **Pursuing a desire.** Once a day at most, while she holds a desire, an
+   attempt is instead a step toward one of them (see
+   [Desires](#desires--the-next-stage-not-built), D4), taking turns. It goes in
+   the same exploration limits and table (kind `pursuit`), so it can browse,
+   reach out or carry a sign-up wish the same way. Activity shows "Took a step
+   toward …".
+
    **Reaching out.** Rarely, when something truly thrilled her or she'd value your
    human perspective, an exploration or wander can carry a short message for you
    (up to 600 characters, a share or a question, never a task) and why. It comes
@@ -1458,7 +1465,7 @@ manual commands respect the same limits and can make billable requests:
 python -m subconscious.interests.interest_store              # list interests (no API calls)
 python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
 python -m subconscious.interests.evolve_interests
-python -m subconscious.interests.explore_interest            # explores, or wanders when it's due
+python -m subconscious.interests.explore_interest            # explores, or wanders or takes a desire step when due
 ```
 
 ## How the opening greeting works
@@ -1623,7 +1630,7 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
 - Cora's own interests: daily evolution from memories and her own sparks, idle web
   exploration with saved findings and tangents (browsing real pages, within limits,
-  when the Browser service is on), wandering somewhere new every third attempt, occasional findings she raises herself during a lull, and, rarely, a
+  when the Browser service is on), wandering somewhere new every third attempt, a daily step toward a desire she holds, occasional findings she raises herself during a lull, and, rarely, a
   message to you when something really excites her.
 - Cora's own developing identity: a daily reflection forms and gradually revises
   first-person traits from her experiences within fixed rules; the traits she holds
@@ -2421,9 +2428,23 @@ in what she experiences.
    interests, findings and conversations it grew from, and its five latest
    changes with their notes. The dashboard has a Desires box beside identity,
    and the desire reflection joins the background box.
-4. [ ] **D4 Pursuing:** for a desire she can pursue herself, she plans and takes
-   concrete next steps in her idle time with the tools she already has, noting
-   progress. Her "site I'd like an account on" wish becomes the first of these.
+4. [x] **D4 Pursuing:** once a day at most, an exploration attempt becomes a
+   step toward one of the desires she holds, taking turns (the one pursued
+   longest ago, or never, first; the strongest on a tie). It shares the
+   exploration limits, browser and table (migration 0041 adds kind `pursuit`
+   and `desire_id`; the wish is its topic). She looks for what would actually
+   make it happen (a real place, event, date, group or way in, not background
+   reading), picking up her earlier next steps. When it needs travel, money, a
+   body or your time, she finds what that would take and looks for a nearer
+   version she could do herself or with a little help. She can only read the web
+   and never spends money. Only the wish and her earlier steps go out, never her
+   motivation. A step saves what she found, her reaction and up to three next
+   steps. Like an exploration, it can carry a sign-up wish (her first way to act
+   on a desire, with your yes) or, rarely, a reach-out. The first step moves the
+   desire from held to pursuing and later ones add progress notes; `recall_desire`
+   and the dashboard show both. Steps feed the identity and desire reflections
+   like findings, as `pursuing_desire`, but aren't raised in conversation as
+   findings; sharing progress is D5. Fulfilling one is D6.
 5. [ ] **D5 Reaching out:** she starts a conversation about a desire (sharing
    progress, or asking for help when it needs you), by voice when Active or on
    Signal, within `NUDGE_HOURS`. Taking part is always your choice.

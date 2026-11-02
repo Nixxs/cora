@@ -3,7 +3,8 @@
 An attempt is started before any web search and finished as 'found' or 'failed', so
 limits on how often she explores can count every attempt, including failed ones. Every
 WANDER_EVERY-th attempt is a wander, tied to no interest: alternately from one of her unused
-tangents and from an area picked at random.
+tangents and from an area picked at random. Once a day at most, an attempt is instead a step
+toward one of the desires she holds (a pursuit), taking turns among them.
 """
 
 from collections.abc import Iterable
@@ -17,7 +18,8 @@ from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
 
 from storage.database import build_engine
-from storage.models import InterestExplorationRecord, InterestRecord
+from storage.models import DesireRecord, InterestExplorationRecord, InterestRecord
+from subconscious.desires.desire_rules import HELD, settle as settle_desire
 from subconscious.interests.interest_store import (
     SPARKS_FRESH_FOR, TITLE_MAX_CHARS, Interest, clean_text, snapshot as interest_snapshot, validate_now,
 )
@@ -78,6 +80,8 @@ SIGN_UP_WHAT_MAX_CHARS = 300
 SIGN_UP_WHY_MAX_CHARS = 500
 SIGN_UP_WISH_DAILY_LIMIT = 1
 SIGN_UP_WISH_FRESH_FOR = timedelta(days=2)
+# A step toward one of her held desires takes the place of an attempt at most once a day.
+PURSUIT_EVERY = timedelta(hours=24)
 
 
 def mention_limits(warmth: float) -> tuple[timedelta, int]:
@@ -104,11 +108,19 @@ class Exploration:
     # Other things she noticed along the way and would like to look into: (title, why) each.
     tangents: tuple[tuple[str, str], ...] = ()
     pull: str | None = None  # none, some or strong: how much she wants to keep going
-    kind: str = "interest"  # or 'wander'
-    topic: str | None = None  # what a wander was about
+    kind: str = "interest"  # 'wander' or 'pursuit'
+    topic: str | None = None  # what a wander was about, or the wish a pursuit was for
     reach_out: tuple[str, str] | None = None  # (message, why): for the person, if it excited her
     browsed: bool = False  # with her own browser rather than web search
     sign_up: tuple[str, str, str] | None = None  # (url, what, why): a site she'd like an account on
+    desire_id: UUID | None = None  # the desire a pursuit step was for
+
+
+@dataclass(frozen=True)
+class Pursuit:
+    """A step toward one of her held desires."""
+    desire_id: UUID
+    wish: str
 
 
 @dataclass(frozen=True)
@@ -154,6 +166,7 @@ class Start:
     exploration: Exploration | None = None
     interest: Interest | None = None
     wander: Wander | None = None  # set instead of interest when she wanders
+    pursuit: Pursuit | None = None  # set instead of interest when she pursues a desire
 
 
 def snapshot(record: InterestExplorationRecord) -> Exploration:
@@ -164,6 +177,7 @@ def snapshot(record: InterestExplorationRecord) -> Exploration:
         record.kind or "interest", record.topic,
         None if record.reach_out is None else (record.reach_out, record.reach_out_why), bool(record.browsed),
         None if record.sign_up_url is None else (record.sign_up_url, record.sign_up_what, record.sign_up_why),
+        record.desire_id,
     )
 
 
@@ -230,8 +244,9 @@ class ExplorationStore:
     def start_next(self, *, now: datetime, browse: bool = False) -> Start:
         """Start exploring the next eligible interest, or wandering, if the limits allow one now.
 
-        She wanders every WANDER_EVERY-th attempt, and whenever no interest is eligible. With
-        browse (her browser is available), the attempt browses if today's browsing limit allows.
+        A step toward a held desire comes first, once every PURSUIT_EVERY. Otherwise she wanders
+        every WANDER_EVERY-th attempt, and whenever no interest is eligible. With browse (her
+        browser is available), the attempt browses if today's browsing limit allows.
         """
         validate_now(now)
         attempts = InterestExplorationRecord
@@ -255,6 +270,14 @@ class ExplorationStore:
                     attempts.browsed, attempts.started_at > now - timedelta(hours=24),
                 ))
                 browse = browsed < BROWSE_DAILY_LIMIT
+
+            pursuit = self._pursuit(session, now)
+            if pursuit is not None:
+                record = attempts(kind="pursuit", desire_id=pursuit.desire_id, topic=pursuit.wish,
+                                  status="running", started_at=now, browsed=browse)
+                session.add(record)
+                session.flush()
+                return Start("started", snapshot(record), pursuit=pursuit)
 
             last_explored = dict(session.execute(
                 select(attempts.interest_id, func.max(attempts.started_at)).where(
@@ -301,6 +324,31 @@ class ExplorationStore:
             session.add(record)
             session.flush()
             return Start("started", snapshot(record), interest_snapshot(interest))
+
+    @staticmethod
+    def _pursuit(session: Session, now: datetime) -> Pursuit | None:
+        """The held desire to take a step toward, if one is due: the one pursued longest ago (or
+        never), the strongest on a tie; None within PURSUIT_EVERY of the last step."""
+        attempts = InterestExplorationRecord
+        if session.scalar(select(func.count()).where(
+            attempts.kind == "pursuit", attempts.started_at > now - PURSUIT_EVERY,
+        )):
+            return None
+        last_pursued = dict(session.execute(
+            select(attempts.desire_id, func.max(attempts.started_at)).where(
+                attempts.desire_id.is_not(None),
+            ).group_by(attempts.desire_id),
+        ).all())
+        held = []
+        for desire in session.scalars(select(DesireRecord).where(DesireRecord.status.in_(HELD))):
+            strength, status = settle_desire(desire.strength, desire.strength_at, desire.status, now)
+            if status != "let_go":  # faded, though nothing has settled it yet
+                held.append((last_pursued.get(desire.id), -strength, desire.created_at, desire.id, desire))
+        if not held:
+            return None
+        never = datetime.min.replace(tzinfo=timezone.utc)
+        desire = min(held, key=lambda item: (item[0] or never, *item[1:4]))[-1]
+        return Pursuit(desire.id, desire.description)
 
     def _wander(self, session: Session, now: datetime, live: list[str]) -> tuple[Wander, UUID | None]:
         """Where to wander, alternating: a tangent after a random wander (if one is left), else at random."""
@@ -370,7 +418,7 @@ class ExplorationStore:
             record = self._running(session, exploration_id)
             if record is None:
                 return None
-            if record.kind == "wander":
+            if record.kind == "wander":  # a pursuit keeps its wish as its topic
                 record.topic = record.topic or topic
                 if record.topic is None:
                     raise ValueError("A wander needs a topic")
@@ -412,6 +460,7 @@ class ExplorationStore:
                 InterestRecord, InterestRecord.id == attempts.interest_id,
             ).where(
                 attempts.status == "found", attempts.finished_at > now - MENTION_FRESH_FOR,
+                attempts.kind != "pursuit",  # a desire's steps aren't findings to raise
             ).order_by(attempts.started_at.desc(), attempts.id.desc())).all()
             seen = set()
             for record, interest in rows:
@@ -500,13 +549,16 @@ class ExplorationStore:
             return SignUpWish(record.id, title or record.topic, record.sign_up_url, record.sign_up_what,
                               record.sign_up_why)
 
-    def list_recent(self, limit: int = 10, *, interest_id: UUID | None = None) -> list[Exploration]:
-        """Newest attempts first, optionally for one interest."""
+    def list_recent(self, limit: int = 10, *, interest_id: UUID | None = None,
+                    desire_id: UUID | None = None) -> list[Exploration]:
+        """Newest attempts first, optionally for one interest or one desire."""
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= LIST_LIMIT:
             raise ValueError(f"Exploration list limit must be an integer from 1 to {LIST_LIMIT}")
         query = select(InterestExplorationRecord)
         if interest_id is not None:
             query = query.where(InterestExplorationRecord.interest_id == interest_id)
+        if desire_id is not None:
+            query = query.where(InterestExplorationRecord.desire_id == desire_id)
         with Session(self.engine) as session:
             records = session.scalars(query.order_by(
                 InterestExplorationRecord.started_at.desc(), InterestExplorationRecord.id.desc(),
