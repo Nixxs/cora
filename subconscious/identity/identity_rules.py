@@ -15,8 +15,9 @@ from uuid import UUID
 KINDS = ("value", "preference", "perspective", "tendency")
 POLARITIES = ("like", "dislike")
 ACTIONS = ("form", "revise", "retire")
-EVIDENCE_SOURCES = ("interest_event", "exploration", "conversation")
-OWN_SOURCES = ("interest_event", "exploration")  # Cora's own experience, not a conversation
+EVIDENCE_SOURCES = ("interest_event", "exploration", "conversation", "desire_event")
+# Cora's own experience, not a conversation.
+OWN_SOURCES = ("interest_event", "exploration", "desire_event")
 
 HELD_CONFIDENCE = 0.5
 FORM_MAX_CONFIDENCE = 0.4  # new traits are never held straight away
@@ -195,7 +196,7 @@ def check_support(change: Change, kind: str, own_id: UUID | None, active: list[T
     if not change.evidence:
         return "Evidence is required"
     if kind in NEEDS_OWN_EVIDENCE and not any(item.source in OWN_SOURCES for item in change.evidence):
-        return "Needs her own experience (an interest change or finding), not only conversations"
+        return "Needs her own experience (an interest change, finding or desire), not only conversations"
     cited = set(change.cited_trait_ids)
     held = {trait.id: trait for trait in active if is_held(trait)}
     if own_id in cited or any(trait_id not in held for trait_id in cited):

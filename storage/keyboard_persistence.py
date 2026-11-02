@@ -19,6 +19,7 @@ from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from sign_ups.password import sign_up_name
 from sign_ups.store import SignUp, SignUpStore
+from subconscious.desires.desire_store import DesireStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
 from subconscious.interests.interest_store import InterestStore
@@ -236,6 +237,9 @@ class KeyboardPersistence:
 
     def load_sign_ups_context(self) -> str:
         return SignUpStore(self._get_store().engine).context()
+
+    def load_desire_context(self) -> str:
+        return DesireStore(self._get_store().engine).get_startup_context(now=datetime.now(timezone.utc))
 
     def finish_sign_up(self, sign_up_id: UUID, status: str, blocked_by: str | None, note: str | None) -> None:
         SignUpStore(self._get_store().engine).finish(

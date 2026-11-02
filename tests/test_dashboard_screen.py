@@ -128,12 +128,13 @@ class DashboardSnapshotTests(unittest.TestCase):
 
     def test_next_due_adds_each_cooldown_to_the_last_run(self):
         now = datetime(2026, 10, 20, 12, tzinfo=timezone.utc)
-        runs = {"interests": now, "identity": None}
+        runs = {"interests": now, "identity": None, "desires": now}
         with patch("storage.dashboard_snapshot.Session") as session:
             scalars = session.return_value.__enter__.return_value.scalars.return_value
             scalars.all.return_value = []
             self.assertEqual(next_due("engine", runs), {
                 "interests": now + EVOLVE_EVERY, "exploration": None, "identity": None,
+                "desires": now + timedelta(hours=24),
             })
             # Two recent starts: only the gap after the newest applies.
             scalars.all.return_value = [now, now - timedelta(hours=7)]
@@ -156,6 +157,7 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.IdentityStore") as identity, \
                 patch("storage.dashboard_snapshot.TaskStore") as tasks, \
                 patch("storage.dashboard_snapshot.SignUpStore") as sign_ups, \
+                patch("storage.dashboard_snapshot.live_desires", return_value=(("To see a redwood", 0.5, "held"),)), \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -171,6 +173,7 @@ class DashboardSnapshotTests(unittest.TestCase):
             snapshot = read_dashboard_snapshot("engine", now)
         self.assertEqual(snapshot.traits, ("trait",))
         self.assertEqual(snapshot.sign_ups, ("sign-up",))
+        self.assertEqual(snapshot.desires, (("To see a redwood", 0.5, "held"),))
         self.assertEqual(snapshot.tasks, ("task",))
         conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
         self.assertEqual(snapshot.message_days, (3, 0))
@@ -595,6 +598,33 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotEqual(colours[0], LABEL_STYLE)
             self.assertEqual(colours[2:], [LABEL_STYLE] * 3)
             self.assertEqual(text.spans[1].end, len("70% value"))
+
+    async def test_desires_box_lists_each_wish_and_dims_the_ones_still_forming(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.click("#view-button")
+            await pilot.pause()
+            screen = app.screen
+            await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
+            desires = screen.query_one("#desire-list", Static)
+            self.assertEqual(str(desires.render()), "no desires yet")
+            self.assertEqual(screen.query_one("#desires-box").border_title, "desires")
+            app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
+                relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
+                memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
+                message_days=(), traits=(),
+                desires=(("To watch a [b]court[/b] session", 0.62, "pursuing"),
+                         ("To see a redwood", 0.3, "candidate")),
+            )
+            await screen.refresh_snapshot().wait()
+            await pilot.pause()
+            text = desires.render()
+            # Brackets in a wish are shown as written, not read as markup.
+            self.assertEqual(str(text).splitlines(), [
+                "62% pursuing", "To watch a [b]court[/b] session", "", "30% forming", "To see a redwood",
+            ])
+            colours = [span.style.foreground.hex.lower() for span in text.spans if span.style.foreground]
+            self.assertNotEqual(colours[0], LABEL_STYLE)
+            self.assertEqual(colours[2:], [LABEL_STYLE] * 3)
 
     async def test_background_box_lists_when_each_job_last_ran_and_is_next_due(self):
         async with keyboard_tests.running_app() as (app, pilot):

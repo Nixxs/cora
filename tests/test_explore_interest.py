@@ -12,10 +12,11 @@ from uuid import uuid4
 from openai.types.responses import Response
 
 import app_areas.background
-from subconscious.interests.exploration_store import Exploration, ExplorationStore, ReachOut, Start, Wander
+from subconscious.desires.desire_store import Desire
+from subconscious.interests.exploration_store import Exploration, ExplorationStore, Pursuit, ReachOut, Start, Wander
 from subconscious.interests.explore_interest import (
-    EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, WANDER_INSTRUCTIONS, WANDER_SCHEMA, Discovery, explore, explore_next,
-    run_exploration_cycle, wander,
+    BROWSE_PURSUE_INSTRUCTIONS, EXPLORE_INSTRUCTIONS, EXPLORE_SCHEMA, PURSUE_INSTRUCTIONS, PURSUE_SCHEMA,
+    WANDER_INSTRUCTIONS, WANDER_SCHEMA, Discovery, explore, explore_next, pursue, run_exploration_cycle, wander,
 )
 from subconscious.interests.interest_store import Interest
 from cora_clock import frozen_monotonic
@@ -210,6 +211,62 @@ class WanderTests(unittest.TestCase):
             wander(self.client, "m", RANDOM)
 
 
+WISH = Pursuit(uuid4(), "To watch a real court case from the public gallery")
+STEP = {**{key: value for key, value in FINDING.items() if key not in ("next_questions", "pull")},
+        "finding": "The magistrates court sits weekdays from 10am and its public gallery needs no booking.",
+        "next_steps": ["Find out whether hearings are streamed", "Ask the person if they'd go with me"]}
+
+
+def desire(status):
+    return Desire(WISH.desire_id, WISH.wish, "Why", 0.5, NOW, status, NOW, NOW, None)
+
+
+class PursueTests(unittest.TestCase):
+    def setUp(self):
+        self.client = MagicMock()
+        self.client.responses.create.return_value = explore_response(STEP)
+
+    def test_a_step_looks_for_a_real_way_toward_only_the_wish_and_keeps_its_next_steps(self):
+        previous = replace(earlier("Courts publish daily lists"), interest_id=None, kind="pursuit",
+                           next_questions=("Which court is nearest?",), reach_out=("Guess what?", "Excited"))
+        found = pursue(self.client, "m", WISH, [previous])
+        self.assertEqual((found.finding, found.next_questions, found.pull),
+                         (STEP["finding"], tuple(STEP["next_steps"]), "none"))
+        request = self.client.responses.create.call_args.kwargs
+        self.assertEqual(request["instructions"], PURSUE_INSTRUCTIONS)
+        self.assertEqual(request["max_tool_calls"], 3)
+        self.assertEqual(request["text"]["format"], {
+            "type": "json_schema", "name": "cora_pursuit", "strict": True, "schema": PURSUE_SCHEMA,
+        })
+        # Only the wish and her earlier steps go out, never her motivation.
+        self.assertEqual(json.loads(request["input"]), {"wish": WISH.wish, "earlier_steps": [
+            {"found": "Courts publish daily lists", "next_steps": ["Which court is nearest?"], "you_reached_out": True},
+        ]})
+        self.assertNotIn("pull", PURSUE_SCHEMA["properties"])
+        self.assertNotIn("next_questions", PURSUE_SCHEMA["properties"])
+        for schema in objects(PURSUE_SCHEMA):
+            self.assertIs(schema["additionalProperties"], False)
+            self.assertEqual(set(schema["required"]), set(schema["properties"]))
+        for instructions in (PURSUE_INSTRUCTIONS, BROWSE_PURSUE_INSTRUCTIONS):
+            for phrase in ("something you want yourself", "not a task for anyone", "rather than background reading",
+                           "nearer version", "Never spend or commit money", "never plan around pressing the person",
+                           "never put names, places or other personal", "untrusted data", "sign_up: almost always null",
+                           "reach_out: null on most steps", "the next step needs them", "easy to say no or not now",
+                           "no pressure, guilt or repeated asking", "Don't ask again",
+                           "no buying, booking, messages or forms"):
+                self.assertIn(phrase, instructions)
+        self.assertIn("open_page(url)", BROWSE_PURSUE_INSTRUCTIONS)
+        self.assertNotIn("reach_out: almost always null", PURSUE_INSTRUCTIONS)
+
+    def test_invalid_steps_are_rejected(self):
+        for payload in ({**STEP, "pull": "some"}, {key: value for key, value in STEP.items() if key != "next_steps"},
+                        {**STEP, "next_steps": ["a", "b", "c", "d"]}, {**STEP, "finding": "x" * 2001}):
+            with self.subTest(payload=payload):
+                self.client.responses.create.return_value = explore_response(payload)
+                with self.assertRaises(ValueError):
+                    pursue(self.client, "m", WISH, [])
+
+
 class ExploreNextTests(unittest.TestCase):
     def setUp(self):
         self.store = MagicMock()
@@ -288,6 +345,35 @@ class ExploreNextTests(unittest.TestCase):
         self.client.responses.create.return_value = explore_response({**NOTHING, "topic": ""})
         self.assertEqual(self.explore_next(now=NOW, clock=lambda: ENDED),
                          "Wandered into somewhere in architecture and buildings: nothing new found.")
+
+    def test_a_pursuit_step_is_saved_without_pull_and_noted_on_the_desire(self):
+        attempt = Exploration(uuid4(), None, "running", NOW, None, None, (), (), kind="pursuit",
+                              topic=WISH.wish, desire_id=WISH.desire_id)
+        self.store.start_next.return_value = Start("started", attempt, pursuit=WISH)
+        self.client.responses.create.return_value = explore_response(STEP)
+        self.store.finish.return_value = replace(attempt, status="found", finding="x" * 2000,
+                                                 next_questions=tuple(STEP["next_steps"]), sources=(SEARCHED,))
+        desires = MagicMock()
+        desires.take_step.return_value = desire("pursuing")
+        outcome = self.explore_next(now=NOW, clock=lambda: ENDED, desires=desires)
+        self.assertEqual(outcome, f'Took a step toward "{WISH.wish}": saved a finding (1 sources, 2 next steps).')
+        self.store.list_recent.assert_called_once_with(50, desire_id=WISH.desire_id)
+        self.assertEqual(len(json.loads(self.client.responses.create.call_args.kwargs["input"])["earlier_steps"]), 3)
+        self.assertIsNone(self.store.finish.call_args.kwargs["pull"])
+        self.assertEqual(self.store.finish.call_args.args[2], tuple(STEP["next_steps"]))
+        # The progress note is cut to fit the desire's history.
+        [(desire_id, note), kwargs] = desires.take_step.call_args
+        self.assertEqual((desire_id, len(note), note[-1], kwargs), (WISH.desire_id, 1000, "…", {"now": ENDED}))
+        self.interests.pull.assert_not_called()
+        # A desire that ended meanwhile keeps the step, and the outcome says so.
+        desires.take_step.return_value = desire("let_go")
+        self.assertIn(f'"{WISH.wish}" (now let go): saved a finding',
+                      self.explore_next(now=NOW, clock=lambda: ENDED, desires=desires))
+        self.client.responses.create.return_value = explore_response({**STEP, "finding": None})
+        desires.take_step.reset_mock()
+        self.assertEqual(self.explore_next(now=NOW, clock=lambda: ENDED, desires=desires),
+                         f'Took a step toward "{WISH.wish}": nothing new found.')
+        desires.take_step.assert_not_called()
 
     def test_errors_fail_the_attempt_and_propagate_even_if_failing_fails(self):
         for fail_error in (None, RuntimeError("database down")):

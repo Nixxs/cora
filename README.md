@@ -235,10 +235,11 @@ Its top right mirrors the chat's connection button, showing **● active** or
 | memories | Memories by kind (duplicates not counted), new memories per day (older days dimmer, as recall fades them), and how many are waiting for embedding, a duplicate check, a correction check, or a fade check. |
 | interests | Live interests by strength, marked ↑ if reinforced or new in the last 3 days and ↓ if only fading, ✦ before one of her own (sparked by her exploring, not by you), and the newest finding. |
 | identity | Active traits, most confident first. Traits still forming (below 50%) are dimmed: they don't reach conversations yet. |
+| desires | Her live desires, strongest first, with each one's strength and state: pursuing (amber), held, or forming (a candidate, dimmed: it doesn't reach conversations yet). |
 | conversations | Messages you sent per day over the last year, a week per column with today in the right-hand column. Hover a square for its date and count. |
 | tasks | Each open task, oldest first: its goal (a blue dot while it waits on others, amber once it needs you), when it started and when a week without progress would bring it back to you, then one line per person asked: "nudge 1/2 in 6h", "no answer · back to you in 2h" after the last nudge, "answered", or "asked" while the task waits on you. "next check" means it's due at the next hourly round (nudges wait for 9am–7pm). Its latest step is underneath. Every task has the same shape (a goal, the people asked, its steps), so the box fits any errand. Below the tasks, her latest sign-ups: each site, how it stands (signed up, confirm email, blocked and by what, failed) and when she asked. |
-| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
-| background | When each background job last saved something, and when the timed ones (interests, exploration, identity) are next due. A run that saved nothing doesn't count. |
+| context | How full each model's context window is, then what fills it. The top two bars are measured by the API: voice as a share of its limit, backend as a share of its limit and a token count from the last request's input (they read “measuring…” and “after a request” until then). Below, each item's estimated share: the voice model's instructions, identity, relationship, memories, interests, desires, reconnect history and the conversation so far; the backend's instructions, tools and delegated turns. Click an item to read the exact text it holds; Esc or a click outside closes it. In Standby or after a drop it keeps showing the last session's numbers. |
+| background | When each background job last saved something, and when the timed ones (interests, exploration, identity, desires) are next due. A run that saved nothing doesn't count. |
 
 The dashboard re-reads the database every 30 seconds; if a read fails, it keeps
 showing the last values and notes the failure in Activity. The context box reads
@@ -441,7 +442,7 @@ finish and incur its separate charges while the local app remains open.
 **Cora-prime** is the Live voice model plus its delegation backend: the part of
 Cora you actually talk to. Everything else (memory extraction, summaries,
 embeddings, duplicate, correction and fade checks, conversation appraisals, interest evolution,
-interest exploration, and identity reflection) runs as **separate background
+interest exploration, identity reflection, and desire reflection) runs as **separate background
 processes that make their own API calls**. Relationship updates are plain code
 with no API call.
 
@@ -453,8 +454,9 @@ small, size-capped results are fed back into Cora-prime:
 - **At each connect** (launch, wake, or reconnect), Live and the delegation
   backend receive the person's name, Cora's held identity traits (at most 4,000
   characters), how she feels about the person (at most 1,000 characters), a memory
-  snapshot (at most 3,000 characters), and her current interests with their
-  latest findings (at most 3,000 characters). Session setup refuses an oversized
+  snapshot (at most 3,000 characters), her current interests with their
+  latest findings (at most 3,000 characters), and the desires she holds or is
+  pursuing (at most 2,000 characters). Session setup refuses an oversized
   block rather than silently growing the context.
 - **At launch**, the opening greeting brief (see
   [How the opening greeting works](#how-the-opening-greeting-works)) carries at
@@ -484,7 +486,8 @@ rate limits.
   first Live session sends the opening greeting.
 - **At each connect** (launch, waking from Standby, or Ctrl+R): both prompts are
   built in this order: the fixed foundation, the person's name, her held identity
-  traits, how she feels about the person, the memory snapshot, then her interests.
+  traits, how she feels about the person, the memory snapshot, her interests,
+  then her desires.
   Each block loads separately; a failure only leaves that block out.
 - **Background memory pass** (at launch and each time she enters Standby): for
   each finished conversation not yet summarised, extract memories and then save
@@ -494,10 +497,12 @@ rate limits.
 - **App timers** (while the app runs, cheap when nothing is due): interest
   evolution every 10 minutes (a cycle at most once a day), exploration every 10
   minutes (only in Standby or after 10 minutes without conversation), identity
-  reflection every 10 minutes (at most once a day), and a lull check for findings
+  reflection every 10 minutes (at most once a day), desire reflection every 10
+  minutes (at most once a day; desires are settled each day it's due, even with
+  too little new to reflect on), and a lull check for findings
   every two minutes (only while Live is active).
 - **On demand:** the backend calls `search_memory`, `recall_interest`,
-  `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `set_person_name`,
+  `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `message_person_on_signal`, `set_person_name`,
   `enter_standby`, or `close_app` when a conversation needs them.
 
 ### Choosing models
@@ -510,7 +515,7 @@ migration 0015, so run `python migrate.py` once after updating):
 | --- | --- | --- |
 | Delegation | The Responses backend behind Live, and typed chat | Immediately: Live reconnects if it is Active (wait for speech and pending work); otherwise at the next connect |
 | Memory | Memory extraction and conversation summaries | The next background memory pass |
-| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity reflection | Each process's next run |
+| Relationship, interests and identity | Conversation appraisals, interest evolution and exploration, identity and desire reflection | Each process's next run |
 | Duplicate check and small jobs | Memory duplicate, correction and fade checks, and future small jobs | The next background memory pass |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list
@@ -818,6 +823,12 @@ the way a professional talks with a client:
   (or message Cora with their number visible) so the ID is saved, and can then
   hide it again. Changing your own number in Settings forgets your saved ID;
   removing someone forgets theirs.
+
+**Cora messaging you.** Ask her to message you, or leave her working on a job
+and she can tell you on Signal when it's done, stuck, or needs your answer:
+`message_person_on_signal` sends to your own number (the one in Settings, so
+you don't add yourself as a contact) with no approval pop-up, since it only
+goes to you. It shows in your chat as hers, and says so if Signal isn't linked.
 
 **Cora messaging them first.** At the desk (voice, or typing in Standby) you can
 ask her to message someone you've added, for example "introduce yourself to
@@ -1389,6 +1400,13 @@ after updating, for migrations 0034 to 0038.)
    evolution cycle can turn it into an interest of her own. Activity shows
    "Wandered into …".
 
+   **Pursuing a desire.** Once a day at most, while she holds a desire, an
+   attempt is instead a step toward one of them (see
+   [Desires](#desires--complete), D4), taking turns. It goes in
+   the same exploration limits and table (kind `pursuit`), so it can browse,
+   reach out or carry a sign-up wish the same way. Activity shows "Took a step
+   toward …".
+
    **Reaching out.** Rarely, when something truly thrilled her or she'd value your
    human perspective, an exploration or wander can carry a short message for you
    (up to 600 characters, a share or a question, never a task) and why. It comes
@@ -1453,7 +1471,7 @@ manual commands respect the same limits and can make billable requests:
 python -m subconscious.interests.interest_store              # list interests (no API calls)
 python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
 python -m subconscious.interests.evolve_interests
-python -m subconscious.interests.explore_interest            # explores, or wanders when it's due
+python -m subconscious.interests.explore_interest            # explores, or wanders or takes a desire step when due
 ```
 
 ## How the opening greeting works
@@ -1517,8 +1535,8 @@ Standby gets a short welcome back instead, with no hook or relationship line.
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
-| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it. |
-| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `look_at_screen`, `show_web_image`, `send_signal_message`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
+| [subconscious/](subconscious/) | Event bus, attention manager, and background workers; [subconscious/interests/](subconscious/interests/) holds interest evolution and exploration; [subconscious/identity/](subconscious/identity/) holds the voice baseline, identity rules, store, and reflection; [subconscious/relationship/](subconscious/relationship/) holds conversation appraisals, relationship rules, updates, and the reset tool; [subconscious/impressions/](subconscious/impressions/) holds her impression of each client and who sees what of it; [subconscious/desires/](subconscious/desires/) holds desire rules and the desire store. |
+| [tools/](tools/) | Backend tool registration, routing each result back to Live or a chat without Live ([tools/route.py](tools/route.py)), and handlers (`close_app`, `search_memory`, `recall_interest`, `enter_standby`, `set_person_name`, `recall_self`, `recall_desire`, `note_desire`, `look_at_screen`, `show_web_image`, `send_signal_message`, `message_person_on_signal`, `close_task`, `check_email`, `send_email`, `pass_on`, `raise_concern`, `stop_replying`, `random_number`). |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Explicit, numbered SQL migrations. |
 | [backup.py](backup.py) | Backing up and restoring the database and Signal keys; the daily backup at launch. |
 | [tests/](tests/), [examples/](examples/) | Automated checks and standalone examples. |
@@ -1618,7 +1636,7 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - A local event bus and attention manager for queued observations, tested with Ctrl+T.
 - Cora's own interests: daily evolution from memories and her own sparks, idle web
   exploration with saved findings and tangents (browsing real pages, within limits,
-  when the Browser service is on), wandering somewhere new every third attempt, occasional findings she raises herself during a lull, and, rarely, a
+  when the Browser service is on), wandering somewhere new every third attempt, a daily step toward a desire she holds, occasional findings she raises herself during a lull, and, rarely, a
   message to you when something really excites her.
 - Cora's own developing identity: a daily reflection forms and gradually revises
   first-person traits from her experiences within fixed rules; the traits she holds
@@ -1633,7 +1651,7 @@ and an error result). Tests follow [tests/test_close_tool.py](tests/test_close_t
 - Non-destructive duplicate markers, corrections, fading, and manual memory inspection.
 - A model choice per area (delegation, memory, relationship/interests/identity,
   and small jobs) from Settings on the top border.
-- A read-only dashboard of her relationship, memories, interests, identity, your
+- A read-only dashboard of her relationship, memories, interests, identity, desires, your
   conversations and the background jobs, beside a live copy of the chat, with a
   context box showing how full each model's context window is and what fills it.
 - Images: paste a screenshot into the chat, let her look at your screen (with an
@@ -1764,25 +1782,30 @@ features it helps check, and package last.
       calendar changes through the webhook listener (a second Graph subscription,
       to her events), published as `CalendarChangedEvent` to refresh her week
 
-*Phase 3 — noticing things*
+*Phase 3 — wanting and noticing things*
 
-11. Awareness W1–W3, including quiet hours and the off switch.
-12. Relevance and awareness triggers (interests step 8 below).
-13. Home Assistant, starting with its demo devices.
-14. Awareness W4: expectations from memory tasks. Webhooks already reach her
-    (T4a: a Starlette listener inside Cora on 127.0.0.1, [mail/webhook.py](mail/webhook.py),
-    publishing events on the event bus); new kinds of webhook join the same listener.
-15. Camera and screen awareness.
-16. Emotions (after awareness gives her more to react to; nothing depends on it,
-    so it can move earlier).
+11. Desires D1–D6, built (see [Desires](#desires--complete) below): what
+    she'd like to do or experience, growing from her interests, pursued on her
+    own where she can, and with your help where she can't.
+12. ~~Awareness foundation.~~ Done through the webhook work: the listener
+    ([mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
+    triage sorts new items into urgent, worth mentioning or ignore, the
+    attention manager delivers at a lull, and she only reaches out on her own
+    between 9am and 7pm (`NUDGE_HOURS`). New sources join as webhooks; there is
+    no polling watcher (the old W1) or separate quiet-hours step (the old W3).
+13. Relevance and awareness triggers (interests step 8 below).
+14. Home Assistant, starting with its demo devices (waiting on devices at home).
+15. Awareness W4: expectations from memory tasks.
+16. Camera and screen awareness (waiting on devices at home).
+17. Emotions (nothing depends on it, so it can move earlier).
 
 *Phase 4 — Cora 1.0*
 
-17. MCP M4 services screen and in-app settings, reusing the dashboard's look.
+18. MCP M4 services screen and in-app settings, reusing the dashboard's look.
     (Model settings already exist; other settings still use `.env`.)
-18. Dashboard editing (for example removing a wrong memory), with a detail view
+19. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-19. Release.
+20. Release.
 
 *After 1.0:* local models.
 
@@ -2152,38 +2175,31 @@ features it helps check, and package last.
   profile picture. Small, and needed before 1.0 so each person's Cora can have
   her own picture without the command line.
 
-- **Awareness (background producers):** one generic, config-driven watcher rather
-  than a process per service. Each watch entry names an MCP tool, its arguments,
-  the field that identifies an item, and how often to poll; read positions are
-  stored, and servers that support resource subscriptions push instead. Polling
-  costs no model tokens; only new items are batched into a cheap triage call
-  (urgent, worth mentioning, or ignore), and the results become observations on
-  the event bus. The attention manager offers urgent items at a lull and groups
-  the rest into one short digest. Each source is opted in and set to off, digest
-  only, or may interrupt, with quiet hours and an off switch for all initiative.
-  In Standby she is off the clock: watchers keep polling and holding items, and
-  she gets a "while you were away" digest on reconnect. Later, expectations from
-  memory tasks (such as waiting to hear back from someone) can raise an item's
-  urgency. Messaging Cora herself over Signal is a separate interface (see
-  Signal below), not an awareness notification. Steps: W1 watcher and stored read
-  positions (no model); W2 batched triage; W3 digest, Standby holding, quiet hours
-  and off switch, with per-source settings and quiet hours editable in the app
-  rather than a config file; W4 expectations. Camera, screen, and home sensor
-  awareness are covered separately below.
+- **Awareness (background producers):** built on webhooks rather than polling.
+  Outside services push to the listener inside Cora
+  ([mail/webhook.py](mail/webhook.py)), which publishes events on the event bus;
+  new items are batched into a cheap triage call (urgent, worth mentioning, or
+  ignore, as [mail/triage.py](mail/triage.py) does for mail); urgent items reach
+  the person at any hour, and the rest wait for one digest the next time they
+  talk. Anything else she raises on her own stays within 9am to 7pm
+  (`NUDGE_HOURS`). A new source is a new kind of webhook on the same listener,
+  not a new watcher. Still to come: W4, expectations from memory tasks (such as
+  waiting to hear back from someone) raising an item's urgency. Messaging Cora
+  herself over Signal is a separate interface (see Signal below), not an
+  awareness notification. Camera, screen, and home sensor awareness are covered
+  separately below.
 - **Environmental awareness:** background producers with their own local models
   watching the screen, camera, and home sensors (such as the front door camera
   or whether the garage is open). Each feeds a local model that decides whether
   anything interesting is happening, and only worthwhile events are proposed to
-  the attention manager, the same path as findings and MCP awareness. Local
+  the attention manager, the same path as findings and webhook awareness. Local
   models keep raw images and video on the machine; only short descriptions
-  reach Cora-prime. Home Assistant is a strong candidate for most of this
-  through its MCP server, giving one connection two uses: tools for Cora to
-  check and control the home when asked, and a watch entry for the generic MCP
-  watcher so changes (such as the garage opening) become awareness events.
-  Rather than polling, awareness can use Home Assistant's WebSocket API: one
-  long-lived connection subscribed to chosen entities or triggers, which pushes
-  changes immediately. MCP stays for control tools; this makes Home Assistant a
-  small dedicated producer rather than a generic watch entry. After Cora has
+  reach Cora-prime. Home Assistant is a strong candidate for most of this:
+  its MCP server gives Cora tools to check and control the home when asked,
+  and its automations can call Cora's webhook listener so changes (such as the
+  garage opening) become awareness events, the same as mail. Its WebSocket API
+  (one long-lived connection subscribed to chosen entities) is the alternative
+  if webhooks prove too limited. After Cora has
   been closed, she reads current states (and history for short events such as a
   doorbell press) to catch up. Users choose which devices she watches from a
   list in the services screen.
@@ -2320,7 +2336,7 @@ sleep/wake behavior should be opt-in, use delays/cooldowns, preserve pending wor
 and provide separate camera privacy controls. Cross-process transport can be added
 when needed; it is not required for these first in-process workers.
 
-#### Desires — the next stage (not built)
+#### Desires — complete
 
 From Nick's notes ("Evolving from an AI Assistant to an Autonomous AI Personality",
 28 October 2026). The aim isn't a more efficient assistant but to see whether an AI
@@ -2358,6 +2374,109 @@ real pages within limits; reaching out to the person when something excites her;
 asking to sign up to sites she'd like an account on (the first small wish she can
 act on, always with the person's yes); and the identity reflection that would take
 in what she experiences.
+
+**Decided (1 November 2026):**
+
+- She holds at most **3 desires** at once (held or being pursued), with a few
+  more **candidates** forming behind them.
+- A desire **fades over a few weeks** unless something reinforces it, and one
+  that fades away is let go, never deleted (the history stays).
+- She **pursues a desire on her own** when it only needs what she can already do
+  (browsing, her email, her calendar, signing up with your yes), and **asks you
+  for help** when it needs you.
+- She **reaches out to you whenever she wants**, like a friend or colleague
+  would: desires can start a conversation, not just shape what she brings up.
+  Anything she does in the world still goes through the usual approvals, and
+  reaching out stays within `NUDGE_HOURS`.
+
+**Steps:**
+
+1. [x] **D1 Storage and rules:** a `desires` table (description, motivation,
+   strength snapshot, status: candidate, held, pursuing, fulfilled or let go),
+   an append-only `desire_events` history with reasons and progress notes, and
+   the interests, findings or conversations each one grew from
+   (`desire_sources`), in migration 0039. Pure rules in
+   [subconscious/desires/desire_rules.py](subconscious/desires/desire_rules.py):
+   a new desire is a candidate at 0.3 and is held once reinforced to 0.45 (two
+   full reinforcements) while she holds fewer than 3; at most 5 candidates; a
+   10-day half-life, so a held desire nothing reinforces is let go after about
+   three weeks (absences count at most 21 days). Deliberate changes: pursue,
+   pause, fulfil, let go. `python -m subconscious.desires.desire_store` lists
+   them.
+2. [x] **D2 Forming desires:** a daily desire reflection
+   ([subconscious/desires/reflect_desires.py](subconscious/desires/reflect_desires.py),
+   on the Relationship, interests and identity model) reads the same experiences
+   as the identity reflection (interest changes, findings with her reactions,
+   conversation summaries; at least three new ones), but only the newest 30
+   since it last ran, since desires are about what draws her now (a backlog,
+   such as her first reflection or days with Cora closed, is skipped rather
+   than worked through), alongside her live
+   desires, live interests and held traits. It may form one candidate citing
+   what it grew from (never from a fixed list), reinforce up to three desires
+   ('some' 0.075 or 'strong' 0.15) citing what renewed them, and let one go.
+   The store re-checks each change (no second copy of a desire she already
+   has, the caps, one change per desire) and applies them with the fading in
+   one transaction (migration 0040 adds its `desire_worker_state`); the outcome
+   goes to Activity under Desires. To change wording, she lets one go and forms
+   another.
+
+   ```powershell
+   python -m subconscious.desires.reflect_desires --dry-run  # show the proposal, save nothing
+   python -m subconscious.desires.reflect_desires            # reflect and save (at most once a day)
+   python -m subconscious.desires.desire_store               # list her desires
+   ```
+3. [x] **D3 Knowing her desires:** the desires she holds or is pursuing
+   reach Live and the backend at each connect, strongest first, as her own
+   wishes (at most 2,000 characters; candidates stay out until held, like
+   traits still forming), told to mention one naturally and never press the
+   person to help. `recall_desire` (backend, the person's contexts only, never
+   clients) takes a held desire's exact wish and returns why she wants it, the
+   interests, findings and conversations it grew from, and its five latest
+   changes with their notes. The dashboard has a Desires box beside identity,
+   and the desire reflection joins the background box.
+4. [x] **D4 Pursuing:** once a day at most, an exploration attempt becomes a
+   step toward one of the desires she holds, taking turns (the one pursued
+   longest ago, or never, first; the strongest on a tie). It shares the
+   exploration limits, browser and table (migration 0041 adds kind `pursuit`
+   and `desire_id`; the wish is its topic). She looks for what would actually
+   make it happen (a real place, event, date, group or way in, not background
+   reading), picking up her earlier next steps. When it needs travel, money, a
+   body or your time, she finds what that would take and looks for a nearer
+   version she could do herself or with a little help. She can only read the web
+   and never spends money. Only the wish and her earlier steps go out, never her
+   motivation. A step saves what she found, her reaction and up to three next
+   steps. Like an exploration, it can carry a sign-up wish (her first way to act
+   on a desire, with your yes) or, rarely, a reach-out. The first step moves the
+   desire from held to pursuing and later ones add progress notes; `recall_desire`
+   and the dashboard show both. Steps feed the identity and desire reflections
+   like findings, as `pursuing_desire`, but aren't raised in conversation as
+   findings; sharing progress is D5. Fulfilling one is D6.
+5. [x] **D5 Reaching out:** a step toward a desire can start a conversation
+   with you, as a friend would: sharing something real she found, or asking
+   once, simply, when the next step needs you (your company, time or yes),
+   easy to say no to, never pressing or asking again when nothing's new (each
+   step knows whether an earlier one already reached out). It goes the same way
+   as her other reach-outs: by voice when Active, otherwise on Signal, between
+   9:00 and 19:00, at most one a day, saved in your conversation. When you
+   answer or talk about one of her desires, by voice, typing or Signal, the
+   backend records it with `note_desire` (the person's contexts only, never
+   clients): **yes** (a held desire starts being pursued), **not now** (it
+   pauses and gets no steps for a week), **instead** (you offered a nearer
+   version: it forms as a new desire linked to the original, `adapted_from` in
+   migration 0042, held at once when there's room, and the original stays),
+   or **note** for anything else. `recall_desire` says what a nearer version
+   was adapted from.
+6. [x] **D6 Reflection:** the loop closes. The daily desire reflection sees
+   each desire's latest changes (steps, what you said) and what a nearer
+   version was adapted from, and can **fulfil** a held or pursued desire (one a
+   reflection) only when an experience shows it actually happened, not when
+   it's merely planned. The interests a fulfilled desire grew from then feel a
+   strong pull. Her desires' milestones (coming to hold one, pursuing, your
+   'not now', fulfilling, letting go, fading) are now experiences of her own
+   that the identity and desire reflections read and cite (migration 0043), so
+   doing what she wanted can shape who she is and what she wants next; a new
+   desire can grow from one she fulfilled, and `recall_desire` shows it.
+   Memories of the experience itself come from the conversation, as always.
 
 #### Self — complete
 

@@ -12,6 +12,8 @@ from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from storage.models import InterestExplorationRecord
+from subconscious.desires.desire_rules import MAX_REINFORCE_DELTA
+from subconscious.desires.desire_store import DesireStore
 from subconscious.interests.exploration_store import (
     LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, REACH_OUT_FRESH_FOR, SIGN_UP_WISH_FRESH_FOR, WANDER_AREAS,
     ExplorationStore, ReachOut, SignUpWish, mention_limits,
@@ -419,6 +421,45 @@ class WanderDatabaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.finish_with("No!", NOW + timedelta(hours=12.2), topic="Owls",
                              sign_up=("forum.example.com", "Forum", "Owls"))
+
+    def test_a_held_desire_gets_a_step_once_a_day_taking_turns_and_steps_are_never_mentioned(self):
+        def clear():
+            with self.engine.begin() as connection:
+                for table in ("interest_explorations", "desire_events", "desire_sources", "desires"):
+                    connection.execute(text(f"DELETE FROM public.{table}"))
+        self.addCleanup(clear)
+        desires = DesireStore(self.engine)
+
+        def held(wish, times=2):
+            desire = desires.form(wish, "I want to", "Grew from reading", now=NOW)
+            for _ in range(times):
+                desire = desires.reinforce(desire.id, MAX_REINFORCE_DELTA, "Still want it", now=NOW)
+            return desire
+
+        desires.form("Still forming", "I might", "Grew from reading", now=NOW)
+        weaker, stronger = held("To see a redwood"), held("To hear a dawn chorus", times=3)
+        # The strongest of those never pursued goes first, and the wish is its topic.
+        step = self.start()
+        self.assertEqual((step.kind, step.desire_id, step.interest_id, step.topic),
+                         ("pursuit", stronger.id, None, "To hear a dawn chorus"))
+        found = self.explorations.finish(step.id, *FINDING, now=NOW + timedelta(minutes=1))
+        self.assertEqual((found.topic, found.next_questions), ("To hear a dawn chorus", tuple(FINDING[1])))
+        self.assertEqual(self.explorations.list_recent(desire_id=stronger.id), [found])
+        # Never raised as a finding in conversation.
+        self.assertIsNone(self.explorations.claim_mention(now=NOW + timedelta(minutes=2)))
+        # One step a day: the rest of the day's attempts are her interests.
+        self.assertEqual(self.start(NOW + timedelta(hours=6)).kind, "interest")
+        # Then the other one, never pursued, before the stronger one again.
+        self.assertEqual(self.start(NOW + timedelta(hours=24, seconds=1)).desire_id, weaker.id)
+        self.assertEqual(self.start(NOW + timedelta(hours=48, seconds=2)).desire_id, stronger.id)
+        # One the person said 'not now' to rests from her steps.
+        desires.answer(weaker.id, "not_now", "Busy", now=NOW + timedelta(hours=48, seconds=3))
+        self.explorations.fail(self.start(NOW + timedelta(hours=54, seconds=5)).id, now=NOW + timedelta(hours=55))
+        self.assertEqual(self.start(NOW + timedelta(hours=72, seconds=4)).desire_id, stronger.id)
+        # A desire she let go gets no step.
+        for desire in (weaker, stronger):
+            desires.change(desire.id, "let_go", "Moved on", now=NOW + timedelta(hours=49))
+        self.assertNotEqual(self.start(NOW + timedelta(hours=96, seconds=5)).kind, "pursuit")
 
     def test_a_stale_sign_up_wish_is_never_asked(self):
         self.finish_with("Forks!", NOW, sign_up=("https://forks.example.com", "Forks club", "To chat"))

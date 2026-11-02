@@ -37,6 +37,7 @@ REASON_MAX_CHARS = 1000
 IDENTITY_CONTEXT_MAX_CHARS = 4000
 EVIDENCE_COLUMNS = {
     "interest_event": "interest_event_id", "exploration": "exploration_id", "conversation": "conversation_id",
+    "desire_event": "desire_event_id",
 }
 
 

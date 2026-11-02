@@ -115,6 +115,14 @@ class EvidenceDatabaseTests(unittest.TestCase):
         batch = read_experiences(self.engine, after=None, now=NOW)
         self.assertEqual(({item.id for item in batch.experiences}, batch.until, batch.more), (ids, at, True))
 
+    def test_newest_skips_a_backlog_and_reads_through_the_window(self):
+        start = NOW - timedelta(days=2)
+        ids = [self.event(start + timedelta(minutes=n)) for n in range(MAX_EXPERIENCES + 5)]
+        newest = self.exploration(NOW - timedelta(hours=1))
+        batch = read_experiences(self.engine, after=None, now=NOW, newest=True)
+        self.assertEqual([item.id for item in batch.experiences], ids[6:] + [newest])
+        self.assertEqual((batch.until, batch.more), (NOW - COMMIT_MARGIN, False))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -35,6 +35,9 @@ SIGN_UP_STYLES = {"done": "#8fc49a", "signing_up": "#7fb8d8", "confirm_email": "
                   "failed": "#d27a7a"}
 SIGN_UP_STATES = {"done": "signed up", "signing_up": "signing up", "confirm_email": "confirm email",
                   "blocked": "blocked", "failed": "failed"}
+# A desire's strength: bright once she's working toward it, softer while held, dim while forming.
+DESIRE_STYLES = {"pursuing": "#e0b45c", "held": "#c9a86a"}
+DESIRE_STATES = {"pursuing": "pursuing", "held": "held", "candidate": "forming"}
 # A task's latest step is cut to this, so one long message doesn't fill the box.
 STEP_PREVIEW_CHARS = 120
 
@@ -47,6 +50,7 @@ BOX_TITLES = {
     "memories-box": "memories",
     "interests-box": "interests",
     "identity-box": "identity",
+    "desires-box": "desires",
     "conversations-box": "conversations",
     "tasks-box": "tasks",
     "context-box": "context",
@@ -114,6 +118,17 @@ def task_lines(tasks, now) -> Text:
                 step = step[:STEP_PREVIEW_CHARS - 1] + "…"
             lines.append(f"\n  ↳ {step}", style=TRACK_STYLE)
     return lines or Text("no open tasks", style=TRACK_STYLE)
+
+
+def desire_lines(desires) -> Text:
+    """Each live desire: its strength and state, then its wish; ones still forming are dim."""
+    lines = Text()
+    for index, (wish, strength, status) in enumerate(desires):
+        style = DESIRE_STYLES.get(status, LABEL_STYLE)
+        lines.append(("\n\n" if index else "") + f"{strength:.0%} ", style=style)
+        lines.append(DESIRE_STATES[status], style=LABEL_STYLE)
+        lines.append("\n" + wish, style="" if status in DESIRE_STYLES else LABEL_STYLE)
+    return lines or Text("no desires yet", style=TRACK_STYLE)
 
 
 def sign_up_lines(sign_ups, now) -> Text:
@@ -217,6 +232,10 @@ class DashboardScreen(Screen):
                     # Scrolls, so every trait can be read in full.
                     with VerticalScroll(id="identity-scroll"):
                         yield Static(id="identity-traits")
+                with Vertical(id="desires-box", classes="dashboard-box"):
+                    # Scrolls, so every desire can be read in full.
+                    with VerticalScroll(id="desires-scroll"):
+                        yield Static(id="desire-list")
             # Pans sideways like the middle row once the boxes reach their minimum widths.
             with HorizontalScroll(id="dashboard-bottom", classes="dashboard-row", can_focus=False):
                 with Vertical(id="conversations-box", classes="dashboard-box"):
@@ -311,6 +330,8 @@ class DashboardScreen(Screen):
             traits.append(trait.kind + ("" if held else " · forming"), style=LABEL_STYLE)
             traits.append("\n" + trait.statement, style="" if held else LABEL_STYLE)
         self.query_one("#identity-traits", Static).update(traits or Text("no traits yet", style=TRACK_STYLE))
+        # Text, so brackets in a wish are not read as markup.
+        self.query_one("#desire-list", Static).update(desire_lines(self.snapshot.desires))
         now = datetime.now(timezone.utc)
         heatmap = self.query_one("#conversation-days", CalendarHeatmap)
         heatmap.today_row = now.astimezone().weekday()

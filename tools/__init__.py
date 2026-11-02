@@ -19,12 +19,17 @@ from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_argum
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
+from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
+from .note_desire import NoteDesireTool, SCHEMA as NOTE_DESIRE_SCHEMA, validate_arguments as validate_note_desire_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
 from .show_web_image import ShowWebImageTool, SCHEMA as WEB_IMAGE_SCHEMA, validate_arguments as validate_web_image_arguments
 from .random_number import RandomNumberTool, SCHEMA as RANDOM_NUMBER_SCHEMA, validate_arguments as validate_random_number_arguments
 from .send_signal_message import SendSignalMessageTool, SCHEMA as SIGNAL_SCHEMA, validate_arguments as validate_signal_arguments
+from .message_person_on_signal import (
+    MessagePersonOnSignalTool, SCHEMA as MESSAGE_PERSON_SCHEMA, validate_arguments as validate_message_person_arguments,
+)
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
 from .request_sign_up import (
@@ -48,6 +53,7 @@ def create_tool_registry(
     task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
     calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
+    signal_reaches_person=lambda: False, message_person=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -62,6 +68,10 @@ def create_tool_registry(
     registry.register(NAME_SCHEMA, validate_name_arguments, name.handle)
     recall_self = RecallSelfTool(get_connection, is_closing, write_debug)
     registry.register(SELF_SCHEMA, validate_self_arguments, recall_self.handle)
+    recall_desire = RecallDesireTool(get_connection, is_closing, write_debug)
+    registry.register(DESIRE_SCHEMA, validate_desire_arguments, recall_desire.handle)
+    note_desire = NoteDesireTool(get_connection, is_closing, write_debug)
+    registry.register(NOTE_DESIRE_SCHEMA, validate_note_desire_arguments, note_desire.handle)
     random_number = RandomNumberTool(get_connection, is_closing, write_debug)
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)
@@ -73,6 +83,9 @@ def create_tool_registry(
         task_goal, record_task,
     )
     registry.register(SIGNAL_SCHEMA, validate_signal_arguments, signal_message.handle)
+    message_person = MessagePersonOnSignalTool(get_connection, is_closing, write_debug, signal_reaches_person,
+                                               message_person)
+    registry.register(MESSAGE_PERSON_SCHEMA, validate_message_person_arguments, message_person.handle)
     pass_on = PassOnTool(get_connection, is_closing, write_debug, relay_to_person, relay_from_email)
     registry.register(PASS_ON_SCHEMA, validate_pass_on_arguments, pass_on.handle)
     concern = RaiseConcernTool(get_connection, is_closing, write_debug, raise_concern)

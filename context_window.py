@@ -10,7 +10,9 @@ from session_config import LIVE_INSTRUCTIONS, RECONNECT_INSTRUCTIONS
 VOICE = "voice"
 BACKEND = "backend"
 # Startup sections that get their own line, in the order they are sent; the name joins the instructions.
-OWN_SECTIONS = ("self_image", "identity", "relationship", "people", "tasks", "calendar", "memories", "interests")
+OWN_SECTIONS = (
+    "self_image", "identity", "relationship", "people", "tasks", "calendar", "memories", "interests", "desires",
+)
 
 
 def estimate_tokens(text: str) -> int:
