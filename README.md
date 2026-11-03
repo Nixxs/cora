@@ -732,6 +732,17 @@ the way a professional talks with a client:
   "professional" means discretion about you, not a flat tone. She keeps no
   relationship with clients (no trust or warmth scores), by design, though her
   impression of them (below) can grow fonder, as with a client you like.
+- Her interests come up only when their message sparks them. A client never
+  gets her interest list: each new message is compared with her live interests
+  (embedding similarity, as for raising findings), and at most two close enough
+  are given for that reply: title, her angle on it (the description) and latest
+  finding, never how it came about (`why_emerged`, where your part in it
+  lives). Descriptions are written as the topic and her angle, never you (the
+  evolution prompt says so; older ones may still mention you until they're
+  rewritten). She's told to bring one in only if it genuinely
+  connects to what they said, never to start on her interests unprompted.
+  Activity notes "Sarah's message touched on: Old engines." The same goes for
+  task contacts' email threads. Her desires never reach clients.
 - She is friendly and helpful but never shares anything about your private life,
   even what she knows. Asked something private, she declines without confirming
   she knows anything ("that's one for the person"), suggests they ask you directly,
@@ -1442,7 +1453,12 @@ after updating, for migrations 0034 to 0038.)
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
    to mention only when they fit naturally. Each includes its latest finding and
-   date where it still fits, marked as possibly outdated or wrong.
+   date where it still fits, marked as possibly outdated or wrong. That's in
+   your own chats (voice, typing, your Signal chat and your email). Contacts
+   get only the interests their message touches on, without how they came about
+   (each interest's embedding, of its title and latest finding, redone when those
+   change; migration 0046): see
+   Signal clients above.
 5. **Bringing findings up herself:** every two minutes the app checks for a lull:
    Live connected and ready, nothing pending or playing, no queued observation,
    and 90 seconds without conversation. It never wakes Cora from Standby. At a
@@ -1527,6 +1543,13 @@ brief of facts, and the first Live session of a launch sends it as a note:
 Typing or speaking before she connects, or while she waits for summaries, cancels
 the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
 Standby gets a short welcome back instead, with no hook or relationship line.
+
+Live rejects a background note over 500 tokens, so each hook's quoted text (a
+summary, finding, plan or Signal exchange) is cut to 450 characters, keeping
+the greeting well under. Every other note to Live (findings, opportunities,
+messages for you, observations, Signal exchanges, typed-message mirrors) caps
+its own text the same way, and as a last resort any note is cut to 1,400
+characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 
 ## Project layout
 
@@ -1742,6 +1765,9 @@ features it helps check, and package last.
       one-liner, no scores
     - [x] S6 who sees what: your contexts get her opinion and gist, each client
       gets their own, other clients only names and one-liners
+    - [x] Contacts' interests: clients and task email contacts get only the
+      interests their message touches on (title, description and latest
+      finding, never why_emerged), not her whole list
     - [x] S6 conduct heads-up (rude, abusive, threatening), client-only
       `raise_concern`, calm boundary
     - [x] T1 tasks with Signal contacts: tasks, parties and step log; asks you for

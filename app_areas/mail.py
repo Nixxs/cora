@@ -451,11 +451,14 @@ class MailMixin:
         if problem:
             await self.task_needs_person(thread.task_id, thread.goal, problem)
 
-    async def email_party_sections(self, thread) -> dict[str, str]:
-        """Her own self and the one brief for this thread; nothing of the person's, no memories."""
+    async def email_party_sections(self, thread, new: list = (), who: str = "") -> dict[str, str]:
+        """Her own self, the interests their new email touches on and the one brief for this thread;
+        nothing of the person's, no memories."""
         await self.conversation_persistence.load_session_context()
+        sparked = await self.interests_sparked(
+            who or "A contact", "\n".join(f"{message.subject or ''}\n{message.text or ''}" for message in new))
         return instruction_sections(
-            interest_context=self.live.interest_context, identity_context=self.live.identity_context,
+            sparked_interests=sparked, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context,
             task_briefs=json.dumps([{"task_id": str(thread.task_id), "brief": thread.brief}], ensure_ascii=False),
         )
@@ -467,7 +470,7 @@ class MailMixin:
         return await self.backend_chat.reply(
             content=[{"type": "input_text", "text": EMAIL_NOTE + json.dumps(
                 [email_view(message) for message in new], ensure_ascii=False)}],
-            history=history, sections=await self.email_party_sections(thread), model=self.live.delegation_model,
+            history=history, sections=await self.email_party_sections(thread, new, who), model=self.live.delegation_model,
             # Web search and pass_on only: nothing of the person's, no services, nobody else emailed.
             route=BackendRoute(
                 excluded=frozenset(self.tools.names()) - {"pass_on"},

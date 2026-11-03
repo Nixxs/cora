@@ -1,9 +1,15 @@
-"""Raising a finding because the conversation touches on it, judged by embedding similarity.
+"""Raising a finding because the conversation touches on it, judged by embedding similarity; and
+giving a contact's chat only the interests their message touches on.
 
 The conversation's latest messages and each eligible finding (its title and text) are embedded
 with the memory embedding model; a finding embeds once, the first time it is needed. Only the
 closest finding, if it is related enough (RELEVANCE_THRESHOLD), is claimed, within its own
 limits (see exploration_store).
+
+A contact (on Signal or in a task's email thread) never gets her whole interest list: their new
+message is compared with each live interest's title and latest finding (each embedding redone
+when that text changes), and at most SPARKED_LIMIT close enough are given: title, description and
+latest finding, never how the interest came about.
 
 Usage: python -m subconscious.interests.relevance "what you might be talking about"
   Shows the closest findings and their similarity, claiming none, to see what would count.
@@ -12,6 +18,7 @@ Usage: python -m subconscious.interests.relevance "what you might be talking abo
 
 import argparse
 from datetime import datetime, timezone
+import json
 import sys
 
 from dotenv import load_dotenv
@@ -20,12 +27,16 @@ from openai import OpenAI
 from memory.store import validate_memory_embedding
 from storage.database import build_engine
 from storage.models import MEMORY_EMBEDDING_DIMENSIONS, MEMORY_EMBEDDING_MODEL
-from subconscious.interests.exploration_store import RELEVANCE_THRESHOLD, ExplorationStore, Mention
+from subconscious.interests.exploration_store import RELEVANCE_THRESHOLD, ExplorationStore, Mention, distance_of
+from subconscious.interests.interest_store import INTEREST_CONTEXT_MAX_CHARS, InterestStore
 
 # The latest messages compared, newest kept when cut.
 RECENT_MESSAGES = 4
 CONVERSATION_MAX_CHARS = 1500
 EMBED_TIMEOUT_SECONDS = 10
+# A contact's chat: the interests their message touches on, at most this many.
+SPARKED_LIMIT = 2
+MESSAGE_MAX_CHARS = 1500
 
 
 def conversation_text(history: list[dict]) -> str | None:
@@ -69,6 +80,38 @@ def claim_relevant_now(conversation: str) -> tuple[Mention, float] | None:
         return store.claim_relevant_mention(vector, now=now)
     finally:
         engine.dispose()
+
+
+def sparked_interests(store: InterestStore, client: OpenAI, message: str, *, now: datetime) -> list[dict]:
+    """The live interests a contact's message touches on, closest first, as they may see them."""
+    shared = store.shareable(now=now)
+    if not shared or not message.strip():
+        return []
+    saved = store.embeddings([item["id"] for item in shared])
+    stale = [item for item in shared if saved.get(item["id"], (None,))[0] != item["text"]]
+    # One request: their message, then any interest whose title or latest finding changed.
+    vectors = embed_texts(client, [message[-MESSAGE_MAX_CHARS:], *(item["text"] for item in stale)])
+    fresh = {item["id"]: (item["text"], vector) for item, vector in zip(stale, vectors[1:])}
+    if fresh:
+        store.save_embeddings(fresh)
+    saved |= fresh
+    scored = sorted(((1 - distance_of(saved[item["id"]][1], vectors[0]), item) for item in shared),
+                    key=lambda pair: pair[0], reverse=True)
+    return [{key: value for key, value in item.items() if key not in ("id", "text")}
+            for similarity, item in scored[:SPARKED_LIMIT] if similarity >= RELEVANCE_THRESHOLD]
+
+
+def sparked_interests_now(message: str) -> str:
+    """For the app, off its event loop: the interests a contact's message touches on, as JSON ("" for none)."""
+    engine = build_engine()
+    try:
+        with OpenAI(max_retries=0, timeout=EMBED_TIMEOUT_SECONDS) as client:
+            sparked = sparked_interests(InterestStore(engine), client, message, now=datetime.now(timezone.utc))
+    finally:
+        engine.dispose()
+    while sparked and len(json.dumps(sparked, ensure_ascii=False)) > INTEREST_CONTEXT_MAX_CHARS:
+        sparked.pop()
+    return json.dumps(sparked, ensure_ascii=False) if sparked else ""
 
 
 def main() -> None:

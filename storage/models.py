@@ -200,6 +200,10 @@ class InterestRecord(Base):
             "parent_interest_id IS NULL OR parent_interest_id <> id", name="interests_parent_check",
         ),
         CheckConstraint("origin IN ('conversation', 'own')", name="interests_origin_check"),
+        CheckConstraint(
+            "(embedding IS NULL) = (embedded_text IS NULL) AND (embedding IS NULL OR vector_norm(embedding) > 0)",
+            name="interests_embedding_check",
+        ),
         {"schema": "public"},
     )
 
@@ -217,6 +221,9 @@ class InterestRecord(Base):
     last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 'conversation': sparked by the person; 'own': by something she came across exploring.
     origin: Mapped[str] = mapped_column(Text, default="conversation", server_default="conversation")
+    # Its title and latest finding embedded (MEMORY_EMBEDDING_MODEL), and that text, to redo it when it changes.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(MEMORY_EMBEDDING_DIMENSIONS))
+    embedded_text: Mapped[str | None] = mapped_column(Text)
 
 
 class InterestEventRecord(Base):
