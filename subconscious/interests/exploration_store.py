@@ -10,6 +10,7 @@ toward one of the desires she holds (a pursuit), taking turns among them.
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from math import sqrt
 from random import Random
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -43,6 +44,14 @@ INTEREST_COOLDOWN = timedelta(hours=24)
 # A running attempt this old was abandoned (e.g. the app closed mid-search).
 STALE_AFTER = timedelta(minutes=30)
 # Raising a finding herself: only each interest's latest, while fresh, and rarely.
+# Raising one because the conversation touches on it: older findings can still fit, but it stays
+# rare. Every mention, either way, counts toward both sets of limits.
+RELEVANT_FRESH_FOR = timedelta(days=30)
+RELEVANT_GAP = timedelta(minutes=30)
+RELEVANT_DAILY_LIMIT = 4
+# Cosine similarity between the conversation and a finding (text-embedding-3-small) to count as related.
+RELEVANCE_THRESHOLD = 0.5
+EMBED_BATCH = 20
 MENTION_GAP = timedelta(hours=4)
 MENTION_DAILY_LIMIT = 2
 MENTION_FRESH_FOR = timedelta(days=3)
@@ -167,6 +176,13 @@ class Start:
     interest: Interest | None = None
     wander: Wander | None = None  # set instead of interest when she wanders
     pursuit: Pursuit | None = None  # set instead of interest when she pursues a desire
+
+
+def distance_of(a, b) -> float:
+    """Cosine distance, as pgvector's <=> works it out."""
+    dot = sum(x * y for x, y in zip(a, b))
+    norms = sqrt(sum(x * x for x in a)) * sqrt(sum(y * y for y in b))
+    return 1 - dot / norms
 
 
 def snapshot(record: InterestExplorationRecord) -> Exploration:
@@ -483,6 +499,67 @@ class ExplorationStore:
                 if record.mentioned_at is None and record.reached_out_at is None and live:
                     record.mentioned_at = now
                     return Mention(record.id, title, record.finding, record.finished_at, now)
+            return None
+
+    def _unmentioned(self, session: Session, now: datetime, *, order_by=None) -> list:
+        """(record, title) for each finding that could still be raised for relevance, oldest-out first."""
+        attempts = InterestExplorationRecord
+        rows = session.execute(select(attempts, InterestRecord).outerjoin(
+            InterestRecord, InterestRecord.id == attempts.interest_id,
+        ).where(
+            attempts.status == "found", attempts.finished_at > now - RELEVANT_FRESH_FOR,
+            attempts.kind != "pursuit", attempts.mentioned_at.is_(None), attempts.reached_out_at.is_(None),
+        ).order_by(*(order_by or (attempts.finished_at.desc(),)), attempts.id.desc())).all()
+        return [(record, record.topic if interest is None else interest.title) for record, interest in rows
+                if interest is None
+                or settle(interest.strength, interest.strength_at, interest.status, now)[1] != "dormant"]
+
+    def unembedded_findings(self, *, now: datetime, limit: int = EMBED_BATCH) -> list[tuple[UUID, str]]:
+        """(id, text to embed) for findings the relevance check could raise but can't compare yet."""
+        validate_now(now)
+        with Session(self.engine) as session:
+            return [(record.id, f"{title}: {record.finding}") for record, title in self._unmentioned(session, now)
+                    if record.finding_embedding is None][:limit]
+
+    def save_finding_embeddings(self, vectors: dict[UUID, list[float]]) -> None:
+        attempts = InterestExplorationRecord
+        with Session(self.engine) as session, session.begin():
+            for exploration_id, vector in vectors.items():
+                session.execute(update(attempts).where(
+                    attempts.id == exploration_id, attempts.status == "found",
+                ).values(finding_embedding=vector).execution_options(synchronize_session=False))
+
+    def closest_findings(self, vector: list[float], *, now: datetime, limit: int = 5) -> list[tuple[float, Mention]]:
+        """The findings closest to `vector`, most similar first, without claiming any."""
+        validate_now(now)
+        distance = InterestExplorationRecord.finding_embedding.cosine_distance(vector)
+        with Session(self.engine) as session:
+            rows = self._unmentioned(session, now, order_by=(distance,))
+            return [(1 - distance_of(record.finding_embedding, vector),
+                     Mention(record.id, title, record.finding, record.finished_at, now))
+                    for record, title in rows if record.finding_embedding is not None][:limit]
+
+    def claim_relevant_mention(self, vector: list[float], *, now: datetime) -> tuple[Mention, float] | None:
+        """Mark the finding closest to the conversation as mentioned, if it is related enough and the
+        limits allow; return it with its similarity."""
+        validate_now(now)
+        attempts = InterestExplorationRecord
+        distance = attempts.finding_embedding.cosine_distance(vector)
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            session.execute(text("LOCK TABLE public.interest_explorations IN SHARE ROW EXCLUSIVE MODE"))
+            recent = session.scalars(select(attempts.mentioned_at).where(
+                attempts.mentioned_at > now - timedelta(hours=24),
+            )).all()
+            if len(recent) >= RELEVANT_DAILY_LIMIT or any(at > now - RELEVANT_GAP for at in recent):
+                return None
+            for record, title in self._unmentioned(session, now, order_by=(distance,)):
+                if record.finding_embedding is None:
+                    continue
+                similarity = 1 - distance_of(record.finding_embedding, vector)
+                if similarity < RELEVANCE_THRESHOLD:
+                    return None
+                record.mentioned_at = now
+                return Mention(record.id, title, record.finding, record.finished_at, now), similarity
             return None
 
     def release_mention(self, mention: Mention) -> bool:

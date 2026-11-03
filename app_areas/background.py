@@ -1,7 +1,8 @@
 """Background jobs: backups, memory, interests, identity, desires, exploring and reaching out: part of CoraApp (see app.py)."""
 
 import asyncio
-from datetime import datetime
+from datetime import date, datetime
+import json
 from time import monotonic
 
 from textual.worker import get_current_worker
@@ -11,6 +12,7 @@ from backup import BackupError, daily_backup_due, run_backup
 from services.connection import CONNECTED
 from services.tools import result_text
 from services.web_guard import refused_address
+from subconscious.desires.opportunities import find_opportunity_now
 from subconscious.desires.reflect_desires import run_desire_cycle
 from subconscious.identity.reflect_identity import run_identity_cycle
 from subconscious.interests.evolve_interests import run_interest_cycle
@@ -22,6 +24,8 @@ from app_areas.shared import NUDGE_HOURS
 
 # Explore only in standby or after this long without conversation.
 EXPLORE_IDLE_SECONDS = 10 * 60
+# Her week and mail are looked at for chances for her desires at most this often, and only when they changed.
+OPPORTUNITY_CHECK_SECONDS = 60 * 60
 
 # One browser action while she explores, from the exploration thread (the service has its own limit).
 BROWSER_CALL_SECONDS = 70
@@ -122,9 +126,48 @@ class BackgroundMixin:
             self.call_from_thread(self.activity.write, outcome, "Identity")
 
     def check_desires(self) -> None:
+        self.check_opportunities()
         if self.closing or (self.desire_worker is not None and not self.desire_worker.is_finished):
             return
         self.desire_worker = self.reflect_desires()
+
+    def opportunity_view(self) -> tuple[str, list[str], tuple] | None:
+        """Her coming week and mail worth knowing, and a key that changes only when they do (or the
+        day does); None with neither."""
+        calendar = self.live.calendar_context or ""
+        mail = [f"{item.sender}: {item.summary}" for item in self.mail_digest.values()]
+        if not calendar and not mail:
+            return None
+        try:
+            events = json.dumps(json.loads(calendar).get("events"), ensure_ascii=False) if calendar else ""
+        except (ValueError, AttributeError):
+            events = calendar
+        return calendar, mail, (date.today().isoformat(), events, tuple(sorted(mail)))
+
+    def check_opportunities(self) -> None:
+        """When her week or mail changed, at most hourly: look for a chance for one of her desires."""
+        if self.closing or (self.opportunity_worker is not None and not self.opportunity_worker.is_finished):
+            return
+        view = self.opportunity_view()
+        if view is None or view[2] == self.opportunity_inputs or (
+                self.opportunity_checked_at is not None
+                and monotonic() - self.opportunity_checked_at < OPPORTUNITY_CHECK_SECONDS):
+            return
+        self.opportunity_inputs, self.opportunity_checked_at = view[2], monotonic()
+        self.opportunity_worker = self.find_opportunity(view[0], view[1])
+
+    @work(thread=True, group="opportunities", exit_on_error=False)
+    def find_opportunity(self, calendar: str, mail: list[str]) -> None:
+        try:
+            outcome = find_opportunity_now(calendar, mail)
+        except Exception as error:
+            self.opportunity_inputs = None  # tried again next time
+            self.call_from_thread(self.activity.write, f"Opportunity check failed ({type(error).__name__}).",
+                                  "Desires")
+            return
+        if outcome is not None:
+            self.opportunity_waiting = True
+            self.call_from_thread(self.activity.write, outcome, "Desires")
 
     @work(thread=True, group="desires", exit_on_error=False)
     def reflect_desires(self) -> None:

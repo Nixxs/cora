@@ -22,6 +22,9 @@ STARTUP_MEMORY_MAX_CHARS = 3000
 MEMORY_SEARCH_MAX_RESULTS = 20
 # Plans the person mentioned this recently can open a greeting ("how did it go?").
 RECENT_PLAN_WINDOW = timedelta(days=7)
+# Plans and decisions this recent can make an email she gets about them urgent (awareness W4).
+EXPECTATION_WINDOW = timedelta(days=14)
+EXPECTATIONS_MAX = 15
 PLAN_KINDS = ("task", "decision")
 
 # What the background embedding and deduplication passes pick up next, joined to source messages.
@@ -223,6 +226,19 @@ class MemoryStore:
                 SAID_BY_PRIMARY,
                 NOT_CORRECTED, or_(MemoryRecord.fades_at.is_(None), MemoryRecord.fades_at > now),
             ).order_by(func.random()).limit(1))
+
+    def expectations(self, now: datetime) -> list[str]:
+        """The person's tasks and decisions from the last two weeks, newest first, still current:
+        what they may be waiting to hear about."""
+        with Session(self.engine) as session:
+            return list(session.scalars(select(MemoryRecord.text).join(
+                MessageRecord, MemoryRecord.source_message_id == MessageRecord.id,
+            ).where(
+                MemoryRecord.kind.in_(PLAN_KINDS), MemoryRecord.duplicate_of.is_(None),
+                MessageRecord.role == "user", MessageRecord.created_at >= now - EXPECTATION_WINDOW,
+                SAID_BY_PRIMARY,
+                NOT_CORRECTED, or_(MemoryRecord.fades_at.is_(None), MemoryRecord.fades_at > now),
+            ).order_by(MessageRecord.created_at.desc(), MemoryRecord.id).limit(EXPECTATIONS_MAX)))
 
     def get_pending_embedding_ids(self) -> list[UUID]:
         with Session(self.engine) as session:

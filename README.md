@@ -732,6 +732,17 @@ the way a professional talks with a client:
   "professional" means discretion about you, not a flat tone. She keeps no
   relationship with clients (no trust or warmth scores), by design, though her
   impression of them (below) can grow fonder, as with a client you like.
+- Her interests come up only when their message sparks them. A client never
+  gets her interest list: each new message is compared with her live interests
+  (embedding similarity, as for raising findings), and at most two close enough
+  are given for that reply: title, her angle on it (the description) and latest
+  finding, never how it came about (`why_emerged`, where your part in it
+  lives). Descriptions are written as the topic and her angle, never you (the
+  evolution prompt says so; older ones may still mention you until they're
+  rewritten). She's told to bring one in only if it genuinely
+  connects to what they said, never to start on her interests unprompted.
+  Activity notes "Sarah's message touched on: Old engines." The same goes for
+  task contacts' email threads. Her desires never reach clients.
 - She is friendly and helpful but never shares anything about your private life,
   even what she knows. Asked something private, she declines without confirming
   she knows anything ("that's one for the person"), suggests they ask you directly,
@@ -1442,7 +1453,12 @@ after updating, for migrations 0034 to 0038.)
 4. **In conversation:** live interests (title, description, status) are given to
    Cora-prime at each connect, within a 3,000-character limit, as her own interests
    to mention only when they fit naturally. Each includes its latest finding and
-   date where it still fits, marked as possibly outdated or wrong.
+   date where it still fits, marked as possibly outdated or wrong. That's in
+   your own chats (voice, typing, your Signal chat and your email). Contacts
+   get only the interests their message touches on, without how they came about
+   (each interest's embedding, of its title and latest finding, redone when those
+   change; migration 0046): see
+   Signal clients above.
 5. **Bringing findings up herself:** every two minutes the app checks for a lull:
    Live connected and ready, nothing pending or playing, no queued observation,
    and 90 seconds without conversation. It never wakes Cora from Standby. At a
@@ -1455,6 +1471,19 @@ after updating, for migrations 0034 to 0038.)
    is not dormant, or a wander's. Each finding is offered at most once (recorded as
    `mentioned_at`); if the send fails, the record is cleared so it can be offered
    later. Being offered does not guarantee she said it.
+6. **When the conversation touches on one:** after each new message from you,
+   in a pause of 4 seconds with Live quiet, the app embeds the latest four
+   messages (`text-embedding-3-small`, the memory embedding model) and compares
+   them with her unmentioned findings from the last 30 days (each embedded once,
+   from its title and text, the first time it's needed; migration 0044). The
+   closest, if its similarity is at least 0.5, is offered to Live as a thought
+   that may connect to what you're talking about, to bring in briefly or leave
+   unsaid. Limits: 30 minutes since any finding was raised and at most four a
+   day; every mention, either way, counts toward the lull limits too. Only in a
+   Live conversation, never in Standby. Activity shows the match score, never the
+   finding. To see what would count, `python -m subconscious.interests.relevance
+   "what you might be talking about"` lists the closest findings and their
+   scores, claiming none.
 
 **Privacy:** exploration sends only an interest's title and description (a wander,
 its tangent or area and her interest and wander titles). Why it
@@ -1472,6 +1501,8 @@ python -m subconscious.interests.interest_store              # list interests (n
 python -m subconscious.interests.evolve_interests --dry-run  # preview a proposal, saving nothing
 python -m subconscious.interests.evolve_interests
 python -m subconscious.interests.explore_interest            # explores, or wanders or takes a desire step when due
+python -m subconscious.interests.relevance "carburettors"     # closest findings and their scores, claiming none
+python -m subconscious.desires.opportunities                  # chances she noticed for her desires (no API calls)
 ```
 
 ## How the opening greeting works
@@ -1512,6 +1543,13 @@ brief of facts, and the first Live session of a launch sends it as a note:
 Typing or speaking before she connects, or while she waits for summaries, cancels
 the greeting. Ctrl+R or waking her by voice never greets. Clicking to resume from
 Standby gets a short welcome back instead, with no hook or relationship line.
+
+Live rejects a background note over 500 tokens, so each hook's quoted text (a
+summary, finding, plan or Signal exchange) is cut to 450 characters, keeping
+the greeting well under. Every other note to Live (findings, opportunities,
+messages for you, observations, Signal exchanges, typed-message mirrors) caps
+its own text the same way, and as a last resort any note is cut to 1,400
+characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 
 ## Project layout
 
@@ -1727,6 +1765,9 @@ features it helps check, and package last.
       one-liner, no scores
     - [x] S6 who sees what: your contexts get her opinion and gist, each client
       gets their own, other clients only names and one-liners
+    - [x] Contacts' interests: clients and task email contacts get only the
+      interests their message touches on (title, description and latest
+      finding, never why_emerged), not her whole list
     - [x] S6 conduct heads-up (rude, abusive, threatening), client-only
       `raise_concern`, calm boundary
     - [x] T1 tasks with Signal contacts: tasks, parties and step log; asks you for
@@ -1763,6 +1804,8 @@ features it helps check, and package last.
       ([mail/triage.py](mail/triage.py)); urgent reaches you at any hour,
       worth mentioning waits for one digest the next time you talk with her, the
       rest is marked read; she never answers it herself
+    - [x] W4 mail that answers an open task or a recent plan of yours is
+      urgent and told as "an email you were waiting on"
     - [x] T5a commitment approvals: every reply to a contact is checked, and one
       that commits you (confirms a booking, agrees a price, promises you'll do
       something) waits for your YES; otherwise a holding line goes instead
@@ -1793,9 +1836,12 @@ features it helps check, and package last.
     attention manager delivers at a lull, and she only reaches out on her own
     between 9am and 7pm (`NUDGE_HOURS`). New sources join as webhooks; there is
     no polling watcher (the old W1) or separate quiet-hours step (the old W3).
-13. Relevance and awareness triggers (interests step 8 below).
+13. ~~Relevance and awareness triggers (interests step 8 below).~~ Done: R1,
+    findings raised when the conversation touches on them, and R2, chances for
+    her desires noticed in her week and mail.
 14. Home Assistant, starting with its demo devices (waiting on devices at home).
-15. Awareness W4: expectations from memory tasks.
+15. ~~Awareness W4: expectations from memory tasks.~~ Done: mail she or you
+    were waiting on is urgent (see Awareness in Details below).
 16. Camera and screen awareness (waiting on devices at home).
 17. Emotions (nothing depends on it, so it can move earlier).
 
@@ -2183,8 +2229,16 @@ features it helps check, and package last.
   the person at any hour, and the rest wait for one digest the next time they
   talk. Anything else she raises on her own stays within 9am to 7pm
   (`NUDGE_HOURS`). A new source is a new kind of webhook on the same listener,
-  not a new watcher. Still to come: W4, expectations from memory tasks (such as
-  waiting to hear back from someone) raising an item's urgency. Messaging Cora
+  not a new watcher. W4 (built): what she and the person are waiting on raises
+  an email's urgency. Before each batch is sorted, the app gathers her open
+  tasks (with who each waits on) and the person's tasks and decisions from the
+  last two weeks that are still current (at most 15, none passed or corrected).
+  An email that is what one was waiting for (a reply, quote, confirmation,
+  booking, result or delivery) is marked expected and treated as urgent: it
+  reaches the person at once as "An email you were waiting on, from ...". A
+  newsletter that only shares a topic doesn't count. Activity adds "(1 you were
+  waiting on)" to the sorting line. If the list can't be read, mail is sorted
+  without it. Messaging Cora
   herself over Signal is a separate interface (see Signal below), not an
   awareness notification. Camera, screen, and home sensor awareness are covered
   separately below.
@@ -2272,8 +2326,9 @@ The intended path is **background worker → event bus → attention manager →
 The bus routes events; the attention manager decides what deserves conversational
 attention and when; Live remains responsible for speaking to the person. The current
 attention policy queues observations until Live is active and quiet, and offers
-an occasional interest finding during a lull. Relevance and awareness-triggered
-opportunities are still planned.
+an occasional interest finding during a lull, or in a short pause when the
+conversation touches on one, and chances for her desires noticed in her coming
+week and mail.
 
 #### Interests
 
@@ -2326,9 +2381,31 @@ Implement and test these in small increments:
   A `FindingEvent` asks the attention manager to consider one.
 7. [x] **Lull-based attention policy:** offer at most one finding during a suitable
   lull, never repeat a delivered one, and never wake Live.
-8. [ ] **Relevance and awareness:** choose candidates relevant to the conversation
+8. [x] **Relevance and awareness:** choose candidates relevant to the conversation
   and test awareness-triggered opportunities, without introducing automatic
   interruption or wake-up by default.
+   - [x] **R1 Relevant findings:** a finding close to what you're talking about
+     (embedding similarity) is offered in a short pause, within its own limits
+     (see "When the conversation touches on one" above).
+   - [x] **R2 Opportunities:** her coming week (her calendar) and mail worth
+     knowing that she hasn't told you about yet are checked against the desires
+     she holds, so a fit, such as a free Saturday for a trip she wants to take
+     with you, becomes one gentle suggestion at a lull
+     ([subconscious/desires/opportunities.py](subconscious/desires/opportunities.py),
+     migration 0045). The check runs only when her week (its events, or the day)
+     or that mail changed, at most hourly, as one call to the utility model, and
+     only while some desire is open to a chance; most checks find nothing.
+     Activity shows "Noticed a chance for: ..." with the wish, never the
+     calendar or mail. A chance waits up to two days and goes before a finding
+     at the next lull (the usual lull rules: Live quiet for 90 seconds, never
+     from Standby), as a thought she may suggest lightly or leave unsaid; your
+     answer goes through `note_desire`. At most one a day. A "not now" doesn't
+     end it: the desire rests for the usual week (`PAUSED_FOR`, as for
+     pursuing), then she may bring it up again if she still wants it. Between
+     chances for the same desire she waits a week, halved when she feels fully
+     warm toward you and doubled when cool. A desire she stops caring about
+     simply fades. `python -m subconscious.desires.opportunities` lists the
+     chances she noticed.
 
 Camera and screen monitors will use the same event path. Start camera
 awareness with presence rather than identity recognition. Any later presence-based

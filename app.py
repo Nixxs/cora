@@ -37,6 +37,8 @@ from subconscious.attention import AttentionManager
 from backend_work import BackendWorkTracker
 from subconscious.event_bus import CalendarChangedEvent, EventBus, FindingEvent, MailArrivedEvent, ObservationEvent
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
+from subconscious.interests.relevance import claim_relevant_now
+from subconscious.desires.opportunities import release_opportunity_now
 from inactivity import InactivityController, read_idle_timeout
 from live import CoraLive
 from backend_chat import BackendChat
@@ -79,6 +81,7 @@ EXPLORE_CHECK_SECONDS = 10 * 60
 # Offer a finding only into a lull this long, well before the default 5-minute standby.
 # The store's limits (4h gap, 2 a day, fresh findings) decide how often she really does.
 FINDING_CHECK_SECONDS = 2 * 60
+RELEVANCE_CHECK_SECONDS = 5
 # Background housekeeping: closes clients' quiet chats so the memory pass picks them up.
 BACKGROUND_ROUND_SECONDS = 60 * 60
 # Her task email threads are checked this often for replies (and once her email is ready). She
@@ -204,6 +207,14 @@ class CoraApp(
         # The next Live session greets first: "launch" once per launch, "welcome_back" after a
         # Standby click. Typing or speaking first cancels it; Ctrl+R and wake never set one.
         self.pending_greeting = "launch"
+        # The person's latest message the relevance check has looked at: (their message count, text).
+        self.relevance_seen = None
+        # Whether a chance for one of her desires may be waiting to offer (one saved before launch may be).
+        self.opportunity_waiting = True
+        # What the last opportunity check looked at, and when (monotonic), so unchanged inputs aren't re-sent.
+        self.opportunity_inputs = None
+        self.opportunity_checked_at = None
+        self.opportunity_worker = None
         self.backend_work = BackendWorkTracker()
         self.last_live_activity = 0.0
         self.idle_standby_timer = None
@@ -403,6 +414,13 @@ class CoraApp(
             ),
             release_finding=lambda mention: asyncio.to_thread(release_mention_now, mention),
             send_message=lambda text: self.live.send_message_for_person(text),
+            claim_relevant=lambda conversation: asyncio.to_thread(claim_relevant_now, conversation),
+            claim_opportunity=self.claim_opportunity,
+            send_opportunity=lambda chance: self.live.send_opportunity(chance.wish, chance.opportunity),
+            release_opportunity=lambda chance: asyncio.to_thread(release_opportunity_now, chance),
+            send_relevant=lambda mention: self.live.send_relevant_finding(
+                mention.interest_title, mention.finding, mention.found_at,
+            ),
         )
         self.event_bus = EventBus(on_error=self.handle_event_bus_error)
         self.event_bus.subscribe(
@@ -426,6 +444,7 @@ class CoraApp(
         self.desire_timer = self.set_interval(DESIRE_CHECK_SECONDS, self.check_desires)
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
         self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
+        self.relevance_timer = self.set_interval(RELEVANCE_CHECK_SECONDS, self.check_relevance)
         self.background_round_timer = self.set_interval(BACKGROUND_ROUND_SECONDS, self.background_round)
         self.task_mail_timer = self.set_interval(TASK_MAIL_CHECK_SECONDS, self.mail_round)
         if self.inactivity.timeout_seconds > 0:

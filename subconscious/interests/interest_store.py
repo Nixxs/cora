@@ -182,6 +182,39 @@ class InterestStore:
                 context = candidate
         return context
 
+    def shareable(self, *, now: datetime) -> list[dict]:
+        """Live interests as a contact may see them: title, description (the topic and her angle,
+        written to leave the person out) and latest finding; never why_emerged, which tells how it
+        came about. Each has "id" and the "text" to embed (title and latest finding)."""
+        validate_now(now)
+        live = [interest for interest in self.list_interests()
+                if settle(interest.strength, interest.strength_at, interest.status, now)[1] != "dormant"]
+        findings = self.latest_findings([interest.id for interest in live]) if live else {}
+        shared = []
+        for interest in live:
+            record = {"id": interest.id, "title": interest.title, "description": interest.description}
+            if interest.id in findings:
+                finding, found_at = findings[interest.id]
+                record |= {"latest_finding": finding, "found_on": found_at.astimezone(timezone.utc).date().isoformat()}
+            record["text"] = f"{interest.title}: {record['latest_finding']}" if "latest_finding" in record else interest.title
+            shared.append(record)
+        return shared
+
+    def embeddings(self, interest_ids: list[UUID]) -> dict[UUID, tuple[str, list[float]]]:
+        """Each saved embedding with the text it was made from."""
+        with Session(self.engine) as session:
+            rows = session.execute(select(InterestRecord.id, InterestRecord.embedded_text, InterestRecord.embedding).where(
+                InterestRecord.id.in_(interest_ids), InterestRecord.embedding.is_not(None),
+            )).all()
+            return {interest_id: (embedded_text, list(vector)) for interest_id, embedded_text, vector in rows}
+
+    def save_embeddings(self, embedded: dict[UUID, tuple[str, list[float]]]) -> None:
+        with Session(self.engine) as session, session.begin():
+            for interest_id, (embedded_text, vector) in embedded.items():
+                session.execute(update(InterestRecord).where(InterestRecord.id == interest_id).values(
+                    embedded_text=embedded_text, embedding=vector,
+                ).execution_options(synchronize_session=False))
+
     def latest_findings(self, interest_ids: list[UUID]) -> dict[UUID, tuple[str, datetime]]:
         """The newest saved finding (and when it was found) for each given interest."""
         exploration = InterestExplorationRecord

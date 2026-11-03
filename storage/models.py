@@ -200,6 +200,10 @@ class InterestRecord(Base):
             "parent_interest_id IS NULL OR parent_interest_id <> id", name="interests_parent_check",
         ),
         CheckConstraint("origin IN ('conversation', 'own')", name="interests_origin_check"),
+        CheckConstraint(
+            "(embedding IS NULL) = (embedded_text IS NULL) AND (embedding IS NULL OR vector_norm(embedding) > 0)",
+            name="interests_embedding_check",
+        ),
         {"schema": "public"},
     )
 
@@ -217,6 +221,9 @@ class InterestRecord(Base):
     last_reinforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # 'conversation': sparked by the person; 'own': by something she came across exploring.
     origin: Mapped[str] = mapped_column(Text, default="conversation", server_default="conversation")
+    # Its title and latest finding embedded (MEMORY_EMBEDDING_MODEL), and that text, to redo it when it changes.
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(MEMORY_EMBEDDING_DIMENSIONS))
+    embedded_text: Mapped[str | None] = mapped_column(Text)
 
 
 class InterestEventRecord(Base):
@@ -349,6 +356,10 @@ class InterestExplorationRecord(Base):
             "AND btrim(sign_up_why) <> '' AND char_length(sign_up_why) <= 500))",
             name="interest_explorations_sign_up_check",
         ),
+        CheckConstraint(
+            "finding_embedding IS NULL OR (status = 'found' AND vector_norm(finding_embedding) > 0)",
+            name="interest_explorations_finding_embedding_check",
+        ),
         Index("interest_explorations_started_at_idx", "started_at"),
         Index("interest_explorations_interest_id_started_at_idx", "interest_id", "started_at"),
         Index("interest_explorations_desire_id_started_at_idx", "desire_id", "started_at",
@@ -395,6 +406,8 @@ class InterestExplorationRecord(Base):
     desire_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("public.desires.id", name="interest_explorations_desire_id_fkey", ondelete="RESTRICT"),
     )
+    # Its title and finding embedded (MEMORY_EMBEDDING_MODEL), made when the relevance check first needs it.
+    finding_embedding: Mapped[list[float] | None] = mapped_column(Vector(MEMORY_EMBEDDING_DIMENSIONS))
 
 
 class IdentityTraitRecord(Base):
@@ -1022,6 +1035,28 @@ class DesireSourceRecord(Base):
     desire_event_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("public.desire_events.id", name="desire_sources_desire_event_id_fkey", ondelete="RESTRICT"),
     )
+
+
+class DesireOpportunityRecord(Base):
+    """A chance she noticed for a desire she holds; offered to her once, at offered_at."""
+
+    __tablename__ = "desire_opportunities"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(opportunity) <> '' AND char_length(opportunity) <= 500",
+            name="desire_opportunities_opportunity_check",
+        ),
+        Index("desire_opportunities_desire_id_found_at_idx", "desire_id", "found_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    desire_id: Mapped[UUID] = mapped_column(
+        ForeignKey("public.desires.id", name="desire_opportunities_desire_id_fkey", ondelete="RESTRICT"),
+    )
+    opportunity: Mapped[str] = mapped_column(Text)
+    found_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class DesireWorkerStateRecord(Base):

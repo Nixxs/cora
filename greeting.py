@@ -15,32 +15,38 @@ COOL_WARMTH = 0.45
 WARM_WARMTH = 0.55
 # Personal memories wait until she knows the person well; others may be listening.
 MEMORY_HOOK_FAMILIARITY = 0.5
+# The quoted text in a hook, so the whole greeting note stays under Live's 500-token limit.
+HOOK_TEXT_MAX_CHARS = 450
+
+
+def fit(text: str, max_chars: int = HOOK_TEXT_MAX_CHARS) -> str:
+    return text if len(text) <= max_chars else text[:max_chars - 1].rstrip() + "…"
 
 
 def last_thread_hook(summary: str) -> str:
     return (
-        f"Your own summary of your last conversation: {json.dumps(summary, ensure_ascii=False)}. "
+        f"Your own summary of your last conversation: {json.dumps(fit(summary), ensure_ascii=False)}. "
         "You may pick that thread up if it feels natural."
     )
 
 
 def finding_hook(interest_title: str, finding: str) -> str:
     return (
-        f"While exploring your interest {json.dumps(interest_title, ensure_ascii=False)} you recently "
-        f"found: {json.dumps(finding, ensure_ascii=False)}. You may mention it as your own discovery "
+        f"While exploring your interest {json.dumps(fit(interest_title, 120), ensure_ascii=False)} you recently "
+        f"found: {json.dumps(fit(finding), ensure_ascii=False)}. You may mention it as your own discovery "
         "if it feels natural; it may be outdated or wrong."
     )
 
 
 def memory_hook(plan: str) -> str:
     return (
-        f"You remember from this past week: {json.dumps(plan, ensure_ascii=False)}. You may ask how it "
+        f"You remember from this past week: {json.dumps(fit(plan), ensure_ascii=False)}. You may ask how it "
         "went if it feels natural; it may be outdated or already done. Others may be listening, so "
         "skip it if it is sensitive, such as health, money or someone else's private matters."
     )
 
 
-SIGNAL_HOOK_MAX_CHARS = 1500
+SIGNAL_HOOK_MAX_CHARS = HOOK_TEXT_MAX_CHARS
 
 
 def signal_hook(exchanges: list[tuple[str, str]]) -> str:

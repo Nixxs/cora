@@ -75,7 +75,7 @@ class DesireStoreDatabaseTests(unittest.TestCase):
     def setUp(self):
         # Only in the disposable DB created above. Children before parents.
         with self.engine.begin() as connection:
-            for table in ("desire_worker_state", "desire_sources", "desire_events", "desires",
+            for table in ("desire_opportunities", "desire_worker_state", "desire_sources", "desire_events", "desires",
                           "interest_explorations", "interest_events", "interests"):
                 connection.execute(text(f"DELETE FROM public.{table}"))
         summary_tests.SummaryDatabaseTests.setUp(self)
