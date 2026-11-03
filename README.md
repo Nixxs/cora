@@ -2306,10 +2306,21 @@ features it helps check, and package last.
      have. `app_areas/feelings.py` saves it within the step 2 limits and
      writes "Cora feels hurt (strong): ..." to Activity (with "in Sarah's
      chat" for a contact); a limit's reason goes back to her.
-  4. **Prompt:** at each connect, any feeling still noticeably high is added as
-     a short "How you're feeling right now" section. Also a quiet note to a
-     running voice session when she notes a feeling in a Signal chat, so it
-     reaches her voice without waiting for a reconnect.
+  4. ~~**Prompt:**~~ done: a "How you're feeling right now" section (one line
+     per noticeable feeling: what, why, and how hard it is to hide) so
+     feelings carry through a conversation and ease as they fade.
+     - Each voice connect, and every written reply in typed chat and the
+       person's Signal chat, worked out fresh, so a feeling eases between
+       replies.
+     - Contacts' Signal chats get how she feels but not why: a reason may be
+       about the person or someone else.
+     - Never in email (the person's or a task thread) or the task
+       coordinator.
+     - In a running voice session (whose instructions can't change), a check
+       every minute (a database read, no model call) sends a quiet note when
+       a feeling begins, rises, eases or passes, including one she noted in a
+       Signal chat meanwhile. Activity shows "Quiet note to her voice: hurt
+       eased." A note that fails is tried again next minute.
   5. **Dashboard:** a Feelings box with one braille line per feeling over the
      last few hours, pulsing when a feeling jumps, and the latest reason
      underneath.

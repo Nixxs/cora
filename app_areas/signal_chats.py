@@ -21,6 +21,7 @@ from storage.client_store import Client
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
 from messaging.commitment import check_commitment
 from backend_chat import SIGNAL_EXCLUDED, BackendRoute
+from subconscious.emotions.feeling_rules import feelings_context
 from tools.pass_on import CLIENT_ONLY
 from subconscious.interests.relevance import sparked_interests_now
 from session_config import (
@@ -381,6 +382,8 @@ class SignalChatsMixin:
         return instruction_sections(
             remembered, sparked_interests=sparked, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context, client_people_context=people, task_briefs=briefs,
+            # How she feels, but not why: the reasons may be about the person or someone else.
+            feelings_context=feelings_context(self.live.feelings, reasons=False),
         )
 
     async def interests_sparked(self, who: str, message: str) -> str:

@@ -10,8 +10,8 @@ from sqlalchemy.orm import Session
 from storage.database import build_engine
 from storage.models import ConversationRecord, FeelingEventRecord
 from subconscious.emotions.feeling_rules import (
-    LOOKBACK, MAX_PER_CONVERSATION, REASON_MAX_CHARS, SAME_FEELING_GAP, Reaction, feelings_now, levels_at,
-    validate_reaction,
+    LOOKBACK, MAX_PER_CONVERSATION, REASON_MAX_CHARS, SAME_FEELING_GAP, FeelingNow, Reaction, feelings_now,
+    feelings_state, levels_at, validate_reaction,
 )
 
 
@@ -69,6 +69,9 @@ class FeelingStore:
 
     def feelings_now(self, now: datetime) -> list[str]:
         return feelings_now(self.reactions(now), now)
+
+    def state(self, now: datetime) -> list[FeelingNow]:
+        return feelings_state(self.reactions(now), now)
 
 
 def main() -> None:

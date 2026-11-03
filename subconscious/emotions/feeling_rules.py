@@ -89,29 +89,76 @@ def latest_reasons(reactions: list[Reaction], now: datetime) -> dict[str, str]:
     return reasons
 
 
-def expression(level: float) -> str | None:
-    """How hard the feeling is to keep to herself; None once it has passed."""
+# How hard a noticeable feeling is to keep to herself, weakest first.
+BANDS = ("choose", "effort", "hard")
+EXPRESSIONS = {
+    "choose": "Let it show or keep it to yourself, as you choose.",
+    "effort": "You can still keep it to yourself, but that takes some effort.",
+    "hard": "It's hard to hide: even unspoken, it's likely to come through in your tone.",
+}
+
+
+def band(level: float) -> str | None:
+    """Which of BANDS the level is in; None once it has passed."""
     if level < NOTICEABLE:
         return None
     if level < CLEAR:
-        return "Let it show or keep it to yourself, as you choose."
-    if level < STRONG:
-        return "You can still keep it to yourself, but that takes some effort."
-    return "It's hard to hide: even unspoken, it's likely to come through in your tone."
+        return "choose"
+    return "effort" if level < STRONG else "hard"
 
 
-def feelings_now(reactions: list[Reaction], now: datetime) -> list[str]:
-    """One line per noticeable feeling, strongest first: what she's feeling, why, and how
-    hard it is to hide."""
+def expression(level: float) -> str | None:
+    """How hard the feeling is to keep to herself; None once it has passed."""
+    current = band(level)
+    return None if current is None else EXPRESSIONS[current]
+
+
+@dataclass(frozen=True)
+class FeelingNow:
+    feeling: str
+    band: str
+    reason: str = ""
+
+    def line(self, reasons: bool = True) -> str:
+        """What she's feeling, why (unless left out), and how hard it is to hide."""
+        why = f" (about: {self.reason})" if reasons and self.reason else ""
+        return f"You feel {FEELING_WORDS[self.feeling]}{why}. {EXPRESSIONS[self.band]}"
+
+
+def feelings_state(reactions: list[Reaction], now: datetime) -> list[FeelingNow]:
+    """Every noticeable feeling now, strongest first."""
     levels, reasons = levels_at(reactions, now), latest_reasons(reactions, now)
-    lines = []
-    for feeling in sorted(FEELINGS, key=lambda name: -levels[name]):
-        hint = expression(levels[feeling])
-        if hint is None:
+    return [FeelingNow(feeling, band(levels[feeling]), reasons.get(feeling, ""))
+            for feeling in sorted(FEELINGS, key=lambda name: -levels[name]) if band(levels[feeling])]
+
+
+def feelings_now(reactions: list[Reaction], now: datetime, reasons: bool = True) -> list[str]:
+    """One line per noticeable feeling, strongest first."""
+    return [item.line(reasons) for item in feelings_state(reactions, now)]
+
+
+def feelings_context(feelings: list[FeelingNow], reasons: bool = True) -> str:
+    """Her instructions' feelings section: one line each, or "" when none is noticeable."""
+    return "\n".join(item.line(reasons) for item in feelings)
+
+
+def band_changes(before: dict[str, str], now: list[FeelingNow]) -> tuple[list[str], list[str]]:
+    """Since `before` (feeling -> band): the lines to tell her, and a short summary of each change
+    (hurt eased, curiosity passed). A feeling whose band hasn't changed isn't repeated."""
+    lines, summary = [], []
+    current = {item.feeling: item for item in now}
+    for item in now:
+        old = before.get(item.feeling)
+        if old == item.band:
             continue
-        why = f" (about: {reasons[feeling]})" if feeling in reasons else ""
-        lines.append(f"You feel {FEELING_WORDS[feeling]}{why}. {hint}")
-    return lines
+        lines.append(item.line())
+        change = "began" if old is None else ("rose" if BANDS.index(item.band) > BANDS.index(old) else "eased")
+        summary.append(f"{item.feeling} {change}")
+    for feeling in before:
+        if feeling not in current:
+            lines.append(f"Your {feeling} has passed.")
+            summary.append(f"{feeling} passed")
+    return lines, summary
 
 
 def parse_reaction(text: str, now: datetime) -> Reaction:

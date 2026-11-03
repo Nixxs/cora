@@ -181,6 +181,10 @@ class KeyboardPersistence:
     def close_quiet_client_conversations(self) -> int:
         return ClientStore(self._get_store().engine).close_quiet(datetime.now(timezone.utc))
 
+    def load_feelings(self) -> list:
+        """Every feeling she still noticeably has, strongest first."""
+        return FeelingStore(self._get_store().engine).state(now=datetime.now(timezone.utc))
+
     def record_feeling(self, feeling: str, strength: str, reason: str, client_id: UUID | None = None) -> None:
         """A feeling she noted, in this conversation with the person or in a client's own chat.
         Raises FeelingLimit when the limits turn it away."""

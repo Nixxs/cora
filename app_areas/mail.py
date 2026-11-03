@@ -359,6 +359,7 @@ class MailMixin:
             try:
                 text = (await self.reply_in_writing(
                     [{"type": "input_text", "text": said}], history, self.person_email_route(), EMAIL_CHAT_INSTRUCTIONS,
+                    feelings=False,
                 )).strip()
             except Exception as error:
                 self.activity.write(f"Answering your email failed ({type(error).__name__}).", "Email from you")
