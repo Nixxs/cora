@@ -31,6 +31,12 @@ NOTICEABLE = 0.05
 CLEAR = 0.18
 STRONG = 0.28
 REASON_MAX_CHARS = 200
+# Far enough back that anything older has faded to nothing (a full feeling, after twelve half-lives).
+LOOKBACK = HALF_LIFE * 12
+# How often she may report a feeling: a few genuine reactions a conversation, not a running commentary,
+# and one feeling can't be pushed up again straight away.
+MAX_PER_CONVERSATION = 8
+SAME_FEELING_GAP = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)

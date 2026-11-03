@@ -64,6 +64,7 @@ from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
+from app_areas.feelings import FeelingsMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -94,7 +95,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, BackgroundMixin, SignUpsMixin, App,
+    WebhooksMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -275,6 +276,7 @@ class CoraApp(
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
             check_sign_up=self.check_sign_up, begin_sign_up=self.begin_sign_up,
             signal_reaches_person=self.signal_reaches_person, message_person=self.tell_person_on_signal,
+            note_feeling=self.note_feeling,
         )
         # Live never sees client-only tools such as pass_on.
         self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)

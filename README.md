@@ -2284,15 +2284,32 @@ features it helps check, and package last.
      even unspoken, each easing as it fades. Below 0.05 it has passed. Try it
      with `python -m subconscious.emotions.feeling_rules hurt:strong:5
      curiosity:small:10` (feeling:strength:minutes ago).
-  2. **Storage:** an append-only `feeling_events` table (feeling, strength,
-     short reason, time, conversation). The current level is worked out from
-     the events and the fading, which also keeps the history for the graph.
-  3. **`feel` tool:** strict schema (feeling, strength, reason), silent, only
-     for a genuine reaction in the moment and never to steer the person; code
-     limits how often it is used per conversation, and each feeling goes to
-     Activity.
+  2. ~~**Storage:**~~ done: migration 0047 adds an append-only
+     `feeling_events` table (feeling, strength, reason of up to 200
+     characters, felt_at, and the conversation if there was one), and
+     `subconscious/emotions/feeling_store.py` saves and reads it. The levels
+     now are worked out from the last six hours of reactions (anything older
+     has faded to nothing), which also keeps the history for the graph. In a
+     conversation she can note at most 8 feelings, and not the same feeling
+     again within 5 minutes; a refusal says why, for the tool to pass on.
+     Try it with `python -m subconscious.emotions.feeling_store --add
+     excitement medium "a new idea"`, or no arguments to see how she feels.
+  3. ~~**`feel` tool:**~~ done in `tools/feel.py`: strict schema (feeling,
+     strength, reason), silent, only for a genuine reaction in the moment,
+     never to perform, steer the person or make them responsible for it.
+     Offered in typed chat, the person's Signal chat and contacts' Signal
+     chats (saved to that contact's conversation), but not in any email:
+     email is more professional, and feelings rarely show there. In voice
+     her speaking model can't call tools, so she hands the feeling to her
+     backend like note_desire (in a request she's already making when she
+     can); the backend answers just "Noted." and she replies as she would
+     have. `app_areas/feelings.py` saves it within the step 2 limits and
+     writes "Cora feels hurt (strong): ..." to Activity (with "in Sarah's
+     chat" for a contact); a limit's reason goes back to her.
   4. **Prompt:** at each connect, any feeling still noticeably high is added as
-     a short "How you're feeling right now" section.
+     a short "How you're feeling right now" section. Also a quiet note to a
+     running voice session when she notes a feeling in a Signal chat, so it
+     reaches her voice without waiting for a reconnect.
   5. **Dashboard:** a Feelings box with one braille line per feeling over the
      last few hours, pulsing when a feeling jumps, and the latest reason
      underneath.

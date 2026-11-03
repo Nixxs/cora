@@ -342,10 +342,10 @@ class SignalChatsMixin:
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history,
             sections=await self.client_sections(client, batch), model=self.live.delegation_model,
-            # Web search, memory search limited to what they may know, and passing things on to the
-            # person; no services, nothing at the desk.
+            # Web search, memory search limited to what they may know, noting her own feelings, and
+            # passing things on to the person; no services, nothing at the desk.
             route=BackendRoute(
-                excluded=frozenset(self.tools.names()) - {"search_memory", *CLIENT_ONLY},
+                excluded=frozenset(self.tools.names()) - {"search_memory", "feel", *CLIENT_ONLY},
                 memory_scope=(client.id, client.name),
             ),
             extra_instructions=client_chat_instructions(client.name, self.live.person_name, self.live.own_name),

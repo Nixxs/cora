@@ -20,6 +20,7 @@ from memory.store import MemoryStore
 from sign_ups.password import sign_up_name
 from sign_ups.store import SignUp, SignUpStore
 from subconscious.desires.desire_store import DesireStore
+from subconscious.emotions.feeling_store import FeelingStore
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.impressions.impression_store import HeadsUp, ImpressionStore
 from subconscious.interests.interest_store import InterestStore
@@ -179,6 +180,18 @@ class KeyboardPersistence:
 
     def close_quiet_client_conversations(self) -> int:
         return ClientStore(self._get_store().engine).close_quiet(datetime.now(timezone.utc))
+
+    def record_feeling(self, feeling: str, strength: str, reason: str, client_id: UUID | None = None) -> None:
+        """A feeling she noted, in this conversation with the person or in a client's own chat.
+        Raises FeelingLimit when the limits turn it away."""
+        store = self._get_store()
+        if client_id is None:
+            conversation_id = self.conversation_id
+            store.create_conversation(conversation_id)
+        else:
+            conversation_id = self.client_conversation(client_id)
+        FeelingStore(store.engine).record(feeling, strength, reason, now=datetime.now(timezone.utc),
+                                          conversation_id=conversation_id)
 
     def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
         ClientStore(self._get_store().engine).save(conversation_id, role, text)

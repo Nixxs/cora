@@ -232,7 +232,7 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.task_party_heard.assert_called_with(app.signal_clients[SARAH].id)
             self.assertEqual(kwargs["extra_instructions"], client_chat_instructions("Sarah", "Nick"))
             # Web search, and memory search limited to what Sarah may know; every other tool left out.
-            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()) - {"search_memory", "pass_on", "raise_concern", "stop_replying"})
+            self.assertEqual(kwargs["route"].excluded, frozenset(app.tools.names()) - {"search_memory", "feel", "pass_on", "raise_concern", "stop_replying"})
             self.assertEqual(kwargs["route"].memory_scope, (app.signal_clients[SARAH].id, "Sarah"))
             app.signal.client.send.assert_awaited_once_with(CORA, SARAH, "Happy to help.")
             saves = [call.args for call in app.persistence.save_client_message.call_args_list]
