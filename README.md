@@ -1804,6 +1804,8 @@ features it helps check, and package last.
       ([mail/triage.py](mail/triage.py)); urgent reaches you at any hour,
       worth mentioning waits for one digest the next time you talk with her, the
       rest is marked read; she never answers it herself
+    - [x] W4 mail that answers an open task or a recent plan of yours is
+      urgent and told as "an email you were waiting on"
     - [x] T5a commitment approvals: every reply to a contact is checked, and one
       that commits you (confirms a booking, agrees a price, promises you'll do
       something) waits for your YES; otherwise a holding line goes instead
@@ -1838,7 +1840,8 @@ features it helps check, and package last.
     findings raised when the conversation touches on them, and R2, chances for
     her desires noticed in her week and mail.
 14. Home Assistant, starting with its demo devices (waiting on devices at home).
-15. Awareness W4: expectations from memory tasks.
+15. ~~Awareness W4: expectations from memory tasks.~~ Done: mail she or you
+    were waiting on is urgent (see Awareness in Details below).
 16. Camera and screen awareness (waiting on devices at home).
 17. Emotions (nothing depends on it, so it can move earlier).
 
@@ -2226,8 +2229,16 @@ features it helps check, and package last.
   the person at any hour, and the rest wait for one digest the next time they
   talk. Anything else she raises on her own stays within 9am to 7pm
   (`NUDGE_HOURS`). A new source is a new kind of webhook on the same listener,
-  not a new watcher. Still to come: W4, expectations from memory tasks (such as
-  waiting to hear back from someone) raising an item's urgency. Messaging Cora
+  not a new watcher. W4 (built): what she and the person are waiting on raises
+  an email's urgency. Before each batch is sorted, the app gathers her open
+  tasks (with who each waits on) and the person's tasks and decisions from the
+  last two weeks that are still current (at most 15, none passed or corrected).
+  An email that is what one was waiting for (a reply, quote, confirmation,
+  booking, result or delivery) is marked expected and treated as urgent: it
+  reaches the person at once as "An email you were waiting on, from ...". A
+  newsletter that only shares a topic doesn't count. Activity adds "(1 you were
+  waiting on)" to the sorting line. If the list can't be read, mail is sorted
+  without it. Messaging Cora
   herself over Signal is a separate interface (see Signal below), not an
   awareness notification. Camera, screen, and home sensor awareness are covered
   separately below.

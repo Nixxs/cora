@@ -255,6 +255,15 @@ class KeyboardPersistence:
     def load_recent_plan(self) -> str | None:
         return MemoryStore(self._get_store().engine).recent_plan(now=datetime.now(timezone.utc))
 
+    def load_expectations(self) -> list[str]:
+        """What she and the person are waiting on: each open task (and who it waits on), then their
+        recent plans and decisions."""
+        engine = self._get_store().engine
+        tasks = [f"Task: {task.goal}" + (f" (waiting on {', '.join(party.name for party in task.parties if party.name)})"
+                                          if any(party.name for party in task.parties) else "")
+                 for task in TaskStore(engine).open_tasks()]
+        return tasks + MemoryStore(engine).expectations(now=datetime.now(timezone.utc))
+
     def load_dashboard_snapshot(self) -> DashboardSnapshot:
         return read_dashboard_snapshot(self._get_store().engine, datetime.now(timezone.utc))
 

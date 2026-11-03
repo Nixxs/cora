@@ -5,9 +5,10 @@ from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from mail.account import READY, EmailStatus, InboxMail
+from storage.keyboard_persistence import KeyboardPersistence
 from mail.triage import IGNORE, MENTION, TRIAGE_INSTRUCTIONS, URGENT, Sorted, digest_text, triage_mail
 import test_keyboard_persistence as keyboard_tests
 
@@ -41,8 +42,26 @@ class TriageTests(unittest.TestCase):
         self.assertEqual(kwargs["model"], "small")
         self.assertNotIn("tools", kwargs)
         sent = json.loads(kwargs["input"])
-        self.assertEqual([item["id"] for item in sent], ["0", "1", "2"])
+        self.assertEqual([item["id"] for item in sent["emails"]], ["0", "1", "2"])
+        self.assertEqual(sent["expected"], [])
         self.assertIn("untrusted", TRIAGE_INSTRUCTIONS)
+        self.assertFalse(any(item.expected for item in result))
+
+    def test_what_she_or_the_person_waited_on_is_urgent(self):
+        api = client([
+            {"id": "0", "verdict": MENTION, "summary": "Plumber's quote for the hot water: $450", "expected": True},
+            {"id": "1", "verdict": IGNORE, "summary": "", "expected": False},
+        ])
+        result = triage_mail([mail("a"), mail("b")], client=api,
+                             expected=["Task: Get a quote for the hot water (waiting on Joe's Plumbing)",
+                                       "x" * 400, *(f"Plan {n}" for n in range(30))])
+        self.assertEqual([(item.verdict, item.expected) for item in result], [(URGENT, True), (IGNORE, False)])
+        sent = json.loads(api.responses.create.call_args.kwargs["input"])["expected"]
+        self.assertEqual(sent[0], "Task: Get a quote for the hot water (waiting on Joe's Plumbing)")
+        self.assertEqual((len(sent), len(sent[1])), (25, 300))
+        for phrase in ("expected lists what Cora and the person are waiting on", "make it urgent",
+                       "a newsletter or advert that only shares a topic is not expected"):
+            self.assertIn(phrase, TRIAGE_INSTRUCTIONS)
 
     def test_a_failed_call_raises_so_the_mail_is_sorted_next_time(self):
         api = client([])
@@ -50,6 +69,22 @@ class TriageTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             triage_mail([mail("a")], client=api)
         self.assertEqual(triage_mail([], client=api), [])
+
+    def test_expectations_are_open_tasks_and_who_they_wait_on_then_recent_plans(self):
+        store = MagicMock()
+        persistence = KeyboardPersistence(store)
+        party = lambda name: SimpleNamespace(name=name)
+        with patch("storage.keyboard_persistence.TaskStore") as tasks,                 patch("storage.keyboard_persistence.MemoryStore") as memories:
+            tasks.return_value.open_tasks.return_value = [
+                SimpleNamespace(goal="Book the plumber", parties=(party("Joe's Plumbing"), party("Sam"))),
+                SimpleNamespace(goal="Find a venue", parties=()),
+            ]
+            memories.return_value.expectations.return_value = ["Bank is sending a new card"]
+            self.assertEqual(persistence.load_expectations(), [
+                "Task: Book the plumber (waiting on Joe's Plumbing, Sam)", "Task: Find a venue",
+                "Bank is sending a new card",
+            ])
+        tasks.assert_called_once_with(store.engine)
 
     def test_the_digest_is_a_line_each(self):
         one = Sorted(mail("a"), MENTION, "Asked for a quote")
@@ -100,6 +135,29 @@ class SortingAppTests(unittest.IsolatedAsyncioTestCase):
             # Already sorted: not sorted again.
             sorter = await self.sort(app, [urgent, note, junk])
             sorter.assert_not_called()
+
+    async def test_mail_she_was_waiting_on_is_told_as_such(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            quote = mail("q", sender="joe@plumbing.example", name="Joe's Plumbing")
+            await self.ready(app, pilot, [Sorted(quote, URGENT, "The hot water quote: $450", True)])
+            app.persistence.load_expectations.return_value = ["Task: Get a hot water quote (waiting on Joe's Plumbing)"]
+            app.activity.write = MagicMock()
+            sorter = await self.sort(app, [quote])
+            self.assertEqual(sorter.call_args.kwargs["expected"],
+                             ["Task: Get a hot water quote (waiting on Joe's Plumbing)"])
+            app.tell_person.assert_awaited_once_with(
+                "An email you were waiting on, from Joe's Plumbing: The hot water quote: $450")
+            app.activity.write.assert_called_with("Sorted her new mail: 1 urgent (1 you were waiting on).", "Email")
+
+    async def test_mail_is_still_sorted_when_what_youre_waiting_on_cant_load(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            await self.ready(app, pilot, [Sorted(mail("a"), MENTION, "A quote")])
+            app.persistence.load_expectations.side_effect = RuntimeError("private")
+            app.activity.write = MagicMock()
+            sorter = await self.sort(app, [mail("a")])
+            self.assertEqual(sorter.call_args.kwargs["expected"], [])
+            app.activity.write.assert_any_call(
+                "What you're waiting on didn't load (RuntimeError); sorting without it.", "Email")
 
     async def test_a_failed_sort_leaves_the_mail_for_next_time(self):
         async with keyboard_tests.running_app() as (app, pilot):

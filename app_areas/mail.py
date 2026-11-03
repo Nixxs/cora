@@ -261,7 +261,8 @@ class MailMixin:
             return
         try:
             models = await self.conversation_persistence.call_database(self.persistence.load_models)
-            sorted_mail = await asyncio.to_thread(triage_mail, new, model=models["utility"])
+            expected = await self.load_expectations()
+            sorted_mail = await asyncio.to_thread(triage_mail, new, model=models["utility"], expected=expected)
         except Exception as error:
             # Left unsorted, so the next check tries again.
             self.activity.write(f"Sorting her new mail failed ({type(error).__name__}).", "Email")
@@ -275,8 +276,9 @@ class MailMixin:
             if item.verdict == IGNORE:
                 await self.mark_mail_read(item.mail.id)
             elif item.verdict == URGENT:
+                about = "An email you were waiting on" if item.expected else "An urgent email to me"
                 try:
-                    await self.tell_person(f"An urgent email to me, from {item.sender}: {item.summary}")
+                    await self.tell_person(f"{about}, from {item.sender}: {item.summary}")
                 except Exception:
                     self.mail_digest[item.mail.id] = item  # can't reach them now: it waits for the digest
                     continue
@@ -284,9 +286,20 @@ class MailMixin:
             else:
                 self.mail_digest[item.mail.id] = item
         self.activity.write(
-            "Sorted her new mail: " + ", ".join(f"{count} {verdict}" for verdict, count in sorted(counts.items())) + ".",
+            "Sorted her new mail: " + ", ".join(f"{count} {verdict}" for verdict, count in sorted(counts.items()))
+            + (f" ({waited} you were waiting on)" if (waited := sum(item.expected for item in sorted_mail)) else "")
+            + ".",
             "Email",
         )
+
+    async def load_expectations(self) -> list[str]:
+        """What she and the person are waiting on, for sorting mail; none if it can't be read."""
+        try:
+            return await self.conversation_persistence.call_database(self.persistence.load_expectations)
+        except Exception as error:
+            self.activity.write(f"What you're waiting on didn't load ({type(error).__name__}); sorting without it.",
+                                "Email")
+            return []
 
     async def mark_mail_read(self, message_id: str) -> None:
         try:
