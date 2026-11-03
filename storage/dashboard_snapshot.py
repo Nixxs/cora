@@ -17,6 +17,8 @@ from storage.models import (
 from subconscious.desires import reflect_desires
 from subconscious.desires.desire_rules import current_strength, settle as settle_desire
 from subconscious.desires.desire_store import DesireStore
+from subconscious.emotions.feeling_rules import FEELINGS, LOOKBACK, Reaction, level_history
+from subconscious.emotions.feeling_store import FeelingStore
 from subconscious.identity.identity_rules import Trait
 from subconscious.identity.identity_store import IdentityStore
 from subconscious.identity.reflect_identity import REFLECT_EVERY
@@ -35,6 +37,12 @@ HISTORY_LIMIT = 200
 RISING_WINDOW = timedelta(days=3)
 # Before an interest of her own: one sparked by her exploring, not by the person.
 OWN_MARK = "✦"
+
+# The feelings graphs: the last six hours, a point every five minutes (two points to a braille cell).
+FEELING_SPAN = timedelta(hours=6)
+FEELING_STEP = timedelta(minutes=5)
+# A feeling she reacted with this recently has just jumped, so its graph pulses.
+FEELING_JUMP_WINDOW = timedelta(minutes=10)
 
 # A year of weeks, more than the widest conversations heatmap will show.
 CALENDAR_DAYS = 7 * 53
@@ -86,6 +94,11 @@ class DashboardSnapshot:
     sign_ups: tuple[SignUp, ...] = ()
     # (wish, strength faded to the load time, status) for each live desire, strongest first.
     desires: tuple[tuple[str, float, str], ...] = ()
+    # (feeling, its level every FEELING_STEP over FEELING_SPAN ending now, jumped lately) for every
+    # feeling, in the fixed order of FEELINGS.
+    feelings: tuple[tuple[str, tuple[float, ...], bool], ...] = ()
+    # Her newest reaction in that span, or None.
+    latest_feeling: Reaction | None = None
 
 
 def last_runs(engine: Engine) -> dict[str, datetime | None]:
@@ -125,6 +138,19 @@ def live_desires(engine: Engine, now: datetime) -> tuple[tuple[str, float, str],
     return tuple(sorted(live, key=lambda item: item[1], reverse=True))
 
 
+def recent_feelings(engine: Engine, now: datetime) -> tuple[
+    tuple[tuple[str, tuple[float, ...], bool], ...], Reaction | None,
+]:
+    """Every feeling's recent levels (and whether it just jumped), and her newest reaction."""
+    # From far enough back that the graph's first point counts what came before it.
+    reactions = FeelingStore(engine).reactions(now, since=now - FEELING_SPAN - LOOKBACK)
+    history = level_history(reactions, now, FEELING_SPAN, FEELING_STEP)
+    jumped = {reaction.feeling for reaction in reactions if now - reaction.at <= FEELING_JUMP_WINDOW}
+    shown = [reaction for reaction in reactions if now - reaction.at <= FEELING_SPAN]
+    return (tuple((feeling, history[feeling], feeling in jumped) for feeling in FEELINGS),
+            shown[-1] if shown else None)
+
+
 def live_interests(engine: Engine, now: datetime) -> tuple[
     tuple[tuple[str, float, bool], ...], tuple[str, str] | None,
 ]:
@@ -153,6 +179,7 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
     memories = MemoryStore(engine)
     interests, latest_finding = live_interests(engine, now)
     runs = last_runs(engine)
+    feelings, latest_feeling = recent_feelings(engine, now)
     return DashboardSnapshot(
         relationship=relationships.current_values(now=now),
         history=tuple(
@@ -172,4 +199,6 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         tasks=tuple(TaskStore(engine).open_tasks()),
         sign_ups=tuple(SignUpStore(engine).recent()),
         desires=live_desires(engine, now),
+        feelings=feelings,
+        latest_feeling=latest_feeling,
     )

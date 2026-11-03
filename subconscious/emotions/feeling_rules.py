@@ -80,6 +80,15 @@ def levels_at(reactions: list[Reaction], now: datetime) -> dict[str, float]:
             for feeling in FEELINGS}
 
 
+def level_history(reactions: list[Reaction], now: datetime, span: timedelta, step: timedelta) -> dict[str, tuple[float, ...]]:
+    """Each feeling's level every `step` across the `span` up to now, oldest first, ending at now.
+    Reactions from before the span still count towards its start."""
+    count = int(span / step)
+    times = [now - step * (count - index) for index in range(count + 1)]
+    levels = [levels_at(reactions, at) for at in times]
+    return {feeling: tuple(sample[feeling] for sample in levels) for feeling in FEELINGS}
+
+
 def latest_reasons(reactions: list[Reaction], now: datetime) -> dict[str, str]:
     """The most recent reason she gave for each feeling, up to `now`."""
     reasons = {}

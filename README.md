@@ -2321,9 +2321,16 @@ features it helps check, and package last.
        a feeling begins, rises, eases or passes, including one she noted in a
        Signal chat meanwhile. Activity shows "Quiet note to her voice: hurt
        eased." A note that fails is tried again next minute.
-  5. **Dashboard:** a Feelings box with one braille line per feeling over the
-     last few hours, pulsing when a feeling jumps, and the latest reason
-     underneath.
+  5. ~~**Dashboard:**~~ done: a feelings box in the middle row beside
+     relationship, with one braille line per feeling in its own colour (a
+     point every 5 minutes over the last 6 hours, as much as fits; one strong
+     reaction fills most of a line). A line pulses for 10 minutes after she
+     reacts with that feeling, and its name is bright while she still feels
+     it. Underneath is her latest reaction: the feeling, how strong, how long
+     ago, and why. It refreshes with the rest of the dashboard every 30
+     seconds. It takes relationship's place at the start of the middle row,
+     and relationship moved to the start of the bottom row, under it (the
+     bottom row's conversations and tasks boxes narrowed to make room).
   6. **Later:** findings she reacts to, fulfilling a desire (fulfilment) and
      conversation appraisals can also raise feelings through the same rules.
 

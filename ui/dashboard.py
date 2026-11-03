@@ -12,6 +12,7 @@ from devices.audio_bands import BAND_COUNT
 from memory.store import fade_weight
 from session_config import BACKEND_CONTEXT_TOKENS
 from storage.task_store import TASK_NUDGES_MAX
+from subconscious.emotions.feeling_rules import FEELING_WORDS, FEELINGS, band
 from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
@@ -38,6 +39,11 @@ SIGN_UP_STATES = {"done": "signed up", "signing_up": "signing up", "confirm_emai
 # A desire's strength: bright once she's working toward it, softer while held, dim while forming.
 DESIRE_STYLES = {"pursuing": "#e0b45c", "held": "#c9a86a"}
 DESIRE_STATES = {"pursuing": "pursuing", "held": "held", "candidate": "forming"}
+# Each feeling's colour: warm for the good ones, red-orange for irritation and hurt.
+FEELING_STYLES = {"excitement": "#e0b45c", "contentment": "#8fcca6", "curiosity": "#7fb8d8",
+                  "fulfilment": "#c9a86a", "irritation": "#e0905c", "hurt": "#d27a7a"}
+# The top of each feelings graph: one strong reaction (0.3) fills most of its row, and more is clipped.
+FEELING_GRAPH_MAX = 0.4
 # A task's latest step is cut to this, so one long message doesn't fill the box.
 STEP_PREVIEW_CHARS = 120
 
@@ -47,6 +53,7 @@ STEP_PREVIEW_CHARS = 120
 BOX_TITLES = {
     "chat-box": "chat",
     "relationship-box": "relationship",
+    "feelings-box": "feelings",
     "memories-box": "memories",
     "interests-box": "interests",
     "identity-box": "identity",
@@ -131,6 +138,16 @@ def desire_lines(desires) -> Text:
     return lines or Text("no desires yet", style=TRACK_STYLE)
 
 
+def latest_feeling_line(reaction, now) -> Text:
+    """Her newest reaction: the feeling, how strong, how long ago, then why."""
+    if reaction is None:
+        return Text("nothing felt lately", style=TRACK_STYLE)
+    return Text.assemble(
+        (FEELING_WORDS[reaction.feeling], FEELING_STYLES[reaction.feeling]),
+        (f" ({reaction.strength}) · {ago(reaction.at, now)}", LABEL_STYLE), "\n", reaction.reason,
+    )
+
+
 def sign_up_lines(sign_ups, now) -> Text:
     """Her latest sign-ups: the site, how it stands and when she asked."""
     lines = Text()
@@ -205,15 +222,16 @@ class DashboardScreen(Screen):
                     )
             # Pans sideways when the boxes don't fit; unfocusable so clicks leave typing alone.
             with HorizontalScroll(id="dashboard-middle", can_focus=False):
-                with Vertical(id="relationship-box", classes="dashboard-box"):
-                    yield Meters(id="relationship-meters", placeholder="loading…")
-                    yield Static("history", classes="dashboard-label")
-                    for name in RELATIONSHIP_VALUES:
-                        with Horizontal(classes="relationship-history"):
-                            yield Static(name, classes="relationship-history-name")
-                            yield BrailleGraph(id=f"{name}-history", pulse=True, grow=True)
-                    yield Static("recent tone", classes="dashboard-label")
-                    yield ToneRibbon(id="relationship-tones")
+                with Vertical(id="feelings-box", classes="dashboard-box"):
+                    # One line per feeling over the last few hours; a line pulses while it has just jumped.
+                    for feeling in FEELINGS:
+                        with Horizontal(classes="feeling-row"):
+                            yield Static(FEELING_WORDS[feeling], id=f"{feeling}-name", classes="feeling-name")
+                            yield BrailleGraph(id=f"{feeling}-feeling", maximum=FEELING_GRAPH_MAX, pulse=True)
+                    yield Static("latest", classes="dashboard-label")
+                    # Scrolls, so a long reason can be read in full.
+                    with VerticalScroll(id="feeling-latest-scroll"):
+                        yield Static(id="feeling-latest")
                 with Vertical(id="memories-box", classes="dashboard-box"):
                     yield Meters(id="memory-kinds", placeholder="loading…")
                     yield Static("new per day", classes="dashboard-label")
@@ -238,6 +256,16 @@ class DashboardScreen(Screen):
                         yield Static(id="desire-list")
             # Pans sideways like the middle row once the boxes reach their minimum widths.
             with HorizontalScroll(id="dashboard-bottom", classes="dashboard-row", can_focus=False):
+                # Under her feelings: the slower-moving relationship.
+                with Vertical(id="relationship-box", classes="dashboard-box"):
+                    yield Meters(id="relationship-meters", placeholder="loading…")
+                    yield Static("history", classes="dashboard-label")
+                    for name in RELATIONSHIP_VALUES:
+                        with Horizontal(classes="relationship-history"):
+                            yield Static(name, classes="relationship-history-name")
+                            yield BrailleGraph(id=f"{name}-history", pulse=True, grow=True)
+                    yield Static("recent tone", classes="dashboard-label")
+                    yield ToneRibbon(id="relationship-tones")
                 with Vertical(id="conversations-box", classes="dashboard-box"):
                     yield Static("your messages per day", classes="dashboard-label")
                     yield CalendarHeatmap(id="conversation-days")
@@ -296,6 +324,12 @@ class DashboardScreen(Screen):
                 getattr(values, name) for values in history
             )
         self.query_one("#relationship-tones", ToneRibbon).tones = self.snapshot.tones
+        for feeling, levels, jumped in self.snapshot.feelings:
+            graph = self.query_one(f"#{feeling}-feeling", BrailleGraph)
+            graph.pulse = jumped
+            graph.values = levels
+            # Bright while she still feels it, dim once it has passed.
+            self.query_one(f"#{feeling}-name").set_class(bool(levels) and band(levels[-1]) is not None, "feeling-felt")
         kinds = self.query_one("#memory-kinds", Meters)
         total = sum(self.snapshot.memory_kinds.values())
         kinds.placeholder = "no memories yet"
@@ -333,6 +367,8 @@ class DashboardScreen(Screen):
         # Text, so brackets in a wish are not read as markup.
         self.query_one("#desire-list", Static).update(desire_lines(self.snapshot.desires))
         now = datetime.now(timezone.utc)
+        # Text, so brackets in a reason are not read as markup.
+        self.query_one("#feeling-latest", Static).update(latest_feeling_line(self.snapshot.latest_feeling, now))
         heatmap = self.query_one("#conversation-days", CalendarHeatmap)
         heatmap.today_row = now.astimezone().weekday()
         heatmap.days = self.snapshot.message_days
