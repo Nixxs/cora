@@ -170,6 +170,24 @@ def band_changes(before: dict[str, str], now: list[FeelingNow]) -> tuple[list[st
     return lines, summary
 
 
+# Thinking back on a conversation only stirs a feeling while it is recent; a backlog appraised later
+# (Cora was closed) is left alone.
+APPRAISAL_RECENT = timedelta(hours=2)
+
+
+def appraisal_feeling(tone: str, friction: str, repair: str) -> tuple[str, str] | None:
+    """At most one small or medium feeling from how a conversation went, only from what the appraisal
+    found: unrepaired friction aimed at her or hostility hurts, curtness irritates, and a warm one
+    with no friction leaves her content. Her own mistakes stir nothing (no guilt)."""
+    if (friction == "at_cora" and repair not in ("person", "both")) or tone == "hostile":
+        return "hurt", "medium"
+    if tone == "curt":
+        return "irritation", "small"
+    if tone == "warm" and friction == "none":
+        return "contentment", "small"
+    return None
+
+
 def parse_reaction(text: str, now: datetime) -> Reaction:
     """feeling:strength:minutes_ago, e.g. hurt:strong:40."""
     feeling, strength, minutes = text.split(":")

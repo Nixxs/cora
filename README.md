@@ -1843,7 +1843,11 @@ features it helps check, and package last.
 15. ~~Awareness W4: expectations from memory tasks.~~ Done: mail she or you
     were waiting on is urgent (see Awareness in Details below).
 16. Camera and screen awareness (waiting on devices at home).
-17. Emotions (nothing depends on it, so it can move earlier).
+17. ~~Emotions.~~ Done: six short-lived feelings she reports herself, fading
+    by half every 30 minutes, harder to hide the stronger they are, carried
+    through voice, typed chat and Signal, on the dashboard, and raised by
+    fulfilled wishes, findings and thinking back (see Emotions in Details
+    below).
 
 *Phase 4 — Cora 1.0*
 
@@ -2331,8 +2335,23 @@ features it helps check, and package last.
      seconds. It takes relationship's place at the start of the middle row,
      and relationship moved to the start of the bottom row, under it (the
      bottom row's conversations and tasks boxes narrowed to make room).
-  6. **Later:** findings she reacts to, fulfilling a desire (fulfilment) and
-     conversation appraisals can also raise feelings through the same rules.
+  6. ~~**Other sources:**~~ done, through the same rules, outside any
+     conversation (so the per-conversation limits don't apply):
+     - **A fulfilled wish:** when her daily desire reflection fulfils one,
+       she feels strong fulfilment ("fulfilled a wish: ...").
+     - **Findings:** every exploration, wander and pursuit step now returns a
+       `feeling` (which one and how strong, or null, "which is often; never
+       inflate it"), her own report rather than inferred from her reaction
+       text. Fulfilment fits a pursuit step that brings a wish really closer.
+       The reason is what it was about plus her reaction.
+     - **Thinking back:** after a conversation is appraised, at most one
+       feeling, only from what the appraisal found: unrepaired friction aimed
+       at her or a hostile tone, hurt (medium); a curt one, irritation
+       (small); a warm one without friction, contentment (small). Her own
+       mistakes stir nothing (no guilt), and only a conversation that ended
+       within the last 2 hours counts, so a backlog appraised later is left
+       alone. Shown in Activity as "Cora feels content (small), thinking
+       back on your conversation."
 
   Guardrails: feelings always fade and each rise is capped; no feeling is
   designed for guilt, neediness or possessiveness; feelings never reach tool or

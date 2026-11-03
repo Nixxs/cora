@@ -32,11 +32,11 @@ INTEREST = Interest(uuid4(), "Old mechanical design", "Why older machines were b
 SEARCHED = "https://example.com/carburettors"
 OPENED = "https://example.org/repair-manuals"
 FINDING = {"finding": "Carburettors were tuned by ear and feel.",
-           "reaction": "I love that mechanics trusted their ears; it feels oddly musical.",
+           "reaction": "I love that mechanics trusted their ears; it feels oddly musical.", "feeling": None,
            "pull": "some", "next_questions": ["Why did fuel injection replace them?"],
            "tangents": [{"title": "Tuning forks and piano tuners", "why": "Tuning by ear sounds like music."}],
            "reach_out": None, "sign_up": None, "sources": [SEARCHED]}
-NOTHING = {"finding": None, "reaction": None, "pull": "none", "next_questions": [], "tangents": [],
+NOTHING = {"finding": None, "reaction": None, "feeling": None, "pull": "none", "next_questions": [], "tangents": [],
            "reach_out": None, "sign_up": None, "sources": []}
 
 
