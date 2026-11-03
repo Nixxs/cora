@@ -21,6 +21,7 @@ from storage.client_store import Client
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
 from messaging.commitment import check_commitment
 from backend_chat import SIGNAL_EXCLUDED, BackendRoute
+from subconscious.emotions.feeling_rules import feelings_context
 from tools.pass_on import CLIENT_ONLY
 from subconscious.interests.relevance import sparked_interests_now
 from session_config import (
@@ -342,10 +343,10 @@ class SignalChatsMixin:
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history,
             sections=await self.client_sections(client, batch), model=self.live.delegation_model,
-            # Web search, memory search limited to what they may know, and passing things on to the
-            # person; no services, nothing at the desk.
+            # Web search, memory search limited to what they may know, noting her own feelings, and
+            # passing things on to the person; no services, nothing at the desk.
             route=BackendRoute(
-                excluded=frozenset(self.tools.names()) - {"search_memory", *CLIENT_ONLY},
+                excluded=frozenset(self.tools.names()) - {"search_memory", "feel", *CLIENT_ONLY},
                 memory_scope=(client.id, client.name),
             ),
             extra_instructions=client_chat_instructions(client.name, self.live.person_name, self.live.own_name),
@@ -381,6 +382,8 @@ class SignalChatsMixin:
         return instruction_sections(
             remembered, sparked_interests=sparked, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context, client_people_context=people, task_briefs=briefs,
+            # How she feels, but not why: the reasons may be about the person or someone else.
+            feelings_context=feelings_context(self.live.feelings, reasons=False),
         )
 
     async def interests_sparked(self, who: str, message: str) -> str:

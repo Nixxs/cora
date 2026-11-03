@@ -235,7 +235,7 @@ Screen > .screen--selection {
     scrollbar-size-horizontal: 1;
 }
 
-/* Just tall enough for the relationship box's contents; narrower than this pans instead. */
+/* Just tall enough for the feelings box's contents; narrower than this pans instead. */
 #dashboard-middle > .dashboard-box {
     width: 20%;
     height: 16;
@@ -248,8 +248,14 @@ Screen > .screen--selection {
 }
 
 /* From 5 to 26 weeks of the heatmap: initials, cells and gaps, plus border and padding. */
+/* Under the feelings box, the width of a middle-row box. */
+#relationship-box {
+    width: 18%;
+    min-width: 34;
+}
+
 #conversations-box {
-    width: 30%;
+    width: 18%;
     min-width: 16;
     max-width: 58;
 }
@@ -440,6 +446,36 @@ Screen > .screen--selection {
     color: #8fcca6;
 }
 
+.feeling-row {
+    height: 1;
+}
+
+/* As wide as the longest feeling's word, so the graphs line up. */
+.feeling-name {
+    width: 10;
+    color: #415575;
+}
+
+.feeling-name.feeling-felt {
+    color: #8f98a8;
+}
+
+#excitement-feeling { color: #e0b45c; }
+#contentment-feeling { color: #8fcca6; }
+#curiosity-feeling { color: #7fb8d8; }
+#fulfilment-feeling { color: #c9a86a; }
+#irritation-feeling { color: #e0905c; }
+#hurt-feeling { color: #d27a7a; }
+
+#feeling-latest-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#feeling-latest {
+    height: auto;
+}
+
 #memory-kinds {
     height: auto;
     color: #a6acd8;
@@ -496,7 +532,7 @@ Screen > .screen--selection {
 
 /* Beside the heatmap; a percentage, as only the context box may use a fr width in a scrolling row. */
 #tasks-box {
-    width: 30%;
+    width: 22%;
     min-width: 34;
 }
 

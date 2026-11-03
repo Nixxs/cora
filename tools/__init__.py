@@ -20,6 +20,7 @@ from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
 from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
+from .feel import FeelTool, SCHEMA as FEEL_SCHEMA, validate_arguments as validate_feel_arguments
 from .note_desire import NoteDesireTool, SCHEMA as NOTE_DESIRE_SCHEMA, validate_arguments as validate_note_desire_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
@@ -53,7 +54,7 @@ def create_tool_registry(
     task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
     calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
-    signal_reaches_person=lambda: False, message_person=_not_set_up,
+    signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -72,6 +73,8 @@ def create_tool_registry(
     registry.register(DESIRE_SCHEMA, validate_desire_arguments, recall_desire.handle)
     note_desire = NoteDesireTool(get_connection, is_closing, write_debug)
     registry.register(NOTE_DESIRE_SCHEMA, validate_note_desire_arguments, note_desire.handle)
+    feel = FeelTool(get_connection, is_closing, write_debug, note_feeling)
+    registry.register(FEEL_SCHEMA, validate_feel_arguments, feel.handle)
     random_number = RandomNumberTool(get_connection, is_closing, write_debug)
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)

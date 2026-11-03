@@ -1059,6 +1059,32 @@ class DesireOpportunityRecord(Base):
     offered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class FeelingEventRecord(Base):
+    """One reaction Cora reported: a feeling, how strong, and why. Never changed once saved."""
+
+    __tablename__ = "feeling_events"
+    __table_args__ = (
+        CheckConstraint(
+            "feeling IN ('excitement', 'contentment', 'curiosity', 'fulfilment', 'irritation', 'hurt')",
+            name="feeling_events_feeling_check",
+        ),
+        CheckConstraint("strength IN ('small', 'medium', 'strong')", name="feeling_events_strength_check"),
+        CheckConstraint("btrim(reason) <> '' AND char_length(reason) <= 200", name="feeling_events_reason_check"),
+        Index("feeling_events_felt_at_idx", "felt_at"),
+        Index("feeling_events_conversation_id_idx", "conversation_id"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    feeling: Mapped[str] = mapped_column(Text)
+    strength: Mapped[str] = mapped_column(Text)
+    reason: Mapped[str] = mapped_column(Text)
+    felt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    conversation_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("public.conversations.id", name="feeling_events_conversation_id_fkey", ondelete="RESTRICT"),
+    )
+
+
 class DesireWorkerStateRecord(Base):
     """At most one row: when Cora last reflected on what she wants."""
 

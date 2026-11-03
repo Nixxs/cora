@@ -88,7 +88,7 @@ class TasksMixin:
                     text = await self.backend_chat.reply(
                         content=[{"type": "input_text", "text": COORDINATOR_NOTE + json.dumps(
                             {"news": news, "task": task}, ensure_ascii=False)}],
-                        history=[], sections=await self.person_sections(), model=self.live.delegation_model,
+                        history=[], sections=await self.person_sections(feelings=False), model=self.live.delegation_model,
                         route=self.coordinator_route(lapsed),
                     )
                 except Exception as error:

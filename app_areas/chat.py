@@ -13,6 +13,7 @@ from ui.composer import ChatComposer
 from live import typed_content
 from backend_chat import STANDBY_EXCLUDED, BackendRoute
 from session_config import instruction_sections
+from subconscious.emotions.feeling_rules import feelings_context
 from app_areas.shared import CONVERSATION_END_STANDBY_SECONDS
 
 
@@ -64,22 +65,24 @@ class ChatMixin:
 
     async def reply_in_writing(
         self, content: list[dict], history: list[dict], route: BackendRoute, extra_instructions: str = "",
-        on_text=None,
+        on_text=None, feelings: bool = True,
     ) -> str:
         """One turn of a chat without Live, as the same Cora: raises if it fails.
 
-        on_text, if given, gets her text so far as it streams in.
+        on_text, if given, gets her text so far as it streams in. feelings: whether how she feels
+        now is in her instructions (not in email).
         """
         # Reloaded each time, as at a Live connect, so she is the same Cora with what she
         # knows now: name, memories, interests, identity, relationship and chosen model.
         return await self.backend_chat.reply(
-            content=content, history=history, sections=await self.person_sections(),
+            content=content, history=history, sections=await self.person_sections(feelings),
             model=self.live.delegation_model, route=route, extra_instructions=extra_instructions,
             on_text=on_text,
         )
 
-    async def person_sections(self) -> dict[str, str]:
-        """The person's own context, reloaded so she is the same Cora with what she knows now."""
+    async def person_sections(self, feelings: bool = True) -> dict[str, str]:
+        """The person's own context, reloaded so she is the same Cora with what she knows now,
+        including how she feels (eased since last time) unless `feelings` is false."""
         await self.conversation_persistence.load_session_context()
         return instruction_sections(
             self.live.memory_context, interest_context=self.live.interest_context,
@@ -88,7 +91,7 @@ class ChatMixin:
             relationship_context=self.live.relationship_context, people_context=self.live.people_context,
             tasks_context=self.live.tasks_context, calendar_context=self.live.calendar_context,
             sign_ups_context=self.live.sign_ups_context, desire_context=self.live.desire_context,
-            own_name=self.live.own_name,
+            own_name=self.live.own_name, feelings_context=feelings_context(self.live.feelings) if feelings else "",
         )
 
     @work(group="text-chat")

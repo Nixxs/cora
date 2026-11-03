@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from collections.abc import Callable
+from datetime import datetime, timezone
 from uuid import UUID
 
 from dotenv import load_dotenv
@@ -21,6 +22,8 @@ from storage.people_store import PeopleStore
 from subconscious.relationship.appraisal import (
     APPRAISAL_FIELDS, FRICTIONS, REASON_MAX_CHARS, REPAIRS, SETTINGS, TONES, Appraisal, validate_appraisal,
 )
+from subconscious.emotions.feeling_rules import APPRAISAL_RECENT, FEELING_WORDS, appraisal_feeling
+from subconscious.emotions.feeling_store import FeelingStore
 from subconscious.relationship.appraisal_store import AppraisalStore
 
 APPRAISAL_INSTRUCTIONS = (
@@ -102,6 +105,23 @@ def describe(conversation_id: UUID, appraisal: Appraisal) -> str:
     )
 
 
+def feel_after_appraisal(engine: Engine, conversations: ConversationStore, conversation_id: UUID,
+                         appraisal: Appraisal, now: datetime) -> str | None:
+    """Thinking back on a recent conversation may leave her with one small or medium feeling; what was
+    felt, for Activity, or None. Never stops the appraisals."""
+    try:
+        feeling = appraisal_feeling(appraisal.tone, appraisal.friction, appraisal.repair)
+        if feeling is None:
+            return None
+        ended = conversations.get_conversation(conversation_id).ended_at
+        if ended is None or now - ended > APPRAISAL_RECENT:
+            return None
+        FeelingStore(engine).record(*feeling, f"thinking back on our conversation: {appraisal.reason}", now=now)
+    except Exception as error:
+        return f"A feeling from thinking back wasn't saved ({type(error).__name__})."
+    return f"Cora feels {FEELING_WORDS[feeling[0]]} ({feeling[1]}), thinking back on your conversation."
+
+
 def appraise_waiting_conversations(
     engine: Engine, *, model: str = BACKEND_MODEL,
     should_stop: Callable[[], bool], write_activity: Callable[[str, str], None],
@@ -132,6 +152,10 @@ def appraise_waiting_conversations(
                         f"cora_mistake={appraisal.cora_mistake}, repair={appraisal.repair}",
                         "Conversation appraised",
                     )
+                felt = feel_after_appraisal(engine, conversations, conversation_id, appraisal,
+                                            datetime.now(timezone.utc))
+                if felt and not should_stop():
+                    write_activity(felt, "Feeling")
     except Exception as error:
         # Database/API exceptions can contain credentials or private transcript text.
         if not should_stop():
