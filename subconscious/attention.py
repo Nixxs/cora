@@ -8,6 +8,15 @@ from dataclasses import dataclass
 # Stands in the queue for "consider raising one of Cora's findings". The finding is
 # chosen and marked as mentioned only at delivery, so nothing is claimed while waiting.
 FINDING_REQUEST = object()
+# The same for a chance she noticed for one of her desires.
+OPPORTUNITY_REQUEST = object()
+
+
+@dataclass(frozen=True)
+class RelevanceRequest:
+    """Consider raising the finding closest to what is being talked about. As with FINDING_REQUEST,
+    the finding is found and claimed only at delivery."""
+    conversation: str
 
 
 @dataclass(eq=False)
@@ -30,6 +39,8 @@ class AttentionManager:
         self, *, can_deliver, is_closing, schedule_delivery, send_observation,
         record_activity, delivery_finished, write_activity,
         claim_finding, send_finding, release_finding, send_message=None,
+        claim_relevant=None, send_relevant=None,
+        claim_opportunity=None, send_opportunity=None, release_opportunity=None,
     ):
         self.can_deliver = can_deliver
         self.is_closing = is_closing
@@ -42,6 +53,13 @@ class AttentionManager:
         self.send_finding = send_finding
         self.release_finding = release_finding
         self.send_message = send_message
+        # claim_relevant(conversation) -> (mention, similarity) or None; send_relevant(mention).
+        self.claim_relevant = claim_relevant
+        self.send_relevant = send_relevant
+        # A chance for one of her desires: claimed at delivery, like a finding.
+        self.claim_opportunity = claim_opportunity
+        self.send_opportunity = send_opportunity
+        self.release_opportunity = release_opportunity
         self.pending = deque()
         self.worker = None
         self.sending = False
@@ -66,6 +84,20 @@ class AttentionManager:
         if self.stopped or self.is_closing() or FINDING_REQUEST in self.pending:
             return
         self.pending.append(FINDING_REQUEST)
+        self.check()
+
+    def submit_opportunity(self) -> None:
+        if self.stopped or self.is_closing() or self.claim_opportunity is None or OPPORTUNITY_REQUEST in self.pending:
+            return
+        self.pending.append(OPPORTUNITY_REQUEST)
+        self.check()
+
+    def submit_relevance(self, conversation: str) -> None:
+        """Not user activity either. A newer request replaces one still waiting."""
+        if self.stopped or self.is_closing() or self.claim_relevant is None:
+            return
+        self.pending = deque(item for item in self.pending if not isinstance(item, RelevanceRequest))
+        self.pending.append(RelevanceRequest(conversation))
         self.check()
 
     def submit_message(self, message: PersonMessage) -> None:
@@ -99,6 +131,10 @@ class AttentionManager:
         try:
             if item is FINDING_REQUEST:
                 attempted = await self._offer_finding()
+            elif isinstance(item, RelevanceRequest):
+                attempted = await self._offer_relevant(item.conversation)
+            elif item is OPPORTUNITY_REQUEST:
+                attempted = await self._offer_opportunity()
             elif isinstance(item, PersonMessage):
                 await self._send_message(item)
             else:
@@ -136,35 +172,56 @@ class AttentionManager:
 
     async def _offer_finding(self) -> bool:
         """Claim a finding only now that Live is quiet; return whether one was sent."""
+        return await self._offer(self.claim_finding, self.send_finding, self.release_finding, "Finding", "Finding")
+
+    async def _offer_relevant(self, conversation: str) -> bool:
+        """Claim the finding closest to the conversation, if one fits; return whether one was sent."""
+        async def claim():
+            claimed = await self.claim_relevant(conversation)
+            if claimed is None:
+                return None
+            mention, similarity = claimed
+            self._offered_note = f"Relevant finding offered to Live (match {similarity:.2f})."
+            return mention
+        return await self._offer(claim, self.send_relevant, self.release_finding, "Relevant finding", "Finding",
+                                 failed="Relevance check failed")
+
+    async def _offer_opportunity(self) -> bool:
+        """Claim a chance for one of her desires only now that Live is quiet; return whether one was sent."""
+        return await self._offer(self.claim_opportunity, self.send_opportunity, self.release_opportunity,
+                                 "Opportunity", "Desires")
+
+    async def _offer(self, claim, send, release, name: str, title: str, *, failed: str | None = None) -> bool:
+        self._offered_note = f"{name} offered to Live."
         try:
-            mention = await self.claim_finding()
+            item = await claim()
         except Exception as error:
-            self.write_activity(f"Finding check failed ({type(error).__name__}).", "Finding failed")
+            self.write_activity(f"{failed or name + ' check failed'} ({type(error).__name__}).", f"{title} failed")
             return False
-        if mention is None:
+        if item is None:
             return False
         # The database call takes time; Live may no longer be free.
         if self.stopped or self.is_closing() or not self.can_deliver():
-            await self._release_finding(mention, "Finding not sent (Live became busy)")
+            await self._release(release, item, f"{name} not sent (Live became busy)", title)
             return False
         try:
             self.record_activity()
-            await asyncio.wait_for(self.send_finding(mention), timeout=5)
+            await asyncio.wait_for(send(item), timeout=5)
         except Exception as error:
             # Unlike observations, release it: a rare partial send may repeat, but a
             # failed one is not lost.
-            await self._release_finding(mention, f"Finding send failed ({type(error).__name__})")
+            await self._release(release, item, f"{name} send failed ({type(error).__name__})", title)
         else:
-            self.write_activity("Finding offered to Live.", "Finding offered")
+            self.write_activity(self._offered_note, f"{title} offered")
         return True
 
-    async def _release_finding(self, mention, reason: str) -> None:
+    async def _release(self, release, item, reason: str, title: str) -> None:
         try:
-            await self.release_finding(mention)
+            await release(item)
         except Exception as error:
-            self.write_activity(f"{reason}; release failed ({type(error).__name__}).", "Finding failed")
+            self.write_activity(f"{reason}; release failed ({type(error).__name__}).", f"{title} failed")
         else:
-            self.write_activity(f"{reason}; it can be offered later.", "Finding deferred")
+            self.write_activity(f"{reason}; it can be offered later.", f"{title} deferred")
 
     def stop(self) -> None:
         """Reject new work; the app waits for an already-running bounded send."""

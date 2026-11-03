@@ -242,6 +242,15 @@ class FadeDatabaseTests(unittest.TestCase):
         self.assertLessEqual(plans, {"Memory 3", "Dentist on Friday"})
         self.assertIsNotNone(self.memories.get_memory(UUID(int=4)))
 
+    def test_expectations_are_recent_current_plans_and_decisions_newest_first(self):
+        now = datetime.now(timezone.utc)
+        self.add_said(2, days_ago=3, kind="task", vector=(1, 0))
+        self.add_said(3, days_ago=1, kind="decision", vector=(1, 0))
+        self.add_said(4, days_ago=1, kind="fact", vector=(1, 0))                 # not something awaited
+        self.add_said(5, days_ago=20, kind="task", vector=(1, 0))                # too long ago
+        self.add_said(6, days_ago=0, kind="task", vector=(1, 0), fades_at=now - timedelta(hours=1))  # passed
+        self.assertEqual(self.memories.expectations(now), ["Dentist on Friday", "Memory 3", "Memory 2"])
+
     def test_service_saves_date_with_mocked_model(self):
         day = date.today() + timedelta(days=3)
         with patch("memory.fade_memory.OpenAI") as factory:

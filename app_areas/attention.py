@@ -11,12 +11,17 @@ from messaging.setup import (
 )
 from subconscious.event_bus import FindingEvent, ObservationEvent
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
+from subconscious.interests.relevance import conversation_text
+from subconscious.desires.opportunities import claim_opportunity_now
 from greeting import (
     choose_hook, finding_hook, greeting_brief, knows_them_well, last_thread_hook, memory_hook, signal_hook,
 )
 
 
 FINDING_IDLE_SECONDS = 90
+
+# A finding related to the conversation can come in a short pause after the person says something.
+RELEVANCE_IDLE_SECONDS = 4
 
 # At launch, the greeting waits up to this long for Signal messages that waited while Cora was
 # closed to be answered, counting them all in once nothing new has come for SIGNAL_QUIET_SECONDS.
@@ -166,5 +171,33 @@ class AttentionMixin:
         )
 
     def check_findings(self) -> None:
-        if self.can_offer_finding():
+        if not self.can_offer_finding():
+            return
+        # A chance for something she wants comes before a finding; the next lull has the finding.
+        if self.opportunity_waiting:
+            self.attention.submit_opportunity()
+        else:
             self.event_bus.publish(FindingEvent(source="interests"))
+
+    async def claim_opportunity(self):
+        chance = await asyncio.to_thread(claim_opportunity_now)
+        if chance is None:
+            self.opportunity_waiting = False  # until the next check finds one
+        return chance
+
+    def check_relevance(self) -> None:
+        """After each new message from the person, in a short pause, look for a finding that fits."""
+        if not (self.can_deliver_observation() and not self.live_transition_blockers()
+                and not self.attention.pending
+                and monotonic() - self.inactivity.last_activity >= RELEVANCE_IDLE_SECONDS):
+            return
+        history = self.conversation.get_reconnect_history()
+        theirs = [message for message in history if message["role"] == "user"]
+        # Their latest message, and how many came before it, so a repeated "yes" still counts as new.
+        latest = (len(theirs), theirs[-1]["content"][0]["text"]) if theirs else None
+        if latest is None or latest == self.relevance_seen:
+            return
+        self.relevance_seen = latest
+        conversation = conversation_text(history)
+        if conversation is not None:
+            self.attention.submit_relevance(conversation)

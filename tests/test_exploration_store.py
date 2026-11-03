@@ -11,11 +11,11 @@ from uuid import uuid4
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
-from storage.models import InterestExplorationRecord
+from storage.models import MEMORY_EMBEDDING_DIMENSIONS, InterestExplorationRecord
 from subconscious.desires.desire_rules import MAX_REINFORCE_DELTA
 from subconscious.desires.desire_store import DesireStore
 from subconscious.interests.exploration_store import (
-    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, REACH_OUT_FRESH_FOR, SIGN_UP_WISH_FRESH_FOR, WANDER_AREAS,
+    LIST_LIMIT, MENTION_DAILY_LIMIT, MENTION_GAP, REACH_OUT_FRESH_FOR, RELEVANT_FRESH_FOR, SIGN_UP_WISH_FRESH_FOR, WANDER_AREAS,
     ExplorationStore, ReachOut, SignUpWish, mention_limits,
 )
 from subconscious.interests.interest_store import WANDERING, Spark
@@ -25,6 +25,19 @@ import test_interest_store as interest_tests
 NOW = interest_tests.NOW
 FINDING = ("Carburettors were tuned by ear", ["How did fuel injection replace them?"],
            ["https://example.com/carburettors"])
+
+
+def axis(n):
+    vector = [0.0] * MEMORY_EMBEDDING_DIMENSIONS
+    vector[n] = 1.0
+    return vector
+
+
+def blend(similarity):
+    """A unit vector with this cosine similarity to axis(0), and the rest toward axis(5)."""
+    vector = axis(0)
+    vector[0], vector[5] = similarity, (1 - similarity ** 2) ** 0.5
+    return vector
 
 
 class ExplorationValidationTests(unittest.TestCase):
@@ -296,6 +309,56 @@ class ExplorationStoreDatabaseTests(unittest.TestCase):
         self.assertFalse(self.explorations.release_mention(mention))
         self.assertEqual(self.mentioned_at(), {"Carburettors were tuned by ear": later})
 
+    def test_a_finding_related_to_the_conversation_is_claimed_within_its_own_limits(self):
+        self.interests.spawn(*interest_tests.spawn_args("Moss gardens"), now=NOW)
+        self.found("Carburettors were tuned by ear")
+        self.found("Moss grows on north faces", NOW + timedelta(hours=6.1))
+        later = NOW + timedelta(days=5)  # too old for a lull, not for relevance
+        waiting = dict((text, id_) for id_, text in self.explorations.unembedded_findings(now=later))
+        self.assertEqual(set(waiting), {f"{self.interest.title}: Carburettors were tuned by ear",
+                                        "Moss gardens: Moss grows on north faces"})
+        carburettors, moss = (waiting[f"{self.interest.title}: Carburettors were tuned by ear"],
+                              waiting["Moss gardens: Moss grows on north faces"])
+        self.explorations.save_finding_embeddings({carburettors: axis(0), moss: axis(1)})
+        self.assertEqual(self.explorations.unembedded_findings(now=later), [])
+        closest = self.explorations.closest_findings(axis(0), now=later)
+        self.assertEqual([(round(similarity, 3), mention.finding) for similarity, mention in closest],
+                         [(1.0, "Carburettors were tuned by ear"), (0.0, "Moss grows on north faces")])
+        self.assertIsNone(self.mentioned_at()["Carburettors were tuned by ear"])  # looking claims nothing
+
+        # Not related enough: nothing claimed.
+        self.assertIsNone(self.explorations.claim_relevant_mention(blend(0.45), now=later))
+        mention, similarity = self.explorations.claim_relevant_mention(blend(0.9), now=later)
+        self.assertEqual((mention.finding, round(similarity, 2)), ("Carburettors were tuned by ear", 0.9))
+        self.assertEqual(self.mentioned_at()["Carburettors were tuned by ear"], later)
+        # Raised once; another waits RELEVANT_GAP, and the lull ones count it too.
+        self.assertIsNone(self.explorations.claim_relevant_mention(axis(1), now=later + timedelta(minutes=29)))
+        self.assertIsNone(self.explorations.claim_relevant_mention(axis(0), now=later + timedelta(hours=1)))
+        self.assertIsNone(self.explorations.claim_mention(now=later + timedelta(hours=1)))
+        mention, _ = self.explorations.claim_relevant_mention(axis(1), now=later + timedelta(minutes=31))
+        self.assertEqual(mention.interest_title, "Moss gardens")
+
+    def test_relevant_mentions_have_a_daily_limit_and_skip_stale_dormant_or_mentioned_findings(self):
+        for n, title in enumerate(("Second", "Third")):
+            self.interests.spawn(*interest_tests.spawn_args(title), now=NOW)
+        for n, finding in enumerate(("First", "Second", "Third")):
+            self.found(finding, NOW + timedelta(hours=6.1 * n))
+        ids = {text.split(": ")[1]: id_ for id_, text in self.explorations.unembedded_findings(now=NOW + timedelta(days=1))}
+        self.explorations.save_finding_embeddings({ids["First"]: axis(0), ids["Second"]: axis(1), ids["Third"]: axis(2)})
+        start = NOW + timedelta(days=1)
+        with patch("subconscious.interests.exploration_store.RELEVANT_DAILY_LIMIT", 2):
+            self.assertIsNotNone(self.explorations.claim_relevant_mention(axis(0), now=start))
+            self.assertIsNotNone(self.explorations.claim_relevant_mention(axis(1), now=start + timedelta(hours=1)))
+            self.assertIsNone(self.explorations.claim_relevant_mention(axis(2), now=start + timedelta(hours=2)))
+        # A mentioned finding is never closest again; one past RELEVANT_FRESH_FOR is never raised.
+        self.assertIsNone(self.explorations.claim_relevant_mention(axis(0), now=start + timedelta(days=2)))
+        self.assertIsNone(self.explorations.claim_relevant_mention(
+            axis(2), now=NOW + timedelta(hours=12.2) + RELEVANT_FRESH_FOR + timedelta(seconds=1)))
+        with self.engine.begin() as connection:
+            connection.execute(text("UPDATE public.interests SET status = 'dormant', strength = 0.05 "
+                                    "WHERE title = 'Third'"))
+        self.assertIsNone(self.explorations.claim_relevant_mention(axis(2), now=start + timedelta(days=2)))
+
     def test_a_start_waits_for_a_concurrent_start_and_sees_its_attempt(self):
         self.interests.spawn(*interest_tests.spawn_args("Second"), now=NOW)
         results = []
@@ -425,7 +488,8 @@ class WanderDatabaseTests(unittest.TestCase):
     def test_a_held_desire_gets_a_step_once_a_day_taking_turns_and_steps_are_never_mentioned(self):
         def clear():
             with self.engine.begin() as connection:
-                for table in ("interest_explorations", "desire_events", "desire_sources", "desires"):
+                for table in ("interest_explorations", "desire_opportunities", "desire_events", "desire_sources",
+                              "desires"):
                     connection.execute(text(f"DELETE FROM public.{table}"))
         self.addCleanup(clear)
         desires = DesireStore(self.engine)

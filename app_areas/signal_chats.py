@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import replace
+import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -21,6 +22,7 @@ from services.confirmation import APPROVED, DECLINED, TIMED_OUT
 from messaging.commitment import check_commitment
 from backend_chat import SIGNAL_EXCLUDED, BackendRoute
 from tools.pass_on import CLIENT_ONLY
+from subconscious.interests.relevance import sparked_interests_now
 from session_config import (
     BACKEND_MODEL, SIGNAL_CHAT_INSTRUCTIONS, client_chat_instructions, instruction_sections, stranger_reply,
 )
@@ -339,7 +341,7 @@ class SignalChatsMixin:
         """Professional mode: her own identity and interests and what she remembers of them, none of the person's."""
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history,
-            sections=await self.client_sections(client), model=self.live.delegation_model,
+            sections=await self.client_sections(client, batch), model=self.live.delegation_model,
             # Web search, memory search limited to what they may know, and passing things on to the
             # person; no services, nothing at the desk.
             route=BackendRoute(
@@ -349,8 +351,9 @@ class SignalChatsMixin:
             extra_instructions=client_chat_instructions(client.name, self.live.person_name, self.live.own_name),
         )
 
-    async def client_sections(self, client: Client) -> dict[str, str]:
-        """A client's chat context: her own self, what she remembers of them, her view of them and their briefs."""
+    async def client_sections(self, client: Client, batch: list[IncomingMessage] = ()) -> dict[str, str]:
+        """A client's chat context: her own self, the interests their message touches on, what she
+        remembers of them, her view of them and their briefs."""
         await self.conversation_persistence.load_session_context()
         try:
             # What she remembers from their earlier chats: theirs only, never the person's.
@@ -374,10 +377,25 @@ class SignalChatsMixin:
         except Exception as error:
             self.activity.write(f"{client.name}'s task briefs didn't load ({type(error).__name__}).", "Signal client")
             briefs = ""
+        sparked = await self.interests_sparked(client.name, "\n".join(message.text for message in batch if message.text))
         return instruction_sections(
-            remembered, interest_context=self.live.interest_context, identity_context=self.live.identity_context,
+            remembered, sparked_interests=sparked, identity_context=self.live.identity_context,
             self_image_context=self.live.self_image_context, client_people_context=people, task_briefs=briefs,
         )
+
+    async def interests_sparked(self, who: str, message: str) -> str:
+        """Only the interests a contact's message touches on ("" for none, or if they can't be checked)."""
+        if not message.strip():
+            return ""
+        try:
+            sparked = await asyncio.to_thread(sparked_interests_now, message)
+        except Exception as error:
+            self.activity.write(f"Interests for {who}'s chat weren't checked ({type(error).__name__}).", "Interests")
+            return ""
+        if sparked:
+            titles = ", ".join(item["title"] for item in json.loads(sparked))
+            self.activity.write(f"{who}'s message touched on: {titles}.", "Interests")
+        return sparked
 
     async def raise_client_concern(self, client_id, client_name: str, concern: str) -> str | None:
         """From a client's chat, at once: her own concern about them, not their words."""

@@ -39,6 +39,7 @@ class FindingDeliveryTests(unittest.IsolatedAsyncioTestCase):
         async with queued_app() as (app, pilot, clock):
             received = MagicMock()
             app.event_bus.subscribe(FindingEvent, received)
+            app.opportunity_waiting = False  # no chance for a desire goes first
             app.inactivity.last_activity = clock.return_value - app_areas.attention.FINDING_IDLE_SECONDS
             with patch.object(app.attention, "submit_finding") as submit:
                 app.check_findings()
