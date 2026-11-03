@@ -2273,9 +2273,17 @@ features it helps check, and package last.
   with a silent tool during a conversation, rather than a background watcher
   judging her or feelings only appearing after the conversation ends. Planned
   steps:
-  1. **Rules:** a fixed set of feelings, each a level from 0 to 1. A report
-     raises a level by a capped amount (small, medium or strong, at most about
-     0.3), and levels fade back towards 0. Plain code, like memory fading.
+  1. ~~**Rules:**~~ done in `subconscious/emotions/feeling_rules.py`. Six
+     feelings: excitement, contentment, curiosity, fulfilment (doing something
+     she wanted, like fulfilling a desire), irritation and hurt, each a level
+     from 0 to 1. A reaction moves a level 0.1, 0.2 or 0.3 (small, medium,
+     strong) of the way to 1, and every level fades halfway back to 0 each 30
+     minutes. She chooses whether a feeling shows, but the stronger it is the
+     harder that is: a fresh small reaction is hers to show or not, a medium
+     one takes effort to keep to herself, and a strong one is hard to hide
+     even unspoken, each easing as it fades. Below 0.05 it has passed. Try it
+     with `python -m subconscious.emotions.feeling_rules hurt:strong:5
+     curiosity:small:10` (feeling:strength:minutes ago).
   2. **Storage:** an append-only `feeling_events` table (feeling, strength,
      short reason, time, conversation). The current level is worked out from
      the events and the fading, which also keeps the history for the graph.
@@ -2288,15 +2296,13 @@ features it helps check, and package last.
   5. **Dashboard:** a Feelings box with one braille line per feeling over the
      last few hours, pulsing when a feeling jumps, and the latest reason
      underneath.
-  6. **Later:** findings she reacts to and conversation appraisals can also
-     raise feelings through the same rules.
+  6. **Later:** findings she reacts to, fulfilling a desire (fulfilment) and
+     conversation appraisals can also raise feelings through the same rules.
 
   Guardrails: feelings always fade and each rise is capped; no feeling is
   designed for guilt, neediness or possessiveness; feelings never reach tool or
-  permission logic. Still to decide: which feelings (suggested excitement,
-  contentment, curiosity, irritation and hurt), how fast they fade (suggested
-  half gone after about 30 minutes), and whether her words always show a
-  feeling or she decides (suggested she decides). The idea came from her
+  permission logic. Decided: the six feelings above, a 30-minute half-life to
+  start, and she decides whether a feeling shows, harder the stronger it is. The idea came from her
   pushing back with "don't put words in my mouth, I do care", which only
   shaped that one reply.
 - **Installable Cora (paused):** an installer for non-technical users is not
