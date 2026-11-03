@@ -123,6 +123,8 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0041_desire_pursuits.sql",
             "0042_desire_adapted_from.sql",
             "0043_desire_events_as_evidence.sql",
+            "0044_finding_embeddings.sql",
+            "0045_create_desire_opportunities.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])
