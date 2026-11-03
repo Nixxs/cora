@@ -158,6 +158,7 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.TaskStore") as tasks, \
                 patch("storage.dashboard_snapshot.SignUpStore") as sign_ups, \
                 patch("storage.dashboard_snapshot.live_desires", return_value=(("To see a redwood", 0.5, "held"),)), \
+                patch("storage.dashboard_snapshot.recent_feelings", return_value=((("hurt", (0.3,), True),), None)), \
                 patch("storage.dashboard_snapshot.live_interests",
                       return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
             store.return_value.current_values.return_value = values
@@ -174,6 +175,7 @@ class DashboardSnapshotTests(unittest.TestCase):
         self.assertEqual(snapshot.traits, ("trait",))
         self.assertEqual(snapshot.sign_ups, ("sign-up",))
         self.assertEqual(snapshot.desires, (("To see a redwood", 0.5, "held"),))
+        self.assertEqual(snapshot.feelings, (("hurt", (0.3,), True),))
         self.assertEqual(snapshot.tasks, ("task",))
         conversations.return_value.daily_message_counts.assert_called_once_with(now, CALENDAR_DAYS)
         self.assertEqual(snapshot.message_days, (3, 0))
@@ -255,7 +257,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             row = app.screen.query_one("#dashboard-middle", HorizontalScroll)
             boxes = [app.screen.query_one(f"#{box_id}") for box_id in (
-                "relationship-box", "memories-box", "interests-box", "identity-box",
+                "feelings-box", "memories-box", "interests-box", "identity-box",
             )]
             # 80 columns can't hold four 34-wide boxes, so the row scrolls instead of squashing them.
             self.assertEqual({box.outer_size.width for box in boxes}, {34})
@@ -823,7 +825,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_wide_bottom_row_caps_the_heatmap_and_gives_context_the_rest(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            await pilot.resize_terminal(240, 53)
+            # 18% of the row reaches the heatmap's cap of 58 columns.
+            await pilot.resize_terminal(330, 53)
             await pilot.click("#view-button")
             await pilot.pause()
             screen = app.screen

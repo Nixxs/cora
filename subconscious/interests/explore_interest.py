@@ -23,6 +23,8 @@ from subconscious.interests.exploration_store import (
     clean_reach_out, clean_sign_up, clean_sources, clean_tangents,
 )
 from subconscious.desires.desire_store import TEXT_MAX_CHARS as NOTE_MAX_CHARS, DesireStore
+from subconscious.emotions.feeling_rules import FEELING_WORDS, FEELINGS, STRENGTHS, validate_reaction
+from subconscious.emotions.feeling_store import FeelingStore
 from subconscious.interests.browse_exploration import (
     BROWSER_NOTE, BROWSING, RANDOM_PAGE, START_URL_NOTE, BrowserAccess, browse,
 )
@@ -68,6 +70,13 @@ PURSUE_REACH_OUT_RULES = (
     "yourself, why you want to tell them now. "
 )
 
+# Her own feeling about what she found, if it stirred one: hers to report, never inferred.
+FEELING_RULE = (
+    "feeling: if what you found genuinely stirred a feeling in you, which one (excitement, "
+    "contentment, curiosity, fulfilment, irritation or hurt) and how strongly (small, medium or "
+    "strong); null if it didn't, which is often. Never inflate it. "
+)
+
 # What every exploration and wander shares: how to read, and what to return.
 EXPLORE_RULES = (
     "Read widely: encyclopedias, magazines, museums, field guides, enthusiasts' sites and good "
@@ -81,7 +90,7 @@ EXPLORE_RULES = (
     "(surprising, delightful, dull, troubling or anything else) and why. Your view, not a "
     "summary; disagreeing or being unimpressed is fine. Use null if it left no real impression "
     "or finding is null. pull: how much this makes you want to keep exploring it: 'none', "
-    "'some' or 'strong'; be honest, most are 'some' or 'none'. "
+    "'some' or 'strong'; be honest, most are 'some' or 'none'. " + FEELING_RULE +
     f"next_questions: up to {MAX_NEXT_QUESTIONS} short questions (under {QUESTION_MAX_CHARS} "
     "characters each) you would like to explore next; empty when finding is null. "
     + SIDE_RULES + "sources: the web addresses you "
@@ -142,7 +151,8 @@ def pursue_instructions(how: str, note: str = "") -> str:
         f"your own words, under {FINDING_MAX_CHARS} characters (where, when, how, what it "
         "takes). Use null if you found nothing useful. reaction: how this leaves you feeling about "
         f"the wish, in a sentence or two, under {REACTION_MAX_CHARS} characters; null if nothing "
-        f"struck you or finding is null. next_steps: up to {MAX_NEXT_QUESTIONS} concrete next "
+        f"struck you or finding is null. " + FEELING_RULE + "Fulfilment fits a step that brings "
+        f"the wish really closer. next_steps: up to {MAX_NEXT_QUESTIONS} concrete next "
         f"steps you'd take (under {QUESTION_MAX_CHARS} characters each), such as something to "
         "look into, a site to join, or something to ask the person to help with; empty when "
         "finding is null. " + TANGENT_RULES + PURSUE_REACH_OUT_RULES + SIGN_UP_RULES
@@ -161,12 +171,18 @@ BROWSE_EXPLORE_INSTRUCTIONS = explore_instructions(BROWSING, BROWSER_NOTE)
 BROWSE_WANDER_INSTRUCTIONS = wander_instructions(BROWSING, BROWSER_NOTE + START_URL_NOTE)
 
 TEXT = {"type": "string"}
-EXPLORE_FIELDS = {"finding", "reaction", "pull", "next_questions", "tangents", "reach_out", "sign_up", "sources"}
+EXPLORE_FIELDS = {"finding", "reaction", "feeling", "pull", "next_questions", "tangents", "reach_out", "sign_up",
+                  "sources"}
 EXPLORE_SCHEMA = {
     "type": "object", "additionalProperties": False, "required": sorted(EXPLORE_FIELDS),
     "properties": {
         "finding": {"type": ["string", "null"]},
         "reaction": {"type": ["string", "null"]},
+        "feeling": {"anyOf": [{
+            "type": "object", "additionalProperties": False, "required": ["feeling", "strength"],
+            "properties": {"feeling": {"type": "string", "enum": list(FEELINGS)},
+                           "strength": {"type": "string", "enum": list(STRENGTHS)}},
+        }, {"type": "null"}]},
         "pull": {"type": "string", "enum": list(PULLS)},
         "next_questions": {"type": "array", "items": TEXT},
         "tangents": {"type": "array", "items": {
@@ -210,6 +226,7 @@ class Discovery:
     topic: str | None = None  # what a wander was about
     pages: int = 0  # pages she read, when she browsed
     sign_up: tuple[str, str, str] | None = None  # (url, what, why): a site she'd like an account on, rarely
+    feeling: tuple[str, str] | None = None  # (feeling, strength) it stirred in her, if any
 
 
 def seen_urls(response) -> set[str]:
@@ -282,6 +299,12 @@ def discovery(payload: dict, seen: set[str], pages: int = 0) -> Discovery:
         if not isinstance(sign_up, dict) or set(sign_up) != {"site_url", "what", "why"}:
             raise ValueError("Invalid sign_up")
         sign_up = clean_sign_up((sign_up["site_url"], sign_up["what"], sign_up["why"]))
+    feeling = payload["feeling"]
+    if feeling is not None:
+        if not isinstance(feeling, dict) or set(feeling) != {"feeling", "strength"}:
+            raise ValueError("Invalid feeling")
+        validate_reaction(feeling["feeling"], feeling["strength"])
+        feeling = (feeling["feeling"], feeling["strength"])
     topic = payload.get("topic")
     reaction = payload["reaction"]
     return Discovery(
@@ -293,7 +316,7 @@ def discovery(payload: dict, seen: set[str], pages: int = 0) -> Discovery:
             (tangent["title"], tangent["why"]) for tangent in tangents
         )),
         payload["pull"], reach_out,
-        None if topic is None else clean_text(topic, "topic", TITLE_MAX_CHARS), pages, sign_up,
+        None if topic is None else clean_text(topic, "topic", TITLE_MAX_CHARS), pages, sign_up, feeling,
     )
 
 
@@ -445,6 +468,14 @@ def explore_next(
         extras.append("wants to tell you about it")
     if saved.sign_up is not None:
         extras.append("would like to sign up to a site")
+    if found.feeling is not None:
+        about = start.pursuit.wish if pursuing else saved.topic if wandering else start.interest.title
+        try:
+            FeelingStore(store.engine).record(*found.feeling, f"{about}: {saved.reaction or saved.finding}",
+                                              now=clock())
+            extras.append(f"felt {FEELING_WORDS[found.feeling[0]]} ({found.feeling[1]})")
+        except Exception:
+            pass  # The finding is saved either way.
     return f"{verb} {title}: saved a finding ({', '.join(extras)})."
 
 

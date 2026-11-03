@@ -16,7 +16,7 @@ class ConversationPersistence:
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
                  set_self_image_context=lambda context: None, set_people_context=lambda context: None,
                  set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
-                 set_desire_context=lambda context: None,
+                 set_desire_context=lambda context: None, set_feelings=lambda feelings: None,
                  set_own_name=lambda name: None, set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
@@ -29,6 +29,7 @@ class ConversationPersistence:
         self.set_tasks_context = set_tasks_context
         self.set_sign_ups_context = set_sign_ups_context
         self.set_desire_context = set_desire_context
+        self.set_feelings = set_feelings
         self.set_relationship_context = set_relationship_context
         self.set_person_name = set_person_name
         self.set_own_name = set_own_name
@@ -271,6 +272,18 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_desire_context(context)
+
+        # How she feels now, worked out fresh each time so a feeling eases between replies.
+        if self.is_closing():
+            return
+        self.set_feelings([])
+        try:
+            feelings = await self.call_database(self.storage.load_feelings)
+        except Exception as error:
+            self.write_activity(f"Feelings didn't load ({type(error).__name__}); going on without them.", "Feeling")
+        else:
+            if not self.is_closing():
+                self.set_feelings(feelings)
 
         # The chosen delegation model loads last; if it fails Cora connects with the default.
         if self.is_closing():

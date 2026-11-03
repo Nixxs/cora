@@ -1843,7 +1843,11 @@ features it helps check, and package last.
 15. ~~Awareness W4: expectations from memory tasks.~~ Done: mail she or you
     were waiting on is urgent (see Awareness in Details below).
 16. Camera and screen awareness (waiting on devices at home).
-17. Emotions (nothing depends on it, so it can move earlier).
+17. ~~Emotions.~~ Done: six short-lived feelings she reports herself, fading
+    by half every 30 minutes, harder to hide the stronger they are, carried
+    through voice, typed chat and Signal, on the dashboard, and raised by
+    fulfilled wishes, findings and thinking back (see Emotions in Details
+    below).
 
 *Phase 4 — Cora 1.0*
 
@@ -2273,30 +2277,86 @@ features it helps check, and package last.
   with a silent tool during a conversation, rather than a background watcher
   judging her or feelings only appearing after the conversation ends. Planned
   steps:
-  1. **Rules:** a fixed set of feelings, each a level from 0 to 1. A report
-     raises a level by a capped amount (small, medium or strong, at most about
-     0.3), and levels fade back towards 0. Plain code, like memory fading.
-  2. **Storage:** an append-only `feeling_events` table (feeling, strength,
-     short reason, time, conversation). The current level is worked out from
-     the events and the fading, which also keeps the history for the graph.
-  3. **`feel` tool:** strict schema (feeling, strength, reason), silent, only
-     for a genuine reaction in the moment and never to steer the person; code
-     limits how often it is used per conversation, and each feeling goes to
-     Activity.
-  4. **Prompt:** at each connect, any feeling still noticeably high is added as
-     a short "How you're feeling right now" section.
-  5. **Dashboard:** a Feelings box with one braille line per feeling over the
-     last few hours, pulsing when a feeling jumps, and the latest reason
-     underneath.
-  6. **Later:** findings she reacts to and conversation appraisals can also
-     raise feelings through the same rules.
+  1. ~~**Rules:**~~ done in `subconscious/emotions/feeling_rules.py`. Six
+     feelings: excitement, contentment, curiosity, fulfilment (doing something
+     she wanted, like fulfilling a desire), irritation and hurt, each a level
+     from 0 to 1. A reaction moves a level 0.1, 0.2 or 0.3 (small, medium,
+     strong) of the way to 1, and every level fades halfway back to 0 each 30
+     minutes. She chooses whether a feeling shows, but the stronger it is the
+     harder that is: a fresh small reaction is hers to show or not, a medium
+     one takes effort to keep to herself, and a strong one is hard to hide
+     even unspoken, each easing as it fades. Below 0.05 it has passed. Try it
+     with `python -m subconscious.emotions.feeling_rules hurt:strong:5
+     curiosity:small:10` (feeling:strength:minutes ago).
+  2. ~~**Storage:**~~ done: migration 0047 adds an append-only
+     `feeling_events` table (feeling, strength, reason of up to 200
+     characters, felt_at, and the conversation if there was one), and
+     `subconscious/emotions/feeling_store.py` saves and reads it. The levels
+     now are worked out from the last six hours of reactions (anything older
+     has faded to nothing), which also keeps the history for the graph. In a
+     conversation she can note at most 8 feelings, and not the same feeling
+     again within 5 minutes; a refusal says why, for the tool to pass on.
+     Try it with `python -m subconscious.emotions.feeling_store --add
+     excitement medium "a new idea"`, or no arguments to see how she feels.
+  3. ~~**`feel` tool:**~~ done in `tools/feel.py`: strict schema (feeling,
+     strength, reason), silent, only for a genuine reaction in the moment,
+     never to perform, steer the person or make them responsible for it.
+     Offered in typed chat, the person's Signal chat and contacts' Signal
+     chats (saved to that contact's conversation), but not in any email:
+     email is more professional, and feelings rarely show there. In voice
+     her speaking model can't call tools, so she hands the feeling to her
+     backend like note_desire (in a request she's already making when she
+     can); the backend answers just "Noted." and she replies as she would
+     have. `app_areas/feelings.py` saves it within the step 2 limits and
+     writes "Cora feels hurt (strong): ..." to Activity (with "in Sarah's
+     chat" for a contact); a limit's reason goes back to her.
+  4. ~~**Prompt:**~~ done: a "How you're feeling right now" section (one line
+     per noticeable feeling: what, why, and how hard it is to hide) so
+     feelings carry through a conversation and ease as they fade.
+     - Each voice connect, and every written reply in typed chat and the
+       person's Signal chat, worked out fresh, so a feeling eases between
+       replies.
+     - Contacts' Signal chats get how she feels but not why: a reason may be
+       about the person or someone else.
+     - Never in email (the person's or a task thread) or the task
+       coordinator.
+     - In a running voice session (whose instructions can't change), a check
+       every minute (a database read, no model call) sends a quiet note when
+       a feeling begins, rises, eases or passes, including one she noted in a
+       Signal chat meanwhile. Activity shows "Quiet note to her voice: hurt
+       eased." A note that fails is tried again next minute.
+  5. ~~**Dashboard:**~~ done: a feelings box in the middle row beside
+     relationship, with one braille line per feeling in its own colour (a
+     point every 5 minutes over the last 6 hours, as much as fits; one strong
+     reaction fills most of a line). A line pulses for 10 minutes after she
+     reacts with that feeling, and its name is bright while she still feels
+     it. Underneath is her latest reaction: the feeling, how strong, how long
+     ago, and why. It refreshes with the rest of the dashboard every 30
+     seconds. It takes relationship's place at the start of the middle row,
+     and relationship moved to the start of the bottom row, under it (the
+     bottom row's conversations and tasks boxes narrowed to make room).
+  6. ~~**Other sources:**~~ done, through the same rules, outside any
+     conversation (so the per-conversation limits don't apply):
+     - **A fulfilled wish:** when her daily desire reflection fulfils one,
+       she feels strong fulfilment ("fulfilled a wish: ...").
+     - **Findings:** every exploration, wander and pursuit step now returns a
+       `feeling` (which one and how strong, or null, "which is often; never
+       inflate it"), her own report rather than inferred from her reaction
+       text. Fulfilment fits a pursuit step that brings a wish really closer.
+       The reason is what it was about plus her reaction.
+     - **Thinking back:** after a conversation is appraised, at most one
+       feeling, only from what the appraisal found: unrepaired friction aimed
+       at her or a hostile tone, hurt (medium); a curt one, irritation
+       (small); a warm one without friction, contentment (small). Her own
+       mistakes stir nothing (no guilt), and only a conversation that ended
+       within the last 2 hours counts, so a backlog appraised later is left
+       alone. Shown in Activity as "Cora feels content (small), thinking
+       back on your conversation."
 
   Guardrails: feelings always fade and each rise is capped; no feeling is
   designed for guilt, neediness or possessiveness; feelings never reach tool or
-  permission logic. Still to decide: which feelings (suggested excitement,
-  contentment, curiosity, irritation and hurt), how fast they fade (suggested
-  half gone after about 30 minutes), and whether her words always show a
-  feeling or she decides (suggested she decides). The idea came from her
+  permission logic. Decided: the six feelings above, a 30-minute half-life to
+  start, and she decides whether a feeling shows, harder the stronger it is. The idea came from her
   pushing back with "don't put words in my mouth, I do care", which only
   shaped that one reply.
 - **Installable Cora (paused):** an installer for non-technical users is not

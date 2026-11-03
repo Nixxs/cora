@@ -14,6 +14,7 @@ from devices.microphone import microphone_chunks
 from devices.speaker import Speaker
 from context_window import ContextTracker
 from session_config import BACKEND_MODEL, config_from_sections, instruction_sections
+from subconscious.emotions.feeling_rules import feelings_context
 
 
 def typed_content(message: str, image_seen: str | None = None) -> list[dict]:
@@ -58,6 +59,10 @@ class CoraLive:
         # Her sign-ups and how each stands.
         self.sign_ups_context = ""
         self.desire_context = ""
+        # How she feels now (FeelingNow, strongest first), and the band of each as her voice
+        # session last heard it, so a change can be passed on quietly.
+        self.feelings = []
+        self.feeling_bands: dict[str, str] = {}
         # Her full name, as she introduces herself to others (Settings).
         self.own_name = "Cora"
         # Her coming week, kept fresh by the app from her calendar.
@@ -100,8 +105,10 @@ class CoraLive:
                         relationship_context=self.relationship_context, people_context=self.people_context,
                         tasks_context=self.tasks_context, calendar_context=self.calendar_context,
                         sign_ups_context=self.sign_ups_context, desire_context=self.desire_context,
-                        own_name=self.own_name,
+                        own_name=self.own_name, feelings_context=feelings_context(self.feelings),
                     )
+                    # What this session knows of how she feels, for the quiet notes as it changes.
+                    self.feeling_bands = {item.feeling: item.band for item in self.feelings}
                     config = config_from_sections(
                         self.tool_schemas(), sections, self.conversation_history, self.delegation_model,
                     )
@@ -496,6 +503,20 @@ class CoraLive:
         )
         note = fit_note(note, NOTE_MAX_CHARS)
         await connection.session.thinking.append(event_id=event_id, delegation_id=None, content=note)
+        self.context.note(note)
+
+    async def note_feelings(self, lines: list[str]) -> None:
+        """Quietly tell voice Cora how her feelings have changed: eased, risen, new or passed."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Live is not ready for a feelings note")
+        note = fit_note(
+            "Silent context about your own feelings, not a message from the person and not a request: "
+            "don't mention this note. Whether a feeling shows is still your choice.\n" + "\n".join(lines),
+            NOTE_MAX_CHARS,
+        )
+        await connection.session.thinking.append(event_id=f"feelings_{uuid4().hex}", delegation_id=None,
+                                                 content=note)
         self.context.note(note)
 
     async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:

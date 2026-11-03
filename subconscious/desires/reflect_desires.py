@@ -25,6 +25,7 @@ from storage.model_settings_store import ModelSettingsStore
 from subconscious.desires.desire_rules import Change, settle
 from subconscious.desires.desire_store import Desire, DesireStore
 from subconscious.desires.propose_desires import propose_desires
+from subconscious.emotions.feeling_store import FeelingStore
 from subconscious.identity.identity_evidence import ExperienceBatch, read_experiences
 from subconscious.identity.identity_rules import is_held
 from subconscious.identity.identity_store import IdentityStore
@@ -63,7 +64,21 @@ def reflect_desires(
     refused = [problem for problem in problems if problem is not None]
     if refused:
         applied.append(f"{len(refused)} refused ({'; '.join(refused)})")
-    return f"Reflected on {len(batch.experiences)} experiences: {'; '.join(applied) or 'no changes'}{faded}."
+    felt = feel_fulfilled(store, [desire for desire in desires if desire.id in fulfilled], now)
+    return f"Reflected on {len(batch.experiences)} experiences: {'; '.join(applied) or 'no changes'}{faded}{felt}."
+
+
+def feel_fulfilled(store: DesireStore, fulfilled: list[Desire], now: datetime) -> str:
+    """Fulfilling a wish leaves her strongly fulfilled; a failure here never undoes the reflection."""
+    feelings = FeelingStore(store.engine)
+    felt = 0
+    for desire in fulfilled:
+        try:
+            feelings.record("fulfilment", "strong", f"fulfilled a wish: {desire.description}", now=now)
+            felt += 1
+        except Exception:
+            pass
+    return "; felt fulfilled" if felt else ""
 
 
 def histories(store: DesireStore, desires: list[Desire]) -> dict:

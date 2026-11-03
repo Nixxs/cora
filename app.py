@@ -64,6 +64,7 @@ from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
+from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -94,7 +95,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, BackgroundMixin, SignUpsMixin, App,
+    WebhooksMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -174,6 +175,7 @@ class CoraApp(
             set_tasks_context=lambda context: setattr(self.live, "tasks_context", context),
             set_sign_ups_context=lambda context: setattr(self.live, "sign_ups_context", context),
             set_desire_context=lambda context: setattr(self.live, "desire_context", context),
+            set_feelings=lambda feelings: setattr(self.live, "feelings", feelings),
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_own_name=lambda name: setattr(self.live, "own_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
@@ -275,6 +277,7 @@ class CoraApp(
             raise_concern=self.raise_client_concern, stop_replying=self.stop_replying_to_client,
             check_sign_up=self.check_sign_up, begin_sign_up=self.begin_sign_up,
             signal_reaches_person=self.signal_reaches_person, message_person=self.tell_person_on_signal,
+            note_feeling=self.note_feeling,
         )
         # Live never sees client-only tools such as pass_on.
         self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)
@@ -445,6 +448,7 @@ class CoraApp(
         self.exploration_timer = self.set_interval(EXPLORE_CHECK_SECONDS, self.check_exploration)
         self.finding_timer = self.set_interval(FINDING_CHECK_SECONDS, self.check_findings)
         self.relevance_timer = self.set_interval(RELEVANCE_CHECK_SECONDS, self.check_relevance)
+        self.feeling_timer = self.set_interval(FEELING_CHECK_SECONDS, self.check_feelings)
         self.background_round_timer = self.set_interval(BACKGROUND_ROUND_SECONDS, self.background_round)
         self.task_mail_timer = self.set_interval(TASK_MAIL_CHECK_SECONDS, self.mail_round)
         if self.inactivity.timeout_seconds > 0:
