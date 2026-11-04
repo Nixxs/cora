@@ -10,6 +10,7 @@ from uuid import uuid4
 import httpx2 as httpx
 import psycopg
 from psycopg import sql
+from sqlalchemy import text
 
 from migrate import apply_migrations, database_settings
 from server.listener import build_app
@@ -205,6 +206,31 @@ class WebDeviceStoreDatabaseTests(unittest.TestCase):
         store.remove(added.id)
         self.assertIsNone(store.find(hashed))
         self.assertEqual(store.devices(), [])
+
+    def test_a_device_unused_for_30_days_is_unpaired_and_one_in_use_isnt(self):
+        store = WebDeviceStore(self.engine)
+        forgotten, in_use = token_hash("forgotten-phone"), token_hash("phone-in-use")
+        store.add("Old phone", forgotten)
+        store.add("iPhone", in_use)
+        with self.engine.begin() as connection:
+            connection.execute(text(
+                "UPDATE public.web_devices SET last_seen_at = now() - interval '31 days' WHERE token_hash = :hash"
+            ), {"hash": forgotten})
+            connection.execute(text(
+                "UPDATE public.web_devices SET last_seen_at = now() - interval '29 days' WHERE token_hash = :hash"
+            ), {"hash": in_use})
+        self.assertEqual([device.name for device in store.devices() if device.name in ("Old phone", "iPhone")],
+                         ["iPhone"])
+        self.assertIsNone(store.find(forgotten))
+        # Used again: its 30 days start over.
+        self.assertIsNotNone(store.find(in_use))
+        with self.engine.connect() as connection:
+            seen = connection.execute(text(
+                "SELECT now() - last_seen_at < interval '1 minute' FROM public.web_devices WHERE token_hash = :hash"
+            ), {"hash": in_use}).scalar_one()
+        self.assertTrue(seen)
+        # The other tests here share this database.
+        store.remove(store.find(in_use).id)
 
     def test_only_a_hash_fits_and_each_is_unique(self):
         store = WebDeviceStore(self.engine)

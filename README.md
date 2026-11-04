@@ -1082,6 +1082,13 @@ How it's kept safe:
 - The API takes small JSON requests only and its answers aren't cached.
 - An approval asked on the page counts only from a paired device, and only once:
   the first answer wins, and nothing runs until it arrives.
+- A device unused for 30 days is unpaired by itself: its cookie stops working and
+  it leaves the list, so a forgotten or lost device doesn't stay signed in. Every
+  use (opening the page, sending a message) counts, so one in use never runs out.
+- Anyone holding a device's cookie can use the page as that device, as with any
+  "stay signed in". It can't be read by scripts, sent unencrypted or sent from
+  other sites, but malware on the device, or someone with it unlocked, could use
+  it. If you suspect that, **Remove** the device in Settings: it stops at once.
 
 **Formatted email.** She writes her emails in simple Markdown: headings, bold,
 bullet and numbered lists, tables and links. They're sent as formatted HTML, with
@@ -2574,6 +2581,14 @@ features it helps check, and package last.
         panel on the right. If a PC needs its own layout, it's told apart by its
         mouse rather than its size: `(hover: hover) and (pointer: fine)` holds
         for a mouse or trackpad, not a finger, even on an iPad with a keyboard.
+      - *Stronger sign-in, later:* a device unused for 30 days is already
+        unpaired ([storage/web_device_store.py](storage/web_device_store.py)).
+        Ideas if more is wanted, strongest first: Face ID or Touch ID (a
+        passkey) to approve tools from the page, so a stolen cookie can't
+        approve anything; an alert at the desk when a device's cookie is used
+        from a new network or browser, with a one-click unpair; and cookies that
+        quietly change now and then, so a stolen copy and the real device
+        clash and both are signed out.
       - *Small fix:* text scrolling under the chat frame's top edge peeks out
         beside the `CORA` title (the title's background covers only the word
         itself). Fade or clip the top of the chat so nothing shows there.
