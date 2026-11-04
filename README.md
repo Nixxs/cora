@@ -1037,6 +1037,46 @@ How it's kept safe:
 - Requests are capped in size, and only Microsoft's handshake token is ever
   echoed back, as plain text.
 
+**Web interface: Cora in a browser.** The same listener can serve Cora's web page
+at the root of the public address (such as `https://cora.example.com/`), for your
+phone, tablet or laptop. It's being built in steps (see Web interface in the
+roadmap's Details). For now you can write to her from a paired device and her
+reply streams back; it's the same conversation as the desk, Signal and voice, so
+your message and her reply show at the desk too and she remembers them. The page
+shows only what's said there, not earlier history, yet. Run `python migrate.py`
+once for migrations 0048 and 0049. Save the public address under **Webhooks** first, then turn on Settings >
+Services > **Web interface**. The listener runs when webhooks, the web interface
+or both are on, and Microsoft is only subscribed to while webhooks are on.
+
+To pair a device, choose **Pair a device** in that row. It shows a QR code and a
+short code (such as `K7QF-M2XP`) for five minutes:
+- On a phone or tablet, scan the QR code with the camera.
+- On a laptop or anything else, go to the address and type the code.
+
+On an iPhone or iPad, add the page to the Home Screen first (Share › Add to Home
+Screen) and pair from inside that app, because it keeps its own sign-in separate
+from Safari. Each paired device is listed in the same row, with when it was last
+seen. **Remove** unpairs it at once.
+
+If a CDN such as Cloudflare proxies the address, have it **bypass its cache** for
+that hostname (in Cloudflare: Caching › Cache Rules, "Hostname equals …" → Bypass
+cache), and purge it once. CDNs keep `.css` and `.js` files by default, so after
+an update every device would get the old ones and the page would break. Cora
+sends `Cache-Control: no-cache`, but a copy taken before that stays until purged.
+Webhooks aren't affected: they're never cached.
+
+How it's kept safe:
+- The page itself is public but holds nothing of Cora's. Everything that reaches
+  her, under `/api/`, needs a paired device.
+- A pairing code exists only while you have it open in Settings. It works once,
+  lasts five minutes, and five wrong tries cancel it. Closing Settings cancels it
+  too.
+- A paired device holds a long random token in a cookie that scripts can't read
+  (`HttpOnly`), is only sent over HTTPS (`Secure`) and never with requests from
+  other sites (`SameSite=Strict`). The token is never in an address. Cora keeps
+  only its SHA-256 in the database, so the database alone can't sign anyone in.
+- The API takes small JSON requests only and its answers aren't cached.
+
 **Formatted email.** She writes her emails in simple Markdown: headings, bold,
 bullet and numbered lists, tables and links. They're sent as formatted HTML, with
 inline styles so Outlook shows them properly, and no colours set, so dark mode still
@@ -1556,7 +1596,7 @@ characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 | Location | Responsibility |
 | --- | --- |
 | [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
-| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, background jobs, and sign-ups. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, the web interface (switch, pairing and devices), background jobs, and sign-ups. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
@@ -1568,7 +1608,7 @@ characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [server/](server/) | Cora's one HTTP listener on 127.0.0.1, behind the public HTTPS route: it builds one app from route groups (Graph notifications, then the web interface) and serves it without touching the TUI. |
-| [web/](web/) | The web interface for the phone and tablet: its routes, and the page in `static/` (plain HTML, CSS and JavaScript, no build). For now a design preview with sample data (WB0). |
+| [web/](web/) | The web interface for the phone and tablet: device pairing (`pairing.py`), its routes and API (`routes.py`), her replies as safe HTML (`rendering.py`), and the page in `static/` (plain HTML, CSS and JavaScript, no build). |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
 | [sign_ups/](sign_ups/) | Signing up to sites for accounts of her own: her one sign-up password in the credential store, the browser session that stays on the approved site, and the `sign_ups` records. |
 | [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her, and the routes for Graph's mail and calendar notifications. |
@@ -2387,14 +2427,18 @@ features it helps check, and package last.
     matched in order: Graph's notifications ([mail/webhook.py](mail/webhook.py))
     first, then the web interface ([web/routes.py](web/routes.py)), whose page
     sits at the root and would otherwise claim every path. No new dependencies.
-    From WB1 it runs whenever webhooks **or** the web interface are on (today
-    only with webhooks), and its settings section may be renamed to something
+    It runs whenever webhooks **or** the web interface are on; Graph's routes
+    and subscriptions only while webhooks are. The public address and port
+    still live in the Webhooks section, which may later be renamed to something
     like "Public address".
   - *Sign-in by device pairing:* the public URL must not open Cora to anyone.
-    Settings shows a pairing QR code. Scanning it gives the phone a long random
-    token, kept in the system credential store and held by the phone as a
-    long-lived cookie. Paired devices are listed and each can be revoked. There
-    are no passwords.
+    Settings shows a QR code and a short code (`K7QF-M2XP`) while you have it
+    open: a phone scans the QR code, a laptop goes to the address and types the
+    code. Pairing always starts from you in Settings; a device asking to pair
+    (as a TV app does) was ruled out, since anyone could then put requests on
+    your desk. The device gets a long random token in a long-lived cookie, and
+    Cora keeps only the token's SHA-256 (`web_devices`). Paired devices are
+    listed and each can be removed. There are no passwords.
   - *Plain HTML, CSS and JavaScript:* no framework, no Node and no build
     step. The files in [web/static/](web/static/) are served as they are. The look is all
     CSS, and a framework would add tooling rather than design options. If the
@@ -2406,23 +2450,58 @@ features it helps check, and package last.
       the iPhone and iPad mini first. `ui.js` has the building blocks (messages,
       a streaming reply, notices, approval cards, the status bar, the composer,
       and sizing to the visible area above the iOS keyboard) that later steps
-      reuse; `preview.js` drives them with sample data. The listener already
-      serves it at the root of its public address (for example
-      `https://cora.intelligis.io/`) whenever webhooks are on; the webhook
+      reuse. The sample data and pretend Cora (`preview.js`) were removed in
+      WB2; they're in Git history if the look needs reworking. The listener
+      serves the page at the root of its public address (for example
+      `https://cora.intelligis.io/`) while the web interface is on; the webhook
       routes keep their secret paths and still match first. Only
       `web/static/` is served, never the Python beside it. Opening
       `index.html` straight from disk shows only the frame, because browsers
-      don't run its module scripts from `file://`. Tap the status to cycle its
-      states; send a message to see a reply stream.
-    - WB1 page and pairing: the QR code in Settings, the page loads, and Add to
-      Home Screen works. No chat yet.
-    - WB2 sending and replies: your message shows in the TUI as `You · web`,
-      and her reply streams on the phone.
+      don't run its module scripts from `file://`.
+    - WB1 page and pairing, **built**: Settings > Services > Web interface
+      (switch, Pair a device, paired devices) in
+      [app_areas/web_interface.py](app_areas/web_interface.py); the codes in
+      [web/pairing.py](web/pairing.py); `/api/session` and `/api/pair` in
+      [web/routes.py](web/routes.py); devices in
+      [storage/web_device_store.py](storage/web_device_store.py) (migration
+      0048). The page checks its session first and shows the pairing screen
+      until paired ([web/static/main.js](web/static/main.js)); a QR link
+      (`/#pair=CODE`) pairs in one step and takes the code out of the address.
+      A manifest and icons make Add to Home Screen open it full-screen. The
+      page's files are sent with `Cache-Control: no-cache`, so browsers and
+      Home Screen apps check for a newer file each time (a cheap 304 when
+      unchanged) and an update never leaves a stale stylesheet behind. iOS Home Screen apps keep
+      their own cookies, so the page tells iPhone and iPad users to add it to
+      the Home Screen first and pair from there.
+    - WB2 sending and replies, **built**: `POST /api/messages` (paired devices
+      only, JSON, at most 8,000 characters) answers with her reply as it
+      streams, one JSON object a line: pieces as she writes, then the finished
+      reply as safe HTML ([web/rendering.py](web/rendering.py): raw HTML
+      escaped, links only to web and mail addresses, as in her emails). The
+      reply runs as its own task, so if the page goes away (the phone locks)
+      she still finishes, and it's shown at the desk and saved. In the app,
+      `answer_on_web` ([app_areas/web_interface.py](app_areas/web_interface.py))
+      uses the same path as your own Signal messages, now shared as
+      `answer_person_in_writing` ([app_areas/chat.py](app_areas/chat.py)):
+      your message shows at the desk as `You · web`, her reply as `Cora · web`,
+      both saved to the same conversation on the `web` channel (migration
+      0049), and voice Cora is told about the exchange. One web message is
+      answered at a time, each with the last in its history. Her instructions
+      (`WEB_CHAT_INSTRUCTIONS`) say replies are shown as formatted Markdown on
+      a phone-sized screen; tools are the same as on Signal (no looking at the
+      screen or showing pictures), and tools that change things still ask in
+      the desk's pop-up until WB4. On the page,
+      [web/static/chat.js](web/static/chat.js) sends and reads the stream; the
+      status and settings controls stay hidden until they do something. The
+      page shows only what's said there, not earlier history, until WB3.
     - WB3 live mirror: the phone shows the shared conversation, with history on
       load and then live updates from the desk, voice captions and Signal.
     - WB4 polish: Approve/Deny buttons for tools that change things (the same
       `ask_approval` hook as Signal), an Active/Standby indicator, and
-      reconnecting after a drop.
+      reconnecting after a drop. Then the layout for wide screens, once every
+      part of the page exists: in landscape (the iPad above all) the page
+      should use the whole screen instead of a centred 820px column, perhaps
+      with room for side panels.
   - *Browser voice (WV1–WV3):* the Live session stays on the desk, and only its
     audio ends move. The Live code touches sound in two places only:
     `microphone_chunks()` (24 kHz mono int16) in `send_microphone`, and

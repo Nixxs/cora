@@ -188,11 +188,6 @@ class SignalChatsMixin:
 
     async def answer_primary_on_signal(self, account: str, person: str, batch: list[IncomingMessage]) -> None:
         """The person's own messages: the same conversation as the desktop, shown in its chat."""
-        # Taken before these messages join the chat, so they aren't sent twice.
-        history = self.conversation.get_reconnect_history()
-        for message in batch:
-            self.conversation.show_signal_message(signal_message_text(message))
-        self.keep_conversation_open()
         self.activity.write(f"Answering {len(batch)} Signal message(s) from you.", "Signal reply")
         # Tools that change things are asked about in this chat, answered only by the person's reply.
         route = BackendRoute(
@@ -200,22 +195,15 @@ class SignalChatsMixin:
             ask_approval=self.signal_approval_asker(account, person, self.signal_settings.allowed_number),
             approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60,
         )
-        text = await self.send_signal_reply(account, person, lambda: self.reply_in_writing(
-            signal_content(batch, datetime.now(timezone.utc)), history, route, SIGNAL_CHAT_INSTRUCTIONS,
-        ))
-        if text is None or self.closing:
-            return
-        self.conversation.show_written_reply(text, label="Cora · Signal", channel="signal")
-        self.activity.write(f"Signal reply sent: characters={len(text)}", "Signal reply sent")
-        self.person_is_talking()
-        said = "\n".join(signal_message_text(message) for message in batch)
-        if self.pending_greeting == "launch":
-            # Answered before she says hello, so the hello can follow on from it.
-            self.signal_launch_exchanges.append((said, text))
-        try:
-            await self.live.note_signal_exchange(said, text)
-        except Exception as error:
-            self.activity.write(f"Signal note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
+        text = await self.answer_person_in_writing(
+            [signal_message_text(message) for message in batch], self.conversation.show_signal_message,
+            lambda history: self.send_signal_reply(account, person, lambda: self.reply_in_writing(
+                signal_content(batch, datetime.now(timezone.utc)), history, route, SIGNAL_CHAT_INSTRUCTIONS,
+            )),
+            label="Cora · Signal", channel="signal", where="messaged you on Signal",
+        )
+        if text is not None:
+            self.activity.write(f"Signal reply sent: characters={len(text)}", "Signal reply sent")
 
     def signal_approval_asker(self, account: str, recipient: str, number: str, lapsed: list | None = None):
         """Ask the person in their Signal chat; the answer is their own next message (see on_signal_message).

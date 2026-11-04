@@ -97,6 +97,33 @@ class WebhookControls:
     port: int = 8000
 
 
+@dataclass
+class WebControls:
+    """What the Web interface row reads and does; the app owns pairing, the devices and the listener."""
+
+    # status() -> the address it's served at, "not listening", or "" when off.
+    status: Callable[[], str]
+    set_enabled: Callable[[bool], None]
+    start_pairing: Callable[[], None]
+    cancel_pairing: Callable[[], None]
+    # pairing() -> (the link in the QR code, the code as shown, seconds left), or None.
+    pairing: Callable[[], tuple[str, str, int] | None]
+    # devices() -> the paired devices (WebDevice), newest first; remove_device(id) unpairs one.
+    devices: Callable[[], list]
+    remove_device: Callable[[object], None]
+    enabled: bool = False
+
+
+WEB_INTRO = (
+    "Cora on your phone, tablet or laptop, in a browser, at the public address under Webhooks below. "
+    "Only devices you pair here can reach her. On a phone, Share › Add to Home Screen opens it like an app."
+)
+WEB_PAIR_HINT = (
+    "Scan with a phone or tablet camera, or go to the address on any device and type the code. "
+    "It works once, for five minutes, and only while this screen is open."
+)
+
+
 WEBHOOK_INTRO = (
     "Lets Microsoft tell Cora the moment new mail lands, instead of her checking every 10 minutes. "
     "She listens only on this PC (127.0.0.1, the port below); you route public HTTPS from the "
@@ -202,6 +229,20 @@ def webhook_line(listening: str, mail: str, subscribed: bool) -> Text:
     return Text(f"● {listening}", style="#8f98a8")
 
 
+def web_line(status: str) -> Text:
+    if not status:
+        return Text("○ off", style="#8f98a8")
+    if status == "not listening":
+        return Text("● on · not listening yet", style="#e07a7a")
+    return Text(f"● {status}", style="#8fcf8f")
+
+
+def device_text(device) -> str:
+    paired = device.paired_at.astimezone()
+    seen = device.last_seen_at.astimezone()
+    return f"{device.name} · paired {paired:%d %b %Y} · last seen {seen:%d %b %H:%M}"
+
+
 def status_line(status: ServiceStatus, enabled: bool) -> Text:
     """Short enough for the service's row; a failure's reason shows in its details."""
     if status.state == CONNECTED:
@@ -247,7 +288,7 @@ class ModelSettingsScreen(ModalScreen):
     def __init__(
         self, models: dict, save, screen_looking: bool, set_screen_looking, services: ServiceControls | None = None,
         signal: SignalControls | None = None, email: EmailControls | None = None,
-        webhooks: WebhookControls | None = None,
+        webhooks: WebhookControls | None = None, web: WebControls | None = None,
     ) -> None:
         super().__init__()
         self.models = dict(models)
@@ -258,6 +299,9 @@ class ModelSettingsScreen(ModalScreen):
         self.signal = signal
         self.email = email
         self.webhooks = webhooks
+        self.web = web
+        self.shown_pair_link: str | None = None
+        self.shown_devices: list | None = None
         self.shown_link_uri: str | None = None
         self.shown_clients: list[tuple[str, str]] | None = None
         self.shown_tools: dict[str, tuple] = {}
@@ -286,6 +330,8 @@ class ModelSettingsScreen(ModalScreen):
                                 yield from self.compose_signal()
                             if self.email is not None:
                                 yield from self.compose_email()
+                            if self.web is not None:
+                                yield from self.compose_web()
                             if self.webhooks is not None:
                                 yield from self.compose_webhooks()
             yield Button("Close", id="model-settings-close")
@@ -354,6 +400,22 @@ class ModelSettingsScreen(ModalScreen):
             yield Input(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora")
             yield Button("Save her name", id="email-save-sign-up-name")
 
+    def compose_web(self) -> ComposeResult:
+        with Horizontal(classes="service-heading", id="service-heading-web"):
+            yield Label("▸ Web interface", classes="service-title", id="service-title-web")
+            yield Static(id="web-status", classes="service-status")
+            yield Switch(value=self.web.enabled, id="web-enabled")
+        with Vertical(classes="service-details", id="service-details-web"):
+            yield Static(Text(WEB_INTRO, style="#8f98a8"), classes="service-help")
+            with Horizontal(classes="service-buttons"):
+                yield Button("Pair a device", id="web-pair")
+                yield Button("Cancel", id="web-pair-cancel")
+            yield Static(id="web-qr", classes="signal-qr")
+            yield Static(id="web-code", classes="service-reason")
+            yield Label("Paired devices", classes="model-settings-label")
+            # One row per device, filled from the app's list.
+            yield Vertical(id="web-devices", classes="signal-clients")
+
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
             yield Label("▸ Webhooks", classes="service-title", id="service-title-webhooks")
@@ -405,7 +467,7 @@ class ModelSettingsScreen(ModalScreen):
         details = self.query_one(f"#service-details-{service_id}")
         details.display = not details.display
         arrow = "▾" if details.display else "▸"
-        titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks"}
+        titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks", "web": "Web interface"}
         title = titles.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
@@ -476,6 +538,47 @@ class ModelSettingsScreen(ModalScreen):
         detail.display = bool(mail)
         detail.update(Text(mail, style="#8f98a8"))
 
+    async def show_web_devices(self) -> None:
+        devices = list(self.web.devices())
+        if devices == self.shown_devices:
+            return
+        self.shown_devices = devices
+        listing = self.query_one("#web-devices", Vertical)
+        # Finish removing the old rows first, so the new ones can reuse their ids.
+        await listing.remove_children()
+        await listing.mount_all(
+            Horizontal(
+                Static(device_text(device), classes="tool-label"),
+                Button("Remove", id=f"web-remove-{index}"),
+                classes="tool-row",
+            )
+            for index, device in enumerate(devices)
+        ) if devices else listing.mount(Static(Text("No devices paired yet.", style="#8f98a8")))
+
+    async def show_web(self) -> None:
+        await self.show_web_devices()
+        self.query_one("#web-status", Static).update(web_line(self.web.status()))
+        pairing = self.web.pairing()
+        qr = self.query_one("#web-qr", Static)
+        code = self.query_one("#web-code", Static)
+        qr.display = code.display = pairing is not None
+        self.query_one("#web-pair-cancel", Button).display = pairing is not None
+        self.query_one("#web-pair", Button).disabled = not self.web.enabled
+        if pairing is None:
+            self.shown_pair_link = None
+            return
+        link, shown, seconds = pairing
+        # Drawn once per code.
+        if link != self.shown_pair_link:
+            self.shown_pair_link = link
+            qr.update(qr_text(link))
+        address = link.split("/#", 1)[0]
+        code.update(Text.assemble(
+            ("Code  ", "#8f98a8"), (shown, "bold #e0e6ef"),
+            (f"   expires in {seconds // 60}:{seconds % 60:02d}\n", "#8f98a8"),
+            (f"Or go to {address} and type the code.\n", "#8f98a8"), (WEB_PAIR_HINT, "#8f98a8"),
+        ))
+
     async def show_services(self) -> None:
         if self.signal is not None:
             await self.show_signal()
@@ -483,6 +586,8 @@ class ModelSettingsScreen(ModalScreen):
             self.show_email()
         if self.webhooks is not None:
             self.show_webhooks()
+        if self.web is not None:
+            await self.show_web()
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -523,6 +628,16 @@ class ModelSettingsScreen(ModalScreen):
             if event.value != self.signal.enabled:
                 self.signal.enabled = event.value
                 self.signal.set_enabled(event.value)
+            return
+        if event.switch.id == "web-enabled":
+            if event.value == self.web.enabled:
+                return
+            if event.value and not (self.webhooks is not None and self.webhooks.public_url):
+                self.notify("Save the public address under Webhooks first.", severity="warning")
+                event.switch.value = False
+                return
+            self.web.enabled = event.value
+            self.web.set_enabled(event.value)
             return
         if event.switch.id == "webhooks-enabled":
             if event.value == self.webhooks.enabled:
@@ -686,6 +801,12 @@ class ModelSettingsScreen(ModalScreen):
             self.save_webhook_address()
         elif button == "webhooks-rotate":
             self.webhooks.rotate()
+        elif button == "web-pair":
+            self.web.start_pairing()
+        elif button == "web-pair-cancel":
+            self.web.cancel_pairing()
+        elif button.startswith("web-remove-"):
+            self.web.remove_device(self.shown_devices[int(button.removeprefix("web-remove-"))].id)
         elif button == "signal-add-client":
             self.add_client()
         elif button.startswith("signal-remove-"):

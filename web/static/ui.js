@@ -46,7 +46,16 @@ export function addMessage({ who, via = "", html, text = "", when = new Date() }
   message.innerHTML = `
     <div class="label"><span class="who">${who}</span><span class="via">${via ? ` · ${escapeText(via)}` : ""}</span><span class="when">${time(when)}</span></div>
     <div class="body">${html ?? `<p>${escapeText(text).replace(/\n/g, "<br>")}</p>`}</div>`;
+  openLinksOutside(message);
   return append(message);
+}
+
+// Links in her replies open in the browser, not inside the Home Screen app in place of Cora.
+function openLinksOutside(element) {
+  for (const link of element.querySelectorAll(".body a")) {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  }
 }
 
 /** A reply streaming in: update(text) as it arrives, then finish(html) or fail(). */
@@ -64,7 +73,10 @@ export function startWriting(via = "web") {
     finish(html) {
       message.classList.remove("writing");
       label.textContent = ` · ${via}`;
+      const follow = nearBottom();
       body.innerHTML = html;
+      openLinksOutside(message);
+      if (follow) output.scrollTop = output.scrollHeight;
     },
     fail() {
       message.classList.remove("writing");
@@ -143,20 +155,35 @@ export function setupComposer(onSend) {
 }
 
 /**
- * iOS Safari doesn't shrink the page for the on-screen keyboard, it covers it. Size the app
- * to the visible area instead, so the composer stays just above the keyboard.
+ * iOS Safari doesn't shrink the page for the on-screen keyboard, it covers it. The page is
+ * pinned to the screen's edges (style.css); this lifts its bottom edge by the keyboard's height,
+ * so the composer stays just above it.
+ *
+ * The keyboard's height is how much the visible area shrank from its height with no keyboard.
+ * Only that difference is used: Home Screen apps report heights short by the status bar, so a
+ * height itself can't size the page.
  */
 export function fitToViewport() {
   const viewport = window.visualViewport;
   if (!viewport) return;
+  const root = document.documentElement;
+  const typing = () => ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName);
+  let full = viewport.height;
   const fit = () => {
     const follow = nearBottom();
-    document.documentElement.style.setProperty("--app-height", `${viewport.height}px`);
+    // With nothing focused there's no keyboard: this is the whole height (it changes on rotating).
+    if (!typing()) full = viewport.height;
+    const keyboard = Math.max(0, Math.round(full - viewport.height - viewport.offsetTop));
+    root.style.setProperty("--keyboard", `${keyboard}px`);
+    root.classList.toggle("keyboard-open", keyboard > 0);
     // Safari scrolls the page to show the focused box; the layout already does that.
     window.scrollTo(0, 0);
     if (follow) output.scrollTop = output.scrollHeight;
   };
   viewport.addEventListener("resize", fit);
+  viewport.addEventListener("scroll", fit);
+  // Focus changes before the keyboard has fully opened or closed; the resize follows.
+  document.addEventListener("focusout", () => setTimeout(fit, 50));
   fit();
 }
 

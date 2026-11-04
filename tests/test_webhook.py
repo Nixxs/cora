@@ -29,12 +29,12 @@ import test_keyboard_persistence as keyboard_tests
 from test_email import FakeClient, FakeResponse
 
 PATH, STATE = "path-secret", "state-secret"
+EXPIRES = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
 
 
 def listener_app(*graph_args):
     """The listener's app as Cora builds it: Graph notifications first, then the web page."""
     return build_app(graph_routes(*graph_args), web_routes())
-EXPIRES = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
 
 
 class WebhookAppTests(unittest.IsolatedAsyncioTestCase):

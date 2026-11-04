@@ -20,8 +20,8 @@
   --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, "JetBrains Mono", Consolas, monospace;
   --radius: 10px;
   --gap: 10px;
-  /* Set from the visual viewport by the script, so the layout shrinks above the iOS keyboard. */
-  --app-height: 100dvh;
+  /* How much of the screen the on-screen keyboard covers, set by the script (ui.js). */
+  --keyboard: 0px;
 }
 
 * { box-sizing: border-box; }
@@ -51,11 +51,20 @@ button {
   -webkit-tap-highlight-color: transparent;
 }
 
-#app {
+[hidden] { display: none !important; }
+
+/* Pinned to the screen's edges rather than sized by a height: iOS Home Screen apps report a
+   height short by the status bar, which left a gap at the bottom. The keyboard, when open,
+   lifts the bottom edge so the composer sits just above it. */
+.screen {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: var(--keyboard);
   display: flex;
   flex-direction: column;
   gap: var(--gap);
-  height: var(--app-height);
   /* The notch, rounded corners and home bar. */
   padding:
     max(env(safe-area-inset-top), 12px)
@@ -66,6 +75,71 @@ button {
   max-width: 820px;
   margin: 0 auto;
 }
+
+/* Above the keyboard there's no home bar to keep clear of. */
+.keyboard-open .screen { padding-bottom: 8px; }
+
+/* ── Pairing: a browser that isn't paired yet ── */
+
+#pair-screen { justify-content: center; overflow-y: auto; }
+
+.pair-frame {
+  margin: auto 0;
+  padding: 28px 20px 20px;
+  max-width: 460px;
+  width: 100%;
+  align-self: center;
+}
+
+.pair-frame h1 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  color: var(--cora);
+  font-weight: 700;
+}
+
+.pair-frame p { margin: 0 0 16px; color: var(--text); }
+.pair-frame strong { color: var(--text-bright); }
+.pair-frame .hint { color: var(--dim); font-size: 13px; margin: 18px 0 0; }
+.pair-frame .error { color: var(--error); min-height: 1.5em; margin: 10px 0 0; }
+
+.field {
+  display: block;
+  margin: 22px 0 14px;
+  padding: 12px 14px 10px;
+}
+.field:focus-within {
+  border-color: #92b0dd;
+  box-shadow: 0 0 0 1px rgba(119, 153, 204, 0.18), 0 0 18px rgba(119, 153, 204, 0.22);
+}
+.field:focus-within .frame-label { color: var(--border); }
+
+#pair-code {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-bright);
+  font-family: var(--mono);
+  /* 16px or more, or iOS zooms in. */
+  font-size: 22px;
+  letter-spacing: 0.18em;
+  text-align: center;
+  caret-color: var(--cora);
+}
+#pair-code::placeholder { color: #3a4558; }
+
+.wide-button {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid var(--cora);
+  border-radius: 8px;
+  color: var(--cora);
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.wide-button:active { background: var(--bg-hover); }
+.wide-button:disabled { opacity: 0.5; }
 
 /* ── Frames: the TUI's round borders, with a title set into the top edge ── */
 
@@ -331,7 +405,7 @@ button {
 
 /* Landscape phones: every line counts. */
 @media (max-height: 500px) and (orientation: landscape) {
-  #app { padding-top: max(env(safe-area-inset-top), 8px); }
+  .screen { padding-top: max(env(safe-area-inset-top), 8px); }
   :root { --gap: 6px; }
   .message { margin-bottom: 10px; }
 }

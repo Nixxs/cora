@@ -15,6 +15,7 @@ from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
 from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
+from .web_device_store import WebDevice, WebDeviceStore
 from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from sign_ups.password import sign_up_name
@@ -227,6 +228,21 @@ class KeyboardPersistence:
 
     def save_webhook_address(self, public_url: str, port: int) -> None:
         WebhookSettingsStore(self._get_store().engine).set_address(public_url, port)
+
+    def save_web_enabled(self, enabled: bool) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_web_enabled(enabled)
+
+    def load_web_devices(self) -> list[WebDevice]:
+        return WebDeviceStore(self._get_store().engine).devices()
+
+    def add_web_device(self, name: str, token_hash: str) -> WebDevice:
+        return WebDeviceStore(self._get_store().engine).add(name, token_hash)
+
+    def find_web_device(self, token_hash: str) -> WebDevice | None:
+        return WebDeviceStore(self._get_store().engine).find(token_hash)
+
+    def remove_web_device(self, device_id: UUID) -> None:
+        WebDeviceStore(self._get_store().engine).remove(device_id)
 
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()

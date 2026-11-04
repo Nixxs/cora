@@ -12,6 +12,8 @@ from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 SIGNAL_PREFIX = "You · Signal: "
 # And the emails they send her own address.
 EMAIL_PREFIX = "You · Email: "
+# And what they write on her web page.
+WEB_PREFIX = "You · web: "
 
 # Who is speaking, coloured so messages tell apart at a glance; the name stays as text too.
 SPEAKER_STYLES = {"Cora": "bold #7fbf73", "You": "bold #7fb8d8"}
@@ -124,6 +126,8 @@ class Conversation:
                 role, text = "user", entry[len(SIGNAL_PREFIX):]
             elif isinstance(entry, str) and entry.startswith(EMAIL_PREFIX):
                 role, text = "user", entry[len(EMAIL_PREFIX):]
+            elif isinstance(entry, str) and entry.startswith(WEB_PREFIX):
+                role, text = "user", entry[len(WEB_PREFIX):]
             elif isinstance(entry, str) and entry.startswith("Cora: "):
                 role, text = "assistant", entry[6:]
             else:
@@ -249,6 +253,13 @@ class Conversation:
         self.write_log(f"{EMAIL_PREFIX}{text}")
         if self.record_message is not None:
             self.record_message("user", text, "email")
+
+    def show_web_message(self, text: str) -> None:
+        """The person's own message from her web page, in the same chat as the desktop's."""
+        self.flush_transcript()
+        self.write_log(f"{WEB_PREFIX}{text}")
+        if self.record_message is not None:
+            self.record_message("user", text, "web")
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

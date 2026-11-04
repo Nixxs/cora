@@ -63,6 +63,35 @@ class ChatMixin:
                 CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
             )
 
+    async def answer_person_in_writing(
+        self, said: list[str], show_message, write, *, label: str, channel: str, where: str,
+    ) -> str | None:
+        """The person's own messages from away from the desk (Signal, the web page), answered as one Cora.
+
+        Shown in the desk's chat with show_message, answered by write(history) (which also delivers
+        the reply, and returns None if it failed), then shown and saved with label and channel, and
+        noted to voice Cora as "the person just {where}". Returns her reply, or None.
+        """
+        # Taken before these messages join the chat, so they aren't sent twice.
+        history = self.conversation.get_reconnect_history()
+        for text in said:
+            show_message(text)
+        self.keep_conversation_open()
+        text = await write(history)
+        if text is None or self.closing:
+            return None
+        self.conversation.show_written_reply(text, label=label, channel=channel)
+        self.person_is_talking()
+        joined = "\n".join(said)
+        if self.pending_greeting == "launch":
+            # Answered before she says hello, so the hello can follow on from it.
+            self.signal_launch_exchanges.append((joined, text))
+        try:
+            await self.live.note_signal_exchange(joined, text, where)
+        except Exception as error:
+            self.activity.write(f"Note to voice Cora failed ({type(error).__name__}).", f"{label} note failed")
+        return text
+
     async def reply_in_writing(
         self, content: list[dict], history: list[dict], route: BackendRoute, extra_instructions: str = "",
         on_text=None, feelings: bool = True,

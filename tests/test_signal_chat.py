@@ -277,7 +277,7 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("You · Signal: Where are my keys?", app.conversation.log_entries)
             self.assertIn("Cora · Signal:", app.conversation.log_entries)
             self.assertEqual(records, [("user", "Where are my keys?", "signal"), ("assistant", "On my way.", "signal")])
-            app.live.note_signal_exchange.assert_awaited_once_with("Where are my keys?", "On my way.")
+            app.live.note_signal_exchange.assert_awaited_once_with("Where are my keys?", "On my way.", "messaged you on Signal")
             history = app.conversation.get_reconnect_history()
             self.assertEqual([(h["role"], h["content"][0]["text"]) for h in history][-2:],
                              [("user", "Where are my keys?"), ("assistant", "On my way.")])

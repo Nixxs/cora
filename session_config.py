@@ -242,6 +242,16 @@ SIGNAL_CHAT_INSTRUCTIONS = (
 )
 
 
+WEB_CHAT_INSTRUCTIONS = (
+    "\n\nThis chat is on your own web page: the person is typing to you in a browser, often on their "
+    "phone or tablet and away from their desk. Your reply is shown as formatted Markdown, so short "
+    "lists, **bold**, links and code blocks work; keep it fairly brief, as on a phone screen. You "
+    "can't see their screen or show pictures here. Tools that change things still ask for approval "
+    "in a pop-up on their desk: say it's waiting for their approval there rather than that it's "
+    "done, and if they decline or don't answer, it wasn't done."
+)
+
+
 # How her emails are written: mail/formatting.py renders it as a formatted email.
 EMAIL_FORMAT = (
     "Markdown, sent as a formatted email: use headings, **bold**, bullet or numbered lists, tables "

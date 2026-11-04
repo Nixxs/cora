@@ -27,6 +27,7 @@ from storage.signal_settings_store import SignalSettings
 from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
 from server.listener import Listener
+from web.pairing import Pairing
 from storage.webhook_settings_store import WebhookSettings
 from services.confirmation import Confirmations
 from services.connection import ServiceManager
@@ -62,6 +63,7 @@ from app_areas.tasks import TasksMixin
 from app_areas.email_account import EmailAccountMixin
 from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
+from app_areas.web_interface import WebInterfaceMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
@@ -95,7 +97,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -348,6 +350,13 @@ class CoraApp(
         self.calendar_notify_timer = None
         self.mail_notify_timer = None
         self.webhook_controls = None
+        # The web interface, on the same listener: the open pairing code (if any), the paired
+        # devices as Settings last loaded them, and what Settings shows.
+        self.web_pairing = Pairing()
+        # One web message answered at a time (see answer_on_web).
+        self.web_reply_lock = asyncio.Lock()
+        self.web_devices = []
+        self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
