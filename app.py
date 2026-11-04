@@ -26,7 +26,7 @@ from storage.client_store import Client
 from storage.signal_settings_store import SignalSettings
 from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
-from mail.webhook import WebhookServer
+from server.listener import Listener
 from storage.webhook_settings_store import WebhookSettings
 from services.confirmation import Confirmations
 from services.connection import ServiceManager
@@ -333,7 +333,7 @@ class CoraApp(
         # Webhooks: her local listener, its settings and secrets, Graph's subscription to new mail,
         # and what Settings shows of them. The lock keeps starting and stopping in order.
         self.webhook_settings = WebhookSettings()
-        self.webhook_server: WebhookServer | None = None
+        self.webhook_server: Listener | None = None
         self.webhook_worker = None
         self.webhook_secrets: tuple[str, str] | None = None
         self.webhook_lock = asyncio.Lock()

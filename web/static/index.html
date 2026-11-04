@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!-- viewport-fit=cover lets the page reach under the notch; the CSS keeps content in the safe area. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#141820">
+  <meta name="color-scheme" content="dark">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Cora">
+  <title>Cora</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main id="app">
+    <section id="chat-panel" class="frame">
+      <header class="frame-title">
+        <span class="title-name">CORA</span>
+        <span class="title-fill" aria-hidden="true"></span>
+        <button type="button" class="title-button" id="settings-button">settings</button>
+      </header>
+      <div id="chat-output" role="log" aria-live="polite"></div>
+    </section>
+
+    <form id="composer" class="frame" autocomplete="off">
+      <span class="frame-label" id="composer-label">message</span>
+      <textarea id="chat-input" rows="1" enterkeyhint="send"
+                placeholder="Type to Cora…" aria-labelledby="composer-label"></textarea>
+      <button type="submit" id="send-button" aria-label="Send">⏎</button>
+    </form>
+
+    <footer id="status-bar">
+      <button type="button" id="chat-status" class="state-standby">◐ Standby</button>
+      <span id="audio-bars" aria-hidden="true"></span>
+      <span id="link-status" class="linked">web · paired</span>
+    </footer>
+  </main>
+
+  <script type="module" src="preview.js"></script>
+</body>
+</html>

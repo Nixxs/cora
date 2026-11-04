@@ -1567,9 +1567,11 @@ characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
+| [server/](server/) | Cora's one HTTP listener on 127.0.0.1, behind the public HTTPS route: it builds one app from route groups (Graph notifications, then the web interface) and serves it without touching the TUI. |
+| [web/](web/) | The web interface for the phone and tablet: its routes, and the page in `static/` (plain HTML, CSS and JavaScript, no build). For now a design preview with sample data (WB0). |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
 | [sign_ups/](sign_ups/) | Signing up to sites for accounts of her own: her one sign-up password in the credential store, the browser session that stays on the approved site, and the `sign_ups` records. |
-| [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her. |
+| [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her, and the routes for Graph's mail and calendar notifications. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
@@ -1831,7 +1833,8 @@ features it helps check, and package last.
     she'd like to do or experience, growing from her interests, pursued on her
     own where she can, and with your help where she can't.
 12. ~~Awareness foundation.~~ Done through the webhook work: the listener
-    ([mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
+    ([server/listener.py](server/listener.py), with Graph's routes in
+    [mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
     triage sorts new items into urgent, worth mentioning or ignore, the
     attention manager delivers at a lull, and she only reaches out on her own
     between 9am and 7pm (`NUDGE_HOURS`). New sources join as webhooks; there is
@@ -1855,7 +1858,11 @@ features it helps check, and package last.
     (Model settings already exist; other settings still use `.env`.)
 19. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-20. Release.
+20. Web interface WB0–WB4, then browser voice WV1–WV3: Cora on the iPhone and
+    iPad mini as a home-screen web app, served by her webhook listener, in the
+    same conversation as the desk and Signal (see Web interface in Details
+    below).
+21. Release.
 
 *After 1.0:* local models.
 
@@ -2227,7 +2234,8 @@ features it helps check, and package last.
 
 - **Awareness (background producers):** built on webhooks rather than polling.
   Outside services push to the listener inside Cora
-  ([mail/webhook.py](mail/webhook.py)), which publishes events on the event bus;
+  ([server/listener.py](server/listener.py); each source brings its own routes,
+  like [mail/webhook.py](mail/webhook.py) for Graph), which publishes events on the event bus;
   new items are batched into a cheap triage call (urgent, worth mentioning, or
   ignore, as [mail/triage.py](mail/triage.py) does for mail); urgent items reach
   the person at any hour, and the rest wait for one digest the next time they
@@ -2359,6 +2367,84 @@ features it helps check, and package last.
   start, and she decides whether a feeling shows, harder the stronger it is. The idea came from her
   pushing back with "don't put words in my mouth, I do care", which only
   shaped that one reply.
+- **Web interface (phone and tablet):** so the person can type to Cora, and
+  later talk to her, from their iPhone or iPad mini, in the same conversation
+  as the desk and Signal.
+  - *What it is:* one page that looks like the TUI: monospace, the dark palette
+    from [cora.tcss](cora.tcss), box borders, `Cora · web` labels and a status
+    line. It is responsive, with the iPhone and iPad mini as the main targets.
+    "Add to Home Screen" (a web manifest, `apple-touch-icon` and
+    `apple-mobile-web-app-capable`) opens it full-screen like an app, with no
+    App Store.
+  - *An interface only:* no new Cora logic. A web message takes the same path
+    as your own Signal messages (`answer_primary_on_signal` in
+    [app_areas/signal_chats.py](app_areas/signal_chats.py)), with that core
+    shared rather than copied. It is shown in the TUI chat, answered by
+    `reply_in_writing`, saved to the same conversation and noted to voice Cora.
+    A migration adds `'web'` to `messages_channel_check`.
+  - *Hosting:* one listener on 127.0.0.1 ([server/listener.py](server/listener.py),
+    Starlette and uvicorn) behind the public HTTPS route, made of route groups
+    matched in order: Graph's notifications ([mail/webhook.py](mail/webhook.py))
+    first, then the web interface ([web/routes.py](web/routes.py)), whose page
+    sits at the root and would otherwise claim every path. No new dependencies.
+    From WB1 it runs whenever webhooks **or** the web interface are on (today
+    only with webhooks), and its settings section may be renamed to something
+    like "Public address".
+  - *Sign-in by device pairing:* the public URL must not open Cora to anyone.
+    Settings shows a pairing QR code. Scanning it gives the phone a long random
+    token, kept in the system credential store and held by the phone as a
+    long-lived cookie. Paired devices are listed and each can be revoked. There
+    are no passwords.
+  - *Plain HTML, CSS and JavaScript:* no framework, no Node and no build
+    step. The files in [web/static/](web/static/) are served as they are. The look is all
+    CSS, and a framework would add tooling rather than design options. If the
+    page outgrows this, Preact with `htm` can be added as one vendored file,
+    still with no build.
+  - *Steps, each runnable:*
+    - WB0 design preview, **built**: [web/static/](web/static/) holds the page with sample
+      messages and a pretend Cora, connected to nothing, to settle the look on
+      the iPhone and iPad mini first. `ui.js` has the building blocks (messages,
+      a streaming reply, notices, approval cards, the status bar, the composer,
+      and sizing to the visible area above the iOS keyboard) that later steps
+      reuse; `preview.js` drives them with sample data. The listener already
+      serves it at the root of its public address (for example
+      `https://cora.intelligis.io/`) whenever webhooks are on; the webhook
+      routes keep their secret paths and still match first. Only
+      `web/static/` is served, never the Python beside it. Opening
+      `index.html` straight from disk shows only the frame, because browsers
+      don't run its module scripts from `file://`. Tap the status to cycle its
+      states; send a message to see a reply stream.
+    - WB1 page and pairing: the QR code in Settings, the page loads, and Add to
+      Home Screen works. No chat yet.
+    - WB2 sending and replies: your message shows in the TUI as `You · web`,
+      and her reply streams on the phone.
+    - WB3 live mirror: the phone shows the shared conversation, with history on
+      load and then live updates from the desk, voice captions and Signal.
+    - WB4 polish: Approve/Deny buttons for tools that change things (the same
+      `ask_approval` hook as Signal), an Active/Standby indicator, and
+      reconnecting after a drop.
+  - *Browser voice (WV1–WV3):* the Live session stays on the desk, and only its
+    audio ends move. The Live code touches sound in two places only:
+    `microphone_chunks()` (24 kHz mono int16) in `send_microphone`, and
+    `Speaker` (`play`, `close`, `is_playback_busy`, bands). A
+    `BrowserMicrophone` and a `BrowserSpeaker` of the same shape carry the
+    audio over the page's WebSocket. Session, tools, memory and captions are
+    unchanged. The browser does not connect to OpenAI itself, because that would
+    be a second session without the desk's tools and context. The desk or the
+    phone has the audio, one at a time. Hanging up or a dropped connection hands
+    it back to the desk.
+    - WV1 hear her on the phone; interrupting her clears the phone's queue.
+    - WV2 talk from the phone, with the switch of audio owner.
+    - WV3 audio bars, mute, and standby/resume from the page.
+  - *Voice limits:* iOS suspends the mic and the connection when the screen
+    locks or the app goes to the background, so voice works in the foreground
+    only (only a native App Store app could avoid this). Starting audio needs a
+    tap ("Talk"), and "Hey Cora" stays desk-only. The hop through the desk adds
+    roughly 50–150 ms. Audio is about 48 KB/s each way while talking. It relies
+    on the browser's echo cancellation. Live is billed while active, as at the
+    desk.
+  - *Not in the first version:* image uploads (the Signal image path could be
+    reused later) and push notifications.
 - **Installable Cora (paused):** an installer for non-technical users is not
   planned for now. Notes for if it returns: keep PostgreSQL rather than moving
   to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was
@@ -2979,7 +3065,7 @@ Camera presence detection is separate from sending images to a model for vision.
 
 ### Long-term direction
 
-- Share identity and memory across terminal, voice, keyboard, and Signal.
+- Share identity and memory across terminal, voice, keyboard, Signal, and the web.
 - Add camera support, permission-bounded local/GIS tools, and external integrations.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.

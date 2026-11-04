@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from textual import work
 
 from mail.account import READY as EMAIL_READY, EmailNotReady, GraphError
-from mail.webhook import WebhookServer, calendar_urls, webhook_app, webhook_secrets
+from mail.webhook import calendar_urls, graph_routes, webhook_secrets
+from server.listener import Listener, build_app
+from web.routes import web_routes
 from subconscious.event_bus import CalendarChangedEvent
 from app_areas.shared import (
     MAIL_NOTIFY_SECONDS, MAIL_SUBSCRIPTION_LIFETIME, MAIL_SUBSCRIPTION_RENEW, WEBHOOK_STARTUP_SECONDS,
@@ -103,9 +105,13 @@ class WebhooksMixin:
                 return
             if rotate:
                 self.activity.write("New webhook secrets made.", "Webhooks")
-            server = WebhookServer(
-                webhook_app(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle,
-                            self.on_calendar_webhook, self.on_calendar_lifecycle),
+            server = Listener(
+                build_app(
+                    graph_routes(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle,
+                                 self.on_calendar_webhook, self.on_calendar_lifecycle),
+                    # Last: the page sits at the root.
+                    web_routes(),
+                ),
                 settings.port,
             )
             try:
