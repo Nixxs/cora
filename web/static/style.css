@@ -454,6 +454,20 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   .body pre { font-size: 14px; }
 }
 
+/* Wide landscape screens (the iPad turned sideways, a laptop): the whole screen, not a centred
+   column. Text keeps a readable line length; code and approval cards may use the full width. */
+@media (min-width: 900px) and (orientation: landscape) {
+  .screen {
+    max-width: none;
+    padding-left: max(env(safe-area-inset-left), 18px);
+    padding-right: max(env(safe-area-inset-right), 18px);
+  }
+  #chat-output { padding: 22px 28px 16px; }
+  .message .body > p, .message .body > ul, .message .body > ol, .message .body > blockquote { max-width: 100ch; }
+  .approval { max-width: 100ch; }
+  #composer { padding-left: 18px; }
+}
+
 /* Landscape phones: every line counts. */
 @media (max-height: 500px) and (orientation: landscape) {
   .screen { padding-top: max(env(safe-area-inset-top), 8px); }

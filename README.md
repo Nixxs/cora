@@ -2553,9 +2553,30 @@ features it helps check, and package last.
         time for…: not done"), given to her in history as "(You approved my
         request to use Email · send_email.)". It isn't saved: her reply,
         which is, says what came of it.
-    - WB4b layout for wide screens, once every part of the page exists: in
-      landscape (the iPad above all) the page should use the whole screen
-      instead of a centred 820px column, perhaps with room for side panels.
+    - WB4b layout for wide screens, **built**: in landscape at 900 points or
+      wider (the iPad mini turned sideways, a laptop) the page fills the whole
+      screen instead of a centred 820px column. Paragraphs, lists and approval
+      cards keep a readable width (100 characters); code blocks use the full
+      width. Portrait and phones are unchanged. A side panel (for voice
+      controls, say) can come with voice if it's wanted.
+    - WB4c, planned (with WV1): two follow-ups from using it on a PC.
+      - *Which device said it:* every web message is labelled `You · web`
+        whichever device sent it. The server knows each device's name, so
+        labels can read `You · web · iPad`: simple for what's said while Cora
+        runs, and kept across restarts with the device saved beside each
+        message (a one-column migration on `messages`).
+      - *Very wide windows:* checked in a PC browser, and the full-width
+        layout stays as it is (no centring): the page fills the window and the
+        device name shows at the bottom right. Where the voice controls and
+        audio bars go is decided when voice is designed, responsively: the
+        idea so far is that on narrow screens the voice animation sits at the
+        top with the conversation below, and on wide screens voice moves to a
+        panel on the right. If a PC needs its own layout, it's told apart by its
+        mouse rather than its size: `(hover: hover) and (pointer: fine)` holds
+        for a mouse or trackpad, not a finger, even on an iPad with a keyboard.
+      - *Small fix:* text scrolling under the chat frame's top edge peeks out
+        beside the `CORA` title (the title's background covers only the word
+        itself). Fade or clip the top of the chat so nothing shows there.
   - *iOS layout notes, measured on an iPhone and an iPad mini on iOS 26:* both
     Home Screen apps report a layout area shorter than the screen by exactly
     the status bar's height (iPhone 812 of 874 points, iPad 1101 of 1133), but
