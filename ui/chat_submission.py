@@ -135,6 +135,8 @@ class ChatSubmission:
             sent = True
             self.conversation.flush_transcript()
             self.conversation.write_log(f"You: {shown}")
+            # Saved above; the web page hears of it here.
+            self.conversation.announce("user", shown, "keyboard")
             if image_png:
                 # Shown small in the chat (click for the pop-up), kept only in memory.
                 image = Image.open(io.BytesIO(image_png)).convert("RGB")

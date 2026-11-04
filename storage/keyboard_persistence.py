@@ -16,6 +16,7 @@ from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
 from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
 from .web_device_store import WebDevice, WebDeviceStore
+from .recent_messages import recent_person_messages
 from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from sign_ups.password import sign_up_name
@@ -243,6 +244,9 @@ class KeyboardPersistence:
 
     def remove_web_device(self, device_id: UUID) -> None:
         WebDeviceStore(self._get_store().engine).remove(device_id)
+
+    def load_recent_person_messages(self, limit: int) -> list[tuple]:
+        return recent_person_messages(self._get_store().engine, limit)
 
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()

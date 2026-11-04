@@ -317,3 +317,7 @@ class LiveSessionMixin:
             "disconnected": "Live is disconnected. Ctrl+R to reconnect.",
         }.get(state, f"Live is {state}.")
         button.disabled = state not in ("active", "standby") or self.closing or self.reconnecting
+        # The web page shows the desk's state too (set up later in on_mount than the first call).
+        feed = getattr(self, "web_feed", None)
+        if feed is not None:
+            feed.set_status(state)

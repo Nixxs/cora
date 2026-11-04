@@ -1,7 +1,7 @@
 // The page's start: is this device paired? If so, the chat; if not, the pairing screen.
 // A link from the QR code in Settings (…/#pair=CODE) pairs straight away.
 
-import { fitToViewport } from "./ui.js";
+import { fitToViewport, setupLayoutReport } from "./ui.js";
 
 const pairScreen = document.getElementById("pair-screen");
 const app = document.getElementById("app");
@@ -81,9 +81,8 @@ function showPairing(offline) {
 async function showApp(deviceName) {
   pairScreen.hidden = true;
   app.hidden = false;
-  document.getElementById("link-status").textContent = `web · ${deviceName}`;
   const { startChat } = await import("./chat.js");
-  startChat();
+  startChat(deviceName);
 }
 
 // The code from the QR link is read, then taken out of the address so it isn't left in history.
@@ -91,6 +90,7 @@ const linked = new URLSearchParams(location.hash.slice(1)).get("pair");
 if (linked) history.replaceState(null, "", location.pathname);
 
 fitToViewport();
+setupLayoutReport(document.getElementById("link-status"));
 const state = await session();
 if (state.paired) {
   await showApp(state.device);

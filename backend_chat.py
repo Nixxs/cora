@@ -41,7 +41,7 @@ class BackendRoute:
     def __init__(
         self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None,
         ask_approval=None, approval_seconds: float = 0, tool_seconds: float | None = None,
-        email_party: tuple | None = None,
+        email_party: tuple | None = None, asked_where: str = "on Signal",
     ) -> None:
         # Tools not offered in this kind of conversation, and refused if called anyway.
         self.excluded = frozenset(excluded)
@@ -49,10 +49,12 @@ class BackendRoute:
         self.memory_scope = memory_scope
         # Answering an email thread for a task, (party id, task id, who they are): pass_on reports from them.
         self.email_party = email_party
-        # In the person's own Signal chat: asks them to approve in the chat (returns their answer),
-        # instead of the pop-up on the desk, waiting at most approval_seconds.
+        # In the person's own chat (Signal, the web page): asks them to approve there (returns their
+        # answer), instead of the pop-up on the desk, waiting at most approval_seconds. asked_where
+        # says where, for Activity.
         self.ask_approval = ask_approval
         self.approval_seconds = approval_seconds
+        self.asked_where = asked_where
         # How long one tool result may take here, if longer than usual (an approval by phone).
         self.tool_seconds = tool_seconds
         self.outputs: dict[str, str] = {}

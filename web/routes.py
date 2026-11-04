@@ -16,6 +16,7 @@ from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from storage.web_device_store import WebDevice
+from .feed import MESSAGE, FeedMessage, MessageFeed, Status
 from .pairing import NO_CODE, PAIRED, Pairing, new_token, token_hash
 from .rendering import chat_html
 
@@ -28,6 +29,10 @@ BODY_MAX_BYTES = 2048
 MESSAGE_MAX_CHARS = 8000
 MESSAGE_BODY_MAX_BYTES = 4 * MESSAGE_MAX_CHARS + 1024
 REPLY_FAILED = "Cora couldn't reply. Check Activity on her PC."
+REF_MAX_CHARS = 64
+# Something is sent at least this often, so proxies (Cloudflare closes a quiet connection after
+# about 100 seconds) keep the live feed open.
+KEEP_ALIVE_SECONDS = 20
 
 
 class PageFiles(StaticFiles):
@@ -53,10 +58,16 @@ class WebAccess:
     # The device holding a token hash, or None; marks it as seen.
     find_device: Callable[[str], Awaitable[WebDevice | None]]
     on_paired: Callable[[WebDevice], None] = lambda device: None
-    # send_message(device, text, on_text) -> her reply, or None if it failed. on_text gets her
-    # text so far as it streams in. It carries on if the page goes away, so the reply is still
-    # shown at the desk and saved.
-    send_message: Callable[[WebDevice, str, Callable[[str], None]], Awaitable[str | None]] | None = None
+    # send_message(device, text, on_text, ref) -> her reply, or None if it failed. on_text gets
+    # her text so far as it streams in. It carries on if the page goes away, so the reply is still
+    # shown at the desk and saved. ref is the page's own mark for the message, carried into the
+    # feed so that page doesn't show it twice.
+    send_message: Callable[[WebDevice, str, Callable[[str], None], str | None], Awaitable[str | None]] | None = None
+    # The conversation as the page sees it, and waiting until its earlier messages are loaded.
+    feed: MessageFeed | None = None
+    feed_ready: Callable[[], Awaitable[None]] = lambda: asyncio.sleep(0)
+    # answer_approval(id, approved) -> whether that request was still waiting.
+    answer_approval: Callable[[str, bool], bool] | None = None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -101,6 +112,25 @@ async def reply_lines(updates: asyncio.Queue):
             continue
         yield line({"type": "done", "html": chat_html(value)} if value else {"type": "error", "message": REPLY_FAILED})
         return
+
+
+def feed_event(feed: MessageFeed, message: FeedMessage) -> str:
+    """One feed item as a server-sent event. A message: hers as safe HTML, the person's as plain
+    text. An approval or its end: its details, shown by the page as text, never as markup."""
+    if message.kind != MESSAGE:
+        body = {**(message.data or {}), "at": message.at.isoformat()}
+        return f"id: {feed.event_id(message)}\nevent: {message.kind}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+    body = {"role": message.role, "channel": message.channel, "at": message.at.isoformat(), "ref": message.ref}
+    if message.role == "assistant":
+        body["html"] = chat_html(message.text)
+    else:
+        body["text"] = message.text
+    return f"id: {feed.event_id(message)}\nevent: message\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def status_event(state: str) -> str:
+    # No id: a page's place in the conversation is its last message, not the desk's state.
+    return f"event: status\ndata: {json.dumps({'state': state})}\n\n"
 
 
 def api_routes(access: WebAccess) -> list[Route]:
@@ -149,12 +179,14 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "Send the message as JSON, with some text."}, 400)
         if len(text) > MESSAGE_MAX_CHARS:
             return answer({"error": f"That's too long: at most {MESSAGE_MAX_CHARS} characters."}, 413)
+        ref = body.get("ref")
+        ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
 
         async def reply() -> None:
             try:
                 updates.put_nowait(("done", await access.send_message(
-                    device, text, lambda so_far: updates.put_nowait(("text", so_far)),
+                    device, text, lambda so_far: updates.put_nowait(("text", so_far)), ref,
                 )))
             except Exception:
                 updates.put_nowait(("done", None))
@@ -170,10 +202,75 @@ def api_routes(access: WebAccess) -> list[Route]:
             "X-Accel-Buffering": "no",
         })
 
+    async def events(request: Request) -> Response:
+        """The conversation, live: recent messages first, then each new one as it's said."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        feed = access.feed
+        if feed is None:
+            return answer({"error": "Cora can't show the conversation here yet."}, 503)
+        await access.feed_ready()
+        last_event_id = request.headers.get("last-event-id")
+
+        async def stream():
+            # Subscribed before reading what's kept, so nothing said in between is missed; anything
+            # both kept and queued is sent once.
+            queue = feed.subscribe()
+            try:
+                fresh, backlog = feed.since(last_event_id)
+                sent = feed.seq
+                # How long the browser waits before reconnecting after a drop.
+                yield "retry: 3000\n\n"
+                if fresh:
+                    yield "event: reset\ndata: {}\n\n"
+                if feed.status is not None:
+                    yield status_event(feed.status)
+                for message in backlog:
+                    yield feed_event(feed, message)
+                while True:
+                    try:
+                        message = await asyncio.wait_for(queue.get(), KEEP_ALIVE_SECONDS)
+                    except TimeoutError:
+                        yield ": still here\n\n"
+                        continue
+                    if message is None:
+                        # Fell too far behind: closed, and the browser reconnects to catch up.
+                        return
+                    if isinstance(message, Status):
+                        yield status_event(message.state)
+                        continue
+                    if message.seq > sent:
+                        sent = message.seq
+                        yield feed_event(feed, message)
+            finally:
+                feed.unsubscribe(queue)
+
+        return StreamingResponse(stream(), media_type="text/event-stream", headers={
+            "Cache-Control": "no-store",
+            "X-Accel-Buffering": "no",
+        })
+
+    async def approvals(request: Request) -> Response:
+        """The person's answer to a request shown on the page: {"id", "approved": true or false}."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        body = await read_json(request)
+        approval_id = body.get("id") if body is not None else None
+        approved = body.get("approved") if body is not None else None
+        if not isinstance(approval_id, str) or not isinstance(approved, bool) or access.answer_approval is None:
+            return answer({"error": "Send the request's id and approved: true or false, as JSON."}, 400)
+        if not access.answer_approval(approval_id, approved):
+            return answer({"error": "That request isn't waiting any more."}, 409)
+        return answer({"answered": True})
+
     return [
         Route("/api/session", session, methods=["GET"]),
         Route("/api/pair", pair, methods=["POST"]),
         Route("/api/messages", messages, methods=["POST"]),
+        Route("/api/events", events, methods=["GET"]),
+        Route("/api/approvals", approvals, methods=["POST"]),
     ]
 
 

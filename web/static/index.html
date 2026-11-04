@@ -57,8 +57,8 @@
     </form>
 
     <footer id="status-bar">
-      <!-- The desk's Active/Standby state and audio bars come later (WB4, WV3). -->
-      <button type="button" id="chat-status" class="state-standby" hidden>◐ Standby</button>
+      <!-- The desk's Live state, shown once it arrives; the audio bars come with voice (WV3). -->
+      <span id="chat-status" class="state-disconnected" title="Cora's voice at the desk" hidden></span>
       <span id="audio-bars" aria-hidden="true" hidden></span>
       <span id="link-status" class="linked">web</span>
     </footer>

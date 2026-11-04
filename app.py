@@ -27,6 +27,7 @@ from storage.signal_settings_store import SignalSettings
 from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
 from server.listener import Listener
+from web.feed import MessageFeed
 from web.pairing import Pairing
 from storage.webhook_settings_store import WebhookSettings
 from services.confirmation import Confirmations
@@ -355,6 +356,19 @@ class CoraApp(
         self.web_pairing = Pairing()
         # One web message answered at a time (see answer_on_web).
         self.web_reply_lock = asyncio.Lock()
+        # The conversation as the web page sees it: every message said, and earlier ones loaded
+        # from the database the first time a page connects.
+        self.web_feed = MessageFeed()
+        # The desk's Live state so far (set_connection_state keeps it current from here).
+        status = self.query_one("#chat-status", Button)
+        self.web_feed.set_status(next(
+            (state for state in ("active", "standby", "connecting", "disconnecting")
+             if status.has_class(f"state-{state}")), "disconnected",
+        ))
+        self.web_feed_lock = asyncio.Lock()
+        # Requests for approval waiting on the page, by id (see ask_on_web).
+        self.web_approvals: dict[str, asyncio.Future] = {}
+        self.conversation.listeners.append(self.publish_to_web)
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
@@ -368,6 +382,10 @@ class CoraApp(
         self.confirmations = Confirmations(
             show=self.show_confirmation, close=self.close_confirmation, write_activity=self.activity.write,
             remind=lambda request: self.tell_cora_approval_waiting(request.title, request.tool, reminder=True),
+            # How each ended goes in the chat, and into the history Cora is given later.
+            on_outcome=lambda request, outcome: self.conversation.show_approval_outcome(
+                f"{request.title} · {request.tool}", outcome,
+            ),
         )
         self.services = ServiceManager(
             schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),

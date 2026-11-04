@@ -1040,11 +1040,15 @@ How it's kept safe:
 **Web interface: Cora in a browser.** The same listener can serve Cora's web page
 at the root of the public address (such as `https://cora.example.com/`), for your
 phone, tablet or laptop. It's being built in steps (see Web interface in the
-roadmap's Details). For now you can write to her from a paired device and her
-reply streams back; it's the same conversation as the desk, Signal and voice, so
-your message and her reply show at the desk too and she remembers them. The page
-shows only what's said there, not earlier history, yet. Run `python migrate.py`
-once for migrations 0048 and 0049. Save the public address under **Webhooks** first, then turn on Settings >
+roadmap's Details). A paired device shows your conversation with Cora as it is
+everywhere: recent messages when it opens (with where each was said: desk, voice,
+Signal, email or web), then each new one live. You can write to her there and her
+reply streams back; your message and her reply show at the desk too and she
+remembers them. When she wants to use a tool that changes things (sending an
+email, making an event), the page shows exactly what it would do with **Approve**
+and **Deny**; nothing happens until you answer, and after 10 minutes it lapses.
+The bottom row shows the desk's voice state (Active, Standby…) and whether the
+page is in touch with Cora. Run `python migrate.py` once for migrations 0048 and 0049. Save the public address under **Webhooks** first, then turn on Settings >
 Services > **Web interface**. The listener runs when webhooks, the web interface
 or both are on, and Microsoft is only subscribed to while webhooks are on.
 
@@ -1076,6 +1080,8 @@ How it's kept safe:
   other sites (`SameSite=Strict`). The token is never in an address. Cora keeps
   only its SHA-256 in the database, so the database alone can't sign anyone in.
 - The API takes small JSON requests only and its answers aren't cached.
+- An approval asked on the page counts only from a paired device, and only once:
+  the first answer wins, and nothing runs until it arrives.
 
 **Formatted email.** She writes her emails in simple Markdown: headings, bold,
 bullet and numbered lists, tables and links. They're sent as formatted HTML, with
@@ -1608,7 +1614,7 @@ characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
 | [server/](server/) | Cora's one HTTP listener on 127.0.0.1, behind the public HTTPS route: it builds one app from route groups (Graph notifications, then the web interface) and serves it without touching the TUI. |
-| [web/](web/) | The web interface for the phone and tablet: device pairing (`pairing.py`), its routes and API (`routes.py`), her replies as safe HTML (`rendering.py`), and the page in `static/` (plain HTML, CSS and JavaScript, no build). |
+| [web/](web/) | The web interface for the phone and tablet: device pairing (`pairing.py`), its routes and API (`routes.py`), her replies as safe HTML (`rendering.py`), the live conversation for pages (`feed.py`), and the page in `static/` (plain HTML, CSS and JavaScript, no build). |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
 | [sign_ups/](sign_ups/) | Signing up to sites for accounts of her own: her one sign-up password in the credential store, the browser session that stays on the approved site, and the `sign_ups` records. |
 | [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her, and the routes for Graph's mail and calendar notifications. |
@@ -1898,7 +1904,7 @@ features it helps check, and package last.
     (Model settings already exist; other settings still use `.env`.)
 19. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-20. Web interface WB0–WB4, then browser voice WV1–WV3: Cora on the iPhone and
+20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
     iPad mini as a home-screen web app, served by her webhook listener, in the
     same conversation as the desk and Signal (see Web interface in Details
     below).
@@ -2492,16 +2498,80 @@ features it helps check, and package last.
       screen or showing pictures), and tools that change things still ask in
       the desk's pop-up until WB4. On the page,
       [web/static/chat.js](web/static/chat.js) sends and reads the stream; the
-      status and settings controls stay hidden until they do something. The
-      page shows only what's said there, not earlier history, until WB3.
-    - WB3 live mirror: the phone shows the shared conversation, with history on
-      load and then live updates from the desk, voice captions and Signal.
-    - WB4 polish: Approve/Deny buttons for tools that change things (the same
-      `ask_approval` hook as Signal), an Active/Standby indicator, and
-      reconnecting after a drop. Then the layout for wide screens, once every
-      part of the page exists: in landscape (the iPad above all) the page
-      should use the whole screen instead of a centred 820px column, perhaps
-      with room for side panels.
+      status and settings controls stay hidden until they do something.
+    - WB3 live mirror, **built**: every message said in your conversation goes
+      through `Conversation.record` ([ui/conversation.py](ui/conversation.py)),
+      which saves it and tells listeners; desk-typed messages, saved
+      separately, are announced the same way. The app's listener publishes each
+      to a feed ([web/feed.py](web/feed.py)) that keeps the last 200, numbered
+      in order, and fills it once with earlier messages from the database
+      ([storage/recent_messages.py](storage/recent_messages.py): your own
+      conversations only, never a client's, nor desk messages that failed to
+      send) the first time a page connects. `GET /api/events` is a
+      Server-Sent Events stream: the last 60 on a first load, then each new one
+      (hers as safe HTML). Browsers reconnect by themselves and send the last
+      number they saw, so a page that dropped gets only what it missed; each
+      run of Cora has its own random epoch, so a page from an earlier run starts
+      afresh, as does one too far behind. A comment every 20 seconds keeps
+      proxies (Cloudflare closes quiet connections after about 100) from
+      dropping it. A message sent from a page carries that page's random
+      `ref`, set for its answer's task only, so the message and her reply reach
+      the feed marked and that page doesn't show them twice. Voice appears as
+      the desk shows it: each spoken turn once it pauses, not word by word. The
+      page marks each new day, and labels where each message was said.
+    - WB4a approvals and status, **built**: web chats ask before tools that
+      change things on the page itself, through the same `ask_approval` hook
+      as Signal (`ask_on_web` in
+      [app_areas/web_interface.py](app_areas/web_interface.py), 10 minutes as
+      on Signal). The request goes into the feed, so every open page shows a
+      card with exactly what the tool would be given (each argument on its own
+      line, long ones cut) and Approve and Deny; `POST /api/approvals` takes the
+      first answer, and a later one from another page is told it's too late.
+      How it ended (approved, declined, or lapsed when time ran out) goes into
+      the feed too, so every page updates its card, and a page that loads
+      later sees both. Her instructions say it's waiting for their approval on
+      the page. The desk's Live state (Active, Standby, Connecting…,
+      Disconnecting…, Disconnected) is sent from `set_connection_state` to
+      every page as it changes, and to each page as it connects, but isn't kept
+      in the conversation. On the page it shows at the bottom left as the TUI
+      shows it (display only; resuming from the page comes with voice), and
+      the device name at the bottom right shows whether the page is in touch:
+      a green dot, "reconnecting…" while the browser retries, or "offline".
+      Testing it found two problems with approvals in every written chat
+      (Signal and email too, not only the page), both fixed:
+      - Her instructions told her to say a request was waiting for approval
+        rather than done. In a written chat the tool's result comes back only
+        after the person answers, so she said "waiting" even when the result
+        showed it was sent. All written chats now share
+        `written_approval_rule` ([session_config.py](session_config.py)):
+        report what the result says, never "still waiting" once it's in.
+      - Later turns are given the visible chat as history, not tool calls and
+        their results, so if her reply got it wrong she had no record of what
+        was done. Now every approval, wherever it's asked (the desk's pop-up,
+        Signal, the page, a task's coordinator), ends with a quiet line in the
+        chat ("you approved Email · send_email", "you declined…", "no answer in
+        time for…: not done"), given to her in history as "(You approved my
+        request to use Email · send_email.)". It isn't saved: her reply,
+        which is, says what came of it.
+    - WB4b layout for wide screens, once every part of the page exists: in
+      landscape (the iPad above all) the page should use the whole screen
+      instead of a centred 820px column, perhaps with room for side panels.
+  - *iOS layout notes, measured on an iPhone and an iPad mini on iOS 26:* both
+    Home Screen apps report a layout area shorter than the screen by exactly
+    the status bar's height (iPhone 812 of 874 points, iPad 1101 of 1133), but
+    they differ below it. On the iPhone the app's window reaches the bottom
+    and only the layout area stops short, so a page sized to it leaves a gap;
+    on the iPad the window itself ends there and nothing below can be drawn.
+    The numbers can't tell them apart, so the page is pinned to the screen's
+    edges and, on iPhones only, its bottom edge pushed down by the missing
+    part; on any device it's lifted above the on-screen keyboard while that's
+    open ([ui.js](web/static/ui.js) `fitToViewport`, rechecked once iOS has
+    filled in the safe areas and when the app returns to the front). Content
+    just under the status bar is blurred, so the top keeps a little more than
+    the safe area. Double-tap zoom is off. Tapping the device name at the
+    bottom right five times quickly shows what the device reports (screen,
+    viewport and safe-area sizes, and the page's edges outlined in red), for
+    fixing layout on a real device.
   - *Browser voice (WV1–WV3):* the Live session stays on the desk, and only its
     audio ends move. The Live code touches sound in two places only:
     `microphone_chunks()` (24 kHz mono int16) in `send_microphone`, and

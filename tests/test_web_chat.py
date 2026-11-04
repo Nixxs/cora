@@ -44,13 +44,15 @@ class RenderingTests(unittest.TestCase):
 class MessageRouteTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.sent = []
+        self.refs = []
         self.reply = "Here's **tomorrow**."
         self.pieces = ["Here's ", "Here's **tomo", "Here's **tomorrow**."]
 
         async def find_device(hashed):
             return IPHONE if hashed == token_hash(TOKEN) else None
 
-        async def send_message(device, text, on_text):
+        async def send_message(device, text, on_text, ref=None):
+            self.refs.append(ref)
             self.sent.append((device, text))
             for piece in self.pieces:
                 on_text(piece)
@@ -85,11 +87,16 @@ class MessageRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("".join(deltas), "Here's **tomorrow**.")
         self.assertEqual(updates[-1], {"type": "done", "html": chat_html(self.reply)})
 
+    async def test_the_pages_mark_for_its_message_is_passed_on_and_checked(self):
+        for ref, expected in (("abc-123", "abc-123"), ("x" * 65, None), (42, None), (None, None)):
+            await self.post({"text": "Hi", "ref": ref})
+            self.assertEqual(self.refs[-1], expected)
+
     async def test_a_failed_reply_says_so(self):
         self.reply = None
         self.assertEqual(lines(await self.post({"text": "Hi"}))[-1], {"type": "error", "message": REPLY_FAILED})
 
-        async def broken(device, text, on_text):
+        async def broken(device, text, on_text, ref=None):
             raise RuntimeError("boom")
 
         self.access.send_message = broken

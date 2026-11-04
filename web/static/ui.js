@@ -7,10 +7,12 @@ const composer = document.getElementById("composer");
 const statusButton = document.getElementById("chat-status");
 const bars = document.getElementById("audio-bars");
 
+// The desk's Live states, labelled as the TUI labels them.
 const STATES = {
   active: "● Active",
-  standby: "◐ Standby",
-  connecting: "◌ Connecting",
+  standby: "○ Standby",
+  connecting: "◌ Connecting…",
+  disconnecting: "◌ Disconnecting…",
   disconnected: "○ Disconnected",
 };
 
@@ -86,6 +88,11 @@ export function startWriting(via = "web") {
   };
 }
 
+/** Empties the chat, for a fresh load of the conversation. */
+export function clearChat() {
+  output.replaceChildren();
+}
+
 /** A quiet line for something that happened, like "Cora went to standby". */
 export function addNotice(text) {
   const notice = document.createElement("div");
@@ -95,30 +102,63 @@ export function addNotice(text) {
 }
 
 /** A tool waiting for your yes; onAnswer(true|false) once tapped. */
-export function addApproval({ title, detail, onAnswer }) {
+const OUTCOMES = { approved: "✓ Approved", declined: "✕ Declined", lapsed: "◌ Lapsed: nothing was done" };
+
+/**
+ * A tool waiting for the person's yes, with exactly what it would do. onAnswer(true|false) sends
+ * the answer and resolves to an error message, or null when it was taken. settle(outcome) shows
+ * how it ended (approved, declined or lapsed), from whichever page answered.
+ */
+export function addApproval({ title, detail, until, onAnswer }) {
   const card = document.createElement("div");
   card.className = "approval";
   card.innerHTML = `
-    <div class="what">⚠ ${escapeText(title)}</div>
-    <div>${escapeText(detail)}</div>
+    <div class="what">⚠ Cora would like to use ${escapeText(title)}</div>
+    <pre class="detail">${escapeText(detail)}</pre>
     <div class="actions">
       <button type="button" class="yes">Approve</button>
       <button type="button" class="no">Deny</button>
-    </div>`;
+    </div>
+    <div class="note">Nothing happens until you answer${until ? ` · lapses at ${time(until)}` : ""}.</div>`;
+  const buttons = card.querySelectorAll(".actions button");
+  const note = card.querySelector(".note");
   for (const [selector, answer] of [[".yes", true], [".no", false]]) {
-    card.querySelector(selector).addEventListener("click", () => {
-      card.classList.add("answered");
-      card.querySelector(".what").textContent = answer ? "✓ Approved" : "✕ Denied";
-      onAnswer?.(answer);
+    card.querySelector(selector).addEventListener("click", async () => {
+      buttons.forEach((button) => { button.disabled = true; });
+      note.textContent = answer ? "Approving…" : "Declining…";
+      const error = await onAnswer(answer);
+      if (error && !card.classList.contains("answered")) {
+        buttons.forEach((button) => { button.disabled = false; });
+        note.textContent = error;
+      }
     });
   }
-  return append(card);
+  append(card);
+  return {
+    settle(outcome) {
+      card.classList.add("answered", `outcome-${outcome}`);
+      card.querySelector(".what").textContent = `${OUTCOMES[outcome] || outcome} · ${title}`;
+      note.textContent = "";
+    },
+  };
 }
 
-/** Active, standby, connecting or disconnected, as the desk shows it. */
+/** The desk's Live state (active, standby, connecting, disconnecting or disconnected). */
 export function setStatus(state) {
+  if (!STATES[state]) return;
   statusButton.className = `state-${state}`;
   statusButton.textContent = STATES[state];
+  statusButton.hidden = false;
+}
+
+const LINKS = { connecting: "connecting…", reconnecting: "reconnecting…", offline: "offline" };
+
+/** Whether this page is in touch with Cora: connecting, linked, reconnecting, or offline. */
+export function setLink(state, deviceName) {
+  const link = document.getElementById("link-status");
+  // Connecting looks like reconnecting: waiting, not wrong.
+  link.className = state === "connecting" ? "reconnecting" : state;
+  link.textContent = state === "linked" ? `web · ${deviceName}` : LINKS[state];
 }
 
 const BAR_CHARS = " ▁▂▃▄▅▆▇█";
@@ -154,27 +194,60 @@ export function setupComposer(onSend) {
   });
 }
 
+/** The status bar's safe area at the top, as the device reports it to CSS. */
+function safeTop() {
+  const probe = document.createElement("div");
+  probe.style.cssText = "position:fixed;visibility:hidden;height:env(safe-area-inset-top)";
+  document.body.append(probe);
+  const height = probe.getBoundingClientRect().height;
+  probe.remove();
+  return Math.round(height);
+}
+
 /**
  * iOS Safari doesn't shrink the page for the on-screen keyboard, it covers it. The page is
  * pinned to the screen's edges (style.css); this lifts its bottom edge by the keyboard's height,
  * so the composer stays just above it.
  *
  * The keyboard's height is how much the visible area shrank from its height with no keyboard.
- * Only that difference is used: Home Screen apps report heights short by the status bar, so a
- * height itself can't size the page.
+ *
+ * iOS Home Screen apps (seen on iOS 26) also lay the page out in an area shorter than the screen
+ * by the status bar's height, anchored at the top, so the bottom of the screen is left outside
+ * the page. With no keyboard, the page's bottom edge is pushed down by that missing part.
  */
 export function fitToViewport() {
   const viewport = window.visualViewport;
   if (!viewport) return;
   const root = document.documentElement;
   const typing = () => ["INPUT", "TEXTAREA"].includes(document.activeElement?.tagName);
+  const standalone = navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches;
   let full = viewport.height;
+  // Measured on iOS 26: an iPhone app's window reaches the screen's bottom while its layout area
+  // stops short (874 and 812, short by the 62-point status bar), so content placed below is drawn.
+  // An iPad app's window itself ends short (1133 and 1101, short by 32), so nothing below can be
+  // drawn. The numbers alone look the same, so only iPhones are stretched.
+  const iphone = /iPhone/.test(navigator.userAgent);
+  // For iPhone-only spacing in style.css.
+  root.classList.toggle("iphone", iphone);
+  /** How far short of the screen's height the page's area stops, in an iPhone Home Screen app. */
+  const missing = () => {
+    if (!standalone || !iphone) return 0;
+    // iOS keeps screen width and height as in portrait, whichever way the phone is turned.
+    const landscape = window.matchMedia("(orientation: landscape)").matches;
+    const screenHeight = landscape ? Math.min(screen.width, screen.height) : Math.max(screen.width, screen.height);
+    const short = screenHeight - root.clientHeight;
+    // Only exactly the status bar's worth (62 and 62 on an iPhone). Anything else, such as an
+    // iPad app in a window smaller than the screen, isn't this quirk and is left alone.
+    return short > 0 && Math.abs(short - safeTop()) <= 2 ? short : 0;
+  };
   const fit = () => {
     const follow = nearBottom();
     // With nothing focused there's no keyboard: this is the whole height (it changes on rotating).
     if (!typing()) full = viewport.height;
     const keyboard = Math.max(0, Math.round(full - viewport.height - viewport.offsetTop));
     root.style.setProperty("--keyboard", `${keyboard}px`);
+    // Above the keyboard when it's open; otherwise down to the screen's real bottom.
+    root.style.setProperty("--bottom", keyboard > 0 ? `${keyboard}px` : `${-missing()}px`);
     root.classList.toggle("keyboard-open", keyboard > 0);
     // Safari scrolls the page to show the focused box; the layout already does that.
     window.scrollTo(0, 0);
@@ -184,7 +257,68 @@ export function fitToViewport() {
   viewport.addEventListener("scroll", fit);
   // Focus changes before the keyboard has fully opened or closed; the resize follows.
   document.addEventListener("focusout", () => setTimeout(fit, 50));
+  // iOS fills in the safe areas a moment after the page starts, and may change them when the app
+  // comes back to the front, without a resize: so checked again once settled, and on return.
+  window.addEventListener("load", fit);
+  window.addEventListener("pageshow", fit);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") setTimeout(fit, 100);
+  });
+  for (const delay of [100, 500, 1500]) setTimeout(fit, delay);
   fit();
+}
+
+/**
+ * What the device reports about the screen, for fixing layout on a real phone: tap the device
+ * name at the bottom right five times quickly to show or hide it. Updates as things change.
+ */
+export function setupLayoutReport(trigger) {
+  let taps = 0;
+  let timer = null;
+  let panel = null;
+  const inset = (side) => {
+    const probe = document.createElement("div");
+    probe.style.cssText = `position:fixed;visibility:hidden;height:env(safe-area-inset-${side})`;
+    document.body.append(probe);
+    const value = probe.getBoundingClientRect().height;
+    probe.remove();
+    return Math.round(value);
+  };
+  const report = () => {
+    if (!panel) return;
+    const viewport = window.visualViewport;
+    const screen = document.querySelector(".screen:not([hidden])")?.getBoundingClientRect();
+    const root = document.documentElement;
+    panel.textContent = [
+      `screen ${window.screen.width}×${window.screen.height}`,
+      `inner ${window.innerWidth}×${window.innerHeight}`,
+      `client ${root.clientWidth}×${root.clientHeight}`,
+      viewport ? `visual ${Math.round(viewport.width)}×${Math.round(viewport.height)} top ${Math.round(viewport.offsetTop)}` : "visual none",
+      `safe top ${inset("top")} bottom ${inset("bottom")}`,
+      `keyboard ${getComputedStyle(root).getPropertyValue("--keyboard").trim()} bottom ${getComputedStyle(root).getPropertyValue("--bottom").trim()}`,
+      screen ? `page ${Math.round(screen.top)}→${Math.round(screen.bottom)}` : "page ?",
+      `standalone ${navigator.standalone === true || window.matchMedia("(display-mode: standalone)").matches}`,
+    ].join("\n");
+  };
+  trigger.addEventListener("click", () => {
+    taps += 1;
+    clearTimeout(timer);
+    timer = setTimeout(() => { taps = 0; }, 1500);
+    if (taps < 5) return;
+    taps = 0;
+    if (panel) {
+      panel.remove();
+      panel = null;
+      return;
+    }
+    panel = document.createElement("pre");
+    panel.className = "layout-report";
+    document.body.append(panel);
+    report();
+  });
+  window.visualViewport?.addEventListener("resize", report);
+  window.addEventListener("resize", report);
+  setInterval(report, 1000);
 }
 
 export { statusButton };
