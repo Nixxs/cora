@@ -318,3 +318,6 @@ class LiveSessionMixin:
         feed = getattr(self, "web_feed", None)
         if feed is not None:
             feed.set_status(state)
+        # A page talking to her can't once she's in standby or disconnected: its call ends.
+        if state in ("standby", "disconnected") and getattr(self, "web_voice", None) is not None:
+            self.web_talk_lost_live()

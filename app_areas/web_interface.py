@@ -55,7 +55,54 @@ class WebInterfaceMixin:
         return WebAccess(self.web_pairing, add_device, find_device, self.on_web_paired,
                          send_message=self.answer_on_web, feed=self.web_feed, feed_ready=self.web_feed_ready,
                          answer_approval=self.answer_web_approval, voice=self.web_voice,
-                         on_listening=self.on_web_listening)
+                         on_listening=self.on_web_listening, on_talk=self.on_web_talk)
+
+    def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
+        """A page starts or stops talking to her. Starting wakes her from standby (and hanging up
+        then puts her back), and Live hears that device's microphone instead of the desk's; only
+        one device talks at a time, so another taking over ends the first."""
+        if talking:
+            previous = self.web_voice.start_talking(listener)
+            if previous is not None:
+                self.web_voice.tell(previous, {"type": "talk_ended", "reason": "taken over"})
+            elif self.standby or not self.live.ready:
+                # Woken for this call: hanging up puts her back.
+                self.web_talk_woke = True
+                if self.standby and not self.reconnecting:
+                    self.action_reconnect()
+                    if self.reconnecting:
+                        self.pending_greeting = "welcome_back"
+            self.run_worker(self.live.use_web_microphone(listener.mic), group="web-talk", exit_on_error=False)
+            self.web_voice.tell(listener, {"type": "talking"})
+            self.activity.write(f"Talking to Cora from {device.name}; the desk mic is quiet.", "Web voice")
+            return
+        if not self.web_voice.stop_talking(listener):
+            return
+        self.end_web_talk(f"{device.name} hung up.")
+        self.web_voice.tell(listener, {"type": "talk_ended", "reason": "hung up"})
+
+    def end_web_talk(self, why: str) -> None:
+        """The desk mic hears her again; if a page's Talk woke her, she goes back to standby
+        (once she's finished speaking and anything pending is done, as when she asks for it)."""
+        self.run_worker(self.live.use_web_microphone(None), group="web-talk", exit_on_error=False)
+        woke = self.web_talk_woke
+        self.web_talk_woke = False
+        if woke and self.live.ready and not self.standby:
+            self.request_standby()
+            self.activity.write(f"{why} Cora goes back to standby, as Talk woke her.", "Web voice")
+        else:
+            self.activity.write(f"{why} The desk mic hears her again.", "Web voice")
+
+    def web_talk_lost_live(self) -> None:
+        """She went into standby or disconnected while a page was talking: that call ends."""
+        talker = self.web_voice.talker
+        if talker is None or self.reconnecting:
+            return
+        self.web_voice.stop_talking(talker)
+        self.web_talk_woke = False
+        self.run_worker(self.live.use_web_microphone(None), group="web-talk", exit_on_error=False)
+        self.web_voice.tell(talker, {"type": "talk_ended", "reason": "standby"})
+        self.activity.write(f"Talk on {talker.device} ended: Cora is in standby.", "Web voice")
 
     def on_web_listening(self, device: WebDevice, listening: bool) -> None:
         """A page started or stopped playing her voice: the desk speaker is quiet while any does."""

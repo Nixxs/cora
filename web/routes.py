@@ -34,6 +34,8 @@ MESSAGE_MAX_CHARS = 8000
 MESSAGE_BODY_MAX_BYTES = 4 * MESSAGE_MAX_CHARS + 1024
 REPLY_FAILED = "Cora couldn't reply. Check Activity on her PC."
 REF_MAX_CHARS = 64
+# One piece of a talking page's microphone: pages send about 40 ms at a time (under 2 KB).
+MIC_CHUNK_MAX_BYTES = 16 * 1024
 # Something is sent at least this often, so proxies (Cloudflare closes a quiet connection after
 # about 100 seconds) keep the live feed open.
 KEEP_ALIVE_SECONDS = 20
@@ -75,6 +77,8 @@ class WebAccess:
     # Her voice for listening pages, and on_listening(device, listening) as a page starts or stops.
     voice: VoiceRelay | None = None
     on_listening: Callable[[WebDevice, bool], None] = lambda device, listening: None
+    # on_talk(device, listener, talking) as a page starts or stops talking to her.
+    on_talk: Callable = lambda device, listener, talking: None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -274,8 +278,13 @@ def api_routes(access: WebAccess) -> list[Route]:
         return answer({"answered": True})
 
     async def voice(websocket: WebSocket) -> None:
-        """Her voice for this page: raw 24 kHz mono PCM16 as binary messages while she speaks, and
-        small JSON messages ({"type": "listening"}, {"type": "ping"}) to keep the line open."""
+        """Her voice for this page, and the page's own voice while it talks.
+
+        To the page: her speech as raw 24 kHz mono PCM16 binary messages, and small JSON messages
+        ({"type": "listening"}, {"type": "talking"}, {"type": "talk_ended", "reason"}, and a
+        {"type": "ping"} to keep the line open). From the page: {"type": "talk", "on": true or
+        false}, and while talking its microphone as binary messages in the same format.
+        """
         device = await device_of(websocket)
         if device is None or access.voice is None or not same_origin(websocket):
             # Refused before accepting: the browser sees the connection fail.
@@ -285,20 +294,38 @@ def api_routes(access: WebAccess) -> list[Route]:
         listener = access.voice.listen(device.name)
         access.on_listening(device, True)
 
-        async def hear_hang_up() -> None:
-            # The page says nothing back yet; this only notices it going away.
+        async def hear_page() -> None:
+            """What the page sends, until it goes away."""
             try:
                 while True:
-                    await websocket.receive_text()
+                    message = await websocket.receive()
+                    if message["type"] == "websocket.disconnect":
+                        return
+                    if message.get("bytes") is not None:
+                        if len(message["bytes"]) <= MIC_CHUNK_MAX_BYTES:
+                            access.voice.hear(listener, message["bytes"])
+                    elif message.get("text"):
+                        try:
+                            body = json.loads(message["text"])
+                        except ValueError:
+                            continue
+                        if isinstance(body, dict) and body.get("type") == "talk":
+                            access.on_talk(device, listener, body.get("on") is True)
             except (WebSocketDisconnect, RuntimeError):
                 return
 
-        hanging_up = asyncio.ensure_future(hear_hang_up())
+        hearing = asyncio.ensure_future(hear_page())
         try:
             await websocket.send_json({"type": "listening"})
-            while not hanging_up.done():
+            while True:
+                sending = asyncio.ensure_future(access.voice.next_chunk(listener, KEEP_ALIVE_SECONDS))
+                await asyncio.wait({sending, hearing}, return_when=asyncio.FIRST_COMPLETED)
+                if hearing.done():
+                    # The page went away: stop at once, so the desk gets its mic and speaker back.
+                    sending.cancel()
+                    return
                 try:
-                    chunk = await access.voice.next_chunk(listener, KEEP_ALIVE_SECONDS)
+                    chunk = sending.result()
                 except TimeoutError:
                     await websocket.send_json({"type": "ping"})
                     continue
@@ -306,11 +333,16 @@ def api_routes(access: WebAccess) -> list[Route]:
                     # Fell too far behind: closed, so the page can start listening afresh.
                     await websocket.close(code=1011)
                     return
-                await websocket.send_bytes(chunk)
+                if isinstance(chunk, dict):
+                    await websocket.send_json(chunk)
+                else:
+                    await websocket.send_bytes(chunk)
         except (WebSocketDisconnect, RuntimeError):
             pass
         finally:
-            hanging_up.cancel()
+            hearing.cancel()
+            if access.voice.talker is listener:
+                access.on_talk(device, listener, False)
             access.voice.stop(listener)
             access.on_listening(device, False)
 

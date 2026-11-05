@@ -372,6 +372,8 @@ class CoraApp(
         # Her voice for devices listening on the page; Live plays to it instead of the desk while any do.
         self.web_voice = VoiceRelay()
         self.live.voice_relay = self.web_voice
+        # Whether a page's Talk woke her from standby, so hanging up puts her back.
+        self.web_talk_woke = False
         self.conversation.listeners.append(self.publish_to_web)
         self.web_devices = []
         self.web_controls = None

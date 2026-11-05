@@ -1048,9 +1048,12 @@ remembers them. When she wants to use a tool that changes things (sending an
 email, making an event), the page shows exactly what it would do with **Approve**
 and **Deny**; nothing happens until you answer, and after 10 minutes it lapses.
 The bottom row shows the desk's voice state (Active, Standby…) and whether the
-page is in touch with Cora. Tap **Listen here** in the Voice panel to hear her
-voice on that device while she's Active (the desk speaker goes quiet meanwhile);
-on iPhone it keeps the app in the foreground, as iOS stops sound when it locks. Messages sent from the page are labelled with the
+page is in touch with Cora. **Talk** in the Voice panel is a call: you speak to
+her through that device's microphone and hear her on it (the desk mic and speaker
+go quiet meanwhile). Talk wakes her from standby; **Hang up** puts her back if
+Talk woke her, or hands the mic and speaker back to the desk if she was already
+Active. Bluetooth headphones work too. On iPhone, keep the app in the foreground:
+iOS stops sound and the mic when it locks. Messages sent from the page are labelled with the
 device they came from (`You · web · iPad`). Run `python migrate.py` once for
 migrations 0048, 0049 and 0050. Save the public address under **Webhooks** first, then turn on Settings >
 Services > **Web interface**. The listener runs when webhooks, the web interface
@@ -2646,8 +2649,46 @@ features it helps check, and package last.
       play through the silent switch, and schedules each piece straight after
       the one before; a locked phone or backgrounded app ends it, and the page
       says so when it's back.
-    - WV2 talk from the phone, with the switch of audio owner.
-    - WV3 audio bars, mute, and standby/resume from the page.
+    - WV2 talk from the phone, **built**. **Talk** in the Voice panel makes
+      that device's microphone what she hears, and listens too. It wakes her
+      from standby the way clicking Standby at the desk does (with her
+      "welcome back"); if Talk woke her, hanging up puts her back through the
+      usual path (`request_standby`: once she's finished speaking and
+      anything pending is done), and if she was already Active, hanging up
+      only hands the mic and speaker back to the desk. One device talks at a
+      time: another tapping Talk takes over, and the first is told. If she
+      goes into standby or disconnects mid-call (the usual quiet period), the
+      call ends and the page says so, so Talk never sits on while she can't
+      hear. In Live, `use_web_microphone` swaps the microphone task's source
+      for the device's audio queue and back (`queued_chunks`); the desk's
+      privacy mute is about the desk mic, so it doesn't silence a device
+      that's talking. The same WebSocket carries the page's microphone up
+      (raw 24 kHz mono PCM16, about 40 ms a message, at most 16 KB, and only
+      while that page is the one talking) and `{"type": "talk", "on": …}`;
+      it now notices a page going away at once, so the desk gets its mic and
+      speaker straight back. On the page, the microphone is captured with the
+      browser's echo cancellation, noise suppression and gain control,
+      gathered in an audio worklet ([mic-worklet.js](web/static/mic-worklet.js)),
+      resampled to 24 kHz and sent in 40 ms pieces; the panel says whether
+      she's in standby (Talk wakes her), waking, or on a call.
+      After testing, two changes:
+      - *One button:* Listen on its own was dropped. Either you talk to her on
+        the device or at the desk, never the desk mic with the device's
+        speaker, so the panel is a single **Talk / Hang up**, and hanging up
+        closes the connection (the server already treats that as hanging up).
+        The relay still serves listening on its own if it's ever wanted.
+      - *Bluetooth headphones* (AirPods gave static in one ear and a dead mic):
+        when the mic starts, iOS switches Bluetooth headphones to their headset
+        mode, which changes the sample rate (typically 48 to 16 kHz). The page
+        made its audio engine first, so playback ran at the old rate on the new
+        route (static) and the mic's audio didn't match it (silence). Now the
+        mic is turned on first and the engine made after, at the route's own
+        rate; a page using the mic may start sound, so it still works from the
+        tap. If headphones come or go mid-call, the audio is rebuilt on the new
+        route (not within 2 seconds of a start, as starting the mic can itself
+        announce a device change).
+    - WV3 audio bars beside the status row, a mute for the device's own mic,
+      and any polish testing turns up.
   - *Voice limits:* iOS suspends the mic and the connection when the screen
     locks or the app goes to the background, so voice works in the foreground
     only (only a native App Store app could avoid this). Starting audio needs a

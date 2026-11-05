@@ -149,6 +149,14 @@ export function setStatus(state) {
   statusButton.className = `state-${state}`;
   statusButton.textContent = STATES[state];
   statusButton.hidden = false;
+  document.dispatchEvent(new CustomEvent("cora-status", { detail: state }));
+}
+
+/** Calls back with the desk's Live state each time it changes (the voice panel follows it). */
+export function onStatus(callback) {
+  document.addEventListener("cora-status", (event) => callback(event.detail));
+  // The state may have arrived already.
+  if (!statusButton.hidden) callback(statusButton.className.replace("state-", ""));
 }
 
 const LINKS = { connecting: "connecting…", reconnecting: "reconnecting…", offline: "offline" };

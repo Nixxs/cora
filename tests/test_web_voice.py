@@ -5,7 +5,7 @@ import base64
 from datetime import datetime, timezone
 from struct import pack
 import unittest
-from unittest.mock import AsyncMock, MagicMock, call
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import uuid4
 
 from starlette.testclient import TestClient
@@ -150,3 +150,158 @@ class LiveVoiceRelayTests(unittest.IsolatedAsyncioTestCase):
             app.web_voice.stop(listener)
             app.on_web_listening(IPHONE, False)
             app.live.speaker = None
+
+
+class TalkRelayTests(unittest.IsolatedAsyncioTestCase):
+    async def test_one_page_talks_at_a_time_and_only_its_microphone_is_heard(self):
+        relay = VoiceRelay()
+        iphone, ipad = relay.listen("iPhone"), relay.listen("iPad")
+        self.assertIsNone(relay.start_talking(iphone))
+        relay.hear(iphone, SPEECH)
+        relay.hear(ipad, SPEECH)  # not talking: dropped
+        self.assertEqual(iphone.mic.get_nowait(), SPEECH)
+        # The iPad takes over: the iPhone stops being heard.
+        self.assertIs(relay.start_talking(ipad), iphone)
+        self.assertIsNone(iphone.mic)
+        self.assertFalse(relay.stop_talking(iphone))
+        self.assertTrue(relay.stop_talking(ipad))
+        self.assertIsNone(relay.talker)
+
+    async def test_messages_reach_a_page_in_order_with_her_audio(self):
+        relay = VoiceRelay()
+        page = relay.listen("iPhone")
+        relay.play(delta(SPEECH))
+        relay.tell(page, {"type": "talking"})
+        self.assertEqual(await relay.next_chunk(page, 1), SPEECH)
+        self.assertEqual(await relay.next_chunk(page, 1), {"type": "talking"})
+
+
+class TalkSocketTests(unittest.TestCase):
+    def setUp(self):
+        self.relay = VoiceRelay()
+        self.talk = []
+        self.heard = []
+
+        async def find_device(hashed):
+            return IPHONE if hashed == token_hash(TOKEN) else None
+
+        def on_talk(device, listener, talking):
+            self.talk.append(talking)
+            if talking:
+                self.relay.start_talking(listener)
+                self.relay.tell(listener, {"type": "talking"})
+            else:
+                if listener.mic is not None:
+                    while not listener.mic.empty():
+                        self.heard.append(listener.mic.get_nowait())
+                self.relay.stop_talking(listener)
+
+        access = WebAccess(Pairing(), AsyncMock(), find_device, voice=self.relay, on_talk=on_talk)
+        self.client = TestClient(build_app(web_routes(access)))
+
+    def test_a_pages_microphone_reaches_her_while_talking_and_leaving_hangs_up(self):
+        headers = {"origin": "https://testserver", "cookie": f"{COOKIE}={TOKEN}"}
+        with self.client.websocket_connect("/api/voice", headers=headers) as socket:
+            self.assertEqual(socket.receive_json(), {"type": "listening"})
+            socket.send_json({"type": "talk", "on": True})
+            self.assertEqual(socket.receive_json(), {"type": "talking"})
+            socket.send_bytes(SPEECH)
+            socket.send_bytes(bytes(64 * 1024))  # far too big for one piece: ignored
+            socket.send_json({"type": "talk", "on": False})
+            socket.send_json({"type": "talk", "on": True})
+            self.assertEqual(socket.receive_json(), {"type": "talking"})
+        for _ in range(50):
+            if self.relay.talker is None and not self.relay.active:
+                break
+            asyncio.run(asyncio.sleep(0.02))
+        # Leaving while talking hangs up too.
+        self.assertIsNone(self.relay.talker)
+        self.assertEqual(self.talk, [True, False, True, False])
+        self.assertEqual(self.heard, [SPEECH])
+
+
+class LiveWebMicrophoneTests(unittest.IsolatedAsyncioTestCase):
+    async def test_while_a_page_talks_live_hears_it_and_the_desk_mic_again_after(self):
+        live = CoraLive()
+        async with live_transport(live) as (connection, speaker, emit):
+            # The harness stands in for the desk microphone; the page's goes through the real path.
+            stand_in = live.send_microphone
+            live.send_microphone = CoraLive.send_microphone.__get__(live)
+            audio = asyncio.Queue()
+            await live.use_web_microphone(audio)
+            audio.put_nowait(SPEECH)
+            for _ in range(50):
+                if connection.session.input_audio.append.await_count:
+                    break
+                await asyncio.sleep(0.01)
+            connection.session.input_audio.append.assert_awaited_with(audio=delta(SPEECH))
+            # The desk's privacy mute doesn't silence a page that's talking.
+            await live.set_microphone_muted(True)
+            audio.put_nowait(SPEECH)
+            for _ in range(50):
+                if connection.session.input_audio.append.await_count >= 2:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertEqual(connection.session.input_audio.append.await_count, 2)
+            await live.set_microphone_muted(False)
+            live.send_microphone = stand_in  # back to the harness's stand-in for the desk
+            await live.use_web_microphone(None)
+            self.assertIsNone(live.web_microphone)
+            # The page's queue was told to end.
+            self.assertIn(None, list(audio._queue))
+
+
+class WebTalkAppTests(unittest.IsolatedAsyncioTestCase):
+    async def test_talk_from_standby_wakes_her_and_hanging_up_puts_her_back(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.standby = True
+            listener = app.web_voice.listen("iPhone")
+            with patch.object(app, "action_reconnect") as reconnect, \
+                    patch.object(app.live, "use_web_microphone", AsyncMock()) as use_mic, \
+                    patch.object(app, "request_standby") as standby:
+                app.on_web_talk(IPHONE, listener, True)
+                reconnect.assert_called_once_with()
+                self.assertIs(app.web_voice.talker, listener)
+                self.assertTrue(app.web_talk_woke)
+                await pilot.pause()
+                use_mic.assert_awaited_with(listener.mic)
+                self.assertEqual(await app.web_voice.next_chunk(listener, 1), {"type": "talking"})
+                # Now Active; hanging up sends her back to standby.
+                app.standby = False
+                app.live.ready = True
+                app.on_web_talk(IPHONE, listener, False)
+                standby.assert_called_once_with()
+                await pilot.pause()
+                use_mic.assert_awaited_with(None)
+                self.assertFalse(app.web_talk_woke)
+                app.live.ready = False
+
+    async def test_talk_while_already_active_just_hands_back_to_the_desk(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.standby = False
+            app.live.ready = True
+            listener = app.web_voice.listen("iPhone")
+            with patch.object(app, "action_reconnect") as reconnect, \
+                    patch.object(app.live, "use_web_microphone", AsyncMock()), \
+                    patch.object(app, "request_standby") as standby:
+                app.on_web_talk(IPHONE, listener, True)
+                app.on_web_talk(IPHONE, listener, False)
+                reconnect.assert_not_called()
+                standby.assert_not_called()
+            app.live.ready = False
+
+    async def test_another_device_takes_over_and_standby_ends_the_call(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.live.ready = True
+            iphone, ipad = app.web_voice.listen("iPhone"), app.web_voice.listen("iPad")
+            with patch.object(app.live, "use_web_microphone", AsyncMock()):
+                app.on_web_talk(IPHONE, iphone, True)
+                app.on_web_talk(IPHONE, ipad, True)
+                messages = [await app.web_voice.next_chunk(iphone, 1) for _ in range(2)]
+                self.assertEqual(messages, [{"type": "talking"}, {"type": "talk_ended", "reason": "taken over"}])
+                self.assertIs(app.web_voice.talker, ipad)
+                app.set_connection_state("standby")
+                self.assertIsNone(app.web_voice.talker)
+                self.assertEqual(await app.web_voice.next_chunk(ipad, 1), {"type": "talking"})
+                self.assertEqual(await app.web_voice.next_chunk(ipad, 1), {"type": "talk_ended", "reason": "standby"})
+            app.live.ready = False

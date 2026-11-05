@@ -27,13 +27,19 @@ def audible(chunk: bytes) -> bool:
     return any(sample for (sample,) in iter_unpack("<h", chunk[: len(chunk) - len(chunk) % 2]))
 
 
+# What a talking page's microphone may get ahead of Live by before its audio is dropped.
+MIC_BACKLOG_CHUNKS = 200
+
+
 @dataclass(eq=False)
 class Listener:
-    """One page listening: its device's name and the audio waiting to go to it."""
+    """One page listening: its device's name and what waits to go to it (her audio as bytes, or
+    a small message for the page as a dict). While it talks, mic holds its microphone's audio."""
 
     device: str
     audio: asyncio.Queue = field(default_factory=asyncio.Queue)
     queued_bytes: int = 0
+    mic: asyncio.Queue | None = None
 
 
 class VoiceRelay:
@@ -42,6 +48,8 @@ class VoiceRelay:
         self.listeners: set[Listener] = set()
         # When what has been sent finishes playing, by the clock.
         self.playing_until = 0.0
+        # The one page talking to her, if any: Live hears its microphone instead of the desk's.
+        self.talker: Listener | None = None
 
     @property
     def active(self) -> bool:
@@ -54,6 +62,33 @@ class VoiceRelay:
 
     def stop(self, listener: Listener) -> None:
         self.listeners.discard(listener)
+
+    def start_talking(self, listener: Listener) -> Listener | None:
+        """This page talks now, with a fresh queue for its microphone; returns the page that was
+        talking before (it's taken over), if any."""
+        previous = self.talker if self.talker is not listener else None
+        if previous is not None:
+            previous.mic = None
+        listener.mic = asyncio.Queue()
+        self.talker = listener
+        return previous
+
+    def stop_talking(self, listener: Listener) -> bool:
+        """Whether this page was the one talking (and now isn't)."""
+        if self.talker is not listener:
+            return False
+        self.talker = None
+        listener.mic = None
+        return True
+
+    def hear(self, listener: Listener, chunk: bytes) -> None:
+        """A piece of a page's microphone audio: for Live, if that page is the one talking."""
+        if self.talker is listener and listener.mic is not None and listener.mic.qsize() < MIC_BACKLOG_CHUNKS:
+            listener.mic.put_nowait(chunk)
+
+    def tell(self, listener: Listener, message: dict) -> None:
+        """A small message for one page, in order with its audio."""
+        listener.audio.put_nowait(message)
 
     def play(self, delta: str) -> None:
         """One of Live's base64 audio chunks, for every listener; silence is skipped."""
@@ -73,10 +108,11 @@ class VoiceRelay:
             listener.queued_bytes += len(chunk)
             listener.audio.put_nowait(chunk)
 
-    async def next_chunk(self, listener: Listener, timeout: float) -> bytes | None:
-        """The next chunk for this listener; None if it was dropped. TimeoutError if none came."""
+    async def next_chunk(self, listener: Listener, timeout: float) -> bytes | dict | None:
+        """The next audio chunk or message for this listener; None if it was dropped.
+        TimeoutError if nothing came."""
         chunk = await asyncio.wait_for(listener.audio.get(), timeout)
-        if chunk is not None:
+        if isinstance(chunk, bytes):
             listener.queued_bytes -= len(chunk)
         return chunk
 
