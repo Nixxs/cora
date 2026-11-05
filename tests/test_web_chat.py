@@ -40,6 +40,18 @@ class RenderingTests(unittest.TestCase):
         self.assertNotIn('href="javascript', html)
         self.assertIn("&lt;script&gt;", html)
 
+    def test_code_with_a_language_is_highlighted_and_still_escaped(self):
+        html = chat_html('```python\nif x < 1:\n    print("<script>")  # hi\n```')
+        self.assertIn('<code class="language-python"><span class="k">if</span>', html)
+        self.assertIn('<span class="c1"># hi</span>', html)
+        self.assertNotIn("<script>", html)
+        self.assertIn("&lt;script&gt;", html)
+        # No language, or one Pygments doesn't know: shown plain, escaped as before.
+        for fence in ("```\nx < y\n```", "```nosuchlang\nx < y\n```"):
+            plain = chat_html(fence)
+            self.assertNotIn("<span", plain)
+            self.assertIn("x &lt; y", plain)
+
 
 class MessageRouteTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
@@ -137,7 +149,8 @@ class WebChatAppTests(unittest.IsolatedAsyncioTestCase):
             # One conversation with the desk: earlier voice is history, and the new message isn't repeated.
             self.assertEqual([h["content"][0]["text"] for h in kwargs["history"]], ["Earlier, by voice"])
             self.assertEqual(kwargs["extra_instructions"], WEB_CHAT_INSTRUCTIONS)
-            self.assertEqual(kwargs["route"].excluded, WEB_EXCLUDED)
+            # Maps only with a Google Maps key (none here).
+            self.assertEqual(kwargs["route"].excluded, WEB_EXCLUDED | {"show_map"})
             # Streams to the page as she writes.
             self.assertEqual(kwargs["on_text"], streamed.append)
             # Labelled and saved with the device it came from; her reply has none.

@@ -209,6 +209,8 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 
 .title-button { color: var(--border); border-radius: 4px; }
 .title-button:hover, .title-button:focus-visible { background: var(--bg-hover); color: var(--text); outline: none; }
+/* "where: on": Cora may check where you are. */
+.title-button.on { color: var(--active); }
 
 .frame-label {
   position: absolute;
@@ -287,6 +289,8 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 /* During a call: her voice in her colour, theirs in the "You" blue, as in the chat. */
 #voice-panel[data-state="talking"] #voice-bars .her { background: var(--cora); }
 #voice-panel[data-state="talking"] #voice-bars .you { background: var(--you); }
+/* While you're quiet (or muted), the lower half mirrors her voice, so it fills both halves. */
+#voice-panel[data-state="talking"] #voice-bars .you.mirror { background: var(--cora); }
 
 #voice-text {
   flex: 1;
@@ -313,6 +317,10 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 /* Talk in the TUI's "you" blue; Hang up in the warning colour while a call is on. */
 .voice-button.talk { border-color: var(--you); color: var(--you); }
 .voice-button.talk.on { border-color: var(--error); color: var(--error); }
+/* Mute in the dim colour; Muted stands out in the waiting colour so it isn't forgotten. */
+.voice-button.mute { border-color: var(--dim); color: var(--dim); }
+.voice-button.mute.on { border-color: var(--waiting); color: var(--waiting); }
+.voice-button[hidden] { display: none; }
 #voice-panel[data-state="talking"] #voice-text { color: var(--text); }
 
 #chat-output {
@@ -533,6 +541,16 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   margin: 4px 0 8px;
   border-radius: 8px;
   border: 1px solid #263044;
+}
+/* A map she showed: wide enough for a route, not taller than a phone's screen allows. */
+.message .map {
+  display: block;
+  width: min(100%, 480px);
+  height: min(320px, 45vh);
+  margin: 4px 0 8px;
+  border: 1px solid #263044;
+  border-radius: 8px;
+  background: var(--bg-deep);
 }
 
 #send-button {

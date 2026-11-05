@@ -252,7 +252,9 @@ SIGNAL_CHAT_INSTRUCTIONS = (
     "\n\nThis chat is over Signal: the person is messaging your own Signal number from their "
     "phone, away from their desk. Keep replies short, like text messages. Signal shows plain "
     "text, so no tables, headings or code blocks unless they ask; a short list is fine. You "
-    "can't see their screen or show pictures here. "
+    "can't see their screen or show pictures or maps here; for a place or a route, a Google Maps "
+    "link (https://www.google.com/maps/search/?api=1&query=… or "
+    "https://www.google.com/maps/dir/?api=1&origin=…&destination=…) opens their Maps app. "
     + written_approval_rule("in this chat to reply YES")
     + " A message marked with when it was sent arrived late; take that into account rather than "
     "answering as if it were new."
@@ -264,7 +266,7 @@ WEB_CHAT_INSTRUCTIONS = (
     "phone or tablet and away from their desk. Your reply is shown as formatted Markdown, so short "
     "lists, **bold**, links and code blocks work; keep it fairly brief, as on a phone screen. You "
     "can't see their screen here, but you can show them pictures (show_web_image), which the page "
-    "displays with your caption. "
+    "displays with your caption, and maps (show_map, when it's offered). "
     + written_approval_rule("first on this page, with Approve and Deny buttons,")
 )
 

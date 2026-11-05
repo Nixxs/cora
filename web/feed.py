@@ -27,6 +27,10 @@ MESSAGE, APPROVAL, APPROVAL_DONE = "message", "approval", "approval_done"
 # And a photo the person sent ({"id", "ref"}), or a picture she showed ({"id", "caption", "url"}):
 # pages fetch the image from memory (GET /api/photos/{id}) while it's still kept.
 PHOTO, PICTURE = "photo", "picture"
+# And a map she showed ({"caption", "embed", "link"}): the page frames the embed.
+MAP = "map"
+# And a quiet line ({"text"}), such as "Cora checked where you are".
+NOTICE = "notice"
 
 
 @dataclass(frozen=True)
@@ -50,6 +54,13 @@ class Status:
     """The desk's Live state now (active, standby, connecting…): sent as it changes, never kept."""
 
     state: str
+
+
+@dataclass(frozen=True)
+class Locate:
+    """A request for the page's position (see web/location.py): sent to open pages, never kept."""
+
+    id: str
 
 
 class MessageFeed:
@@ -76,6 +87,17 @@ class MessageFeed:
         """A photo the person sent (PHOTO) or a picture she showed (PICTURE)."""
         return self._add(FeedMessage(self.seq + 1, role, "web", "", datetime.now(timezone.utc),
                                      ref=data.get("ref"), kind=kind, data=data))
+
+    def publish_notice(self, text: str) -> FeedMessage:
+        """A quiet line in the conversation, for every page."""
+        return self._add(FeedMessage(self.seq + 1, "assistant", "web", "", datetime.now(timezone.utc),
+                                     kind=NOTICE, data={"text": text}))
+
+    def ask_location(self, request_id: str) -> int:
+        """Ask every open page where the person is; returns how many pages were asked."""
+        asked = len(self.subscribers)
+        self._send(Locate(request_id))
+        return asked
 
     def _add(self, message: FeedMessage) -> FeedMessage:
         self.seq = message.seq

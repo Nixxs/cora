@@ -112,11 +112,18 @@ class WebControls:
     devices: Callable[[], list]
     remove_device: Callable[[object], None]
     enabled: bool = False
+    # The Google Maps key for maps on the page: whether one is set, and saving one ("" forgets it).
+    has_maps_key: bool = False
+    save_maps_key: Callable[[str], None] = lambda key: None
 
 
 WEB_INTRO = (
     "Cora on your phone, tablet or laptop, in a browser, at the public address under Webhooks below. "
     "Only devices you pair here can reach her. On a phone, Share › Add to Home Screen opens it like an app."
+)
+WEB_MAPS_HELP = (
+    "Google Maps key (optional), so Cora can show maps on the page. In Google Cloud Console, allow only "
+    "the Maps Embed API and only websites at your public address (https://your-address/*)."
 )
 WEB_PAIR_HINT = (
     "Scan with a phone or tablet camera, or go to the address on any device and type the code. "
@@ -415,6 +422,14 @@ class ModelSettingsScreen(ModalScreen):
             yield Label("Paired devices", classes="model-settings-label")
             # One row per device, filled from the app's list.
             yield Vertical(id="web-devices", classes="signal-clients")
+            yield Label(WEB_MAPS_HELP, classes="model-settings-label service-help")
+            yield Input(
+                id="web-maps-key", password=True,
+                placeholder="key saved · paste to replace" if self.web.has_maps_key else "AIza…",
+            )
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save key", id="web-maps-save")
+                yield Button("Forget", id="web-maps-forget")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
@@ -753,6 +768,16 @@ class ModelSettingsScreen(ModalScreen):
         field_.value = ""
         field_.placeholder = "password saved · type to replace"
 
+    def save_maps_key(self) -> None:
+        field_ = self.query_one("#web-maps-key", Input)
+        if not field_.value.strip():
+            self.notify("Paste the Google Maps key first.", severity="warning")
+            return
+        # Straight to the credential store; the field never keeps it.
+        self.web.save_maps_key(field_.value)
+        field_.value = ""
+        field_.placeholder = "key saved · paste to replace"
+
     def save_webhook_address(self) -> None:
         url = self.query_one("#webhooks-url", Input).value
         if not url.strip():
@@ -805,6 +830,11 @@ class ModelSettingsScreen(ModalScreen):
             self.web.start_pairing()
         elif button == "web-pair-cancel":
             self.web.cancel_pairing()
+        elif button == "web-maps-save":
+            self.save_maps_key()
+        elif button == "web-maps-forget":
+            self.web.save_maps_key("")
+            self.query_one("#web-maps-key", Input).placeholder = "AIza…"
         elif button.startswith("web-remove-"):
             self.web.remove_device(self.shown_devices[int(button.removeprefix("web-remove-"))].id)
         elif button == "signal-add-client":

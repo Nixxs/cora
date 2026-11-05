@@ -140,7 +140,7 @@ class ChatMixin:
         draft = self.conversation.start_written_reply()
         try:
             text = await self.reply_in_writing(
-                content, history, BackendRoute(excluded=STANDBY_EXCLUDED), on_text=draft.update,
+                content, history, BackendRoute(excluded=STANDBY_EXCLUDED | self.unavailable_tools()), on_text=draft.update,
             )
         except Exception as error:
             draft.fail()

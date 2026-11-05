@@ -236,6 +236,8 @@ class LiveSessionMixin:
             # Photos belong to the conversation they came in.
             self.kept_images.clear()
             self.web_pictures.clear()
+            # And so does where the person was.
+            self.whereabouts.forget()
             self.process_finished_conversations()
 
     @work(group="database-startup")

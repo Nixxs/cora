@@ -34,6 +34,8 @@ from .message_person_on_signal import (
 )
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
+from .show_map import ShowMapTool, SCHEMA as MAP_SCHEMA, validate_arguments as validate_map_arguments
+from .where_is_person import WhereIsPersonTool, SCHEMA as WHERE_SCHEMA, validate_arguments as validate_where_arguments
 from .request_sign_up import (
     RequestSignUpTool, SCHEMA as SIGN_UP_SCHEMA, validate_arguments as validate_sign_up_arguments,
 )
@@ -41,6 +43,10 @@ from .request_sign_up import (
 
 async def _not_set_up(*args, **kwargs):
     raise RuntimeError("Signal messaging is not wired up")
+
+
+async def _nowhere(refresh):
+    return {"status": "error", "message": "Checking where the person is isn't available here."}
 
 
 async def _no_sign_ups(url):
@@ -56,7 +62,7 @@ def create_tool_registry(
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
     calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
     signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
-    kept_images: KeptImages | None = None,
+    kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -84,6 +90,12 @@ def create_tool_registry(
     # The person's photos from this conversation (web page, desk paste, their own Signal).
     look_again = LookAgainTool(get_connection, is_closing, kept_images or KeptImages(), write_debug)
     registry.register(LOOK_AGAIN_SCHEMA, validate_look_again_arguments, look_again.handle)
+    # Where the person is, from their open web page, when it matters to what they asked.
+    where = WhereIsPersonTool(get_connection, is_closing, locate_person, write_debug)
+    registry.register(WHERE_SCHEMA, validate_where_arguments, where.handle)
+    # A map on the web page (only offered with a Google Maps key).
+    map_tool = ShowMapTool(get_connection, is_closing, show_map, write_debug)
+    registry.register(MAP_SCHEMA, validate_map_arguments, map_tool.handle)
     web_image = ShowWebImageTool(get_connection, is_closing, show_image, write_debug)
     registry.register(WEB_IMAGE_SCHEMA, validate_web_image_arguments, web_image.handle)
     signal_message = SendSignalMessageTool(

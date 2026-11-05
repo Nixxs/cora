@@ -1930,7 +1930,7 @@ features it helps check, and package last.
 20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
     iPad mini as a home-screen web app, served by her webhook listener, in the
     same conversation as the desk and Signal (see Web interface in Details
-    below). WB5 (photos both ways) is built; next, WB6 (where you are, on demand).
+    below). WB5 (photos both ways), WB6 (where you are), WV3 (voice polish) and WB7 (maps on the page) are built.
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below).
@@ -2509,8 +2509,12 @@ features it helps check, and package last.
       only, JSON, at most 8,000 characters) answers with her reply as it
       streams, one JSON object a line: pieces as she writes, then the finished
       reply as safe HTML ([web/rendering.py](web/rendering.py): raw HTML
-      escaped, links only to web and mail addresses, as in her emails). The
-      reply runs as its own task, so if the page goes away (the phone locks)
+      escaped, links only to web and mail addresses, as in her emails). Code
+      blocks that name their language are highlighted on the server with
+      Pygments (already there for the TUI) as token classes, coloured by
+      [web/static/code.css](web/static/code.css) in monokai like the TUI; an
+      unknown or missing language shows plain, and Pygments escapes the code
+      either way. The reply runs as its own task, so if the page goes away (the phone locks)
       she still finishes, and it's shown at the desk and saved. In the app,
       `answer_on_web` ([app_areas/web_interface.py](app_areas/web_interface.py))
       uses the same path as your own Signal messages, now shared as
@@ -2709,12 +2713,22 @@ features it helps check, and package last.
         tap. If headphones come or go mid-call, the audio is rebuilt on the new
         route (not within 2 seconds of a start, as starting the mic can itself
         announce a device change).
-    - WV3 a mute for the device's own mic, and any polish testing turns up.
-      Done so far: the Voice panel's bars are split at a centre line, as the
+    - WV3 voice polish, **built**: the Voice panel's bars are split at a centre line, as the
       TUI's dashboard shows playback and microphone: her voice grows upward in
       her green, and what the device's mic picks up grows downward in the
       "You" blue (an analyser on the mic, read only, never played), so you can
       see you're being heard, and when you're talking over each other.
+      - *Mute:* a Mute button beside Hang up during a call. Muted, the mic's
+        track is disabled, so the page sends silence (the call stays open, she
+        carries on, and you still hear her); the button reads Unmute in the
+        waiting colour and the panel says she can't hear you. It stays muted
+        if headphones change mid-call, and a new call starts unmuted.
+      - *Mirrored bars:* while you're quiet (or muted), the lower half mirrors
+        her voice in her green, so her speech fills both halves as it did
+        before the split. Once the mic's loudness (RMS after noise
+        suppression) passes 0.02 the lower half shows your blue bars, held
+        for 0.6 seconds after you stop so it doesn't flicker; both values are
+        at the top of voice.js if testing shows they need tuning.
   - *Voice limits:* iOS suspends the mic and the connection when the screen
     locks or the app goes to the background, so voice works in the foreground
     only (only a native App Store app could avoid this). Starting audio needs a
@@ -2796,27 +2810,77 @@ features it helps check, and package last.
     - Both go when the conversation ends, like look_again's photos; one no
       longer kept shows "(no longer kept)" instead. After a restart, history
       shows them as text ("[image] …"), as before.
-  - WB6 where you are, planned: on the web page, Cora can check where you are
+  - WB6 where you are, **built**: on the web page, Cora can check where you are
     when it's relevant to what you ask ("what's near me?", "how long to get
     home?", "what's the weather here?"). On demand only: she isn't told your
     location at the start of a call or otherwise unprompted.
-    - *How:* a tool for her (`where_is_person`, say) asks your open page for a
-      position fix over the live connection; the page uses the browser's
-      location (iOS asks permission the first time, as for the microphone)
-      and replies with the position and its accuracy; the server turns it into
-      a place name ("Leederville, near Oxford St") through OpenStreetMap's
-      geocoder, and that's what she gets, with the accuracy.
+    - *The switch:* "where: off" at the top of the chat; tapping it asks the
+      device's permission straight away (so iOS's prompt comes from your tap,
+      not mid-reply) and turns it "where: on". The choice stays on that device
+      (`localStorage`); off is the default.
+    - *How:* her `where_is_person` tool (`refresh`: true only if you may have
+      moved) asks every open page over the live feed (a `locate` event, never
+      kept). A page with "where" on answers `POST /api/location` with the
+      browser's position and accuracy; one with it off, or refused, says so.
+      The first position wins. The server names it through OpenStreetMap's
+      geocoder (Nominatim, `web/location.py`): area, "near" the street when
+      the fix is within 150 m (never a house number), town, state, country.
+      She gets only that name, the accuracy and the device.
+    - *When there's no place:* no page open, every page off, the device's
+      location refused, no fix within 20 seconds (a page in the background
+      can't answer), or the geocoder failing: she's told which, and to ask
+      you if it matters.
     - *Only while a page is open:* iOS doesn't let web pages share location in
       the background. Phone calls (P1) don't share location at all; they work
       like calling a friend.
-    - *Privacy:* never saved to the database; the last position is held in
-      memory for about 10 minutes, so she doesn't ask again mid-conversation.
-      A switch on the page ("Cora can check where I am"), off until you turn
-      it on. Every check shows a quiet line in the chat and in Activity, so
-      you always know when she looked. Only in your own chats: contacts'
-      chats, task coordinators and email threads never get the tool. The
-      coordinates go to OpenStreetMap's geocoder to name the place, and the
-      place name to OpenAI as part of her context.
+    - *Privacy:* never saved to the database. The coordinates are dropped once
+      named; the place is held in memory for 10 minutes (reused unless she
+      asks for a fresh one) and forgotten when the conversation ends. Every
+      check shows a quiet line in the desk's chat and on the page ("Cora
+      checked where you are, from iPhone: …"), never saved or given to her as
+      history, and one in Activity without the place. Offered in voice, at the
+      desk and on the web page; not on Signal or by email, and never in
+      contacts' chats, task coordinators or email threads (their allowlists
+      don't include it). The coordinates go to OpenStreetMap's geocoder to
+      name the place, and the place name to OpenAI as part of her context.
+  - WB7 maps on the page, **built**: Cora can show a small map in the web chat
+    for a place, a route, or an area search ("cafes near Leederville").
+    - *How:* her `show_map` tool (mode place, directions or search; the
+      place, destination or search text; an origin and a travel mode for
+      routes: driving, walking, bicycling or transit). Every open page shows
+      an interactive map from Google's Maps Embed API in a frame (pan and
+      zoom; a route shows its line, distance and time), with the caption and
+      an "Open in Google Maps" link that opens the Maps app on the iPhone.
+      The page only frames `https://www.google.com/maps/embed/v1/` addresses
+      and only links to `https://www.google.com/maps/`. For "from here" she
+      checks `where_is_person` (WB6) first. She doesn't see the map; she's
+      told it was shown.
+    - *Elsewhere:* saved to history as text ("[map] Route from Leederville to
+      Fremantle (driving) (link)"), so she remembers showing it. The desk's
+      chat shows "Cora · map: …" with an "Open in Google Maps" link. Not
+      offered on Signal or by email; there her instructions say a Google
+      Maps link opens the Maps app (those links need no key).
+    - *The key:* Settings › Services › Web interface › Google Maps key, kept
+      in the system credential store (`web/maps.py`) and loaded with the
+      listener's settings. Create it in Google Cloud Console (APIs & Services
+      › Credentials › Create credentials › API key), then restrict it:
+      *Application restrictions* › Websites › `https://cora.intelligis.io/*`;
+      *API restrictions* › only the Maps Embed API (enable that API in the
+      Library first). The Embed API is free with no usage limits; the page
+      has to show the key, which those restrictions make useless anywhere
+      else. Without a key, `show_map` isn't offered anywhere. Saving or
+      forgetting one reaches voice Cora when Settings closes (she reconnects,
+      as for service tools) and written chats at once.
+    - *Privacy:* the embedded map loads from Google in your browser, so Google
+      sees what's mapped and your device's IP address, as when you open
+      Google Maps yourself. Nothing goes to Google until she shows a map.
+    - *Not the same as a Maps MCP server:* a Google Maps MCP server (added
+      through MCP, item 18's services screen) would give her map data as
+      tools: real travel times, directions step by step, places with
+      opening hours and ratings. It doesn't draw maps. It needs the paid
+      Places and Routes APIs (Google gives a monthly free allowance), and
+      the text answers work everywhere, Signal and voice included. It's
+      worth adding on its own later; it can use the same Google Cloud project.
   - *Calls with the phone locked:* not possible as a web app. iOS suspends web
     pages, Home Screen apps included, when the screen locks or another app
     comes to the front: the connection drops and the microphone stops. Only a

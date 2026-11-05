@@ -12,6 +12,10 @@
 // gave silence. Made after, it starts at the headset's rate. (A page using the mic may start
 // sound, so this still works from the tap.) If headphones come or go mid-call, the audio is
 // rebuilt on the new route.
+//
+// Mute stops what she hears from this device (the mic sends silence) while you still hear her.
+// The bars show her voice upward; downward, your mic while you're speaking, and otherwise a
+// mirror of hers, so her speech fills both halves.
 
 import { onStatus } from "./ui.js";
 
@@ -21,11 +25,16 @@ const BAR_COUNT = 12;
 const LEAD_SECONDS = 0.08;
 // The microphone goes to Cora in pieces this long (960 samples at 24 kHz = 40 ms).
 const MIC_PIECE_SAMPLES = 960;
+// You count as speaking when the mic's loudness (RMS, after noise suppression) passes this, and
+// for HEARD_HOLD_MS after, so the lower bars don't flicker between yours and the mirror.
+const SPEAKING_LEVEL = 0.02;
+const HEARD_HOLD_MS = 600;
 
 const panel = document.getElementById("voice-panel");
 const bars = document.getElementById("voice-bars");
 const text = document.getElementById("voice-text");
 const talkButton = document.getElementById("talk-button");
+const muteButton = document.getElementById("mute-button");
 
 let audio = null;     // AudioContext during a call
 let analyser = null;  // her voice, for the top half of the bars
@@ -37,11 +46,14 @@ const playing = new Set();
 let state = "idle";   // idle, connecting, talking
 let deskState = null; // the desk's Live state: active, standby, connecting…
 let note = "";        // a one-off line, such as why a call ended
+let muted = false;    // this device's mic sends silence
+let heardAt = 0;      // when the mic last picked you up speaking
 
 function describe() {
   if (note) return note;
   if (state === "connecting") return "Connecting…";
   if (state === "talking") {
+    if (muted) return "Muted · she can't hear you; you still hear her.";
     return deskState === "active" ? "On a call here · the desk mic and speaker are quiet." : "Waking Cora…";
   }
   return deskState === "active" ? "Tap Talk to talk to her here." : "She's in standby · Talk wakes her.";
@@ -53,6 +65,10 @@ function show(newState = state) {
   text.textContent = describe();
   talkButton.textContent = state === "idle" ? "Talk" : "Hang up";
   talkButton.classList.toggle("on", state !== "idle");
+  muteButton.hidden = state !== "talking";
+  muteButton.textContent = muted ? "Unmute" : "Mute";
+  muteButton.classList.toggle("on", muted);
+  muteButton.setAttribute("aria-pressed", String(muted));
 }
 
 // ── The audio engine: microphone first, then playback at the route's own rate ──
@@ -82,11 +98,24 @@ async function startAudio() {
   source.connect(node).connect(silent).connect(audio.destination);
   node.port.onmessage = (event) => sendMic(event.data);
   mic = { stream, source, node };
+  // Still muted after headphones change mid-call.
+  applyMute();
   startedAt = performance.now();
   nextStart = 0;
   carry = new Float32Array(0);
   position = 0;
   pending = [];
+}
+
+/** A muted track gives silence: the mic's pieces still go, so her side of the call carries on. */
+function applyMute() {
+  mic?.stream.getAudioTracks().forEach((track) => { track.enabled = !muted; });
+}
+
+function setMuted(on) {
+  muted = on;
+  applyMute();
+  show();
 }
 
 function stopAudio() {
@@ -216,6 +245,7 @@ function hangUp(message = "") {
   if (closing && closing.readyState <= WebSocket.OPEN) closing.close();
   stopAudio();
   if (navigator.audioSession) navigator.audioSession.type = "auto";
+  muted = false;
   note = message;
   show("idle");
 }
@@ -228,14 +258,29 @@ function bandLevels(source) {
   return (index) => (levels.length ? levels[Math.min(levels.length - 1, Math.floor(index * 1.4) + 1)] / 255 : 0);
 }
 
+/** Whether the mic picks you up speaking now, or did a moment ago. */
+const timeDomain = new Float32Array(64);
+function speaking() {
+  if (!micAnalyser || muted) return false;
+  micAnalyser.getFloatTimeDomainData(timeDomain);
+  let sum = 0;
+  for (const sample of timeDomain) sum += sample * sample;
+  const now = performance.now();
+  if (Math.sqrt(sum / timeDomain.length) >= SPEAKING_LEVEL) heardAt = now;
+  return now - heardAt < HEARD_HOLD_MS;
+}
+
 /** The bars, split at a centre line as the TUI's dashboard shows them: her voice upward in her
- * green, the person's microphone downward in the "You" blue; flat when quiet or no call is on. */
+ * green; downward, the person's microphone in the "You" blue while they speak, and otherwise her
+ * voice mirrored in green. Flat when quiet or no call is on. */
 function drawBars() {
   const hers = bandLevels(analyser);
-  const yours = bandLevels(micAnalyser);
+  const mirror = !speaking();
+  const lower = mirror ? hers : bandLevels(micAnalyser);
   bars.childNodes.forEach((column, index) => {
     column.firstChild.style.transform = `scaleY(${Math.max(0.1, hers(index))})`;
-    column.lastChild.style.transform = `scaleY(${Math.max(0.1, yours(index))})`;
+    column.lastChild.style.transform = `scaleY(${Math.max(0.1, lower(index))})`;
+    column.lastChild.classList.toggle("mirror", mirror);
   });
   requestAnimationFrame(drawBars);
 }
@@ -255,6 +300,7 @@ export function setupVoice() {
     if (state === "idle") talk();
     else hangUp();
   });
+  muteButton.addEventListener("click", () => setMuted(!muted));
   onStatus((desk) => {
     deskState = desk;
     show();

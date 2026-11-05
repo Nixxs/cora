@@ -2,10 +2,11 @@
 // and messages sent from here with her reply streaming back as she writes it.
 
 import {
-  addApproval, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
+  addApproval, addMap, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
   startWriting,
 } from "./ui.js";
 import { hasPhoto, setupPhotos, takePhoto } from "./photo.js";
+import { answerLocate, setupLocation } from "./location.js";
 
 const UNREACHABLE = "Couldn't reach Cora. Is her PC on and the web interface switched on?";
 const DROPPED = "The connection dropped before her reply finished. It's still shown at the desk.";
@@ -80,10 +81,24 @@ function follow(deviceName) {
       when: new Date(picture.at),
     });
   });
+  // A map she showed: Google's map in a frame, with a link to Google Maps.
+  events.addEventListener("map", (event) => {
+    const map = JSON.parse(event.data);
+    markDay(new Date(map.at));
+    addMap({ caption: map.caption, embed: map.embed, link: map.link, when: new Date(map.at) });
+  });
   events.addEventListener("approval_done", (event) => {
     const done = JSON.parse(event.data);
     approvals.get(done.id)?.settle(done.outcome);
   });
+  // A quiet line from Cora's PC, such as each time she checks where you are.
+  events.addEventListener("notice", (event) => {
+    const notice = JSON.parse(event.data);
+    markDay(new Date(notice.at));
+    addNotice(notice.text);
+  });
+  // Cora asks where you are: answered only with "where" on.
+  events.addEventListener("locate", (event) => answerLocate(JSON.parse(event.data).id));
   events.addEventListener("status", (event) => setStatus(JSON.parse(event.data).state));
   events.addEventListener("error", async () => {
     // The browser retries by itself while it can; closed means it gave up.
@@ -206,5 +221,6 @@ async function send(text) {
 export function startChat(deviceName) {
   setupComposer(send, hasPhoto);
   setupPhotos(addNotice);
+  setupLocation(addNotice);
   follow(deviceName);
 }

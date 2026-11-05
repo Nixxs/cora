@@ -120,7 +120,7 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                         [schema["name"] for schema in app.live.tool_schemas()
                          if schema["name"] != "random_number"],
                         ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                         "recall_self", "recall_desire", "note_desire", "feel", "look_at_screen", "look_again", "show_web_image", "send_signal_message", "message_person_on_signal", "close_task", "check_email", "send_email", "check_calendar", "create_event", "update_event", "cancel_event", "forward_event", "request_sign_up", "echo", "other_tool"],
+                         "recall_self", "recall_desire", "note_desire", "feel", "look_at_screen", "look_again", "where_is_person", "show_web_image", "send_signal_message", "message_person_on_signal", "close_task", "check_email", "send_email", "check_calendar", "create_event", "update_event", "cancel_event", "forward_event", "request_sign_up", "echo", "other_tool"],
                     )
 
     async def test_tool_validation_and_handler_errors_are_isolated(self):
@@ -245,11 +245,11 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     connection.response.create.assert_not_called()
                     config = connection.session.start.call_args.kwargs["session"]
                     # Live gets every tool but the client-only ones.
-                    self.assertEqual(config, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY)))
+                    self.assertEqual(config, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY | app.unavailable_tools())))
                     backend = config["delegation"]["responses"]
                     self.assertFalse(backend["parallel_tool_calls"])
                     self.assertEqual(backend["tools"][0], {"type": "web_search"})
-                    self.assertEqual(backend["tools"][1:], app.tools.schemas(excluding=CLIENT_ONLY))
+                    self.assertEqual(backend["tools"][1:], app.tools.schemas(excluding=CLIENT_ONLY | app.unavailable_tools()))
                     self.assertEqual(backend["tools"][-1]["name"], "example")
                     tool = backend["tools"][1]
                     self.assertEqual(tool["name"], "close_app")
