@@ -1930,7 +1930,7 @@ features it helps check, and package last.
 20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
     iPad mini as a home-screen web app, served by her webhook listener, in the
     same conversation as the desk and Signal (see Web interface in Details
-    below). WB5 (photos both ways) is built; next, WB6 (where you are, on demand).
+    below). WB5 (photos both ways) and WB6 (where you are, on demand) are built; next, WV3 (voice polish).
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below).
@@ -2796,27 +2796,39 @@ features it helps check, and package last.
     - Both go when the conversation ends, like look_again's photos; one no
       longer kept shows "(no longer kept)" instead. After a restart, history
       shows them as text ("[image] …"), as before.
-  - WB6 where you are, planned: on the web page, Cora can check where you are
+  - WB6 where you are, **built**: on the web page, Cora can check where you are
     when it's relevant to what you ask ("what's near me?", "how long to get
     home?", "what's the weather here?"). On demand only: she isn't told your
     location at the start of a call or otherwise unprompted.
-    - *How:* a tool for her (`where_is_person`, say) asks your open page for a
-      position fix over the live connection; the page uses the browser's
-      location (iOS asks permission the first time, as for the microphone)
-      and replies with the position and its accuracy; the server turns it into
-      a place name ("Leederville, near Oxford St") through OpenStreetMap's
-      geocoder, and that's what she gets, with the accuracy.
+    - *The switch:* "where: off" at the top of the chat; tapping it asks the
+      device's permission straight away (so iOS's prompt comes from your tap,
+      not mid-reply) and turns it "where: on". The choice stays on that device
+      (`localStorage`); off is the default.
+    - *How:* her `where_is_person` tool (`refresh`: true only if you may have
+      moved) asks every open page over the live feed (a `locate` event, never
+      kept). A page with "where" on answers `POST /api/location` with the
+      browser's position and accuracy; one with it off, or refused, says so.
+      The first position wins. The server names it through OpenStreetMap's
+      geocoder (Nominatim, `web/location.py`): area, "near" the street when
+      the fix is within 150 m (never a house number), town, state, country.
+      She gets only that name, the accuracy and the device.
+    - *When there's no place:* no page open, every page off, the device's
+      location refused, no fix within 20 seconds (a page in the background
+      can't answer), or the geocoder failing: she's told which, and to ask
+      you if it matters.
     - *Only while a page is open:* iOS doesn't let web pages share location in
       the background. Phone calls (P1) don't share location at all; they work
       like calling a friend.
-    - *Privacy:* never saved to the database; the last position is held in
-      memory for about 10 minutes, so she doesn't ask again mid-conversation.
-      A switch on the page ("Cora can check where I am"), off until you turn
-      it on. Every check shows a quiet line in the chat and in Activity, so
-      you always know when she looked. Only in your own chats: contacts'
-      chats, task coordinators and email threads never get the tool. The
-      coordinates go to OpenStreetMap's geocoder to name the place, and the
-      place name to OpenAI as part of her context.
+    - *Privacy:* never saved to the database. The coordinates are dropped once
+      named; the place is held in memory for 10 minutes (reused unless she
+      asks for a fresh one) and forgotten when the conversation ends. Every
+      check shows a quiet line in the desk's chat and on the page ("Cora
+      checked where you are, from iPhone: …"), never saved or given to her as
+      history, and one in Activity without the place. Offered in voice, at the
+      desk and on the web page; not on Signal or by email, and never in
+      contacts' chats, task coordinators or email threads (their allowlists
+      don't include it). The coordinates go to OpenStreetMap's geocoder to
+      name the place, and the place name to OpenAI as part of her context.
   - *Calls with the phone locked:* not possible as a web app. iOS suspends web
     pages, Home Screen apps included, when the screen locks or another app
     comes to the front: the connection drops and the microphone stops. Only a

@@ -25,9 +25,9 @@ TOOL_RESULT_SECONDS = 180
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY})
-# Signal, away from the desk: nothing that needs the screen either. Tools that change things are
-# offered: the person approves them in the chat.
-SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image"}
+# Signal, away from the desk: nothing that needs the screen either, and not where they are (that's
+# for the web page). Tools that change things are offered: the person approves them in the chat.
+SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image", "where_is_person"}
 # The web page, often on a phone: like Signal, except that the page shows her pictures.
 WEB_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen"}
 

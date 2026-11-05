@@ -20,7 +20,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.staticfiles import StaticFiles
 
 from storage.web_device_store import WebDevice
-from .feed import MESSAGE, FeedMessage, MessageFeed, Status
+from .feed import MESSAGE, FeedMessage, Locate, MessageFeed, Status
 from .pairing import NO_CODE, PAIRED, Pairing, new_token, token_hash
 from .rendering import chat_html
 from .voice import VoiceRelay
@@ -86,6 +86,8 @@ class WebAccess:
     on_talk: Callable = lambda device, listener, talking: None
     # photo(id) -> a kept photo's or shown picture's JPEG, or None once it's gone.
     photo: Callable[[str], bytes | None] = lambda image_id: None
+    # answer_location(device, body) -> whether that request for the page's position was waiting.
+    answer_location: Callable[[WebDevice, dict], bool] | None = None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -150,6 +152,11 @@ def feed_event(feed: MessageFeed, message: FeedMessage) -> str:
 def status_event(state: str) -> str:
     # No id: a page's place in the conversation is its last message, not the desk's state.
     return f"event: status\ndata: {json.dumps({'state': state})}\n\n"
+
+
+def locate_event(request_id: str) -> str:
+    # No id either: it's a question for the pages open now, not part of the conversation.
+    return f"event: locate\ndata: {json.dumps({'id': request_id})}\n\n"
 
 
 def api_routes(access: WebAccess) -> list[Route]:
@@ -271,6 +278,9 @@ def api_routes(access: WebAccess) -> list[Route]:
                     if isinstance(message, Status):
                         yield status_event(message.state)
                         continue
+                    if isinstance(message, Locate):
+                        yield locate_event(message.id)
+                        continue
                     if message.seq > sent:
                         sent = message.seq
                         yield feed_event(feed, message)
@@ -293,6 +303,19 @@ def api_routes(access: WebAccess) -> list[Route]:
         if not isinstance(approval_id, str) or not isinstance(approved, bool) or access.answer_approval is None:
             return answer({"error": "Send the request's id and approved: true or false, as JSON."}, 400)
         if not access.answer_approval(approval_id, approved):
+            return answer({"error": "That request isn't waiting any more."}, 409)
+        return answer({"answered": True})
+
+    async def location(request: Request) -> Response:
+        """The page's answer to a request for its position: {"id", "latitude", "longitude",
+        "accuracy"}, or {"id", "error": "off", "denied" or "unavailable"}."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        body = await read_json(request)
+        if body is None or access.answer_location is None:
+            return answer({"error": "Send the position as JSON."}, 400)
+        if not access.answer_location(device, body):
             return answer({"error": "That request isn't waiting any more."}, 409)
         return answer({"answered": True})
 
@@ -381,6 +404,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         Route("/api/messages", messages, methods=["POST"]),
         Route("/api/events", events, methods=["GET"]),
         Route("/api/approvals", approvals, methods=["POST"]),
+        Route("/api/location", location, methods=["POST"]),
         Route("/api/photos/{image_id:str}", photo, methods=["GET"]),
         WebSocketRoute("/api/voice", voice),
     ]

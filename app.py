@@ -28,6 +28,7 @@ from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
 from server.listener import Listener
 from tools.look_again import KeptImages
+from web.location import Whereabouts
 from web.feed import MessageFeed
 from web.voice import VoiceRelay
 from web.pairing import Pairing
@@ -271,6 +272,7 @@ class CoraApp(
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
             screen_looking=lambda: self.screen_looking,
             kept_images=self.kept_images,
+            locate_person=lambda refresh: self.locate_person(refresh),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -385,6 +387,8 @@ class CoraApp(
         self.web_pictures = KeptImages(prefix="pic")
         self.conversation.photo_listeners.append(self.publish_web_photo)
         self.conversation.picture_listeners.append(self.publish_web_picture)
+        # Where the person is, asked of the open pages on demand (where_is_person), in memory only.
+        self.whereabouts = Whereabouts(self.web_feed.ask_location)
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None

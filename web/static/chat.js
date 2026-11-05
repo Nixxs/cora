@@ -6,6 +6,7 @@ import {
   startWriting,
 } from "./ui.js";
 import { hasPhoto, setupPhotos, takePhoto } from "./photo.js";
+import { answerLocate, setupLocation } from "./location.js";
 
 const UNREACHABLE = "Couldn't reach Cora. Is her PC on and the web interface switched on?";
 const DROPPED = "The connection dropped before her reply finished. It's still shown at the desk.";
@@ -84,6 +85,14 @@ function follow(deviceName) {
     const done = JSON.parse(event.data);
     approvals.get(done.id)?.settle(done.outcome);
   });
+  // A quiet line from Cora's PC, such as each time she checks where you are.
+  events.addEventListener("notice", (event) => {
+    const notice = JSON.parse(event.data);
+    markDay(new Date(notice.at));
+    addNotice(notice.text);
+  });
+  // Cora asks where you are: answered only with "where" on.
+  events.addEventListener("locate", (event) => answerLocate(JSON.parse(event.data).id));
   events.addEventListener("status", (event) => setStatus(JSON.parse(event.data).state));
   events.addEventListener("error", async () => {
     // The browser retries by itself while it can; closed means it gave up.
@@ -206,5 +215,6 @@ async function send(text) {
 export function startChat(deviceName) {
   setupComposer(send, hasPhoto);
   setupPhotos(addNotice);
+  setupLocation(addNotice);
   follow(deviceName);
 }

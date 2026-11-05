@@ -42,6 +42,11 @@ class PhotoNote(ApprovalNote):
     """A chat line under the person's photo: its description and id, given to Cora in later turns."""
 
 
+class QuietNote(str):
+    """A quiet line in the chat about what happened (such as "Cora checked where you are"): shown
+    only, never saved or given to Cora as history."""
+
+
 # A kept photo's id, at the start of its description (messaging/images.py photo_described).
 PHOTO_ID = re.compile(r"Photo (img\d+) ")
 # How much of a photo's description the chat line shows; Cora is given all of it.
@@ -50,7 +55,7 @@ PHOTO_NOTE_SHOWN_CHARS = 140
 
 def styled_entry(entry):
     """A chat line with its speaker's label coloured; anything else is drawn as it is."""
-    if isinstance(entry, ApprovalNote):
+    if isinstance(entry, (ApprovalNote, QuietNote)):
         # Quieter than something said: it's what happened, not a message.
         return Text(str(entry), style="italic #8f98a8")
     if not isinstance(entry, str):
@@ -338,6 +343,10 @@ class Conversation:
         self.write_log(PhotoNote(f"· {shown}", f"(The photo I sent. {described})"))
         if (photo := PHOTO_ID.match(described)) is not None:
             self.tell(self.photo_listeners, photo.group(1))
+
+    def show_note(self, text: str) -> None:
+        """A quiet line in the chat, not saved and not part of her history."""
+        self.write_log(QuietNote(f"· {text}"))
 
     def show_web_message(self, text: str, device: str | None = None) -> None:
         """The person's own message from her web page, in the same chat as the desktop's, labelled

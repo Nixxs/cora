@@ -209,6 +209,8 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 
 .title-button { color: var(--border); border-radius: 4px; }
 .title-button:hover, .title-button:focus-visible { background: var(--bg-hover); color: var(--text); outline: none; }
+/* "where: on": Cora may check where you are. */
+.title-button.on { color: var(--active); }
 
 .frame-label {
   position: absolute;
