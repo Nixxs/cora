@@ -31,9 +31,20 @@ function nearBottom() {
   return output.scrollHeight - output.scrollTop - output.clientHeight < 60;
 }
 
+// Whether the chat is following the latest messages: true while you're at the bottom, false once
+// you scroll back to read. Growth doesn't scroll by itself, so this is only set by scrolling.
+let following = true;
+output.addEventListener("scroll", () => { following = nearBottom(); }, { passive: true });
+// A message that grows after it's shown (a map or picture filled in, or loading) keeps the
+// bottom in view while following.
+const growing = typeof ResizeObserver === "function"
+  ? new ResizeObserver(() => { if (following) output.scrollTop = output.scrollHeight; })
+  : null;
+
 function append(element) {
   const follow = nearBottom();
   output.append(element);
+  growing?.observe(element);
   if (follow) output.scrollTop = output.scrollHeight;
   return element;
 }
@@ -182,7 +193,10 @@ export function startWriting(via = "web") {
 
 /** Empties the chat, for a fresh load of the conversation. */
 export function clearChat() {
+  // Stop watching the old messages, so they can go.
+  growing?.disconnect();
   output.replaceChildren();
+  following = true;
 }
 
 /** A quiet line for something that happened, like "Cora went to standby". */

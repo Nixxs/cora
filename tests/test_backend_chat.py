@@ -235,7 +235,8 @@ class StandbyTypingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs["content"], [{"type": "input_text", "text": "Are you there?"}])
             # History is taken before the new message joins the chat, so it isn't sent twice.
             self.assertEqual([h["content"][0]["text"] for h in kwargs["history"]], ["Earlier answer"])
-            self.assertEqual(kwargs["route"].excluded, STANDBY_EXCLUDED)
+            # Maps only with a Google Maps key (none here).
+            self.assertEqual(kwargs["route"].excluded, STANDBY_EXCLUDED | {"show_map"})
             self.assertIn("Cora · written:", app.conversation.log_entries)
             self.assertIn("You: Are you there?", app.conversation.log_entries)
             self.assertTrue(app.standby)
