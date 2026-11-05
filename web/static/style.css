@@ -240,6 +240,9 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   -webkit-overflow-scrolling: touch;
   padding: 16px 14px 12px;
   scrollbar-width: none;
+  /* Text scrolling up fades out before the frame's top edge, so none peeks out beside the title. */
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
 }
 #chat-output::-webkit-scrollbar { display: none; }
 

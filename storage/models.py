@@ -57,6 +57,8 @@ class MessageRecord(Base):
             name="messages_delivery_status_check",
         ),
         CheckConstraint("btrim(text) <> ''", name="messages_text_check"),
+        CheckConstraint("device IS NULL OR (btrim(device) <> '' AND char_length(device) <= 60)",
+                        name="messages_device_check"),
         {"schema": "public"},
     )
 
@@ -71,6 +73,8 @@ class MessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     status: Mapped[str] = mapped_column(Text, server_default="incomplete")
     delivery_status: Mapped[str] = mapped_column(Text, server_default="not_applicable")
+    # The paired device a web message was sent from; None otherwise.
+    device: Mapped[str | None] = mapped_column(Text)
 
     conversation: Mapped[ConversationRecord] = relationship(back_populates="messages")
 

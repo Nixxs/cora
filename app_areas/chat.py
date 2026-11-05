@@ -41,12 +41,19 @@ class ChatMixin:
     ) -> None:
         await self.submission.submit_keyboard_message(message, message_id, composer, image_png)
 
-    def record_chat_message(self, role: str, text: str, channel: str) -> None:
-        self.conversation_persistence.record_chat_message(role, text, channel)
+    def record_chat_message(self, role: str, text: str, channel: str, device: str | None = None) -> None:
+        if device is None:
+            self.conversation_persistence.record_chat_message(role, text, channel)
+        else:
+            self.conversation_persistence.record_chat_message(role, text, channel, device)
 
     @work(group="chat-save")
-    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
-        await self.conversation_persistence.save_chat_message(message_id, role, text, channel)
+    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str,
+                                device: str | None = None) -> None:
+        if device is None:
+            await self.conversation_persistence.save_chat_message(message_id, role, text, channel)
+        else:
+            await self.conversation_persistence.save_chat_message(message_id, role, text, channel, device)
 
     def send_without_live(self, message: str, image_seen: str | None = None) -> None:
         """In Standby, answer a typed message in writing without waking Live."""

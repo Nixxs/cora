@@ -91,13 +91,15 @@ class ConversationListenerTests(unittest.TestCase):
                                     record_message=lambda *message: recorded.append(message))
         conversation.listeners.append(lambda *message: heard.append(message))
         conversation.show_signal_message("From Signal")
-        conversation.show_web_message("From the page")
+        conversation.show_web_message("From the page", "iPad")
         conversation.show_written_reply("Her reply", label="Cora · web", channel="web")
         # Typed at the desk: saved elsewhere, so only passed on.
         conversation.announce("user", "From the desk", "keyboard")
-        self.assertEqual(recorded, [("user", "From Signal", "signal"), ("user", "From the page", "web"),
+        # The device is saved only for a web message, so other callers keep three arguments.
+        self.assertEqual(recorded, [("user", "From Signal", "signal"), ("user", "From the page", "web", "iPad"),
                                     ("assistant", "Her reply", "web")])
-        self.assertEqual(heard, recorded + [("user", "From the desk", "keyboard")])
+        self.assertEqual(heard, [("user", "From Signal", "signal", None), ("user", "From the page", "web", "iPad"),
+                                 ("assistant", "Her reply", "web", None), ("user", "From the desk", "keyboard", None)])
 
     def test_a_failing_listener_doesnt_stop_the_chat(self):
         conversation = Conversation(MagicMock(), MagicMock(), MagicMock())
@@ -105,7 +107,7 @@ class ConversationListenerTests(unittest.TestCase):
         later = MagicMock()
         conversation.listeners.append(later)
         conversation.show_web_message("Hi")
-        later.assert_called_once_with("user", "Hi", "web")
+        later.assert_called_once_with("user", "Hi", "web", None)
 
 
 class EventsStreamTests(unittest.IsolatedAsyncioTestCase):
@@ -270,18 +272,30 @@ class RecentMessagesDatabaseTests(unittest.TestCase):
                 (earlier, 1, "user", "voice", "first", "not_applicable", 0),
                 (earlier, 2, "assistant", "voice", "second", "not_applicable", 1),
                 (today, 1, "user", "keyboard", "never sent", "failed", 2),
-                (today, 2, "user", "web", "third", "not_applicable", 3),
+                (today, 2, "user", "web", "third", "not_applicable", 3, "iPhone"),
                 (theirs, 1, "user", "signal", "a client's", "not_applicable", 4),
             ]
-            for conversation, sequence, role, channel, text, delivery, minutes in rows:
+            for conversation, sequence, role, channel, text, delivery, minutes, *device in rows:
                 session.add(MessageRecord(
                     conversation_id=conversation.id, sequence_number=sequence, role=role, channel=channel,
                     text=text, delivery_status=delivery, created_at=EARLIER + timedelta(minutes=minutes),
+                    device=device[0] if device else None,
                 ))
         self.assertEqual([row[2] for row in recent_person_messages(self.engine, 10)], ["first", "second", "third"])
         self.assertEqual([row[2] for row in recent_person_messages(self.engine, 2)], ["second", "third"])
-        role, channel, text, at = recent_person_messages(self.engine, 1)[0]
-        self.assertEqual((role, channel, text, at), ("user", "web", "third", EARLIER + timedelta(minutes=3)))
+        self.assertEqual(recent_person_messages(self.engine, 1)[0],
+                         ("user", "web", "third", EARLIER + timedelta(minutes=3), "iPhone"))
+        self.assertIsNone(recent_person_messages(self.engine, 10)[0][4])
+
+    def test_the_save_step_keeps_a_web_messages_device_and_leaves_others_without(self):
+        from storage.conversation_store import ConversationStore
+        store = ConversationStore(self.engine)
+        conversation_id = uuid4()
+        store.create_conversation(conversation_id)
+        web = store.save_message(conversation_id, message_id=uuid4(), role="user", text="From the iPad",
+                                 channel="web", device="iPad")
+        voice = store.save_message(conversation_id, message_id=uuid4(), role="user", text="By voice", channel="voice")
+        self.assertEqual((web.device, voice.device), ("iPad", None))
 
 
 class ApprovalAndStatusFeedTests(unittest.TestCase):
@@ -304,3 +318,29 @@ class ApprovalAndStatusFeedTests(unittest.TestCase):
         self.assertEqual([item.state for item in queue._queue], ["active", "standby"])
         self.assertEqual(feed.status, "standby")
         self.assertEqual(len(feed.items), 0)
+
+
+class DeviceLabelTests(unittest.TestCase):
+    def test_the_desks_chat_labels_web_messages_with_their_device_and_cora_still_reads_them(self):
+        conversation = Conversation(MagicMock(), MagicMock(), MagicMock())
+        conversation.show_web_message("From the iPad", "iPad (Home Screen app)")
+        conversation.show_web_message("Device unknown")
+        self.assertEqual(conversation.log_entries[-2:], ["You · web · iPad (Home Screen app): From the iPad",
+                                                         "You · web: Device unknown"])
+        history = [(item["role"], item["content"][0]["text"]) for item in conversation.get_reconnect_history()]
+        self.assertEqual(history, [("user", "From the iPad"), ("user", "Device unknown")])
+
+    def test_the_feed_carries_the_device_from_now_and_from_history(self):
+        feed = MessageFeed()
+        feed.publish("user", "Said now", "web", device="iPhone")
+        feed.seed([("user", "web", "Said earlier", EARLIER, "iPad"), ("assistant", "web", "Her reply", EARLIER, None),
+                   ("user", "voice", "Old row without one", EARLIER)])
+        self.assertEqual([(item.text, item.device) for item in feed.items], [
+            ("Said earlier", "iPad"), ("Her reply", None), ("Old row without one", None), ("Said now", "iPhone"),
+        ])
+        event = json.loads(routes.feed_event(feed, feed.items[-1]).split("data: ", 1)[1])
+        self.assertEqual(event["device"], "iPhone")
+
+    def test_a_device_name_never_has_a_colon(self):
+        from storage.web_device_store import device_name
+        self.assertEqual(device_name("Work: laptop"), "Work laptop")

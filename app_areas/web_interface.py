@@ -85,9 +85,9 @@ class WebInterfaceMixin:
         answer.set_result(approved)
         return True
 
-    def publish_to_web(self, role: str, text: str, channel: str) -> None:
+    def publish_to_web(self, role: str, text: str, channel: str, device: str | None = None) -> None:
         """Every message said in the conversation, for pages showing it (the conversation's listener)."""
-        self.web_feed.publish(role, text, channel, ref=WEB_REF.get())
+        self.web_feed.publish(role, text, channel, ref=WEB_REF.get(), device=device)
 
     async def web_feed_ready(self) -> None:
         """The feed holds the earlier messages too: loaded once, the first time a page connects."""
@@ -137,7 +137,7 @@ class WebInterfaceMixin:
             marked = WEB_REF.set(ref)
             try:
                 reply = await self.answer_person_in_writing(
-                    [text], self.conversation.show_web_message, write,
+                    [text], lambda said: self.conversation.show_web_message(said, device.name), write,
                     label="Cora · web", channel="web", where="wrote to you on your web page",
                 )
             finally:

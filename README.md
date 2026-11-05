@@ -1048,7 +1048,9 @@ remembers them. When she wants to use a tool that changes things (sending an
 email, making an event), the page shows exactly what it would do with **Approve**
 and **Deny**; nothing happens until you answer, and after 10 minutes it lapses.
 The bottom row shows the desk's voice state (Active, Standby…) and whether the
-page is in touch with Cora. Run `python migrate.py` once for migrations 0048 and 0049. Save the public address under **Webhooks** first, then turn on Settings >
+page is in touch with Cora. Messages sent from the page are labelled with the
+device they came from (`You · web · iPad`). Run `python migrate.py` once for
+migrations 0048, 0049 and 0050. Save the public address under **Webhooks** first, then turn on Settings >
 Services > **Web interface**. The listener runs when webhooks, the web interface
 or both are on, and Microsoft is only subscribed to while webhooks are on.
 
@@ -2566,12 +2568,15 @@ features it helps check, and package last.
       cards keep a readable width (100 characters); code blocks use the full
       width. Portrait and phones are unchanged. A side panel (for voice
       controls, say) can come with voice if it's wanted.
-    - WB4c, planned (with WV1): two follow-ups from using it on a PC.
-      - *Which device said it:* every web message is labelled `You · web`
-        whichever device sent it. The server knows each device's name, so
-        labels can read `You · web · iPad`: simple for what's said while Cora
-        runs, and kept across restarts with the device saved beside each
-        message (a one-column migration on `messages`).
+    - WB4c follow-ups from using it on a PC:
+      - *Which device said it*, **built**: a web message is labelled with the
+        paired device it came from, at the desk (`You · web · iPad: …`) and on
+        the page (`You · web · iPad`), including what this page sends itself.
+        The name travels with the message through `Conversation.record` and its
+        listeners, and is saved beside it (`messages.device`, migration 0050),
+        so history after a restart keeps it; every other message, and her
+        replies, have none. Device names never contain a colon, which would end
+        the desk's label early.
       - *Very wide windows:* checked in a PC browser, and the full-width
         layout stays as it is (no centring): the page fills the window and the
         device name shows at the bottom right. Where the voice controls and
@@ -2589,9 +2594,9 @@ features it helps check, and package last.
         from a new network or browser, with a one-click unpair; and cookies that
         quietly change now and then, so a stolen copy and the real device
         clash and both are signed out.
-      - *Small fix:* text scrolling under the chat frame's top edge peeks out
-        beside the `CORA` title (the title's background covers only the word
-        itself). Fade or clip the top of the chat so nothing shows there.
+      - *Title fix*, **built**: text scrolling under the chat frame's top edge
+        peeked out beside the `CORA` title. The chat's scroll area now fades
+        out over its top 16 pixels, so nothing reaches the edge.
   - *iOS layout notes, measured on an iPhone and an iPad mini on iOS 26:* both
     Home Screen apps report a layout area shorter than the screen by exactly
     the status bar's height (iPhone 812 of 874 points, iPad 1101 of 1133), but

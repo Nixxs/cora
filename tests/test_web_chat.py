@@ -126,7 +126,8 @@ class WebChatAppTests(unittest.IsolatedAsyncioTestCase):
             app.live.note_signal_exchange = AsyncMock()
             app.conversation.log_entries.append("Cora: Earlier, by voice")
             records = []
-            app.conversation.record_message = lambda role, text, channel: records.append((role, text, channel))
+            app.conversation.record_message = lambda role, text, channel, device=None: records.append(
+                (role, text, channel, device))
             streamed = []
             reply = await app.answer_on_web(IPHONE, "When's the dentist?", streamed.append)
             await self.settle(app, pilot)
@@ -139,9 +140,11 @@ class WebChatAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(kwargs["route"].excluded, WEB_EXCLUDED)
             # Streams to the page as she writes.
             self.assertEqual(kwargs["on_text"], streamed.append)
-            self.assertIn("You · web: When's the dentist?", app.conversation.log_entries)
+            # Labelled and saved with the device it came from; her reply has none.
+            self.assertIn("You · web · iPhone: When's the dentist?", app.conversation.log_entries)
             self.assertIn("Cora · web:", app.conversation.log_entries)
-            self.assertEqual(records, [("user", "When's the dentist?", "web"), ("assistant", "It's at 2pm.", "web")])
+            self.assertEqual(records, [("user", "When's the dentist?", "web", "iPhone"),
+                                       ("assistant", "It's at 2pm.", "web", None)])
             app.live.note_signal_exchange.assert_awaited_once_with(
                 "When's the dentist?", "It's at 2pm.", "wrote to you on your web page",
             )
@@ -155,7 +158,7 @@ class WebChatAppTests(unittest.IsolatedAsyncioTestCase):
             app.live.note_signal_exchange = AsyncMock()
             self.assertIsNone(await app.answer_on_web(IPHONE, "Hello?", lambda text: None))
             await self.settle(app, pilot)
-            self.assertIn("You · web: Hello?", app.conversation.log_entries)
+            self.assertIn("You · web · iPhone: Hello?", app.conversation.log_entries)
             self.assertNotIn("Cora · web:", app.conversation.log_entries)
             app.live.note_signal_exchange.assert_not_awaited()
 

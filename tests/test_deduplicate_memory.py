@@ -399,9 +399,10 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                  "0043_desire_events_as_evidence.sql", "0044_finding_embeddings.sql",
                  "0045_create_desire_opportunities.sql", "0046_interest_embeddings.sql",
                  "0047_create_feeling_events.sql", "0048_create_web_devices.sql",
-                 "0049_add_web_channel.sql"]
+                 "0049_add_web_channel.sql", "0050_add_message_device.sql"]
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             connection.execute("DROP TABLE public.web_devices")
+            connection.execute("ALTER TABLE public.messages DROP COLUMN device")
             connection.execute("ALTER TABLE public.interest_explorations DROP COLUMN desire_id")
             connection.execute("ALTER TABLE public.identity_event_evidence DROP COLUMN desire_event_id")
             connection.execute("DROP TABLE public.feeling_events")

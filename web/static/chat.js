@@ -14,6 +14,8 @@ const PLACES = { voice: "voice", keyboard: "desk", screen: "desk", signal: "Sign
 // This page's own messages, already shown as they were sent: the feed's copies are skipped.
 const sentHere = new Set();
 let lastDay = null;
+// This page's own device, for labelling what's sent from here.
+let thisDevice = null;
 
 function dayLabel(date) {
   const today = new Date();
@@ -39,7 +41,9 @@ function showFeedMessage(message) {
   markDay(when);
   addMessage({
     who: message.role === "assistant" ? "Cora" : "You",
-    via: PLACES[message.channel] || message.channel,
+    // A web message says which device it came from ("web · iPad").
+    via: [PLACES[message.channel] || message.channel, message.role === "user" ? message.device : null]
+      .filter(Boolean).join(" · "),
     html: message.html,
     text: message.text ?? "",
     when,
@@ -48,6 +52,7 @@ function showFeedMessage(message) {
 
 /** The live conversation. Browsers reconnect by themselves and say what they last saw. */
 function follow(deviceName) {
+  thisDevice = deviceName;
   setLink("connecting");
   const events = new EventSource("/api/events", { withCredentials: true });
   events.addEventListener("open", () => setLink("linked", deviceName));
@@ -144,7 +149,7 @@ async function send(text) {
   const ref = newRef();
   sentHere.add(ref);
   markDay(new Date());
-  addMessage({ who: "You", via: "web", text });
+  addMessage({ who: "You", via: thisDevice ? `web · ${thisDevice}` : "web", text });
   const draft = startWriting("web");
   let response;
   try {

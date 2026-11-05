@@ -12,8 +12,9 @@ from .chat_widgets import ChatImage, ChatMarkdown, chat_link
 SIGNAL_PREFIX = "You · Signal: "
 # And the emails they send her own address.
 EMAIL_PREFIX = "You · Email: "
-# And what they write on her web page.
+# And what they write on her web page, with the device it came from when known.
 WEB_PREFIX = "You · web: "
+WEB_LINE = re.compile(r"You · web(?: · [^:\n]*)?: ")
 # How a request for approval ended, wherever it was asked (desk, Signal, the web page). Shown in the
 # chat and given to Cora as history, so later turns know what was done even if her reply didn't say.
 APPROVAL_PREFIX = "Cora · approval: "
@@ -127,17 +128,21 @@ class Conversation:
         # page's feed. Called after the message is recorded.
         self.listeners: list = []
 
-    def record(self, role: str, text: str, channel: str) -> None:
-        """A message said in this conversation: saved, and passed on to listeners."""
+    def record(self, role: str, text: str, channel: str, device: str | None = None) -> None:
+        """A message said in this conversation: saved, and passed on to listeners. device is the
+        paired device a web message came from."""
         if self.record_message is not None:
-            self.record_message(role, text, channel)
-        self.announce(role, text, channel)
+            if device is None:
+                self.record_message(role, text, channel)
+            else:
+                self.record_message(role, text, channel, device)
+        self.announce(role, text, channel, device)
 
-    def announce(self, role: str, text: str, channel: str) -> None:
+    def announce(self, role: str, text: str, channel: str, device: str | None = None) -> None:
         """Pass a message on to listeners only, for one saved elsewhere (typed at the desk)."""
         for listener in list(self.listeners):
             try:
-                listener(role, text, channel)
+                listener(role, text, channel, device)
             except Exception as error:
                 self.write_debug(f"Message listener failed ({type(error).__name__}).", "Message listener failed")
 
@@ -161,8 +166,8 @@ class Conversation:
                 role, text = "user", entry[len(SIGNAL_PREFIX):]
             elif isinstance(entry, str) and entry.startswith(EMAIL_PREFIX):
                 role, text = "user", entry[len(EMAIL_PREFIX):]
-            elif isinstance(entry, str) and entry.startswith(WEB_PREFIX):
-                role, text = "user", entry[len(WEB_PREFIX):]
+            elif isinstance(entry, str) and (web := WEB_LINE.match(entry)):
+                role, text = "user", entry[web.end():]
             elif isinstance(entry, ApprovalNote):
                 role, text = "assistant", entry.for_cora
             elif isinstance(entry, str) and entry.startswith("Cora: "):
@@ -297,11 +302,12 @@ class Conversation:
         self.write_log(ApprovalNote(f"{APPROVAL_PREFIX}{APPROVAL_SHOWN[outcome].format(what)}",
                                     APPROVAL_FOR_CORA[outcome].format(what)))
 
-    def show_web_message(self, text: str) -> None:
-        """The person's own message from her web page, in the same chat as the desktop's."""
+    def show_web_message(self, text: str, device: str | None = None) -> None:
+        """The person's own message from her web page, in the same chat as the desktop's, labelled
+        with the device it came from when known ("You · web · iPad: …")."""
         self.flush_transcript()
-        self.write_log(f"{WEB_PREFIX}{text}")
-        self.record("user", text, "web")
+        self.write_log(f"You · web · {device}: {text}" if device else f"{WEB_PREFIX}{text}")
+        self.record("user", text, "web", device)
 
     def display_written_item(self, item: dict) -> None:
         item_id = item.get("id")

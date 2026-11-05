@@ -38,6 +38,8 @@ class FeedMessage:
     kind: str = MESSAGE
     # An approval's details: {"id", "title", "detail", "seconds"}, or {"id", "outcome"} when done.
     data: dict | None = None
+    # The paired device a web message came from ("iPhone"), else None.
+    device: str | None = None
 
 
 @dataclass(frozen=True)
@@ -58,8 +60,9 @@ class MessageFeed:
         self.status: str | None = None
 
     def publish(self, role: str, text: str, channel: str, at: datetime | None = None,
-                ref: str | None = None) -> FeedMessage:
-        return self._add(FeedMessage(self.seq + 1, role, channel, text, at or datetime.now(timezone.utc), ref))
+                ref: str | None = None, device: str | None = None) -> FeedMessage:
+        return self._add(FeedMessage(self.seq + 1, role, channel, text, at or datetime.now(timezone.utc), ref,
+                                     device=device))
 
     def publish_approval(self, kind: str, data: dict) -> FeedMessage:
         """An approval asked for on the page (APPROVAL), or its end (APPROVAL_DONE)."""
@@ -87,9 +90,9 @@ class MessageFeed:
             else:
                 queue.put_nowait(item)
 
-    def seed(self, rows: list[tuple[str, str, str, datetime]]) -> None:
-        """Earlier messages from the database, (role, channel, text, at) oldest first, put before
-        anything said since Cora started. Ones already here (said since) aren't repeated."""
+    def seed(self, rows: list[tuple]) -> None:
+        """Earlier messages from the database, (role, channel, text, at[, device]) oldest first, put
+        before anything said since Cora started. Ones already here (said since) aren't repeated."""
         if self.seeded:
             return
         self.seeded = True
@@ -98,9 +101,9 @@ class MessageFeed:
         earlier = [row for row in rows if (row[0], row[2]) not in said]
         self.items.clear()
         self.seq = 0
-        for role, channel, text, at in earlier[-self.items.maxlen:]:
+        for role, channel, text, at, *device in earlier[-self.items.maxlen:]:
             self.seq += 1
-            self.items.append(FeedMessage(self.seq, role, channel, text, at))
+            self.items.append(FeedMessage(self.seq, role, channel, text, at, device=device[0] if device else None))
         # Renumbered after the earlier ones. Nobody can have seen them yet: pages wait for seeding.
         for item in since_start:
             self.seq += 1

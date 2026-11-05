@@ -120,7 +120,8 @@ def feed_event(feed: MessageFeed, message: FeedMessage) -> str:
     if message.kind != MESSAGE:
         body = {**(message.data or {}), "at": message.at.isoformat()}
         return f"id: {feed.event_id(message)}\nevent: {message.kind}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
-    body = {"role": message.role, "channel": message.channel, "at": message.at.isoformat(), "ref": message.ref}
+    body = {"role": message.role, "channel": message.channel, "at": message.at.isoformat(), "ref": message.ref,
+            "device": message.device}
     if message.role == "assistant":
         body["html"] = chat_html(message.text)
     else:

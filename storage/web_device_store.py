@@ -28,7 +28,8 @@ class WebDevice:
 
 def device_name(name: str) -> str:
     """A tidy name for the list, from whatever the browser sent."""
-    name = " ".join(str(name).split())[:NAME_MAX_CHARS]
+    # No colons: the desk's chat ends its "You · web · iPad:" label at the first one.
+    name = " ".join(str(name).replace(":", " ").split())[:NAME_MAX_CHARS]
     return name or "Browser"
 
 

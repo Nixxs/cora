@@ -312,13 +312,15 @@ class KeyboardPersistence:
             channel="keyboard", status="completed", delivery_status="pending",
         )
 
-    def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
+    def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str,
+                          device: str | None = None) -> None:
         # Voice records are display chunks, not API-confirmed complete turns.
         store = self._get_store()
         store.create_conversation(self.conversation_id)
         store.save_message(
             self.conversation_id, message_id=message_id, role=role, text=text,
             channel=channel, status="completed" if channel == "screen" else "incomplete",
+            **({"device": device} if device is not None else {}),
         )
 
     def record_delivery(self, message_id: UUID, status: str) -> None:
