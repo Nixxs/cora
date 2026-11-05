@@ -245,11 +245,11 @@ class CloseToolTests(unittest.IsolatedAsyncioTestCase):
                     connection.response.create.assert_not_called()
                     config = connection.session.start.call_args.kwargs["session"]
                     # Live gets every tool but the client-only ones.
-                    self.assertEqual(config, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY)))
+                    self.assertEqual(config, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY | app.unavailable_tools())))
                     backend = config["delegation"]["responses"]
                     self.assertFalse(backend["parallel_tool_calls"])
                     self.assertEqual(backend["tools"][0], {"type": "web_search"})
-                    self.assertEqual(backend["tools"][1:], app.tools.schemas(excluding=CLIENT_ONLY))
+                    self.assertEqual(backend["tools"][1:], app.tools.schemas(excluding=CLIENT_ONLY | app.unavailable_tools()))
                     self.assertEqual(backend["tools"][-1]["name"], "example")
                     tool = backend["tools"][1]
                     self.assertEqual(tool["name"], "close_app")

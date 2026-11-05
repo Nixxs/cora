@@ -117,6 +117,41 @@ export function addPicture({ src, caption, url, when = new Date() }) {
   return message;
 }
 
+// Only Google's own map frames and links are shown; anything else in a map item is ignored.
+const MAP_EMBED = "https://www.google.com/maps/embed/v1/";
+const MAP_LINK = "https://www.google.com/maps/";
+
+/** A map Cora showed: Google's interactive map, its caption, and a link that opens Google Maps
+ * (the Maps app on a phone). */
+export function addMap({ caption, embed, link, when = new Date() }) {
+  const message = addMessage({ who: "Cora", via: "map", text: "", when });
+  const body = message.querySelector(".body");
+  if (typeof embed === "string" && embed.startsWith(MAP_EMBED)) {
+    const frame = document.createElement("iframe");
+    frame.className = "map";
+    frame.src = embed;
+    frame.title = caption || "A map from Cora";
+    frame.loading = "lazy";
+    frame.allowFullscreen = true;
+    // The page's address goes with it: that's what the key is restricted to.
+    frame.referrerPolicy = "strict-origin-when-cross-origin";
+    body.append(frame);
+  }
+  const line = document.createElement("p");
+  line.className = "caption";
+  line.textContent = caption ? `${caption} · ` : "";
+  if (typeof link === "string" && link.startsWith(MAP_LINK)) {
+    const open = document.createElement("a");
+    open.href = link;
+    open.textContent = "Open in Google Maps";
+    open.target = "_blank";
+    open.rel = "noopener noreferrer";
+    line.append(open);
+  }
+  body.append(line);
+  return message;
+}
+
 /** A reply streaming in: update(text) as it arrives, then finish(html) or fail(). */
 export function startWriting(via = "web") {
   const message = addMessage({ who: "Cora", via: "writing…", text: "" });

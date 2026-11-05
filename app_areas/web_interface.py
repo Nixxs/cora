@@ -22,7 +22,8 @@ from tools.where_is_person import NOTE as WHERE_NOTE, WHY_NOT as WHERE_NOT
 from session_config import WEB_CHAT_INSTRUCTIONS
 from storage.web_device_store import WebDevice
 from ui.model_settings import WebControls
-from web.feed import APPROVAL, APPROVAL_DONE, KEEP as FEED_KEEP, PHOTO, PICTURE
+from web import maps
+from web.feed import APPROVAL, APPROVAL_DONE, KEEP as FEED_KEEP, MAP, PHOTO, PICTURE
 from web.pairing import shown_code
 from web.routes import WebAccess
 
@@ -230,6 +231,51 @@ class WebInterfaceMixin:
         return {"status": "ok", "place": where.place, "accuracy_metres": where.accuracy,
                 "from_device": where.device, "checked_minutes_ago": minutes, "note": WHERE_NOTE}
 
+    def unavailable_tools(self) -> frozenset[str]:
+        """Tools not set up, so not offered anywhere: show_map without a Google Maps key."""
+        return frozenset() if self.maps_key else frozenset({"show_map"})
+
+    def show_map(self, view: maps.MapView) -> bool:
+        """show_map: the map on every open page, and its caption and link in the desk's chat.
+        False when no key is set (her session may still list the tool until she reconnects)."""
+        if not self.maps_key:
+            return False
+        caption, link = view.caption(), view.link()
+        self.conversation.show_map(caption, link)
+        self.web_feed.publish_image(MAP, {"caption": caption, "embed": view.embed_url(self.maps_key), "link": link},
+                                    "assistant")
+        self.activity.write(f"Cora showed a map ({view.mode}).", "Map")
+        return True
+
+    async def load_maps_key(self) -> None:
+        try:
+            self.maps_key = await asyncio.to_thread(maps.maps_key)
+        except Exception as error:
+            self.activity.write(f"The Google Maps key didn't load ({type(error).__name__}).", "Maps")
+
+    @work(group="maps-key", exit_on_error=False)
+    async def save_maps_key(self, key: str) -> None:
+        """The Google Maps key, in the system credential store; empty forgets it. Her voice session
+        gets show_map (or loses it) at her next connect; written chats at once."""
+        try:
+            saved = await asyncio.to_thread(maps.save_maps_key, key)
+        except ValueError as error:
+            self.notify(str(error), severity="warning")
+            return
+        except Exception as error:
+            self.activity.write(f"Saving the Google Maps key failed ({type(error).__name__}).", "Maps")
+            self.notify("The Google Maps key couldn't be saved. Check Activity.", severity="error")
+            return
+        changed = bool(saved) != bool(self.maps_key)
+        self.maps_key = saved
+        if self.web_controls is not None:
+            self.web_controls.has_maps_key = bool(saved)
+        if changed:
+            # Like service tools: she gets the change when Settings closes.
+            self.service_tools_changed = True
+        self.activity.write("Saved the Google Maps key." if saved else "Forgot the Google Maps key.", "Maps")
+        self.notify("Maps are on: Cora can show maps on the web page." if saved else "Maps are off.")
+
     def publish_to_web(self, role: str, text: str, channel: str, device: str | None = None) -> None:
         """Every message said in the conversation, for pages showing it (the conversation's listener)."""
         self.web_feed.publish(role, text, channel, ref=WEB_REF.get(), device=device)
@@ -272,7 +318,7 @@ class WebInterfaceMixin:
             try:
                 # Tools that change things are asked about on the page, with Approve and Deny.
                 route = BackendRoute(
-                    excluded=WEB_EXCLUDED, ask_approval=self.ask_on_web, approval_seconds=APPROVAL_SECONDS,
+                    excluded=WEB_EXCLUDED | self.unavailable_tools(), ask_approval=self.ask_on_web, approval_seconds=APPROVAL_SECONDS,
                     tool_seconds=APPROVAL_SECONDS + 60, asked_where="on the web page",
                 )
                 reply = await self.reply_in_writing(
@@ -391,5 +437,6 @@ class WebInterfaceMixin:
             start_pairing=self.start_web_pairing, cancel_pairing=self.web_pairing.cancel,
             pairing=self.web_pairing_shown, devices=lambda: self.web_devices,
             remove_device=self.remove_web_device, enabled=self.webhook_settings.web_enabled,
+            has_maps_key=bool(self.maps_key), save_maps_key=self.save_maps_key,
         )
         return self.web_controls

@@ -1930,7 +1930,7 @@ features it helps check, and package last.
 20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
     iPad mini as a home-screen web app, served by her webhook listener, in the
     same conversation as the desk and Signal (see Web interface in Details
-    below). WB5 (photos both ways), WB6 (where you are) and WV3 (voice polish) are built; next, WB7 (maps on the page).
+    below). WB5 (photos both ways), WB6 (where you are), WV3 (voice polish) and WB7 (maps on the page) are built.
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below).
@@ -2509,8 +2509,12 @@ features it helps check, and package last.
       only, JSON, at most 8,000 characters) answers with her reply as it
       streams, one JSON object a line: pieces as she writes, then the finished
       reply as safe HTML ([web/rendering.py](web/rendering.py): raw HTML
-      escaped, links only to web and mail addresses, as in her emails). The
-      reply runs as its own task, so if the page goes away (the phone locks)
+      escaped, links only to web and mail addresses, as in her emails). Code
+      blocks that name their language are highlighted on the server with
+      Pygments (already there for the TUI) as token classes, coloured by
+      [web/static/code.css](web/static/code.css) in monokai like the TUI; an
+      unknown or missing language shows plain, and Pygments escapes the code
+      either way. The reply runs as its own task, so if the page goes away (the phone locks)
       she still finishes, and it's shown at the desk and saved. In the app,
       `answer_on_web` ([app_areas/web_interface.py](app_areas/web_interface.py))
       uses the same path as your own Signal messages, now shared as
@@ -2839,39 +2843,44 @@ features it helps check, and package last.
       contacts' chats, task coordinators or email threads (their allowlists
       don't include it). The coordinates go to OpenStreetMap's geocoder to
       name the place, and the place name to OpenAI as part of her context.
-  - WB7 maps on the page, planned: Cora can show a small map in the web chat
+  - WB7 maps on the page, **built**: Cora can show a small map in the web chat
     for a place, a route, or an area search ("cafes near Leederville").
-    - *How:* a `show_map` tool (mode: place, directions or search, with the
-      place, the origin and destination with a travel mode, or the search
-      text). On the page it shows as an interactive map from Google's Maps
-      Embed API (pan and zoom; a route shows its line, distance and time),
-      with an "Open in Google Maps" link underneath that opens the Maps app on
-      the iPhone for real navigation. "From here" can start from the place
-      `where_is_person` found (WB6).
-    - *Elsewhere:* like her pictures, it's saved to history as text
-      ("[map] route from Leederville to Fremantle, driving") so she remembers
-      showing it. The TUI shows that line with the same Google Maps link
-      (clickable), and on Signal she can send the link. Those links (Google
-      Maps URLs) need no key.
-    - *The key (a setting):* the Embed API is free with no usage limits but
-      needs a Google Cloud API key. It goes in Settings › Services › Web
-      interface ("Google Maps key"), kept in the system credential store like
-      her other secrets. Create it in Google Cloud Console with only the Maps
-      Embed API allowed and restricted to `https://cora.intelligis.io/*`, so
-      it's useless anywhere else (the page has to show it, as every embedded
-      map does). Without a key, `show_map` isn't offered, and she sends the
-      Google Maps link instead.
+    - *How:* her `show_map` tool (mode place, directions or search; the
+      place, destination or search text; an origin and a travel mode for
+      routes: driving, walking, bicycling or transit). Every open page shows
+      an interactive map from Google's Maps Embed API in a frame (pan and
+      zoom; a route shows its line, distance and time), with the caption and
+      an "Open in Google Maps" link that opens the Maps app on the iPhone.
+      The page only frames `https://www.google.com/maps/embed/v1/` addresses
+      and only links to `https://www.google.com/maps/`. For "from here" she
+      checks `where_is_person` (WB6) first. She doesn't see the map; she's
+      told it was shown.
+    - *Elsewhere:* saved to history as text ("[map] Route from Leederville to
+      Fremantle (driving) (link)"), so she remembers showing it. The desk's
+      chat shows "Cora · map: …" with an "Open in Google Maps" link. Not
+      offered on Signal or by email; there her instructions say a Google
+      Maps link opens the Maps app (those links need no key).
+    - *The key:* Settings › Services › Web interface › Google Maps key, kept
+      in the system credential store (`web/maps.py`) and loaded with the
+      listener's settings. Create it in Google Cloud Console (APIs & Services
+      › Credentials › Create credentials › API key), then restrict it:
+      *Application restrictions* › Websites › `https://cora.intelligis.io/*`;
+      *API restrictions* › only the Maps Embed API (enable that API in the
+      Library first). The Embed API is free with no usage limits; the page
+      has to show the key, which those restrictions make useless anywhere
+      else. Without a key, `show_map` isn't offered anywhere. Saving or
+      forgetting one reaches voice Cora when Settings closes (she reconnects,
+      as for service tools) and written chats at once.
     - *Privacy:* the embedded map loads from Google in your browser, so Google
       sees what's mapped and your device's IP address, as when you open
-      Google Maps yourself. Nothing is sent to Google until she shows a map.
+      Google Maps yourself. Nothing goes to Google until she shows a map.
     - *Not the same as a Maps MCP server:* a Google Maps MCP server (added
       through MCP, item 18's services screen) would give her map data as
       tools: real travel times, directions step by step, places with
       opening hours and ratings. It doesn't draw maps. It needs the paid
       Places and Routes APIs (Google gives a monthly free allowance), and
       the text answers work everywhere, Signal and voice included. It's
-      worth adding on its own later; WB7 is only about showing the map, and
-      the two would share the same Google Cloud project.
+      worth adding on its own later; it can use the same Google Cloud project.
   - *Calls with the phone locked:* not possible as a web app. iOS suspends web
     pages, Home Screen apps included, when the screen locks or another app
     comes to the front: the connection drops and the microphone stops. Only a

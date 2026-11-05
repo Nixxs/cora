@@ -27,6 +27,8 @@ MESSAGE, APPROVAL, APPROVAL_DONE = "message", "approval", "approval_done"
 # And a photo the person sent ({"id", "ref"}), or a picture she showed ({"id", "caption", "url"}):
 # pages fetch the image from memory (GET /api/photos/{id}) while it's still kept.
 PHOTO, PICTURE = "photo", "picture"
+# And a map she showed ({"caption", "embed", "link"}): the page frames the embed.
+MAP = "map"
 # And a quiet line ({"text"}), such as "Cora checked where you are".
 NOTICE = "notice"
 

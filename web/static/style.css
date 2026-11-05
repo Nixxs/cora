@@ -542,6 +542,16 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   border-radius: 8px;
   border: 1px solid #263044;
 }
+/* A map she showed: wide enough for a route, not taller than a phone's screen allows. */
+.message .map {
+  display: block;
+  width: min(100%, 480px);
+  height: min(320px, 45vh);
+  margin: 4px 0 8px;
+  border: 1px solid #263044;
+  border-radius: 8px;
+  background: var(--bg-deep);
+}
 
 #send-button {
   flex-shrink: 0;

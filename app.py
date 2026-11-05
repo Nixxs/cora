@@ -273,6 +273,7 @@ class CoraApp(
             screen_looking=lambda: self.screen_looking,
             kept_images=self.kept_images,
             locate_person=lambda refresh: self.locate_person(refresh),
+            show_map=lambda view: self.show_map(view),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -290,7 +291,8 @@ class CoraApp(
             note_feeling=self.note_feeling,
         )
         # Live never sees client-only tools such as pass_on.
-        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)
+        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY | self.unavailable_tools()),
+                             on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
@@ -389,6 +391,8 @@ class CoraApp(
         self.conversation.picture_listeners.append(self.publish_web_picture)
         # Where the person is, asked of the open pages on demand (where_is_person), in memory only.
         self.whereabouts = Whereabouts(self.web_feed.ask_location)
+        # The Google Maps key for maps on the page (Settings › Services › Web interface), or "".
+        self.maps_key = ""
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None

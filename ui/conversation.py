@@ -303,6 +303,18 @@ class Conversation:
         self.record("assistant", f"[image] {caption} ({page_url})", "screen", announce=False)
         self.tell(self.picture_listeners, image, caption, page_url)
 
+    def show_map(self, caption: str, link: str) -> None:
+        """A map she showed on the web page: here, its caption and a Google Maps link. Saved as
+        text, so she remembers showing it; listeners (the page) are told another way."""
+        self.log_entries.extend([
+            "",
+            f"Cora · map: {caption}",
+            Text.assemble("Open in ", ("Google Maps", chat_link(link))),
+            "",
+        ])
+        self.redraw_log()
+        self.record("assistant", f"[map] {caption} ({link})", "screen", announce=False)
+
     def start_written_reply(self, label: str = "Cora · written", channel: str = "screen") -> WrittenDraft:
         """A written reply to show as it streams in; nothing appears until its first text."""
         return WrittenDraft(self, label, channel)

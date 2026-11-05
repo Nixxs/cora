@@ -89,6 +89,8 @@ class WebhooksMixin:
             except Exception as error:
                 self.activity.write(f"Webhook settings didn't load ({type(error).__name__}).", "Webhooks")
                 return
+            # The Google Maps key, for maps on the web page.
+            await self.load_maps_key()
             if self.webhook_controls is not None:
                 self.webhook_controls.enabled = self.webhook_settings.enabled
                 self.webhook_controls.public_url = self.webhook_settings.public_url or ""

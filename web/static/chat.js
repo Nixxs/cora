@@ -2,7 +2,7 @@
 // and messages sent from here with her reply streaming back as she writes it.
 
 import {
-  addApproval, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
+  addApproval, addMap, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
   startWriting,
 } from "./ui.js";
 import { hasPhoto, setupPhotos, takePhoto } from "./photo.js";
@@ -80,6 +80,12 @@ function follow(deviceName) {
       src: `/api/photos/${encodeURIComponent(picture.id)}`, caption: picture.caption, url: picture.url,
       when: new Date(picture.at),
     });
+  });
+  // A map she showed: Google's map in a frame, with a link to Google Maps.
+  events.addEventListener("map", (event) => {
+    const map = JSON.parse(event.data);
+    markDay(new Date(map.at));
+    addMap({ caption: map.caption, embed: map.embed, link: map.link, when: new Date(map.at) });
   });
   events.addEventListener("approval_done", (event) => {
     const done = JSON.parse(event.data);
