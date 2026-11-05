@@ -111,7 +111,7 @@ class MailMixin:
 
     def ensure_mail_subscription(self, renew: bool = False) -> None:
         """Graph's subscription to new mail, made or renewed when due, while she listens and her email is ready."""
-        if self.closing or self.webhook_server is None or self.email_status.state != EMAIL_READY:
+        if self.closing or not self.graph_listening() or self.email_status.state != EMAIL_READY:
             return
         if self.mail_subscription_worker is not None and not self.mail_subscription_worker.is_finished:
             return
@@ -130,7 +130,8 @@ class MailMixin:
                 break
             await asyncio.sleep(0.1)
         server, settings, secrets_now = self.webhook_server, self.webhook_settings, self.webhook_secrets
-        if server is None or not self.webhook_listening() or secrets_now is None or not settings.public_url:
+        if server is None or not self.webhook_listening() or secrets_now is None or not settings.public_url \
+                or not settings.enabled:
             return
         expires = datetime.now(timezone.utc) + MAIL_SUBSCRIPTION_LIFETIME
         try:

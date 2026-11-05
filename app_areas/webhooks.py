@@ -6,7 +6,9 @@ from datetime import datetime, timezone
 from textual import work
 
 from mail.account import READY as EMAIL_READY, EmailNotReady, GraphError
-from mail.webhook import WebhookServer, calendar_urls, webhook_app, webhook_secrets
+from mail.webhook import calendar_urls, graph_routes, webhook_secrets
+from server.listener import Listener, build_app
+from web.routes import web_routes
 from subconscious.event_bus import CalendarChangedEvent
 from app_areas.shared import (
     MAIL_NOTIFY_SECONDS, MAIL_SUBSCRIPTION_LIFETIME, MAIL_SUBSCRIPTION_RENEW, WEBHOOK_STARTUP_SECONDS,
@@ -87,27 +89,35 @@ class WebhooksMixin:
             except Exception as error:
                 self.activity.write(f"Webhook settings didn't load ({type(error).__name__}).", "Webhooks")
                 return
+            # The Google Maps key, for maps on the web page.
+            await self.load_maps_key()
             if self.webhook_controls is not None:
                 self.webhook_controls.enabled = self.webhook_settings.enabled
                 self.webhook_controls.public_url = self.webhook_settings.public_url or ""
                 self.webhook_controls.port = self.webhook_settings.port
             await self.stop_webhooks()
             settings = self.webhook_settings
-            if self.closing or not settings.enabled or not settings.public_url:
+            if not settings.web_enabled:
+                self.web_pairing.cancel()
+            # The listener runs for webhooks, the web interface or both.
+            if self.closing or not settings.listening:
                 return
-            try:
-                self.webhook_secrets = await asyncio.to_thread(webhook_secrets, rotate)
-            except Exception as error:
-                self.webhook_status = "Not listening: the system credential store isn't available."
-                self.activity.write(f"Webhook secrets couldn't be loaded ({type(error).__name__}).", "Webhooks")
-                return
-            if rotate:
-                self.activity.write("New webhook secrets made.", "Webhooks")
-            server = WebhookServer(
-                webhook_app(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle,
-                            self.on_calendar_webhook, self.on_calendar_lifecycle),
-                settings.port,
-            )
+            groups = []
+            if settings.enabled:
+                try:
+                    self.webhook_secrets = await asyncio.to_thread(webhook_secrets, rotate)
+                except Exception as error:
+                    self.webhook_status = "Not listening: the system credential store isn't available."
+                    self.activity.write(f"Webhook secrets couldn't be loaded ({type(error).__name__}).", "Webhooks")
+                    return
+                if rotate:
+                    self.activity.write("New webhook secrets made.", "Webhooks")
+                groups.append(graph_routes(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle,
+                                           self.on_calendar_webhook, self.on_calendar_lifecycle))
+            if settings.web_enabled:
+                # Last: the page sits at the root.
+                groups.append(web_routes(self.web_access()))
+            server = Listener(build_app(*groups), settings.port)
             try:
                 server.open()
             except OSError as error:
@@ -118,7 +128,9 @@ class WebhooksMixin:
             self.webhook_server = server
             self.webhook_worker = self.run_worker(server.serve(), group="webhook", exit_on_error=False)
             self.webhook_status = f"Listening on 127.0.0.1:{settings.port}"
-            self.activity.write(f"Listening for webhooks on 127.0.0.1:{settings.port}.", "Webhooks")
+            serving = " and ".join(name for name, on in (("webhooks", settings.enabled),
+                                                          ("the web interface", settings.web_enabled)) if on)
+            self.activity.write(f"Listening for {serving} on 127.0.0.1:{settings.port}.", "Webhooks")
         self.ensure_mail_subscription()
         self.ensure_calendar_subscription()
 
@@ -138,6 +150,10 @@ class WebhooksMixin:
             except Exception:
                 worker.cancel()
         self.activity.write("Stopped listening for webhooks.", "Webhooks")
+
+    def graph_listening(self) -> bool:
+        """Whether Microsoft's notifications can reach her: the listener runs with webhooks on."""
+        return self.webhook_server is not None and self.webhook_settings.enabled
 
     def webhook_listening(self) -> bool:
         server = self.webhook_server
@@ -169,7 +185,7 @@ class WebhooksMixin:
 
     def ensure_calendar_subscription(self, renew: bool = False) -> None:
         """Graph's subscription to changes in her calendar, made or renewed when due, as with mail."""
-        if self.closing or self.webhook_server is None or self.email_status.state != EMAIL_READY:
+        if self.closing or not self.graph_listening() or self.email_status.state != EMAIL_READY:
             return
         if self.calendar_subscription_worker is not None and not self.calendar_subscription_worker.is_finished:
             return
@@ -187,7 +203,8 @@ class WebhooksMixin:
                 break
             await asyncio.sleep(0.1)
         server, settings, secrets_now = self.webhook_server, self.webhook_settings, self.webhook_secrets
-        if server is None or not self.webhook_listening() or secrets_now is None or not settings.public_url:
+        if server is None or not self.webhook_listening() or secrets_now is None or not settings.public_url \
+                or not settings.enabled:
             return
         expires = datetime.now(timezone.utc) + MAIL_SUBSCRIPTION_LIFETIME
         try:

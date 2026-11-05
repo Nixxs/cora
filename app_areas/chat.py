@@ -41,12 +41,19 @@ class ChatMixin:
     ) -> None:
         await self.submission.submit_keyboard_message(message, message_id, composer, image_png)
 
-    def record_chat_message(self, role: str, text: str, channel: str) -> None:
-        self.conversation_persistence.record_chat_message(role, text, channel)
+    def record_chat_message(self, role: str, text: str, channel: str, device: str | None = None) -> None:
+        if device is None:
+            self.conversation_persistence.record_chat_message(role, text, channel)
+        else:
+            self.conversation_persistence.record_chat_message(role, text, channel, device)
 
     @work(group="chat-save")
-    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
-        await self.conversation_persistence.save_chat_message(message_id, role, text, channel)
+    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str,
+                                device: str | None = None) -> None:
+        if device is None:
+            await self.conversation_persistence.save_chat_message(message_id, role, text, channel)
+        else:
+            await self.conversation_persistence.save_chat_message(message_id, role, text, channel, device)
 
     def send_without_live(self, message: str, image_seen: str | None = None) -> None:
         """In Standby, answer a typed message in writing without waking Live."""
@@ -62,6 +69,38 @@ class ChatMixin:
             self.conversation_end_timer = self.set_timer(
                 CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
             )
+
+    async def answer_person_in_writing(
+        self, said: list[str], show_message, write, *, label: str, channel: str, where: str,
+        noted: str | None = None,
+    ) -> str | None:
+        """The person's own messages from away from the desk (Signal, the web page), answered as one Cora.
+
+        Shown in the desk's chat with show_message, answered by write(history) (which also delivers
+        the reply, and returns None if it failed), then shown and saved with label and channel, and
+        noted to voice Cora as "the person just {where}". Returns her reply, or None.
+        """
+        # Taken before these messages join the chat, so they aren't sent twice.
+        history = self.conversation.get_reconnect_history()
+        for text in said:
+            show_message(text)
+        self.keep_conversation_open()
+        text = await write(history)
+        if text is None or self.closing:
+            return None
+        self.conversation.show_written_reply(text, label=label, channel=channel)
+        self.person_is_talking()
+        joined = "\n".join(said)
+        if self.pending_greeting == "launch":
+            # Answered before she says hello, so the hello can follow on from it.
+            self.signal_launch_exchanges.append((joined, text))
+        try:
+            # noted: what voice Cora is told they said, when more than the chat shows (a photo's
+            # description, say).
+            await self.live.note_signal_exchange(noted or joined, text, where)
+        except Exception as error:
+            self.activity.write(f"Note to voice Cora failed ({type(error).__name__}).", f"{label} note failed")
+        return text
 
     async def reply_in_writing(
         self, content: list[dict], history: list[dict], route: BackendRoute, extra_instructions: str = "",
@@ -101,7 +140,7 @@ class ChatMixin:
         draft = self.conversation.start_written_reply()
         try:
             text = await self.reply_in_writing(
-                content, history, BackendRoute(excluded=STANDBY_EXCLUDED), on_text=draft.update,
+                content, history, BackendRoute(excluded=STANDBY_EXCLUDED | self.unavailable_tools()), on_text=draft.update,
             )
         except Exception as error:
             draft.fail()

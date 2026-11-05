@@ -60,12 +60,14 @@ class SettingsMixin:
                 ),
                 email=self.make_email_controls(has_email_app, email_tenant, has_sign_up_password),
                 webhooks=self.make_webhook_controls(),
+                web=self.make_web_controls(),
             ), callback=self.settings_closed)
 
     def make_webhook_controls(self) -> WebhookControls:
         self.webhook_controls = WebhookControls(
             status=lambda: (
-                self.webhook_status,
+                # The listener may be running only for the web interface.
+                self.webhook_status if self.webhook_settings.enabled else "",
                 "\n".join(filter(None, (self.mail_subscription_status, self.calendar_subscription_status))),
                 self.mail_subscription is not None,
             ),
@@ -88,6 +90,8 @@ class SettingsMixin:
         return self.email_controls
 
     def settings_closed(self, _result=None) -> None:
+        # A pairing code lives only while Settings is open.
+        self.web_pairing.cancel()
         # Tool changes reach Cora at a connect, so reconnect once now rather than after every switch.
         if self.service_tools_changed and self.live.ready and not self.standby and not self.closing:
             self.activity.write("Reconnecting so Cora has the service tools you changed.", "Service tools changed")

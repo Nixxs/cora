@@ -120,8 +120,8 @@ class LiveSessionMixin:
         tools_busy = any(
             worker.group == "tool-actions" and not worker.is_finished for worker in self.workers
         )
-        speaker = self.live.speaker
-        playback_busy = speaker is not None and speaker.is_playback_busy()
+        # The desk speaker, or a device listening on the web page.
+        playback_busy = self.live.playback_busy()
         return [name for name, busy in (
             ("connection setup", connecting),
             ("typed submission", keyboard_busy),
@@ -233,6 +233,11 @@ class LiveSessionMixin:
         if not self.standby or self.closing or self.reconnecting:
             return
         if await self.conversation_persistence.end_conversation() and not self.closing:
+            # Photos belong to the conversation they came in.
+            self.kept_images.clear()
+            self.web_pictures.clear()
+            # And so does where the person was.
+            self.whereabouts.forget()
             self.process_finished_conversations()
 
     @work(group="database-startup")
@@ -249,10 +254,7 @@ class LiveSessionMixin:
                 user_activity = self.wake.has_request(event.delta)
             self.record_idle_activity(user_activity=user_activity)
             self.inactivity.record_output()
-        elif (
-            event.type == "session.output_audio.delta" and self.live.speaker is not None
-            and not self.live.speaker_muted and self.live.speaker.is_playback_busy()
-        ):
+        elif event.type == "session.output_audio.delta" and self.live.playback_busy():
             # Output audio is a continuous stream: silent chunks are not speech.
             self.last_live_activity = monotonic()
             self.record_idle_activity()
@@ -317,3 +319,13 @@ class LiveSessionMixin:
             "disconnected": "Live is disconnected. Ctrl+R to reconnect.",
         }.get(state, f"Live is {state}.")
         button.disabled = state not in ("active", "standby") or self.closing or self.reconnecting
+        # The web page shows the desk's state too (set up later in on_mount than the first call).
+        feed = getattr(self, "web_feed", None)
+        if feed is not None:
+            feed.set_status(state)
+        # Connected while a page talks (Talk woke her): she's told where the person is now.
+        if state == "active" and getattr(self, "web_voice", None) is not None:
+            self.web_voice_connected()
+        # A page talking to her can't once she's in standby or disconnected: its call ends.
+        if state in ("standby", "disconnected") and getattr(self, "web_voice", None) is not None:
+            self.web_talk_lost_live()

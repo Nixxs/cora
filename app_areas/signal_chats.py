@@ -114,7 +114,9 @@ class SignalChatsMixin:
                 return
             client = self.signal_clients.get(sender)
             if sender == self.signal_settings.allowed_number:
-                batch = await self.read_signal_images(account, self.signal_settings.person_recipient, batch)
+                # The person's own photos are kept for look_again; a contact's never are.
+                batch = await self.read_signal_images(account, self.signal_settings.person_recipient, batch,
+                                                      keep=self.kept_images.keep)
                 await self.answer_primary_on_signal(account, self.signal_settings.person_recipient, batch)
             elif client is not None:
                 batch = await self.read_signal_images(account, client.recipient, batch)
@@ -122,7 +124,8 @@ class SignalChatsMixin:
             else:
                 self.discard_signal_attachments(batch)
 
-    async def read_signal_images(self, account: str, recipient: str, batch: list[IncomingMessage]) -> list[IncomingMessage]:
+    async def read_signal_images(self, account: str, recipient: str, batch: list[IncomingMessage],
+                                 keep=None) -> list[IncomingMessage]:
         """Images from people she knows are read like pasted ones; then every attachment is deleted from signal-cli."""
         if not any(message.attachments for message in batch):
             return batch
@@ -133,7 +136,9 @@ class SignalChatsMixin:
         read = []
         try:
             for message in batch:
-                seen, failed = await read_images(message, lambda attachment_id: self.signal.client.attachment(account, attachment_id))
+                seen, failed = await read_images(
+                    message, lambda attachment_id: self.signal.client.attachment(account, attachment_id), keep=keep,
+                )
                 withheld = seen.count(WITHHELD_IMAGE)
                 if len(seen) > withheld:
                     self.activity.write(f"Read {len(seen) - withheld} Signal image(s) for Cora.", "Image read")
@@ -188,11 +193,6 @@ class SignalChatsMixin:
 
     async def answer_primary_on_signal(self, account: str, person: str, batch: list[IncomingMessage]) -> None:
         """The person's own messages: the same conversation as the desktop, shown in its chat."""
-        # Taken before these messages join the chat, so they aren't sent twice.
-        history = self.conversation.get_reconnect_history()
-        for message in batch:
-            self.conversation.show_signal_message(signal_message_text(message))
-        self.keep_conversation_open()
         self.activity.write(f"Answering {len(batch)} Signal message(s) from you.", "Signal reply")
         # Tools that change things are asked about in this chat, answered only by the person's reply.
         route = BackendRoute(
@@ -200,22 +200,26 @@ class SignalChatsMixin:
             ask_approval=self.signal_approval_asker(account, person, self.signal_settings.allowed_number),
             approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60,
         )
-        text = await self.send_signal_reply(account, person, lambda: self.reply_in_writing(
-            signal_content(batch, datetime.now(timezone.utc)), history, route, SIGNAL_CHAT_INSTRUCTIONS,
-        ))
-        if text is None or self.closing:
-            return
-        self.conversation.show_written_reply(text, label="Cora · Signal", channel="signal")
-        self.activity.write(f"Signal reply sent: characters={len(text)}", "Signal reply sent")
-        self.person_is_talking()
-        said = "\n".join(signal_message_text(message) for message in batch)
-        if self.pending_greeting == "launch":
-            # Answered before she says hello, so the hello can follow on from it.
-            self.signal_launch_exchanges.append((said, text))
-        try:
-            await self.live.note_signal_exchange(said, text)
-        except Exception as error:
-            self.activity.write(f"Signal note to voice Cora failed ({type(error).__name__}).", "Signal note failed")
+        messages = iter(batch)
+
+        def show(text: str) -> None:
+            # Each message, then a note for each photo of the person's kept from it, so later turns
+            # still have its description and id.
+            message = next(messages)
+            self.conversation.show_signal_message(text)
+            for seen in message.images_seen:
+                if seen.startswith("Photo img"):
+                    self.conversation.show_photo_note(seen)
+
+        text = await self.answer_person_in_writing(
+            [signal_message_text(message) for message in batch], show,
+            lambda history: self.send_signal_reply(account, person, lambda: self.reply_in_writing(
+                signal_content(batch, datetime.now(timezone.utc)), history, route, SIGNAL_CHAT_INSTRUCTIONS,
+            )),
+            label="Cora · Signal", channel="signal", where="messaged you on Signal",
+        )
+        if text is not None:
+            self.activity.write(f"Signal reply sent: characters={len(text)}", "Signal reply sent")
 
     def signal_approval_asker(self, account: str, recipient: str, number: str, lapsed: list | None = None):
         """Ask the person in their Signal chat; the answer is their own next message (see on_signal_message).

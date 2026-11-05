@@ -68,8 +68,12 @@ class ConversationStore:
         channel: str,
         status: str = "incomplete",
         delivery_status: str = "not_applicable",
+        device: str | None = None,
     ) -> MessageRecord:
-        """Commit one message; identical retries preserve its text/order/time."""
+        """Commit one message; identical retries preserve its text/order/time.
+
+        device: the paired device a web message came from, else None.
+        """
         if not text.strip():
             raise ValueError("Message text must not be blank")
         values = {
@@ -79,6 +83,7 @@ class ConversationStore:
             "channel": channel,
             "status": status,
             "delivery_status": delivery_status,
+            "device": device,
         }
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             # One lock protects both same-ID retries and sequence allocation.

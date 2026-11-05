@@ -26,7 +26,12 @@ from storage.client_store import Client
 from storage.signal_settings_store import SignalSettings
 from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
-from mail.webhook import WebhookServer
+from server.listener import Listener
+from tools.look_again import KeptImages
+from web.location import Whereabouts
+from web.feed import MessageFeed
+from web.voice import VoiceRelay
+from web.pairing import Pairing
 from storage.webhook_settings_store import WebhookSettings
 from services.confirmation import Confirmations
 from services.connection import ServiceManager
@@ -62,6 +67,7 @@ from app_areas.tasks import TasksMixin
 from app_areas.email_account import EmailAccountMixin
 from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
+from app_areas.web_interface import WebInterfaceMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
@@ -95,7 +101,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -255,6 +261,8 @@ class CoraApp(
         self.calendar_problem = ""
         self.email_status = EmailStatus()
         self.email_controls: EmailControls | None = None
+        # The person's photos from this conversation, in memory only, for look_again.
+        self.kept_images = KeptImages()
         self.tools = create_tool_registry(
             get_connection=self.tool_connection,
             is_closing=lambda: self.closing or self.reconnecting,
@@ -263,6 +271,9 @@ class CoraApp(
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
             screen_looking=lambda: self.screen_looking,
+            kept_images=self.kept_images,
+            locate_person=lambda refresh: self.locate_person(refresh),
+            show_map=lambda view: self.show_map(view),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -280,7 +291,8 @@ class CoraApp(
             note_feeling=self.note_feeling,
         )
         # Live never sees client-only tools such as pass_on.
-        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY), on_trace=self.trace_live)
+        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY | self.unavailable_tools()),
+                             on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
@@ -333,7 +345,7 @@ class CoraApp(
         # Webhooks: her local listener, its settings and secrets, Graph's subscription to new mail,
         # and what Settings shows of them. The lock keeps starting and stopping in order.
         self.webhook_settings = WebhookSettings()
-        self.webhook_server: WebhookServer | None = None
+        self.webhook_server: Listener | None = None
         self.webhook_worker = None
         self.webhook_secrets: tuple[str, str] | None = None
         self.webhook_lock = asyncio.Lock()
@@ -348,6 +360,41 @@ class CoraApp(
         self.calendar_notify_timer = None
         self.mail_notify_timer = None
         self.webhook_controls = None
+        # The web interface, on the same listener: the open pairing code (if any), the paired
+        # devices as Settings last loaded them, and what Settings shows.
+        self.web_pairing = Pairing()
+        # One web message answered at a time (see answer_on_web).
+        self.web_reply_lock = asyncio.Lock()
+        # The conversation as the web page sees it: every message said, and earlier ones loaded
+        # from the database the first time a page connects.
+        self.web_feed = MessageFeed()
+        # The desk's Live state so far (set_connection_state keeps it current from here).
+        status = self.query_one("#chat-status", Button)
+        self.web_feed.set_status(next(
+            (state for state in ("active", "standby", "connecting", "disconnecting")
+             if status.has_class(f"state-{state}")), "disconnected",
+        ))
+        self.web_feed_lock = asyncio.Lock()
+        # Requests for approval waiting on the page, by id (see ask_on_web).
+        self.web_approvals: dict[str, asyncio.Future] = {}
+        # Her voice for devices listening on the page; Live plays to it instead of the desk while any do.
+        self.web_voice = VoiceRelay()
+        self.live.voice_relay = self.web_voice
+        # Whether a page's Talk woke her from standby, so hanging up puts her back.
+        self.web_talk_woke = False
+        # Where the person is talking from, still to be told to her (she was waking), or None.
+        self.web_talk_where: str | None = None
+        self.conversation.listeners.append(self.publish_to_web)
+        # The person's photos and the pictures she shows reach the page too, from memory.
+        self.web_pictures = KeptImages(prefix="pic")
+        self.conversation.photo_listeners.append(self.publish_web_photo)
+        self.conversation.picture_listeners.append(self.publish_web_picture)
+        # Where the person is, asked of the open pages on demand (where_is_person), in memory only.
+        self.whereabouts = Whereabouts(self.web_feed.ask_location)
+        # The Google Maps key for maps on the page (Settings › Services › Web interface), or "".
+        self.maps_key = ""
+        self.web_devices = []
+        self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
@@ -359,6 +406,10 @@ class CoraApp(
         self.confirmations = Confirmations(
             show=self.show_confirmation, close=self.close_confirmation, write_activity=self.activity.write,
             remind=lambda request: self.tell_cora_approval_waiting(request.title, request.tool, reminder=True),
+            # How each ended goes in the chat, and into the history Cora is given later.
+            on_outcome=lambda request, outcome: self.conversation.show_approval_outcome(
+                f"{request.title} · {request.tool}", outcome,
+            ),
         )
         self.services = ServiceManager(
             schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),
@@ -373,6 +424,7 @@ class CoraApp(
             record_activity=self.record_idle_activity, write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
             trace=self.trace_live, send_without_live=self.send_without_live,
+            keep_image=self.kept_images.keep,
         )
         self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(

@@ -1,31 +1,25 @@
-"""Cora's webhook listener: Microsoft Graph tells her mail has landed or her calendar changed, and
+"""Microsoft Graph notifications: Graph tells Cora mail has landed or her calendar changed, and
 she checks for herself.
 
-It listens on 127.0.0.1 only; the person routes public HTTPS to it however they like (a reverse
-proxy, a tunnel). Every route sits under a secret path, and each notification must carry the
-secret clientState Cora gave Microsoft, so only her own subscriptions count. Nothing in a request
-is trusted or used: a notification only says "look", and her mailbox is read through Graph itself.
-The secrets live in the system credential store, never in the database or logs.
+These routes join her one listener (server/listener.py), which listens on 127.0.0.1 only. Every
+route sits under a secret path, and each notification must carry the secret clientState Cora gave
+Microsoft, so only her own subscriptions count. Nothing in a request is trusted or used: a
+notification only says "look", and her mailbox is read through Graph itself. The secrets live in
+the system credential store, never in the database or logs.
 """
 
 from collections.abc import Callable
-from contextlib import contextmanager
 import hmac
 import json
-import logging
 import secrets
-import socket
 
 import keyring
-from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
-import uvicorn
 
 from .account import KEYRING_SERVICE
 
-HOST = "127.0.0.1"
 PATH_ACCOUNT = "webhook:path"
 CLIENT_STATE_ACCOUNT = "webhook:client-state"
 # Graph's handshake token is short; anything longer isn't from it.
@@ -76,10 +70,13 @@ async def read_items(request: Request) -> list[dict] | None:
     return [item for item in items[:ITEMS_MAX] if isinstance(item, dict)] if isinstance(items, list) else []
 
 
-def webhook_app(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[], None],
-                on_lifecycle: Callable[[str], None], on_calendar: Callable[[], None] = lambda: None,
-                on_calendar_lifecycle: Callable[[str], None] = lambda event: None) -> Starlette:
-    """get_secrets() -> (path, clientState) as they are now, so new ones apply at once."""
+def graph_routes(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[], None],
+                 on_lifecycle: Callable[[str], None], on_calendar: Callable[[], None] = lambda: None,
+                 on_calendar_lifecycle: Callable[[str], None] = lambda event: None) -> list[Route]:
+    """The notification routes, for the listener's build_app.
+
+    get_secrets() -> (path, clientState) as they are now, so new ones apply at once.
+    """
     def handshake(request: Request) -> Response | None:
         # Graph proves the URL is ours before a subscription starts: echo its token, as plain text.
         token = request.query_params.get("validationToken")
@@ -124,59 +121,11 @@ def webhook_app(get_secrets: Callable[[], tuple[str, str]], on_mail: Callable[[]
             return Response(status_code=404)
         return PlainTextResponse("ok")
 
-    return Starlette(routes=[
+    return [
         Route("/webhooks/{secret}/mail", mail, methods=["POST"]),
         Route("/webhooks/{secret}/mail/lifecycle", lifecycle, methods=["POST"]),
         Route("/webhooks/{secret}/calendar", calendar, methods=["POST"]),
         Route("/webhooks/{secret}/calendar/lifecycle", calendar_lifecycle, methods=["POST"]),
         Route("/webhooks/{secret}/health", health, methods=["GET"]),
-    ])
+    ]
 
-
-class QuietServer(uvicorn.Server):
-    """Textual owns the process's signals; uvicorn mustn't take Ctrl+C from it."""
-
-    @contextmanager
-    def capture_signals(self):
-        yield
-
-
-def silence_uvicorn() -> None:
-    # Anything uvicorn printed would land on top of the TUI.
-    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
-        logger = logging.getLogger(name)
-        logger.propagate = False
-        if not any(isinstance(handler, logging.NullHandler) for handler in logger.handlers):
-            logger.addHandler(logging.NullHandler())
-
-
-class WebhookServer:
-    """Serves the app on 127.0.0.1:port until stopped. open() raises OSError if the port is taken."""
-
-    def __init__(self, app, port: int) -> None:
-        self.app = app
-        self.port = port
-        self.socket: socket.socket | None = None
-        self.server: QuietServer | None = None
-
-    def open(self) -> None:
-        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            listener.bind((HOST, self.port))
-        except OSError:
-            listener.close()
-            raise
-        self.socket = listener
-
-    async def serve(self) -> None:
-        silence_uvicorn()
-        self.server = QuietServer(uvicorn.Config(
-            self.app, log_config=None, access_log=False, lifespan="off", log_level="warning",
-        ))
-        await self.server.serve(sockets=[self.socket])
-
-    def stop(self) -> None:
-        if self.server is not None:
-            self.server.should_exit = True
-        elif self.socket is not None:
-            self.socket.close()

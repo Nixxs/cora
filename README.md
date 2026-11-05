@@ -110,8 +110,10 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
   being sent (“sending image…”) you can keep typing; the next message waits until
   it is done, and if sending fails your draft and image come back. A separate
   one-off model request reads the image with your message as the question, and
-  only its short description enters Cora's session, so she cannot look at the
-  image again later. The chat shows a small copy of the image under your message
+  only its short description enters Cora's session. The image is kept in memory
+  (never saved) for the rest of the conversation, so she can look at it again
+  with a new question (`look_again`); a quiet line under your message shows the
+  description and the photo's id. The chat shows a small copy of the image under your message
   (click it to see it sharply); the
   database only shows “[image]” in its place, and the image itself is never saved. Large
   images are scaled
@@ -1037,6 +1039,69 @@ How it's kept safe:
 - Requests are capped in size, and only Microsoft's handshake token is ever
   echoed back, as plain text.
 
+**Web interface: Cora in a browser.** The same listener can serve Cora's web page
+at the root of the public address (such as `https://cora.example.com/`), for your
+phone, tablet or laptop. It's being built in steps (see Web interface in the
+roadmap's Details). A paired device shows your conversation with Cora as it is
+everywhere: recent messages when it opens (with where each was said: desk, voice,
+Signal, email or web), then each new one live. You can write to her there and her
+reply streams back; your message and her reply show at the desk too and she
+remembers them. When she wants to use a tool that changes things (sending an
+email, making an event), the page shows exactly what it would do with **Approve**
+and **Deny**; nothing happens until you answer, and after 10 minutes it lapses.
+The bottom row shows the desk's voice state (Active, Standby…) and whether the
+page is in touch with Cora. **Talk** in the Voice panel is a call: you speak to
+her through that device's microphone and hear her on it (the desk mic and speaker
+go quiet meanwhile). Talk wakes her from standby; **Hang up** puts her back if
+Talk woke her, or hands the mic and speaker back to the desk if she was already
+Active. Bluetooth headphones work too. On iPhone, keep the app in the foreground:
+iOS stops sound and the mic when it locks. The `+img` button in the message box sends
+her a photo (on an iPhone, Take Photo or Photo Library), with a question or on its
+own: she sees the photo itself for that reply, and can look at it again later in
+the conversation, even by voice on a call. Messages sent from the page are labelled with the
+device they came from (`You · web · iPad`). Run `python migrate.py` once for
+migrations 0048, 0049 and 0050. Save the public address under **Webhooks** first, then turn on Settings >
+Services > **Web interface**. The listener runs when webhooks, the web interface
+or both are on, and Microsoft is only subscribed to while webhooks are on.
+
+To pair a device, choose **Pair a device** in that row. It shows a QR code and a
+short code (such as `K7QF-M2XP`) for five minutes:
+- On a phone or tablet, scan the QR code with the camera.
+- On a laptop or anything else, go to the address and type the code.
+
+On an iPhone or iPad, add the page to the Home Screen first (Share › Add to Home
+Screen) and pair from inside that app, because it keeps its own sign-in separate
+from Safari. Each paired device is listed in the same row, with when it was last
+seen. **Remove** unpairs it at once.
+
+If a CDN such as Cloudflare proxies the address, have it **bypass its cache** for
+that hostname (in Cloudflare: Caching › Cache Rules, "Hostname equals …" → Bypass
+cache), and purge it once. CDNs keep `.css` and `.js` files by default, so after
+an update every device would get the old ones and the page would break. Cora
+sends `Cache-Control: no-cache`, but a copy taken before that stays until purged.
+Webhooks aren't affected: they're never cached.
+
+How it's kept safe:
+- The page itself is public but holds nothing of Cora's. Everything that reaches
+  her, under `/api/`, needs a paired device.
+- A pairing code exists only while you have it open in Settings. It works once,
+  lasts five minutes, and five wrong tries cancel it. Closing Settings cancels it
+  too.
+- A paired device holds a long random token in a cookie that scripts can't read
+  (`HttpOnly`), is only sent over HTTPS (`Secure`) and never with requests from
+  other sites (`SameSite=Strict`). The token is never in an address. Cora keeps
+  only its SHA-256 in the database, so the database alone can't sign anyone in.
+- The API takes small JSON requests only and its answers aren't cached.
+- An approval asked on the page counts only from a paired device, and only once:
+  the first answer wins, and nothing runs until it arrives.
+- A device unused for 30 days is unpaired by itself: its cookie stops working and
+  it leaves the list, so a forgotten or lost device doesn't stay signed in. Every
+  use (opening the page, sending a message) counts, so one in use never runs out.
+- Anyone holding a device's cookie can use the page as that device, as with any
+  "stay signed in". It can't be read by scripts, sent unencrypted or sent from
+  other sites, but malware on the device, or someone with it unlocked, could use
+  it. If you suspect that, **Remove** the device in Settings: it stops at once.
+
 **Formatted email.** She writes her emails in simple Markdown: headings, bold,
 bullet and numbered lists, tables and links. They're sent as formatted HTML, with
 inline styles so Outlook shows them properly, and no colours set, so dark mode still
@@ -1556,7 +1621,7 @@ characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 | Location | Responsibility |
 | --- | --- |
 | [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
-| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, background jobs, and sign-ups. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice (wake word and audio), attention (greeting, observations, findings), chat, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, the web interface (switch, pairing and devices), background jobs, and sign-ups. Constants and helpers more than one area uses are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py) | OpenAI Live connection, audio transport, and typed-context mirroring. |
 | [live_events.py](live_events.py), [backend_work.py](backend_work.py) | Live event handling and pending backend-work tracking. |
 | [backend_chat.py](backend_chat.py) | Conversations with Cora's backend without Live (typing in Standby now, Signal later), tools included. |
@@ -1567,9 +1632,11 @@ characters (`NOTE_MAX_CHARS` in [live.py](live.py)).
 | [wake/](wake/) | Local wake detection, capture/buffering, and wake lifecycle. |
 | [ui/](ui/) | Conversation display, composer, selection/copy, Activity, image pop-ups, the dashboard and its context pop-up, and the model settings screen. |
 | [devices/](devices/) | Microphone capture, speaker playback, and the voice bands. |
+| [server/](server/) | Cora's one HTTP listener on 127.0.0.1, behind the public HTTPS route: it builds one app from route groups (Graph notifications, then the web interface) and serves it without touching the TUI. |
+| [web/](web/) | The web interface for the phone and tablet: device pairing (`pairing.py`), its routes and API (`routes.py`), her replies as safe HTML (`rendering.py`), the live conversation for pages (`feed.py`), and the page in `static/` (plain HTML, CSS and JavaScript, no build). |
 | [storage/](storage/) | Database connection, ORM models, conversation persistence, people (the primary person and Signal clients, with their own conversations), model, service and Signal settings, and the dashboard's snapshot read. |
 | [sign_ups/](sign_ups/) | Signing up to sites for accounts of her own: her one sign-up password in the credential store, the browser session that stays on the approved site, and the `sign_ups` records. |
-| [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her. |
+| [mail/](mail/) | Cora's own Outlook mailbox through Microsoft Graph: the app ID and her sign-in (set up in Settings > Services > Email), reading her inbox and sending as her, and the routes for Graph's mail and calendar notifications. |
 | [messaging/](messaging/) | Cora's own Signal account: the `signal-cli` client, starting its container, linking her phone with a QR code, listening for messages and turning them into her input, and her Signal profile. |
 | [services/](services/) | Outside services over MCP: the catalogue of services, tokens in the system credential store, one long-lived connection per service, and their switched-on tools as Cora's. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search, and duplicates. |
@@ -1599,7 +1666,11 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 ```
 
 Write tests use disposable databases, not Cora's saved chats, and require permission
-to create databases. The standalone connection test is read-only. Model calls and
+to create databases. Two tests sometimes fail in a full run on a busy machine and pass
+when run on their own: `test_completed_summary_still_retries_embedding_then_no_candidate_check_and_second_pass_is_cached`
+(memory maintenance, database) and `test_explores_only_in_standby_or_after_a_quiet_spell`
+(exploration timing). Rerun the file before suspecting a change; making them less
+timing-sensitive is a small job worth doing. The standalone connection test is read-only. Model calls and
 audio transport are mocked; real hardware, mixed voice/text behaviour, and memory
 quality still need manual checks.
 
@@ -1831,7 +1902,8 @@ features it helps check, and package last.
     she'd like to do or experience, growing from her interests, pursued on her
     own where she can, and with your help where she can't.
 12. ~~Awareness foundation.~~ Done through the webhook work: the listener
-    ([mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
+    ([server/listener.py](server/listener.py), with Graph's routes in
+    [mail/webhook.py](mail/webhook.py)) publishes events on the event bus,
     triage sorts new items into urgent, worth mentioning or ignore, the
     attention manager delivers at a lull, and she only reaches out on her own
     between 9am and 7pm (`NUDGE_HOURS`). New sources join as webhooks; there is
@@ -1855,7 +1927,14 @@ features it helps check, and package last.
     (Model settings already exist; other settings still use `.env`.)
 19. Dashboard editing (for example removing a wrong memory), with a detail view
     for picking out the item to change.
-20. Release.
+20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
+    iPad mini as a home-screen web app, served by her webhook listener, in the
+    same conversation as the desk and Signal (see Web interface in Details
+    below). WB5 (photos both ways), WB6 (where you are), WV3 (voice polish) and WB7 (maps on the page) are built.
+21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
+    contacts you've added can too, and she can call places for tasks (see
+    Phone calls in Details below).
+22. Release.
 
 *After 1.0:* local models.
 
@@ -2227,7 +2306,8 @@ features it helps check, and package last.
 
 - **Awareness (background producers):** built on webhooks rather than polling.
   Outside services push to the listener inside Cora
-  ([mail/webhook.py](mail/webhook.py)), which publishes events on the event bus;
+  ([server/listener.py](server/listener.py); each source brings its own routes,
+  like [mail/webhook.py](mail/webhook.py) for Graph), which publishes events on the event bus;
   new items are batched into a cheap triage call (urgent, worth mentioning, or
   ignore, as [mail/triage.py](mail/triage.py) does for mail); urgent items reach
   the person at any hour, and the rest wait for one digest the next time they
@@ -2359,6 +2439,486 @@ features it helps check, and package last.
   start, and she decides whether a feeling shows, harder the stronger it is. The idea came from her
   pushing back with "don't put words in my mouth, I do care", which only
   shaped that one reply.
+- **Web interface (phone and tablet):** so the person can type to Cora, and
+  later talk to her, from their iPhone or iPad mini, in the same conversation
+  as the desk and Signal.
+  - *What it is:* one page that looks like the TUI: monospace, the dark palette
+    from [cora.tcss](cora.tcss), box borders, `Cora · web` labels and a status
+    line. It is responsive, with the iPhone and iPad mini as the main targets.
+    "Add to Home Screen" (a web manifest, `apple-touch-icon` and
+    `apple-mobile-web-app-capable`) opens it full-screen like an app, with no
+    App Store.
+  - *An interface only:* no new Cora logic. A web message takes the same path
+    as your own Signal messages (`answer_primary_on_signal` in
+    [app_areas/signal_chats.py](app_areas/signal_chats.py)), with that core
+    shared rather than copied. It is shown in the TUI chat, answered by
+    `reply_in_writing`, saved to the same conversation and noted to voice Cora.
+    A migration adds `'web'` to `messages_channel_check`.
+  - *Hosting:* one listener on 127.0.0.1 ([server/listener.py](server/listener.py),
+    Starlette and uvicorn) behind the public HTTPS route, made of route groups
+    matched in order: Graph's notifications ([mail/webhook.py](mail/webhook.py))
+    first, then the web interface ([web/routes.py](web/routes.py)), whose page
+    sits at the root and would otherwise claim every path. No new dependencies.
+    It runs whenever webhooks **or** the web interface are on; Graph's routes
+    and subscriptions only while webhooks are. The public address and port
+    still live in the Webhooks section, which may later be renamed to something
+    like "Public address".
+  - *Sign-in by device pairing:* the public URL must not open Cora to anyone.
+    Settings shows a QR code and a short code (`K7QF-M2XP`) while you have it
+    open: a phone scans the QR code, a laptop goes to the address and types the
+    code. Pairing always starts from you in Settings; a device asking to pair
+    (as a TV app does) was ruled out, since anyone could then put requests on
+    your desk. The device gets a long random token in a long-lived cookie, and
+    Cora keeps only the token's SHA-256 (`web_devices`). Paired devices are
+    listed and each can be removed. There are no passwords.
+  - *Plain HTML, CSS and JavaScript:* no framework, no Node and no build
+    step. The files in [web/static/](web/static/) are served as they are. The look is all
+    CSS, and a framework would add tooling rather than design options. If the
+    page outgrows this, Preact with `htm` can be added as one vendored file,
+    still with no build.
+  - *Steps, each runnable:*
+    - WB0 design preview, **built**: [web/static/](web/static/) holds the page with sample
+      messages and a pretend Cora, connected to nothing, to settle the look on
+      the iPhone and iPad mini first. `ui.js` has the building blocks (messages,
+      a streaming reply, notices, approval cards, the status bar, the composer,
+      and sizing to the visible area above the iOS keyboard) that later steps
+      reuse. The sample data and pretend Cora (`preview.js`) were removed in
+      WB2; they're in Git history if the look needs reworking. The listener
+      serves the page at the root of its public address (for example
+      `https://cora.intelligis.io/`) while the web interface is on; the webhook
+      routes keep their secret paths and still match first. Only
+      `web/static/` is served, never the Python beside it. Opening
+      `index.html` straight from disk shows only the frame, because browsers
+      don't run its module scripts from `file://`.
+    - WB1 page and pairing, **built**: Settings > Services > Web interface
+      (switch, Pair a device, paired devices) in
+      [app_areas/web_interface.py](app_areas/web_interface.py); the codes in
+      [web/pairing.py](web/pairing.py); `/api/session` and `/api/pair` in
+      [web/routes.py](web/routes.py); devices in
+      [storage/web_device_store.py](storage/web_device_store.py) (migration
+      0048). The page checks its session first and shows the pairing screen
+      until paired ([web/static/main.js](web/static/main.js)); a QR link
+      (`/#pair=CODE`) pairs in one step and takes the code out of the address.
+      A manifest and icons make Add to Home Screen open it full-screen. The
+      page's files are sent with `Cache-Control: no-cache`, so browsers and
+      Home Screen apps check for a newer file each time (a cheap 304 when
+      unchanged) and an update never leaves a stale stylesheet behind. iOS Home Screen apps keep
+      their own cookies, so the page tells iPhone and iPad users to add it to
+      the Home Screen first and pair from there.
+    - WB2 sending and replies, **built**: `POST /api/messages` (paired devices
+      only, JSON, at most 8,000 characters) answers with her reply as it
+      streams, one JSON object a line: pieces as she writes, then the finished
+      reply as safe HTML ([web/rendering.py](web/rendering.py): raw HTML
+      escaped, links only to web and mail addresses, as in her emails). Code
+      blocks that name their language are highlighted on the server with
+      Pygments (already there for the TUI) as token classes, coloured by
+      [web/static/code.css](web/static/code.css) in monokai like the TUI; an
+      unknown or missing language shows plain, and Pygments escapes the code
+      either way. The reply runs as its own task, so if the page goes away (the phone locks)
+      she still finishes, and it's shown at the desk and saved. In the app,
+      `answer_on_web` ([app_areas/web_interface.py](app_areas/web_interface.py))
+      uses the same path as your own Signal messages, now shared as
+      `answer_person_in_writing` ([app_areas/chat.py](app_areas/chat.py)):
+      your message shows at the desk as `You · web`, her reply as `Cora · web`,
+      both saved to the same conversation on the `web` channel (migration
+      0049), and voice Cora is told about the exchange. One web message is
+      answered at a time, each with the last in its history. Her instructions
+      (`WEB_CHAT_INSTRUCTIONS`) say replies are shown as formatted Markdown on
+      a phone-sized screen; tools are the same as on Signal (no looking at the
+      screen or showing pictures), and tools that change things still ask in
+      the desk's pop-up until WB4. On the page,
+      [web/static/chat.js](web/static/chat.js) sends and reads the stream; the
+      status and settings controls stay hidden until they do something.
+    - WB3 live mirror, **built**: every message said in your conversation goes
+      through `Conversation.record` ([ui/conversation.py](ui/conversation.py)),
+      which saves it and tells listeners; desk-typed messages, saved
+      separately, are announced the same way. The app's listener publishes each
+      to a feed ([web/feed.py](web/feed.py)) that keeps the last 200, numbered
+      in order, and fills it once with earlier messages from the database
+      ([storage/recent_messages.py](storage/recent_messages.py): your own
+      conversations only, never a client's, nor desk messages that failed to
+      send) the first time a page connects. `GET /api/events` is a
+      Server-Sent Events stream: the last 60 on a first load, then each new one
+      (hers as safe HTML). Browsers reconnect by themselves and send the last
+      number they saw, so a page that dropped gets only what it missed; each
+      run of Cora has its own random epoch, so a page from an earlier run starts
+      afresh, as does one too far behind. A comment every 20 seconds keeps
+      proxies (Cloudflare closes quiet connections after about 100) from
+      dropping it. A message sent from a page carries that page's random
+      `ref`, set for its answer's task only, so the message and her reply reach
+      the feed marked and that page doesn't show them twice. Voice appears as
+      the desk shows it: each spoken turn once it pauses, not word by word. The
+      page marks each new day, and labels where each message was said.
+    - WB4a approvals and status, **built**: web chats ask before tools that
+      change things on the page itself, through the same `ask_approval` hook
+      as Signal (`ask_on_web` in
+      [app_areas/web_interface.py](app_areas/web_interface.py), 10 minutes as
+      on Signal). The request goes into the feed, so every open page shows a
+      card with exactly what the tool would be given (each argument on its own
+      line, long ones cut) and Approve and Deny; `POST /api/approvals` takes the
+      first answer, and a later one from another page is told it's too late.
+      How it ended (approved, declined, or lapsed when time ran out) goes into
+      the feed too, so every page updates its card, and a page that loads
+      later sees both. Her instructions say it's waiting for their approval on
+      the page. The desk's Live state (Active, Standby, Connecting…,
+      Disconnecting…, Disconnected) is sent from `set_connection_state` to
+      every page as it changes, and to each page as it connects, but isn't kept
+      in the conversation. On the page it shows at the bottom left as the TUI
+      shows it (display only; resuming from the page comes with voice), and
+      the device name at the bottom right shows whether the page is in touch:
+      a green dot, "reconnecting…" while the browser retries, or "offline".
+      Testing it found two problems with approvals in every written chat
+      (Signal and email too, not only the page), both fixed:
+      - Her instructions told her to say a request was waiting for approval
+        rather than done. In a written chat the tool's result comes back only
+        after the person answers, so she said "waiting" even when the result
+        showed it was sent. All written chats now share
+        `written_approval_rule` ([session_config.py](session_config.py)):
+        report what the result says, never "still waiting" once it's in.
+      - Later turns are given the visible chat as history, not tool calls and
+        their results, so if her reply got it wrong she had no record of what
+        was done. Now every approval, wherever it's asked (the desk's pop-up,
+        Signal, the page, a task's coordinator), ends with a quiet line in the
+        chat ("you approved Email · send_email", "you declined…", "no answer in
+        time for…: not done"), given to her in history as "(You approved my
+        request to use Email · send_email.)". It isn't saved: her reply,
+        which is, says what came of it.
+    - WB4b layout for wide screens, **built**: in landscape at 900 points or
+      wider (the iPad mini turned sideways, a laptop) the page fills the whole
+      screen instead of a centred 820px column. Paragraphs, lists and approval
+      cards keep a readable width (100 characters); code blocks use the full
+      width. Portrait and phones are unchanged. A side panel (for voice
+      controls, say) can come with voice if it's wanted.
+    - WB4c follow-ups from using it on a PC:
+      - *Which device said it*, **built**: a web message is labelled with the
+        paired device it came from, at the desk (`You · web · iPad: …`) and on
+        the page (`You · web · iPad`), including what this page sends itself.
+        The name travels with the message through `Conversation.record` and its
+        listeners, and is saved beside it (`messages.device`, migration 0050),
+        so history after a restart keeps it; every other message, and her
+        replies, have none. Device names never contain a colon, which would end
+        the desk's label early.
+      - *Very wide windows:* checked in a PC browser, and the full-width
+        layout stays as it is (no centring): the page fills the window and the
+        device name shows at the bottom right. Voice is laid out responsively
+        (built with WV1): on narrow screens its panel is a strip above the
+        conversation, and in any landscape at least 640 points wide (an iPhone
+        or iPad turned sideways, a laptop) a panel on the right: 280 pixels,
+        or 200 with shorter bars on a phone (landscape under 500 points
+        high). If a PC needs its own layout, it's told apart by its
+        mouse rather than its size: `(hover: hover) and (pointer: fine)` holds
+        for a mouse or trackpad, not a finger, even on an iPad with a keyboard.
+      - *Stronger sign-in, later:* a device unused for 30 days is already
+        unpaired ([storage/web_device_store.py](storage/web_device_store.py)).
+        Ideas if more is wanted, strongest first: Face ID or Touch ID (a
+        passkey) to approve tools from the page, so a stolen cookie can't
+        approve anything; an alert at the desk when a device's cookie is used
+        from a new network or browser, with a one-click unpair; and cookies that
+        quietly change now and then, so a stolen copy and the real device
+        clash and both are signed out.
+      - *Title fix*, **built**: text scrolling under the chat frame's top edge
+        peeked out beside the `CORA` title. The chat's scroll area now fades
+        out over its top 16 pixels, so nothing reaches the edge.
+  - *iOS layout notes, measured on an iPhone and an iPad mini on iOS 26:* both
+    Home Screen apps report a layout area shorter than the screen by exactly
+    the status bar's height (iPhone 812 of 874 points, iPad 1101 of 1133), but
+    they differ below it. On the iPhone the app's window reaches the bottom
+    and only the layout area stops short, so a page sized to it leaves a gap;
+    on the iPad the window itself ends there and nothing below can be drawn.
+    The numbers can't tell them apart, so the page is pinned to the screen's
+    edges and, on iPhones only, its bottom edge pushed down by the missing
+    part; on any device it's lifted above the on-screen keyboard while that's
+    open ([ui.js](web/static/ui.js) `fitToViewport`, rechecked once iOS has
+    filled in the safe areas and when the app returns to the front). Content
+    just under the status bar is blurred, so the top keeps a little more than
+    the safe area. Double-tap zoom is off. Tapping the device name at the
+    bottom right five times quickly shows what the device reports (screen,
+    viewport and safe-area sizes, and the page's edges outlined in red), for
+    fixing layout on a real device.
+  - *Browser voice (WV1–WV3):* the Live session stays on the desk, and only its
+    audio ends move. The Live code touches sound in two places only:
+    `microphone_chunks()` (24 kHz mono int16) in `send_microphone`, and
+    `Speaker` (`play`, `close`, `is_playback_busy`, bands). A
+    `BrowserMicrophone` and a `BrowserSpeaker` of the same shape carry the
+    audio over the page's WebSocket. Session, tools, memory and captions are
+    unchanged. The browser does not connect to OpenAI itself, because that would
+    be a second session without the desk's tools and context. The desk or the
+    phone has the audio, one at a time. Hanging up or a dropped connection hands
+    it back to the desk.
+    - WV1 hear her on the phone, **built**. Live sends her speech as one
+      continuous stream (silence included) and handles interruptions itself,
+      so a page just plays what arrives; no clearing was needed. A voice relay
+      ([web/voice.py](web/voice.py)) takes each audio chunk from Live while
+      any device listens, skips silent ones, and queues the rest for each
+      listening page; one more than 8 seconds behind is dropped rather than
+      drifting later. Pages listen over a WebSocket (`/api/voice`: raw 24 kHz
+      mono PCM16 as binary messages, a ping every 20 seconds), open only to a
+      paired device and only from Cora's own page (the `Origin` must match,
+      since a WebSocket isn't held to the cookie's same-site rule everywhere).
+      While any device listens the desk speaker is quiet, so she isn't heard
+      twice, and what it still had queued stops when the first starts; it
+      plays again when the last stops. Standby waits for her voice on a page
+      too: the relay knows how long what it sent takes to play, and
+      `CoraLive.playback_busy` counts both. On the page, a **Voice** panel
+      ([voice.js](web/static/voice.js)) sits above the conversation on narrow
+      screens and beside it on wide ones, with **Listen here**, a line saying
+      where her voice plays, and bars drawn from what's actually playing.
+      Listening starts from the tap (iOS allows sound only then), asks iOS to
+      play through the silent switch, and schedules each piece straight after
+      the one before; a locked phone or backgrounded app ends it, and the page
+      says so when it's back.
+    - WV2 talk from the phone, **built**. **Talk** in the Voice panel makes
+      that device's microphone what she hears, and listens too. It wakes her
+      from standby the way clicking Standby at the desk does (with her
+      "welcome back"); if Talk woke her, hanging up puts her back through the
+      usual path (`request_standby`: once she's finished speaking and
+      anything pending is done), and if she was already Active, hanging up
+      only hands the mic and speaker back to the desk. One device talks at a
+      time: another tapping Talk takes over, and the first is told. If she
+      goes into standby or disconnects mid-call (the usual quiet period), the
+      call ends and the page says so, so Talk never sits on while she can't
+      hear. In Live, `use_web_microphone` swaps the microphone task's source
+      for the device's audio queue and back (`queued_chunks`); the desk's
+      privacy mute is about the desk mic, so it doesn't silence a device
+      that's talking. The same WebSocket carries the page's microphone up
+      (raw 24 kHz mono PCM16, about 40 ms a message, at most 16 KB, and only
+      while that page is the one talking) and `{"type": "talk", "on": …}`;
+      it now notices a page going away at once, so the desk gets its mic and
+      speaker straight back. On the page, the microphone is captured with the
+      browser's echo cancellation, noise suppression and gain control,
+      gathered in an audio worklet ([mic-worklet.js](web/static/mic-worklet.js)),
+      resampled to 24 kHz and sent in 40 ms pieces; the panel says whether
+      she's in standby (Talk wakes her), waking, or on a call. Voice Cora is
+      told silently where the person is (`note_where_they_are`): when a call
+      starts or moves to another device, that they're talking from that device
+      through the page, likely away from the desk, with the desk mic and
+      speaker off (so the desk's screen won't show what they see, and a photo
+      from the page will); and when they hang up while she stays Active, that
+      they're back on the desk's mic and speaker. If Talk is waking her, the
+      note waits until she's connected, and one not yet told is dropped if
+      she goes into standby.
+      After testing, two changes:
+      - *One button:* Listen on its own was dropped. Either you talk to her on
+        the device or at the desk, never the desk mic with the device's
+        speaker, so the panel is a single **Talk / Hang up**, and hanging up
+        closes the connection (the server already treats that as hanging up).
+        The relay still serves listening on its own if it's ever wanted.
+      - *Bluetooth headphones* (AirPods gave static in one ear and a dead mic):
+        when the mic starts, iOS switches Bluetooth headphones to their headset
+        mode, which changes the sample rate (typically 48 to 16 kHz). The page
+        made its audio engine first, so playback ran at the old rate on the new
+        route (static) and the mic's audio didn't match it (silence). Now the
+        mic is turned on first and the engine made after, at the route's own
+        rate; a page using the mic may start sound, so it still works from the
+        tap. If headphones come or go mid-call, the audio is rebuilt on the new
+        route (not within 2 seconds of a start, as starting the mic can itself
+        announce a device change).
+    - WV3 voice polish, **built**: the Voice panel's bars are split at a centre line, as the
+      TUI's dashboard shows playback and microphone: her voice grows upward in
+      her green, and what the device's mic picks up grows downward in the
+      "You" blue (an analyser on the mic, read only, never played), so you can
+      see you're being heard, and when you're talking over each other.
+      - *Mute:* a Mute button beside Hang up during a call. Muted, the mic's
+        track is disabled, so the page sends silence (the call stays open, she
+        carries on, and you still hear her); the button reads Unmute in the
+        waiting colour and the panel says she can't hear you. It stays muted
+        if headphones change mid-call, and a new call starts unmuted.
+      - *Mirrored bars:* while you're quiet (or muted), the lower half mirrors
+        her voice in her green, so her speech fills both halves as it did
+        before the split. Once the mic's loudness (RMS after noise
+        suppression) passes 0.02 the lower half shows your blue bars, held
+        for 0.6 seconds after you stop so it doesn't flicker; both values are
+        at the top of voice.js if testing shows they need tuning.
+  - *Voice limits:* iOS suspends the mic and the connection when the screen
+    locks or the app goes to the background, so voice works in the foreground
+    only (only a native App Store app could avoid this). Starting audio needs a
+    tap ("Talk"), and "Hey Cora" stays desk-only. The hop through the desk adds
+    roughly 50–150 ms. Audio is about 48 KB/s each way while talking. It relies
+    on the browser's echo cancellation. Live is billed while active, as at the
+    desk.
+  - *Not in the first version:* push notifications.
+  - WB5a photos to her, **built** (below as planned, except where noted):
+    - Built: the camera button and thumbnail ([photo.js](web/static/photo.js),
+      scaled on the phone to 2048 pixels as JPEG, up to 8 MB accepted as
+      base64 in the message's JSON); `read_photo` and `photo_described` in
+      [messaging/images.py](messaging/images.py) (scaled again, screened and
+      described, `WEB_PHOTO_INSTRUCTIONS`); `photo_content` gives the web
+      turn the photo itself plus its description and id; `KeptImages` and the
+      `look_again` tool in [tools/look_again.py](tools/look_again.py); the
+      person's own photos from the web page, desk paste and their Signal are
+      kept (a contact's never are, and client chats, coordinators and email
+      threads don't get the tool, as they allow only listed tools); a quiet
+      note under each kept photo (`show_photo_note`, a `PhotoNote` chat line)
+      carries its description and id into later turns as "(The photo I
+      sent. …)", and voice Cora is told the description with the exchange.
+      Photos are dropped when a long standby ends the conversation.
+    - Not yet: seeing the photo itself on the turn it's sent is on the web
+      page only; Signal photos and desk pastes still answer that turn from the
+      description (they are kept for look_again). Doing the same for them is a
+      small follow-up.
+    - Also changed: a pasted or Signal image's description now shows in the
+      desk's chat as that quiet note (still never saved to the database).
+  - WB5 images both ways, planned:
+    - *Sending her a photo:* a camera button beside the message box; on an
+      iPhone it offers Take Photo or Photo Library. Scaled to 2048 pixels,
+      with explicit or gory images withheld first, as for pasted and Signal
+      images.
+    - *Why images became descriptions, and what changes:* the Live voice model
+      takes no images, and its backend's session holds at most 128 items and
+      4 MB, which one photo (1–3 MB encoded) would mostly fill for the rest of
+      the session; so every image is read by a separate one-off look and only
+      its description joins the conversation. That keeps voice working and
+      later turns cheap, but she knows only what the description says, so a
+      detail it missed can't be answered. Written chats (the web page,
+      Signal, typing in Standby) are standalone requests with no such
+      session, so they go hybrid: on the turn an image is sent, her backend
+      model (`gpt-6.1-sol`) gets the image itself and answers from the real
+      thing; the description still goes into the conversation for later
+      turns and for voice. Keep the context window in mind whenever images
+      are passed directly.
+    - *Look again:* a tool for any channel, voice included: she asks a new
+      question about an image from earlier in the conversation, answered by a
+      separate one-off look (as `look_at_screen` does for the screen), so
+      follow-ups about details work without the image entering her session.
+    - *Memory only:* images are held in memory, never saved to disk, and
+      belong to the conversation they came in; they're dropped when it ends
+      (after the usual quiet hour), and at most about 20 images or 50 MB are
+      kept, oldest dropped first. Asking about one that's gone gets an honest
+      "I can't look at that one any more", with its description still there.
+      Saving photos on the PC (so she could look again days later, or recall
+      them as memories) would be a separate opt-in feature with its own
+      retention and deletion; for now the README's promise stands that the
+      image itself is never saved.
+    - *Seeing her pictures:* `show_web_image` is off on the web for now; the
+      page could show those pictures inline (it shows images better than the
+      terminal does), with the caption and a link to the page.
+  - WB5b pictures on the page, **built**:
+    - *Your photos on every device:* when a kept photo's note is shown,
+      `Conversation.photo_listeners` hear its id and the feed carries a
+      `photo` item (with the sending page's `ref`, so that page, which shows
+      its own copy, skips it); other pages put the photo under your latest
+      message, fetched from memory at `GET /api/photos/{id}` (paired devices
+      only, `private, no-store`). Photos pasted at the desk or sent on your
+      Signal show on the page the same way.
+    - *Her pictures:* `show_web_image` is now on in web chats (and her
+      instructions say so; `look_at_screen` stays off there). `show_image`
+      still saves "[image] caption (link)" as text, but tells
+      `picture_listeners` instead of the usual listeners, so the page gets the
+      picture itself: kept in memory as JPEG (at most 1600 pixels, `pic` ids,
+      with caption and page) and shown with the caption and a link to the
+      page's site; only http(s) links are made clickable.
+    - Both go when the conversation ends, like look_again's photos; one no
+      longer kept shows "(no longer kept)" instead. After a restart, history
+      shows them as text ("[image] …"), as before.
+  - WB6 where you are, **built**: on the web page, Cora can check where you are
+    when it's relevant to what you ask ("what's near me?", "how long to get
+    home?", "what's the weather here?"). On demand only: she isn't told your
+    location at the start of a call or otherwise unprompted.
+    - *The switch:* "where: off" at the top of the chat; tapping it asks the
+      device's permission straight away (so iOS's prompt comes from your tap,
+      not mid-reply) and turns it "where: on". The choice stays on that device
+      (`localStorage`); off is the default.
+    - *How:* her `where_is_person` tool (`refresh`: true only if you may have
+      moved) asks every open page over the live feed (a `locate` event, never
+      kept). A page with "where" on answers `POST /api/location` with the
+      browser's position and accuracy; one with it off, or refused, says so.
+      The first position wins. The server names it through OpenStreetMap's
+      geocoder (Nominatim, `web/location.py`): area, "near" the street when
+      the fix is within 150 m (never a house number), town, state, country.
+      She gets only that name, the accuracy and the device.
+    - *When there's no place:* no page open, every page off, the device's
+      location refused, no fix within 20 seconds (a page in the background
+      can't answer), or the geocoder failing: she's told which, and to ask
+      you if it matters.
+    - *Only while a page is open:* iOS doesn't let web pages share location in
+      the background. Phone calls (P1) don't share location at all; they work
+      like calling a friend.
+    - *Privacy:* never saved to the database. The coordinates are dropped once
+      named; the place is held in memory for 10 minutes (reused unless she
+      asks for a fresh one) and forgotten when the conversation ends. Every
+      check shows a quiet line in the desk's chat and on the page ("Cora
+      checked where you are, from iPhone: …"), never saved or given to her as
+      history, and one in Activity without the place. Offered in voice, at the
+      desk and on the web page; not on Signal or by email, and never in
+      contacts' chats, task coordinators or email threads (their allowlists
+      don't include it). The coordinates go to OpenStreetMap's geocoder to
+      name the place, and the place name to OpenAI as part of her context.
+  - WB7 maps on the page, **built**: Cora can show a small map in the web chat
+    for a place, a route, or an area search ("cafes near Leederville").
+    - *How:* her `show_map` tool (mode place, directions or search; the
+      place, destination or search text; an origin and a travel mode for
+      routes: driving, walking, bicycling or transit). Every open page shows
+      an interactive map from Google's Maps Embed API in a frame (pan and
+      zoom; a route shows its line, distance and time), with the caption and
+      an "Open in Google Maps" link that opens the Maps app on the iPhone.
+      The page only frames `https://www.google.com/maps/embed/v1/` addresses
+      and only links to `https://www.google.com/maps/`. For "from here" she
+      checks `where_is_person` (WB6) first. She doesn't see the map; she's
+      told it was shown.
+    - *Elsewhere:* saved to history as text ("[map] Route from Leederville to
+      Fremantle (driving) (link)"), so she remembers showing it. The desk's
+      chat shows "Cora · map: …" with an "Open in Google Maps" link. Not
+      offered on Signal or by email; there her instructions say a Google
+      Maps link opens the Maps app (those links need no key).
+    - *The key:* Settings › Services › Web interface › Google Maps key, kept
+      in the system credential store (`web/maps.py`) and loaded with the
+      listener's settings. Create it in Google Cloud Console (APIs & Services
+      › Credentials › Create credentials › API key), then restrict it:
+      *Application restrictions* › Websites › `https://cora.intelligis.io/*`;
+      *API restrictions* › only the Maps Embed API (enable that API in the
+      Library first). The Embed API is free with no usage limits; the page
+      has to show the key, which those restrictions make useless anywhere
+      else. Without a key, `show_map` isn't offered anywhere. Saving or
+      forgetting one reaches voice Cora when Settings closes (she reconnects,
+      as for service tools) and written chats at once.
+    - *Privacy:* the embedded map loads from Google in your browser, so Google
+      sees what's mapped and your device's IP address, as when you open
+      Google Maps yourself. Nothing goes to Google until she shows a map.
+    - *Not the same as a Maps MCP server:* a Google Maps MCP server (added
+      through MCP, item 18's services screen) would give her map data as
+      tools: real travel times, directions step by step, places with
+      opening hours and ratings. It doesn't draw maps. It needs the paid
+      Places and Routes APIs (Google gives a monthly free allowance), and
+      the text answers work everywhere, Signal and voice included. It's
+      worth adding on its own later; it can use the same Google Cloud project.
+  - *Calls with the phone locked:* not possible as a web app. iOS suspends web
+    pages, Home Screen apps included, when the screen locks or another app
+    comes to the front: the connection drops and the microphone stops. Only a
+    native app using Apple's call framework (CallKit) could keep a call going,
+    which means Xcode and Apple's developer programme. Calling her on her
+    phone number (Phone calls, below) gets the same result without an app.
+- **Phone calls (Cora's own number), planned:** calling Cora like any contact,
+  which works with the phone locked, over Bluetooth and in the car, through
+  iOS's own call handling; and later her calling places to get things done.
+  - *Her number stays:* it's the SIM in her Signal phone, and a SIM can't be
+    connected to software directly, so calls to it are forwarded by the carrier
+    to a telephony number (Twilio, say) that hands them to OpenAI's realtime
+    voice. People keep calling the number they know and Signal stays on the
+    SIM. Check with the carrier that forwarding keeps the caller's number, as
+    who's calling decides what follows. Costs: cents a minute for the line, on
+    top of Live.
+  - *Who can call:* you (the same conversation as the desk, Signal and the web
+    page, with her tools); contacts you've added (client mode, as in their
+    Signal chats: professional, never your private life, in their own
+    conversation); anyone else hears a short polite line and the call ends, as
+    strangers get on Signal.
+  - *Approvals never by voice on a phone call:* caller ID can be faked, so on a
+    call, tools that change things are approved only where they are now in a
+    written chat (on the web page or on Signal), never by saying yes on the
+    call. At the desk, approvals stay as they are with the TUI's voice (the
+    pop-up).
+  - *Calling out for tasks:* like `send_signal_message` and `send_email` in a
+    task, each call approved first (who and why); she says up front that she's
+    an AI assistant calling on your behalf; the commitment check holds (she
+    can ask, gather prices and hold an option, but anything that commits you
+    waits for your yes); the transcript is kept for the task like an email
+    thread, and she mentions that, as some Australian states require telling
+    the other party a call is recorded; what she learns reaches the
+    coordinator and comes back to you like an email reply.
+  - *Steps:* P1 you can call her (forwarding, the telephony number, your
+    number recognised, the same context as the desk); P2 contacts can call
+    (client mode, strangers turned away); P3 she calls places for tasks
+    (approval, disclosure, commitments, transcript, reporting back).
 - **Installable Cora (paused):** an installer for non-technical users is not
   planned for now. Notes for if it returns: keep PostgreSQL rather than moving
   to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was
@@ -2979,7 +3539,7 @@ Camera presence detection is separate from sending images to a model for vision.
 
 ### Long-term direction
 
-- Share identity and memory across terminal, voice, keyboard, and Signal.
+- Share identity and memory across terminal, voice, keyboard, Signal, and the web.
 - Add camera support, permission-bounded local/GIS tools, and external integrations.
 - Introduce proactive follow-ups and background reflection with explicit budgets,
   permissions, quiet hours, and an off switch.

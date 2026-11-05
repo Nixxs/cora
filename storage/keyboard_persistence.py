@@ -15,6 +15,8 @@ from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
 from .webhook_settings_store import WebhookSettings, WebhookSettingsStore
+from .web_device_store import WebDevice, WebDeviceStore
+from .recent_messages import recent_person_messages
 from .task_store import EmailParty, EmailThread, QuietParty, TaskStore
 from memory.store import MemoryStore
 from sign_ups.password import sign_up_name
@@ -228,6 +230,24 @@ class KeyboardPersistence:
     def save_webhook_address(self, public_url: str, port: int) -> None:
         WebhookSettingsStore(self._get_store().engine).set_address(public_url, port)
 
+    def save_web_enabled(self, enabled: bool) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_web_enabled(enabled)
+
+    def load_web_devices(self) -> list[WebDevice]:
+        return WebDeviceStore(self._get_store().engine).devices()
+
+    def add_web_device(self, name: str, token_hash: str) -> WebDevice:
+        return WebDeviceStore(self._get_store().engine).add(name, token_hash)
+
+    def find_web_device(self, token_hash: str) -> WebDevice | None:
+        return WebDeviceStore(self._get_store().engine).find(token_hash)
+
+    def remove_web_device(self, device_id: UUID) -> None:
+        WebDeviceStore(self._get_store().engine).remove(device_id)
+
+    def load_recent_person_messages(self, limit: int) -> list[tuple]:
+        return recent_person_messages(self._get_store().engine, limit)
+
     def load_service_tools(self) -> dict[str, set[str]]:
         return ServiceSettingsStore(self._get_store().engine).enabled_tools()
 
@@ -292,13 +312,15 @@ class KeyboardPersistence:
             channel="keyboard", status="completed", delivery_status="pending",
         )
 
-    def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
+    def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str,
+                          device: str | None = None) -> None:
         # Voice records are display chunks, not API-confirmed complete turns.
         store = self._get_store()
         store.create_conversation(self.conversation_id)
         store.save_message(
             self.conversation_id, message_id=message_id, role=role, text=text,
             channel=channel, status="completed" if channel == "screen" else "incomplete",
+            **({"device": device} if device is not None else {}),
         )
 
     def record_delivery(self, message_id: UUID, status: str) -> None:
