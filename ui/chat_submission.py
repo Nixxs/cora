@@ -3,6 +3,7 @@ import asyncio
 import io
 from uuid import UUID, uuid4
 from PIL import Image
+from messaging.images import photo_described, scaled_jpeg
 from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION, look
 from ui.chat_widgets import ChatImage
 from ui.composer import SENDING_IMAGE, ChatComposer
@@ -11,9 +12,11 @@ from ui.composer import SENDING_IMAGE, ChatComposer
 class ChatSubmission:
     def __init__(self, *, persistence, conversation, live, backend_work,
                  is_closing, is_reconnecting, is_standby, schedule,
-                 record_activity, write_activity, notify, trace, send_without_live=None):
+                 record_activity, write_activity, notify, trace, send_without_live=None, keep_image=None):
         # In Standby, a typed message goes here instead: answered in writing without waking Live.
         self.send_without_live = send_without_live
+        # keep_image(jpeg) -> id: a pasted image is kept in memory for look_again (see tools/look_again.py).
+        self.keep_image = keep_image
         self.persistence = persistence
         self.conversation = conversation
         self.live = live
@@ -85,6 +88,13 @@ class ChatSubmission:
                     self.notify("Message not sent: the image could not be read. Draft kept.", severity="error")
                     return
                 self.write_activity("Pasted image read for Cora", "Image read")
+                if self.keep_image is not None:
+                    try:
+                        jpeg = await asyncio.to_thread(scaled_jpeg, image_png)
+                        image_seen = photo_described(self.keep_image(jpeg), image_seen)
+                    except Exception as error:
+                        # Still sent, described as before; only looking again won't work.
+                        self.write_activity(f"Pasted image not kept ({type(error).__name__}).", "Image not kept")
                 if self.is_closing():
                     return
             # Image bytes are never stored; the saved and shown text only marks one was sent.
@@ -142,6 +152,9 @@ class ChatSubmission:
                 image = Image.open(io.BytesIO(image_png)).convert("RGB")
                 image.thumbnail((1024, 1024))
                 self.conversation.write_log(ChatImage(image, message or "Pasted image"))
+                if image_seen and image_seen.startswith("Photo img"):
+                    # Under the thumbnail: its description and id, for later turns.
+                    self.conversation.show_photo_note(image_seen)
             self.conversation.write_log("")
             if not image_png:
                 composer.clear()

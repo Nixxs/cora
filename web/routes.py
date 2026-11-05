@@ -5,6 +5,7 @@ needs a paired device, known by the token in its cookie (see web/pairing.py).
 """
 
 import asyncio
+import base64
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import json
@@ -32,6 +33,10 @@ BODY_MAX_BYTES = 2048
 # A message from the page: room for a long one, not for anything abusive.
 MESSAGE_MAX_CHARS = 8000
 MESSAGE_BODY_MAX_BYTES = 4 * MESSAGE_MAX_CHARS + 1024
+# A photo sent with a message, as base64 JPEG: the page scales it to 2048 pixels first (well under
+# 2 MB), and the server scales it again whatever arrives.
+PHOTO_MAX_BYTES = 8_000_000
+PHOTO_BODY_MAX_BYTES = MESSAGE_BODY_MAX_BYTES + PHOTO_MAX_BYTES * 4 // 3 + 1024
 REPLY_FAILED = "Cora couldn't reply. Check Activity on her PC."
 REF_MAX_CHARS = 64
 # One piece of a talking page's microphone: pages send about 40 ms at a time (under 2 KB).
@@ -79,6 +84,8 @@ class WebAccess:
     on_listening: Callable[[WebDevice, bool], None] = lambda device, listening: None
     # on_talk(device, listener, talking) as a page starts or stops talking to her.
     on_talk: Callable = lambda device, listener, talking: None
+    # photo(id) -> a kept photo's or shown picture's JPEG, or None once it's gone.
+    photo: Callable[[str], bytes | None] = lambda image_id: None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -185,10 +192,20 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "This device isn't paired."}, 401)
         if access.send_message is None:
             return answer({"error": "Cora can't take messages here yet."}, 503)
-        body = await read_json(request, MESSAGE_BODY_MAX_BYTES)
+        body = await read_json(request, PHOTO_BODY_MAX_BYTES)
         text = str(body.get("text", "")).strip() if body is not None else ""
-        if not text:
-            return answer({"error": "Send the message as JSON, with some text."}, 400)
+        image = None
+        if body is not None and body.get("image") is not None:
+            try:
+                image = base64.b64decode(str(body["image"]), validate=True)
+            except ValueError:
+                return answer({"error": "That photo didn't come through. Try again."}, 400)
+            if not image:
+                return answer({"error": "That photo didn't come through. Try again."}, 400)
+            if len(image) > PHOTO_MAX_BYTES:
+                return answer({"error": "That photo is too large."}, 413)
+        if not text and image is None:
+            return answer({"error": "Send the message as JSON, with some text or a photo."}, 400)
         if len(text) > MESSAGE_MAX_CHARS:
             return answer({"error": f"That's too long: at most {MESSAGE_MAX_CHARS} characters."}, 413)
         ref = body.get("ref")
@@ -197,8 +214,10 @@ def api_routes(access: WebAccess) -> list[Route]:
 
         async def reply() -> None:
             try:
+                # The photo only when there is one, so senders without photos keep four arguments.
+                extra = {"image": image} if image is not None else {}
                 updates.put_nowait(("done", await access.send_message(
-                    device, text, lambda so_far: updates.put_nowait(("text", so_far)), ref,
+                    device, text, lambda so_far: updates.put_nowait(("text", so_far)), ref, **extra,
                 )))
             except Exception:
                 updates.put_nowait(("done", None))
@@ -277,6 +296,16 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "That request isn't waiting any more."}, 409)
         return answer({"answered": True})
 
+    async def photo(request: Request) -> Response:
+        """A photo the person sent, or a picture she showed, while it's still kept in memory."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        jpeg = access.photo(request.path_params["image_id"])
+        if jpeg is None:
+            return answer({"error": "That photo is no longer kept."}, 404)
+        return Response(jpeg, media_type="image/jpeg", headers={"Cache-Control": "private, no-store"})
+
     async def voice(websocket: WebSocket) -> None:
         """Her voice for this page, and the page's own voice while it talks.
 
@@ -352,6 +381,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         Route("/api/messages", messages, methods=["POST"]),
         Route("/api/events", events, methods=["GET"]),
         Route("/api/approvals", approvals, methods=["POST"]),
+        Route("/api/photos/{image_id:str}", photo, methods=["GET"]),
         WebSocketRoute("/api/voice", voice),
     ]
 

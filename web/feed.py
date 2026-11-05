@@ -24,6 +24,9 @@ BACKLOG = 500
 # What a feed item is: a message said, a request for the person's approval on the page, or the
 # end of one (approved, declined or lapsed), so every page shows the request and its outcome.
 MESSAGE, APPROVAL, APPROVAL_DONE = "message", "approval", "approval_done"
+# And a photo the person sent ({"id", "ref"}), or a picture she showed ({"id", "caption", "url"}):
+# pages fetch the image from memory (GET /api/photos/{id}) while it's still kept.
+PHOTO, PICTURE = "photo", "picture"
 
 
 @dataclass(frozen=True)
@@ -68,6 +71,11 @@ class MessageFeed:
         """An approval asked for on the page (APPROVAL), or its end (APPROVAL_DONE)."""
         return self._add(FeedMessage(self.seq + 1, "assistant", "web", "", datetime.now(timezone.utc),
                                      kind=kind, data=data))
+
+    def publish_image(self, kind: str, data: dict, role: str) -> FeedMessage:
+        """A photo the person sent (PHOTO) or a picture she showed (PICTURE)."""
+        return self._add(FeedMessage(self.seq + 1, role, "web", "", datetime.now(timezone.utc),
+                                     ref=data.get("ref"), kind=kind, data=data))
 
     def _add(self, message: FeedMessage) -> FeedMessage:
         self.seq = message.seq

@@ -263,7 +263,8 @@ WEB_CHAT_INSTRUCTIONS = (
     "\n\nThis chat is on your own web page: the person is typing to you in a browser, often on their "
     "phone or tablet and away from their desk. Your reply is shown as formatted Markdown, so short "
     "lists, **bold**, links and code blocks work; keep it fairly brief, as on a phone screen. You "
-    "can't see their screen or show pictures here. "
+    "can't see their screen here, but you can show them pictures (show_web_image), which the page "
+    "displays with your caption. "
     + written_approval_rule("first on this page, with Approve and Deny buttons,")
 )
 

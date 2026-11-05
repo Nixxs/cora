@@ -2,6 +2,7 @@ import io
 import subprocess
 import threading
 import unittest
+from messaging.images import photo_described
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -179,7 +180,9 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(look.call_args.args[0], PASTE_QUESTION)
                 self.assertTrue(look.call_args.args[1].startswith(b"\x89PNG"))
                 self.assertEqual(look.call_args.kwargs, {"mime": "image/png", "instructions": PASTE_INSTRUCTIONS})
-                self.assertEqual(app.live.send_text.await_args.kwargs, {"image_seen": "A white page."})
+                # Kept for look_again: the description carries the photo's id.
+                self.assertEqual(app.live.send_text.await_args.kwargs,
+                                 {"image_seen": photo_described("img1", "A white page.")})
                 # Only the marker is saved, never the image bytes.
                 self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image]")
                 self.assertIsNone(composer.image_png)
@@ -192,12 +195,15 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(look.call_args.args[0], "why")
                 self.assertEqual(persistence.call_database.await_args_list[0].args[2], "[image] why")
                 entries = app.conversation.log_entries
-                self.assertEqual([entries[i] for i in (0, 2, 3, 5)], ["You: [image]", "", "You: [image] why", ""])
+                self.assertEqual([entries[i] for i in (0, 3, 4, 7)], ["You: [image]", "", "You: [image] why", ""])
                 # Each sent image shows as a clickable thumbnail under its message.
-                self.assertEqual([type(entries[i]) for i in (1, 4)], [ChatImage, ChatImage])
-                self.assertEqual([entries[i].caption for i in (1, 4)], ["Pasted image", "why"])
+                self.assertEqual([type(entries[i]) for i in (1, 5)], [ChatImage, ChatImage])
+                self.assertEqual([entries[i].caption for i in (1, 5)], ["Pasted image", "why"])
                 self.assertEqual(entries[1].image.size, (1024, 512))
-                self.assertEqual(len(entries), 6)
+                # Then a quiet note with its description and id, kept for look_again.
+                self.assertTrue(entries[2].startswith("· Photo img1 (kept for this conversation"))
+                self.assertTrue(entries[6].startswith("· Photo img2 (kept for this conversation"))
+                self.assertEqual(len(entries), 8)
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(frame.border_subtitle, "")
 
@@ -235,7 +241,7 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                     release.set()
                 await app.workers.wait_for_complete()
                 await pilot.pause()
-                app.live.send_text.assert_awaited_once_with("why", image_seen="A page.")
+                app.live.send_text.assert_awaited_once_with("why", image_seen=photo_described("img1", "A page."))
                 self.assertEqual(composer.text, "next")
                 self.assertEqual(frame.border_subtitle, "")
                 await pilot.press("enter")

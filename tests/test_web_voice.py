@@ -305,3 +305,63 @@ class WebTalkAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(await app.web_voice.next_chunk(ipad, 1), {"type": "talking"})
                 self.assertEqual(await app.web_voice.next_chunk(ipad, 1), {"type": "talk_ended", "reason": "standby"})
             app.live.ready = False
+
+
+class TalkWhereTests(unittest.IsolatedAsyncioTestCase):
+    """Voice Cora is told where the person is talking from as a call starts, moves or ends."""
+
+    async def test_starting_a_call_while_shes_active_tells_her_its_from_the_device(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.live.ready = True
+            app.live.note_where_they_are = AsyncMock(return_value=True)
+            listener = app.web_voice.listen("iPhone")
+            with patch.object(app.live, "use_web_microphone", AsyncMock()):
+                app.on_web_talk(IPHONE, listener, True)
+                await pilot.pause()
+                told = app.live.note_where_they_are.await_args.args[0]
+                self.assertIn("from their iPhone", told)
+                self.assertIn("probably away from the desk", told)
+                # Hung up while she stays on: she's told they're back at the desk.
+                app.on_web_talk(IPHONE, listener, False)
+                await pilot.pause()
+                self.assertIn("at the desk again", app.live.note_where_they_are.await_args.args[0])
+            app.live.ready = False
+
+    async def test_a_call_that_wakes_her_tells_her_once_shes_connected(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.standby = True
+            app.live.note_where_they_are = AsyncMock(return_value=True)
+            listener = app.web_voice.listen("iPad")
+            with patch.object(app, "action_reconnect"), patch.object(app.live, "use_web_microphone", AsyncMock()):
+                app.on_web_talk(IPHONE, listener, True)
+                await pilot.pause()
+                app.live.note_where_they_are.assert_not_awaited()
+                app.standby = False
+                app.live.ready = True
+                app.set_connection_state("active")
+                await pilot.pause()
+                self.assertIn("from their iPhone", app.live.note_where_they_are.await_args.args[0])
+                self.assertIsNone(app.web_talk_where)
+            app.live.ready = False
+
+    async def test_going_into_standby_drops_anything_not_yet_told(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.live.ready = False
+            listener = app.web_voice.listen("iPhone")
+            with patch.object(app.live, "use_web_microphone", AsyncMock()):
+                app.web_voice.start_talking(listener)
+                app.tell_cora_where("somewhere")
+                app.set_connection_state("standby")
+            self.assertIsNone(app.web_talk_where)
+
+    async def test_live_sends_the_note_silently_only_while_connected(self):
+        live = CoraLive()
+        self.assertFalse(await live.note_where_they_are("anywhere"))
+        async with live_transport(live) as (connection, speaker, emit):
+            connection.session.thinking.append.reset_mock()
+            self.assertTrue(await live.note_where_they_are("the person is on their iPhone."))
+            note = connection.session.thinking.append.await_args.kwargs["content"]
+            # Background to use if relevant, never something to announce.
+            self.assertTrue(note.startswith("Background only"))
+            self.assertIn("Don't announce it", note)
+            self.assertTrue(note.endswith("Where the person is: the person is on their iPhone."))

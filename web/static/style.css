@@ -265,17 +265,28 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   height: 28px;
   flex-shrink: 0;
 }
-#voice-bars span {
+/* Each column: her half above the centre line, the person's below it. */
+#voice-bars .column {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   width: 4px;
   height: 100%;
+}
+#voice-bars .her, #voice-bars .you {
+  flex: 1;
   border-radius: 2px;
-  /* Quiet: a dim flat line, like the TUI's when nothing plays. */
+  /* Quiet: a dim flat line at the centre, like the TUI's when nothing plays. */
   background: #4a5a74;
-  transform: scaleY(0.14);
+  transform: scaleY(0.1);
   transition: transform 0.08s linear, background 0.3s ease;
 }
-/* During a call the bars show her voice, in her colour. */
-#voice-panel[data-state="talking"] #voice-bars span { background: var(--cora); }
+/* Grow away from the centre line: hers upward, the person's downward. */
+#voice-bars .her { transform-origin: bottom; }
+#voice-bars .you { transform-origin: top; }
+/* During a call: her voice in her colour, theirs in the "You" blue, as in the chat. */
+#voice-panel[data-state="talking"] #voice-bars .her { background: var(--cora); }
+#voice-panel[data-state="talking"] #voice-bars .you { background: var(--you); }
 
 #voice-text {
   flex: 1;
@@ -470,6 +481,60 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 }
 #chat-input::placeholder { color: #566074; }
 
+/* The camera button, and the chosen photo's thumbnail until it's sent or removed. */
+/* A text button, like the TUI's own ("settings", "close"), not an emoji. */
+#photo-button {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--border);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+#photo-button:hover, #photo-button:focus-visible { background: var(--bg-hover); color: var(--text); outline: none; }
+#photo-button:active { background: var(--bg-hover); }
+#photo-chip {
+  position: relative;
+  flex-shrink: 0;
+  width: 40px;
+  height: 34px;
+}
+#photo-chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-deep);
+}
+#photo-remove {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1;
+}
+
+/* A picture's caption and source, and a photo she no longer keeps. */
+.message .caption { margin: 0; color: var(--dim); font-size: 13px; }
+.message .gone { margin: 4px 0 8px; color: var(--dim); font-size: 12px; font-style: italic; }
+/* A photo in the conversation. */
+.message .photo {
+  display: block;
+  max-width: min(100%, 320px);
+  max-height: 320px;
+  margin: 4px 0 8px;
+  border-radius: 8px;
+  border: 1px solid #263044;
+}
+
 #send-button {
   flex-shrink: 0;
   width: 40px;
@@ -540,8 +605,11 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   .message .body > p, .message .body > ul, .message .body > ol, .message .body > blockquote { max-width: 100ch; }
   .approval { max-width: 100ch; }
   #composer { padding-left: 18px; }
+}
 
-  /* The conversation on the left, voice in a panel on the right, the status row below both. */
+/* Any landscape at least 640 points wide (an iPhone or iPad turned sideways, a laptop): the
+   conversation on the left, voice in a panel on the right, the status row below both. */
+@media (min-width: 640px) and (orientation: landscape) {
   #app {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 280px;
@@ -560,17 +628,27 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
     text-align: center;
   }
   #voice-bars { height: 120px; gap: 6px; }
-  #voice-bars span { width: 9px; border-radius: 4px; }
+  #voice-bars .column { width: 9px; gap: 2px; }
+  #voice-bars .her, #voice-bars .you { border-radius: 4px; }
   #voice-text { flex: 0; }
   .voice-buttons { align-self: stretch; flex-direction: column; }
   .voice-button { min-height: 44px; }
 }
 
-/* Landscape phones: every line counts. */
+/* Landscape phones: every line counts, and the voice panel is slimmer with shorter bars. */
 @media (max-height: 500px) and (orientation: landscape) {
   .screen { padding-top: max(env(safe-area-inset-top), 8px); }
   :root { --gap: 6px; }
   .message { margin-bottom: 10px; }
+  #app { grid-template-columns: minmax(0, 1fr) 200px; }
+  .voice-body { gap: 12px; padding: 14px 12px; }
+  #voice-bars { height: 64px; gap: 4px; }
+  #voice-bars .column { width: 6px; }
+  .voice-button { min-height: 38px; }
+}
+/* The iPhone's own top spacing is for the status bar, which landscape doesn't have. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .iphone .screen { padding-top: 12px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

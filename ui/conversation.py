@@ -38,6 +38,16 @@ class ApprovalNote(str):
         return note
 
 
+class PhotoNote(ApprovalNote):
+    """A chat line under the person's photo: its description and id, given to Cora in later turns."""
+
+
+# A kept photo's id, at the start of its description (messaging/images.py photo_described).
+PHOTO_ID = re.compile(r"Photo (img\d+) ")
+# How much of a photo's description the chat line shows; Cora is given all of it.
+PHOTO_NOTE_SHOWN_CHARS = 140
+
+
 def styled_entry(entry):
     """A chat line with its speaker's label coloured; anything else is drawn as it is."""
     if isinstance(entry, ApprovalNote):
@@ -127,16 +137,31 @@ class Conversation:
         # Told about every message said in this conversation, as (role, text, channel): the web
         # page's feed. Called after the message is recorded.
         self.listeners: list = []
+        # Told the id of each of the person's kept photos as its note is shown (photo_listeners), and
+        # each picture she shows as (image, caption, page_url) (picture_listeners): the web page
+        # shows them, from memory.
+        self.photo_listeners: list = []
+        self.picture_listeners: list = []
 
-    def record(self, role: str, text: str, channel: str, device: str | None = None) -> None:
-        """A message said in this conversation: saved, and passed on to listeners. device is the
-        paired device a web message came from."""
+    def record(self, role: str, text: str, channel: str, device: str | None = None,
+               announce: bool = True) -> None:
+        """A message said in this conversation: saved, and passed on to listeners (unless announce
+        is false, for one told to them another way). device is the paired device a web message
+        came from."""
         if self.record_message is not None:
             if device is None:
                 self.record_message(role, text, channel)
             else:
                 self.record_message(role, text, channel, device)
-        self.announce(role, text, channel, device)
+        if announce:
+            self.announce(role, text, channel, device)
+
+    def tell(self, listeners: list, *details) -> None:
+        for listener in list(listeners):
+            try:
+                listener(*details)
+            except Exception as error:
+                self.write_debug(f"Message listener failed ({type(error).__name__}).", "Message listener failed")
 
     def announce(self, role: str, text: str, channel: str, device: str | None = None) -> None:
         """Pass a message on to listeners only, for one saved elsewhere (typed at the desk)."""
@@ -168,6 +193,8 @@ class Conversation:
                 role, text = "user", entry[len(EMAIL_PREFIX):]
             elif isinstance(entry, str) and (web := WEB_LINE.match(entry)):
                 role, text = "user", entry[web.end():]
+            elif isinstance(entry, PhotoNote):  # before ApprovalNote, which it's built on
+                role, text = "user", entry.for_cora
             elif isinstance(entry, ApprovalNote):
                 role, text = "assistant", entry.for_cora
             elif isinstance(entry, str) and entry.startswith("Cora: "):
@@ -267,8 +294,9 @@ class Conversation:
             "",
         ])
         self.redraw_log()
-        # The image is never saved; only the caption and its page.
-        self.record("assistant", f"[image] {caption} ({page_url})", "screen")
+        # The image is never saved; only the caption and its page. Listeners get the picture itself.
+        self.record("assistant", f"[image] {caption} ({page_url})", "screen", announce=False)
+        self.tell(self.picture_listeners, image, caption, page_url)
 
     def start_written_reply(self, label: str = "Cora · written", channel: str = "screen") -> WrittenDraft:
         """A written reply to show as it streams in; nothing appears until its first text."""
@@ -301,6 +329,15 @@ class Conversation:
         self.flush_transcript()
         self.write_log(ApprovalNote(f"{APPROVAL_PREFIX}{APPROVAL_SHOWN[outcome].format(what)}",
                                     APPROVAL_FOR_CORA[outcome].format(what)))
+
+    def show_photo_note(self, described: str) -> None:
+        """A kept photo's description and id (photo_described), under the message it came with: a
+        quiet line in the chat, and in the history later turns are given, so Cora still knows what
+        it showed and can look again. Not saved: her reply says what she made of it."""
+        shown = described if len(described) <= PHOTO_NOTE_SHOWN_CHARS else described[:PHOTO_NOTE_SHOWN_CHARS - 1] + "…"
+        self.write_log(PhotoNote(f"· {shown}", f"(The photo I sent. {described})"))
+        if (photo := PHOTO_ID.match(described)) is not None:
+            self.tell(self.photo_listeners, photo.group(1))
 
     def show_web_message(self, text: str, device: str | None = None) -> None:
         """The person's own message from her web page, in the same chat as the desktop's, labelled

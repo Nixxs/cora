@@ -17,6 +17,7 @@ from .close_app import CloseAppTool, SCHEMA, validate_arguments
 from .close_task import CloseTaskTool, SCHEMA as CLOSE_TASK_SCHEMA, validate_arguments as validate_close_task_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
+from .look_again import KeptImages, LookAgainTool, SCHEMA as LOOK_AGAIN_SCHEMA, validate_arguments as validate_look_again_arguments
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
 from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
@@ -55,6 +56,7 @@ def create_tool_registry(
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
     calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
     signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
+    kept_images: KeptImages | None = None,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -79,6 +81,9 @@ def create_tool_registry(
     registry.register(RANDOM_NUMBER_SCHEMA, validate_random_number_arguments, random_number.handle)
     screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)
     registry.register(SCREEN_SCHEMA, validate_screen_arguments, screen.handle)
+    # The person's photos from this conversation (web page, desk paste, their own Signal).
+    look_again = LookAgainTool(get_connection, is_closing, kept_images or KeptImages(), write_debug)
+    registry.register(LOOK_AGAIN_SCHEMA, validate_look_again_arguments, look_again.handle)
     web_image = ShowWebImageTool(get_connection, is_closing, show_image, write_debug)
     registry.register(WEB_IMAGE_SCHEMA, validate_web_image_arguments, web_image.handle)
     signal_message = SendSignalMessageTool(

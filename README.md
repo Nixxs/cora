@@ -110,8 +110,10 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
   being sent (“sending image…”) you can keep typing; the next message waits until
   it is done, and if sending fails your draft and image come back. A separate
   one-off model request reads the image with your message as the question, and
-  only its short description enters Cora's session, so she cannot look at the
-  image again later. The chat shows a small copy of the image under your message
+  only its short description enters Cora's session. The image is kept in memory
+  (never saved) for the rest of the conversation, so she can look at it again
+  with a new question (`look_again`); a quiet line under your message shows the
+  description and the photo's id. The chat shows a small copy of the image under your message
   (click it to see it sharply); the
   database only shows “[image]” in its place, and the image itself is never saved. Large
   images are scaled
@@ -1053,7 +1055,10 @@ her through that device's microphone and hear her on it (the desk mic and speake
 go quiet meanwhile). Talk wakes her from standby; **Hang up** puts her back if
 Talk woke her, or hands the mic and speaker back to the desk if she was already
 Active. Bluetooth headphones work too. On iPhone, keep the app in the foreground:
-iOS stops sound and the mic when it locks. Messages sent from the page are labelled with the
+iOS stops sound and the mic when it locks. The `+img` button in the message box sends
+her a photo (on an iPhone, Take Photo or Photo Library), with a question or on its
+own: she sees the photo itself for that reply, and can look at it again later in
+the conversation, even by voice on a call. Messages sent from the page are labelled with the
 device they came from (`You · web · iPad`). Run `python migrate.py` once for
 migrations 0048, 0049 and 0050. Save the public address under **Webhooks** first, then turn on Settings >
 Services > **Web interface**. The listener runs when webhooks, the web interface
@@ -1661,7 +1666,11 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 ```
 
 Write tests use disposable databases, not Cora's saved chats, and require permission
-to create databases. The standalone connection test is read-only. Model calls and
+to create databases. Two tests sometimes fail in a full run on a busy machine and pass
+when run on their own: `test_completed_summary_still_retries_embedding_then_no_candidate_check_and_second_pass_is_cached`
+(memory maintenance, database) and `test_explores_only_in_standby_or_after_a_quiet_spell`
+(exploration timing). Rerun the file before suspecting a change; making them less
+timing-sensitive is a small job worth doing. The standalone connection test is read-only. Model calls and
 audio transport are mocked; real hardware, mixed voice/text behaviour, and memory
 quality still need manual checks.
 
@@ -1921,8 +1930,11 @@ features it helps check, and package last.
 20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
     iPad mini as a home-screen web app, served by her webhook listener, in the
     same conversation as the desk and Signal (see Web interface in Details
-    below).
-21. Release.
+    below). WB5 (photos both ways) is built; next, WB6 (where you are, on demand).
+21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
+    contacts you've added can too, and she can call places for tasks (see
+    Phone calls in Details below).
+22. Release.
 
 *After 1.0:* local models.
 
@@ -2586,8 +2598,10 @@ features it helps check, and package last.
         layout stays as it is (no centring): the page fills the window and the
         device name shows at the bottom right. Voice is laid out responsively
         (built with WV1): on narrow screens its panel is a strip above the
-        conversation, and on wide landscape screens a 280-pixel panel on the
-        right. If a PC needs its own layout, it's told apart by its
+        conversation, and in any landscape at least 640 points wide (an iPhone
+        or iPad turned sideways, a laptop) a panel on the right: 280 pixels,
+        or 200 with shorter bars on a phone (landscape under 500 points
+        high). If a PC needs its own layout, it's told apart by its
         mouse rather than its size: `(hover: hover) and (pointer: fine)` holds
         for a mouse or trackpad, not a finger, even on an iPad with a keyboard.
       - *Stronger sign-in, later:* a device unused for 30 days is already
@@ -2670,7 +2684,15 @@ features it helps check, and package last.
       browser's echo cancellation, noise suppression and gain control,
       gathered in an audio worklet ([mic-worklet.js](web/static/mic-worklet.js)),
       resampled to 24 kHz and sent in 40 ms pieces; the panel says whether
-      she's in standby (Talk wakes her), waking, or on a call.
+      she's in standby (Talk wakes her), waking, or on a call. Voice Cora is
+      told silently where the person is (`note_where_they_are`): when a call
+      starts or moves to another device, that they're talking from that device
+      through the page, likely away from the desk, with the desk mic and
+      speaker off (so the desk's screen won't show what they see, and a photo
+      from the page will); and when they hang up while she stays Active, that
+      they're back on the desk's mic and speaker. If Talk is waking her, the
+      note waits until she's connected, and one not yet told is dropped if
+      she goes into standby.
       After testing, two changes:
       - *One button:* Listen on its own was dropped. Either you talk to her on
         the device or at the desk, never the desk mic with the device's
@@ -2687,8 +2709,12 @@ features it helps check, and package last.
         tap. If headphones come or go mid-call, the audio is rebuilt on the new
         route (not within 2 seconds of a start, as starting the mic can itself
         announce a device change).
-    - WV3 audio bars beside the status row, a mute for the device's own mic,
-      and any polish testing turns up.
+    - WV3 a mute for the device's own mic, and any polish testing turns up.
+      Done so far: the Voice panel's bars are split at a centre line, as the
+      TUI's dashboard shows playback and microphone: her voice grows upward in
+      her green, and what the device's mic picks up grows downward in the
+      "You" blue (an analyser on the mic, read only, never played), so you can
+      see you're being heard, and when you're talking over each other.
   - *Voice limits:* iOS suspends the mic and the connection when the screen
     locks or the app goes to the background, so voice works in the foreground
     only (only a native App Store app could avoid this). Starting audio needs a
@@ -2696,8 +2722,139 @@ features it helps check, and package last.
     roughly 50–150 ms. Audio is about 48 KB/s each way while talking. It relies
     on the browser's echo cancellation. Live is billed while active, as at the
     desk.
-  - *Not in the first version:* image uploads (the Signal image path could be
-    reused later) and push notifications.
+  - *Not in the first version:* push notifications.
+  - WB5a photos to her, **built** (below as planned, except where noted):
+    - Built: the camera button and thumbnail ([photo.js](web/static/photo.js),
+      scaled on the phone to 2048 pixels as JPEG, up to 8 MB accepted as
+      base64 in the message's JSON); `read_photo` and `photo_described` in
+      [messaging/images.py](messaging/images.py) (scaled again, screened and
+      described, `WEB_PHOTO_INSTRUCTIONS`); `photo_content` gives the web
+      turn the photo itself plus its description and id; `KeptImages` and the
+      `look_again` tool in [tools/look_again.py](tools/look_again.py); the
+      person's own photos from the web page, desk paste and their Signal are
+      kept (a contact's never are, and client chats, coordinators and email
+      threads don't get the tool, as they allow only listed tools); a quiet
+      note under each kept photo (`show_photo_note`, a `PhotoNote` chat line)
+      carries its description and id into later turns as "(The photo I
+      sent. …)", and voice Cora is told the description with the exchange.
+      Photos are dropped when a long standby ends the conversation.
+    - Not yet: seeing the photo itself on the turn it's sent is on the web
+      page only; Signal photos and desk pastes still answer that turn from the
+      description (they are kept for look_again). Doing the same for them is a
+      small follow-up.
+    - Also changed: a pasted or Signal image's description now shows in the
+      desk's chat as that quiet note (still never saved to the database).
+  - WB5 images both ways, planned:
+    - *Sending her a photo:* a camera button beside the message box; on an
+      iPhone it offers Take Photo or Photo Library. Scaled to 2048 pixels,
+      with explicit or gory images withheld first, as for pasted and Signal
+      images.
+    - *Why images became descriptions, and what changes:* the Live voice model
+      takes no images, and its backend's session holds at most 128 items and
+      4 MB, which one photo (1–3 MB encoded) would mostly fill for the rest of
+      the session; so every image is read by a separate one-off look and only
+      its description joins the conversation. That keeps voice working and
+      later turns cheap, but she knows only what the description says, so a
+      detail it missed can't be answered. Written chats (the web page,
+      Signal, typing in Standby) are standalone requests with no such
+      session, so they go hybrid: on the turn an image is sent, her backend
+      model (`gpt-6.1-sol`) gets the image itself and answers from the real
+      thing; the description still goes into the conversation for later
+      turns and for voice. Keep the context window in mind whenever images
+      are passed directly.
+    - *Look again:* a tool for any channel, voice included: she asks a new
+      question about an image from earlier in the conversation, answered by a
+      separate one-off look (as `look_at_screen` does for the screen), so
+      follow-ups about details work without the image entering her session.
+    - *Memory only:* images are held in memory, never saved to disk, and
+      belong to the conversation they came in; they're dropped when it ends
+      (after the usual quiet hour), and at most about 20 images or 50 MB are
+      kept, oldest dropped first. Asking about one that's gone gets an honest
+      "I can't look at that one any more", with its description still there.
+      Saving photos on the PC (so she could look again days later, or recall
+      them as memories) would be a separate opt-in feature with its own
+      retention and deletion; for now the README's promise stands that the
+      image itself is never saved.
+    - *Seeing her pictures:* `show_web_image` is off on the web for now; the
+      page could show those pictures inline (it shows images better than the
+      terminal does), with the caption and a link to the page.
+  - WB5b pictures on the page, **built**:
+    - *Your photos on every device:* when a kept photo's note is shown,
+      `Conversation.photo_listeners` hear its id and the feed carries a
+      `photo` item (with the sending page's `ref`, so that page, which shows
+      its own copy, skips it); other pages put the photo under your latest
+      message, fetched from memory at `GET /api/photos/{id}` (paired devices
+      only, `private, no-store`). Photos pasted at the desk or sent on your
+      Signal show on the page the same way.
+    - *Her pictures:* `show_web_image` is now on in web chats (and her
+      instructions say so; `look_at_screen` stays off there). `show_image`
+      still saves "[image] caption (link)" as text, but tells
+      `picture_listeners` instead of the usual listeners, so the page gets the
+      picture itself: kept in memory as JPEG (at most 1600 pixels, `pic` ids,
+      with caption and page) and shown with the caption and a link to the
+      page's site; only http(s) links are made clickable.
+    - Both go when the conversation ends, like look_again's photos; one no
+      longer kept shows "(no longer kept)" instead. After a restart, history
+      shows them as text ("[image] …"), as before.
+  - WB6 where you are, planned: on the web page, Cora can check where you are
+    when it's relevant to what you ask ("what's near me?", "how long to get
+    home?", "what's the weather here?"). On demand only: she isn't told your
+    location at the start of a call or otherwise unprompted.
+    - *How:* a tool for her (`where_is_person`, say) asks your open page for a
+      position fix over the live connection; the page uses the browser's
+      location (iOS asks permission the first time, as for the microphone)
+      and replies with the position and its accuracy; the server turns it into
+      a place name ("Leederville, near Oxford St") through OpenStreetMap's
+      geocoder, and that's what she gets, with the accuracy.
+    - *Only while a page is open:* iOS doesn't let web pages share location in
+      the background. Phone calls (P1) don't share location at all; they work
+      like calling a friend.
+    - *Privacy:* never saved to the database; the last position is held in
+      memory for about 10 minutes, so she doesn't ask again mid-conversation.
+      A switch on the page ("Cora can check where I am"), off until you turn
+      it on. Every check shows a quiet line in the chat and in Activity, so
+      you always know when she looked. Only in your own chats: contacts'
+      chats, task coordinators and email threads never get the tool. The
+      coordinates go to OpenStreetMap's geocoder to name the place, and the
+      place name to OpenAI as part of her context.
+  - *Calls with the phone locked:* not possible as a web app. iOS suspends web
+    pages, Home Screen apps included, when the screen locks or another app
+    comes to the front: the connection drops and the microphone stops. Only a
+    native app using Apple's call framework (CallKit) could keep a call going,
+    which means Xcode and Apple's developer programme. Calling her on her
+    phone number (Phone calls, below) gets the same result without an app.
+- **Phone calls (Cora's own number), planned:** calling Cora like any contact,
+  which works with the phone locked, over Bluetooth and in the car, through
+  iOS's own call handling; and later her calling places to get things done.
+  - *Her number stays:* it's the SIM in her Signal phone, and a SIM can't be
+    connected to software directly, so calls to it are forwarded by the carrier
+    to a telephony number (Twilio, say) that hands them to OpenAI's realtime
+    voice. People keep calling the number they know and Signal stays on the
+    SIM. Check with the carrier that forwarding keeps the caller's number, as
+    who's calling decides what follows. Costs: cents a minute for the line, on
+    top of Live.
+  - *Who can call:* you (the same conversation as the desk, Signal and the web
+    page, with her tools); contacts you've added (client mode, as in their
+    Signal chats: professional, never your private life, in their own
+    conversation); anyone else hears a short polite line and the call ends, as
+    strangers get on Signal.
+  - *Approvals never by voice on a phone call:* caller ID can be faked, so on a
+    call, tools that change things are approved only where they are now in a
+    written chat (on the web page or on Signal), never by saying yes on the
+    call. At the desk, approvals stay as they are with the TUI's voice (the
+    pop-up).
+  - *Calling out for tasks:* like `send_signal_message` and `send_email` in a
+    task, each call approved first (who and why); she says up front that she's
+    an AI assistant calling on your behalf; the commitment check holds (she
+    can ask, gather prices and hold an option, but anything that commits you
+    waits for your yes); the transcript is kept for the task like an email
+    thread, and she mentions that, as some Australian states require telling
+    the other party a call is recorded; what she learns reaches the
+    coordinator and comes back to you like an email reply.
+  - *Steps:* P1 you can call her (forwarding, the telephony number, your
+    number recognised, the same context as the desk); P2 contacts can call
+    (client mode, strangers turned away); P3 she calls places for tasks
+    (approval, disclosure, commitments, transcript, reporting back).
 - **Installable Cora (paused):** an installer for non-technical users is not
   planned for now. Notes for if it returns: keep PostgreSQL rather than moving
   to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was

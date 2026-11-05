@@ -2,8 +2,10 @@
 // and messages sent from here with her reply streaming back as she writes it.
 
 import {
-  addApproval, addMessage, addNotice, clearChat, setLink, setStatus, setupComposer, startWriting,
+  addApproval, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
+  startWriting,
 } from "./ui.js";
+import { hasPhoto, setupPhotos, takePhoto } from "./photo.js";
 
 const UNREACHABLE = "Couldn't reach Cora. Is her PC on and the web interface switched on?";
 const DROPPED = "The connection dropped before her reply finished. It's still shown at the desk.";
@@ -63,6 +65,21 @@ function follow(deviceName) {
   });
   events.addEventListener("message", (event) => showFeedMessage(JSON.parse(event.data)));
   events.addEventListener("approval", (event) => showApproval(JSON.parse(event.data)));
+  // A photo the person sent from somewhere else, under the message it came with; and a picture
+  // she showed. Both are fetched from Cora's memory while she still keeps them.
+  events.addEventListener("photo", (event) => {
+    const photo = JSON.parse(event.data);
+    if (photo.ref && sentHere.has(photo.ref)) return;
+    attachPhoto(`/api/photos/${encodeURIComponent(photo.id)}`);
+  });
+  events.addEventListener("picture", (event) => {
+    const picture = JSON.parse(event.data);
+    markDay(new Date(picture.at));
+    addPicture({
+      src: `/api/photos/${encodeURIComponent(picture.id)}`, caption: picture.caption, url: picture.url,
+      when: new Date(picture.at),
+    });
+  });
   events.addEventListener("approval_done", (event) => {
     const done = JSON.parse(event.data);
     approvals.get(done.id)?.settle(done.outcome);
@@ -148,8 +165,11 @@ function newRef() {
 async function send(text) {
   const ref = newRef();
   sentHere.add(ref);
+  // A photo chosen with the camera button goes with this message; she sees it herself.
+  const photo = await takePhoto();
+  if (!text && !photo) return;
   markDay(new Date());
-  addMessage({ who: "You", via: thisDevice ? `web · ${thisDevice}` : "web", text });
+  addMessage({ who: "You", via: thisDevice ? `web · ${thisDevice}` : "web", text, photo: photo?.url });
   const draft = startWriting("web");
   let response;
   try {
@@ -157,7 +177,7 @@ async function send(text) {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text, ref }),
+      body: JSON.stringify(photo ? { text, ref, image: photo.base64 } : { text, ref }),
     });
   } catch {
     draft.fail();
@@ -184,6 +204,7 @@ async function send(text) {
 }
 
 export function startChat(deviceName) {
-  setupComposer(send);
+  setupComposer(send, hasPhoto);
+  setupPhotos(addNotice);
   follow(deviceName);
 }

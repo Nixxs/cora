@@ -578,7 +578,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([schema["name"] for schema in registry.schemas()
                           if schema["name"] != "random_number"],
                          ["close_app", "search_memory", "recall_interest", "enter_standby", "set_person_name",
-                          "recall_self", "recall_desire", "note_desire", "feel", "look_at_screen", "show_web_image", "send_signal_message", "message_person_on_signal", "pass_on",
+                          "recall_self", "recall_desire", "note_desire", "feel", "look_at_screen", "look_again", "show_web_image", "send_signal_message", "message_person_on_signal", "pass_on",
                           "raise_concern", "stop_replying", "close_task", "check_email", "send_email", "check_calendar", "create_event", "update_event", "cancel_event", "forward_event", "request_sign_up"])
         self.assertEqual(registry.schemas()[1], SCHEMA)
         self.build.assert_not_called()
@@ -832,7 +832,7 @@ class SearchMemoryToolTests(unittest.IsolatedAsyncioTestCase):
                 # random_number is a developer example tool; ignore it here.
                 self.assertEqual([tool["name"] for tool in tools[1:] if tool["name"] != "random_number"],
                                  ["close_app", "search_memory", "recall_interest", "enter_standby",
-                                  "set_person_name", "recall_self", "recall_desire", "note_desire", "feel", "look_at_screen", "show_web_image", "send_signal_message", "message_person_on_signal",
+                                  "set_person_name", "recall_self", "recall_desire", "note_desire", "feel", "look_at_screen", "look_again", "show_web_image", "send_signal_message", "message_person_on_signal",
                                   "close_task", "check_email", "send_email", "check_calendar", "create_event", "update_event", "cancel_event", "forward_event", "request_sign_up"])
                 self.assertEqual(tools[2], SCHEMA)
                 self.search.assert_called_once_with(self.store_type.return_value, "PRIVATE question", limit=8)

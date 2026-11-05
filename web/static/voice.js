@@ -28,7 +28,8 @@ const text = document.getElementById("voice-text");
 const talkButton = document.getElementById("talk-button");
 
 let audio = null;     // AudioContext during a call
-let analyser = null;  // what the bars read
+let analyser = null;  // her voice, for the top half of the bars
+let micAnalyser = null; // the person's microphone, for the bottom half
 let mic = null;       // { stream, source, node } during a call
 let socket = null;
 let nextStart = 0;    // when the next piece of her voice starts, on audio's clock
@@ -69,6 +70,11 @@ async function startAudio() {
   analyser.connect(audio.destination);
   await audio.audioWorklet.addModule("mic-worklet.js");
   const source = audio.createMediaStreamSource(stream);
+  // What the mic picks up, for the bars (it's only read, never played).
+  micAnalyser = audio.createAnalyser();
+  micAnalyser.fftSize = 64;
+  micAnalyser.smoothingTimeConstant = 0.6;
+  source.connect(micAnalyser);
   const node = new AudioWorkletNode(audio, "mic-capture");
   // Connected through silence so the browser keeps it running; nothing of it is heard here.
   const silent = audio.createGain();
@@ -98,6 +104,7 @@ function stopAudio() {
   if (audio) audio.close().catch(() => {});
   audio = null;
   analyser = null;
+  micAnalyser = null;
 }
 
 /** Headphones connected or disconnected mid-call: the same call, on the new route. Starting the
@@ -213,20 +220,37 @@ function hangUp(message = "") {
   show("idle");
 }
 
-/** The bars: her voice's loudness across a few bands, flat when she's quiet or no call is on. */
+/** Loudness across a few bands (0 to 1 each), from an analyser; none when there isn't one. */
+function bandLevels(source) {
+  const levels = new Uint8Array(source ? source.frequencyBinCount : 0);
+  if (source) source.getByteFrequencyData(levels);
+  // The lower bands carry speech; spread the bars over them.
+  return (index) => (levels.length ? levels[Math.min(levels.length - 1, Math.floor(index * 1.4) + 1)] / 255 : 0);
+}
+
+/** The bars, split at a centre line as the TUI's dashboard shows them: her voice upward in her
+ * green, the person's microphone downward in the "You" blue; flat when quiet or no call is on. */
 function drawBars() {
-  const levels = new Uint8Array(analyser ? analyser.frequencyBinCount : 0);
-  if (analyser) analyser.getByteFrequencyData(levels);
-  bars.childNodes.forEach((bar, index) => {
-    // The lower bands carry speech; spread the bars over them.
-    const level = levels.length ? levels[Math.min(levels.length - 1, Math.floor(index * 1.4) + 1)] / 255 : 0;
-    bar.style.transform = `scaleY(${Math.max(0.14, level)})`;
+  const hers = bandLevels(analyser);
+  const yours = bandLevels(micAnalyser);
+  bars.childNodes.forEach((column, index) => {
+    column.firstChild.style.transform = `scaleY(${Math.max(0.1, hers(index))})`;
+    column.lastChild.style.transform = `scaleY(${Math.max(0.1, yours(index))})`;
   });
   requestAnimationFrame(drawBars);
 }
 
 export function setupVoice() {
-  for (let index = 0; index < BAR_COUNT; index += 1) bars.append(document.createElement("span"));
+  for (let index = 0; index < BAR_COUNT; index += 1) {
+    const column = document.createElement("span");
+    column.className = "column";
+    const her = document.createElement("span");
+    her.className = "her";
+    const you = document.createElement("span");
+    you.className = "you";
+    column.append(her, you);
+    bars.append(column);
+  }
   talkButton.addEventListener("click", () => {
     if (state === "idle") talk();
     else hangUp();
