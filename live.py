@@ -556,6 +556,21 @@ class CoraLive:
         await connection.session.thinking.append(event_id=event_id, delegation_id=None, content=note)
         self.context.note(note)
 
+    async def note_where_they_are(self, where: str) -> bool:
+        """Tell voice Cora, silently, where the person is talking to her from (the desk, or a device
+        on the web page); False if Live isn't connected to be told."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            return False
+        note = fit_note(
+            "Background only, for you to know and use if it becomes relevant. Don't announce it, react to "
+            f"it, or bring it up unprompted; just carry on the conversation naturally. Where the person is: {where}",
+            NOTE_MAX_CHARS,
+        )
+        await connection.session.thinking.append(event_id=f"where_{uuid4().hex}", delegation_id=None, content=note)
+        self.context.note(note)
+        return True
+
     async def note_feelings(self, lines: list[str]) -> None:
         """Quietly tell voice Cora how her feelings have changed: eased, risen, new or passed."""
         connection = self.connection

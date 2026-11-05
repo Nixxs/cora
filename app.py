@@ -27,6 +27,7 @@ from storage.signal_settings_store import SignalSettings
 from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
 from server.listener import Listener
+from tools.look_again import KeptImages
 from web.feed import MessageFeed
 from web.voice import VoiceRelay
 from web.pairing import Pairing
@@ -259,6 +260,8 @@ class CoraApp(
         self.calendar_problem = ""
         self.email_status = EmailStatus()
         self.email_controls: EmailControls | None = None
+        # The person's photos from this conversation, in memory only, for look_again.
+        self.kept_images = KeptImages()
         self.tools = create_tool_registry(
             get_connection=self.tool_connection,
             is_closing=lambda: self.closing or self.reconnecting,
@@ -267,6 +270,7 @@ class CoraApp(
             write_debug=self.activity.write,
             schedule=lambda action: self.run_worker(action, group="tool-actions"),
             screen_looking=lambda: self.screen_looking,
+            kept_images=self.kept_images,
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -374,7 +378,13 @@ class CoraApp(
         self.live.voice_relay = self.web_voice
         # Whether a page's Talk woke her from standby, so hanging up puts her back.
         self.web_talk_woke = False
+        # Where the person is talking from, still to be told to her (she was waking), or None.
+        self.web_talk_where: str | None = None
         self.conversation.listeners.append(self.publish_to_web)
+        # The person's photos and the pictures she shows reach the page too, from memory.
+        self.web_pictures = KeptImages(prefix="pic")
+        self.conversation.photo_listeners.append(self.publish_web_photo)
+        self.conversation.picture_listeners.append(self.publish_web_picture)
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
@@ -406,6 +416,7 @@ class CoraApp(
             record_activity=self.record_idle_activity, write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
             trace=self.trace_live, send_without_live=self.send_without_live,
+            keep_image=self.kept_images.keep,
         )
         self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(

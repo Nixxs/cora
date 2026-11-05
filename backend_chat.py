@@ -28,8 +28,8 @@ STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY})
 # Signal, away from the desk: nothing that needs the screen either. Tools that change things are
 # offered: the person approves them in the chat.
 SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image"}
-# The web page, often on a phone: the same as Signal for now (pictures may come to the page later).
-WEB_EXCLUDED = SIGNAL_EXCLUDED
+# The web page, often on a phone: like Signal, except that the page shows her pictures.
+WEB_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen"}
 
 TOOL_REFUSED ='{"status": "error", "message": "That tool is not available here."}'
 TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in time; do not guess its result."}'

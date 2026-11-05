@@ -5,6 +5,7 @@ The page and its API are served by the same listener as the webhooks (app_areas/
 
 import asyncio
 from contextvars import ContextVar
+import io
 import json
 import secrets
 from uuid import UUID
@@ -13,17 +14,29 @@ from textual import work
 
 from backend_chat import WEB_EXCLUDED, BackendRoute
 from live import typed_content
-from messaging.messages import APPROVAL_SECONDS
+from messaging.images import photo_content, photo_described, read_photo
+from messaging.messages import APPROVAL_SECONDS, image_seen_content
+from messaging.receiver import WITHHELD_IMAGE
+from tools.look_at_screen import PASTE_QUESTION, WEB_PHOTO_INSTRUCTIONS
 from session_config import WEB_CHAT_INSTRUCTIONS
 from storage.web_device_store import WebDevice
 from ui.model_settings import WebControls
-from web.feed import APPROVAL, APPROVAL_DONE, KEEP as FEED_KEEP
+from web.feed import APPROVAL, APPROVAL_DONE, KEEP as FEED_KEEP, PHOTO, PICTURE
 from web.pairing import shown_code
 from web.routes import WebAccess
 
 # The page's own mark for the message being answered, set for that answer's task only, so the
 # message and her reply reach the feed marked and that page doesn't show them twice.
 WEB_REF: ContextVar[str | None] = ContextVar("web_ref", default=None)
+# What voice Cora is told as a call on the web page starts or ends, so she knows where the person is.
+TALKING_FROM = (
+    "they're talking to you from their {device} through your web page, probably away from the "
+    "desk, so the desk's screen and microphone aren't where they are. If they want to show you "
+    "something, they can send a photo from the page."
+)
+BACK_AT_DESK = "they're talking to you at the desk again, on its microphone and speaker."
+# Her pictures for the page are kept this size at most.
+PICTURE_MAX_SIDE = 1600
 # What a request for approval shows of what would be done: each argument on its own line.
 APPROVAL_VALUE_MAX_CHARS = 300
 APPROVAL_DETAIL_MAX_CHARS = 1500
@@ -55,7 +68,7 @@ class WebInterfaceMixin:
         return WebAccess(self.web_pairing, add_device, find_device, self.on_web_paired,
                          send_message=self.answer_on_web, feed=self.web_feed, feed_ready=self.web_feed_ready,
                          answer_approval=self.answer_web_approval, voice=self.web_voice,
-                         on_listening=self.on_web_listening, on_talk=self.on_web_talk)
+                         on_listening=self.on_web_listening, on_talk=self.on_web_talk, photo=self.web_photo)
 
     def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
         """A page starts or stops talking to her. Starting wakes her from standby (and hanging up
@@ -75,6 +88,7 @@ class WebInterfaceMixin:
             self.run_worker(self.live.use_web_microphone(listener.mic), group="web-talk", exit_on_error=False)
             self.web_voice.tell(listener, {"type": "talking"})
             self.activity.write(f"Talking to Cora from {device.name}; the desk mic is quiet.", "Web voice")
+            self.tell_cora_where(TALKING_FROM.format(device=device.name))
             return
         if not self.web_voice.stop_talking(listener):
             return
@@ -92,6 +106,31 @@ class WebInterfaceMixin:
             self.activity.write(f"{why} Cora goes back to standby, as Talk woke her.", "Web voice")
         else:
             self.activity.write(f"{why} The desk mic hears her again.", "Web voice")
+            # She stays on: she's told the person is back on the desk's mic and speaker.
+            self.tell_cora_where(BACK_AT_DESK)
+
+    def tell_cora_where(self, where: str) -> None:
+        """Let voice Cora know where the person is talking from; if she's still waking (Talk
+        woke her), it's told once she's connected (see web_voice_connected)."""
+        self.web_talk_where = where
+        if self.live.ready:
+            self.run_worker(self.send_web_talk_where(), group="web-talk-where", exit_on_error=False)
+
+    def web_voice_connected(self) -> None:
+        """Live is active: anything she's still to be told about where the person is goes now."""
+        if self.web_talk_where is not None:
+            self.run_worker(self.send_web_talk_where(), group="web-talk-where", exit_on_error=False)
+
+    async def send_web_talk_where(self) -> None:
+        where, self.web_talk_where = self.web_talk_where, None
+        if where is None:
+            return
+        try:
+            if not await self.live.note_where_they_are(where):
+                self.web_talk_where = where  # not connected after all: told when she is
+        except Exception as error:
+            self.activity.write(f"Telling Cora where you're talking from failed ({type(error).__name__}).",
+                                "Web voice")
 
     def web_talk_lost_live(self) -> None:
         """She went into standby or disconnected while a page was talking: that call ends."""
@@ -100,6 +139,8 @@ class WebInterfaceMixin:
             return
         self.web_voice.stop_talking(talker)
         self.web_talk_woke = False
+        # Not carried into her next session.
+        self.web_talk_where = None
         self.run_worker(self.live.use_web_microphone(None), group="web-talk", exit_on_error=False)
         self.web_voice.tell(talker, {"type": "talk_ended", "reason": "standby"})
         self.activity.write(f"Talk on {talker.device} ended: Cora is in standby.", "Web voice")
@@ -148,6 +189,24 @@ class WebInterfaceMixin:
         answer.set_result(approved)
         return True
 
+    def publish_web_photo(self, image_id: str) -> None:
+        """One of the person's kept photos, for every page (the one that sent it shows its own)."""
+        self.web_feed.publish_image(PHOTO, {"id": image_id, "ref": WEB_REF.get()}, "user")
+
+    def publish_web_picture(self, image, caption: str, page_url: str) -> None:
+        """A picture she showed (a PIL image from show_web_image), kept in memory for the page."""
+        picture = image.convert("RGB")
+        picture.thumbnail((PICTURE_MAX_SIDE, PICTURE_MAX_SIDE))
+        buffer = io.BytesIO()
+        picture.save(buffer, format="JPEG", quality=85)
+        picture_id = self.web_pictures.keep(buffer.getvalue(), caption, page_url)
+        self.web_feed.publish_image(PICTURE, {"id": picture_id, "caption": caption, "url": page_url}, "assistant")
+
+    def web_photo(self, image_id: str) -> bytes | None:
+        """A kept photo of the person's (img…) or a picture she showed (pic…), for a page; None if gone."""
+        kept = (self.web_pictures if image_id.startswith("pic") else self.kept_images).get(image_id)
+        return kept.jpeg if kept is not None else None
+
     def publish_to_web(self, role: str, text: str, channel: str, device: str | None = None) -> None:
         """Every message said in the conversation, for pages showing it (the conversation's listener)."""
         self.web_feed.publish(role, text, channel, ref=WEB_REF.get(), device=device)
@@ -168,12 +227,24 @@ class WebInterfaceMixin:
                 rows = []
             self.web_feed.seed(rows)
 
-    async def answer_on_web(self, device: WebDevice, text: str, on_text, ref: str | None = None) -> str | None:
+    async def answer_on_web(self, device: WebDevice, text: str, on_text, ref: str | None = None,
+                            image: bytes | None = None) -> str | None:
         """A message from the web page: the same conversation as the desk, answered like Signal.
 
         One at a time, so a second message is answered with the first exchange in its history.
         on_text gets her reply so far as it streams to the page; the desk shows the finished one.
+        image: a photo sent with it, which she sees herself on this turn (see read_web_photo).
         """
+        content, described = typed_content(text), None
+        if image is not None:
+            content, described = await self.read_web_photo(text, image)
+        shown = f"[image] {text}".rstrip() if image is not None else text
+
+        def show(said: str) -> None:
+            self.conversation.show_web_message(said, device.name)
+            if described is not None:
+                self.conversation.show_photo_note(described)
+
         async def write(history: list[dict]) -> str | None:
             try:
                 # Tools that change things are asked about on the page, with Approve and Deny.
@@ -182,7 +253,7 @@ class WebInterfaceMixin:
                     tool_seconds=APPROVAL_SECONDS + 60, asked_where="on the web page",
                 )
                 reply = await self.reply_in_writing(
-                    typed_content(text), history, route, WEB_CHAT_INSTRUCTIONS, on_text=on_text,
+                    content, history, route, WEB_CHAT_INSTRUCTIONS, on_text=on_text,
                 )
                 if not reply:
                     raise ValueError("empty reply")
@@ -200,14 +271,37 @@ class WebInterfaceMixin:
             marked = WEB_REF.set(ref)
             try:
                 reply = await self.answer_person_in_writing(
-                    [text], lambda said: self.conversation.show_web_message(said, device.name), write,
-                    label="Cora · web", channel="web", where="wrote to you on your web page",
+                    [shown], show, write, label="Cora · web", channel="web", where="wrote to you on your web page",
+                    noted=f"{shown}\n{described}" if described else None,
                 )
             finally:
                 WEB_REF.reset(marked)
             if reply is not None:
                 self.activity.write(f"Web reply sent: characters={len(reply)}", "Web reply sent")
             return reply
+
+    async def read_web_photo(self, text: str, image: bytes) -> tuple[list[dict], str | None]:
+        """(this turn's content, the photo's description for later turns or None).
+
+        The hybrid: she sees the photo itself on this turn (a written turn is a request of its own,
+        so it never fills a session), while a separate look describes it for later turns and
+        voice, and withholds explicit, gory or abusive ones before she sees anything. The photo is
+        kept in memory for look_again; never saved.
+        """
+        try:
+            jpeg, seen = await asyncio.to_thread(read_photo, text or PASTE_QUESTION, image, WEB_PHOTO_INSTRUCTIONS)
+        except Exception as error:
+            self.activity.write(f"A photo from the web page couldn't be read ({type(error).__name__}).",
+                                "Image look failed")
+            return typed_content(text) + [{"type": "input_text", "text": (
+                "A photo was sent with this message but couldn't be opened. Say so rather than guessing."
+            )}], None
+        if seen == WITHHELD_IMAGE:
+            self.activity.write("Withheld an explicit, gory or abusive photo from Cora.", "Image withheld")
+            return typed_content(text) + [image_seen_content(WITHHELD_IMAGE)], None
+        described = photo_described(self.kept_images.keep(jpeg), seen)
+        self.activity.write("Read a photo from the web page for Cora.", "Image read")
+        return photo_content(text, jpeg, described), described
 
     def on_web_paired(self, device: WebDevice) -> None:
         self.activity.write(f"Paired a device with the web interface: {device.name}.", "Web interface")

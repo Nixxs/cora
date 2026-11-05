@@ -42,12 +42,20 @@ function append(element) {
  * A message. who: "You" or "Cora". via: where it came from or went ("web", "Signal", "voice"…).
  * html: Cora's Markdown, already rendered and made safe by the server; text: plain text, escaped here.
  */
-export function addMessage({ who, via = "", html, text = "", when = new Date() }) {
+export function addMessage({ who, via = "", html, text = "", when = new Date(), photo = null }) {
   const message = document.createElement("article");
   message.className = `message ${who === "Cora" ? "cora" : "you"}`;
   message.innerHTML = `
     <div class="label"><span class="who">${who}</span><span class="via">${via ? ` · ${escapeText(via)}` : ""}</span><span class="when">${time(when)}</span></div>
-    <div class="body">${html ?? `<p>${escapeText(text).replace(/\n/g, "<br>")}</p>`}</div>`;
+    <div class="body">${html ?? (text ? `<p>${escapeText(text).replace(/\n/g, "<br>")}</p>` : "")}</div>`;
+  if (photo) {
+    // The photo this page sent, shown from the phone itself (a local address, never uploaded again).
+    const image = document.createElement("img");
+    image.className = "photo";
+    image.src = photo;
+    image.alt = "Photo sent to Cora";
+    message.querySelector(".body").prepend(image);
+  }
   openLinksOutside(message);
   return append(message);
 }
@@ -58,6 +66,55 @@ function openLinksOutside(element) {
     link.target = "_blank";
     link.rel = "noopener noreferrer";
   }
+}
+
+/** An image from Cora's memory; once she no longer keeps it, a quiet line says so instead. */
+function keptImage(src, alt) {
+  const image = document.createElement("img");
+  image.className = "photo";
+  image.src = src;
+  image.alt = alt;
+  image.addEventListener("error", () => {
+    const gone = document.createElement("p");
+    gone.className = "gone";
+    gone.textContent = "(no longer kept)";
+    image.replaceWith(gone);
+  });
+  return image;
+}
+
+/** A photo the person sent from another device or the desk: under their latest message. */
+export function attachPhoto(src) {
+  const yours = output.querySelectorAll(".message.you");
+  const message = yours[yours.length - 1];
+  if (!message) return;
+  const follow = nearBottom();
+  message.querySelector(".body").append(keptImage(src, "Photo sent to Cora"));
+  if (follow) output.scrollTop = output.scrollHeight;
+}
+
+/** A picture Cora showed, with her caption and a link to the page it's from. */
+export function addPicture({ src, caption, url, when = new Date() }) {
+  const message = addMessage({ who: "Cora", via: "picture", text: "", when });
+  const body = message.querySelector(".body");
+  body.append(keptImage(src, caption || "A picture from Cora"));
+  const line = document.createElement("p");
+  line.className = "caption";
+  line.textContent = caption ? `${caption} · ` : "";
+  try {
+    // Only web links: her tool only gives https pages, but nothing else is made clickable here.
+    if (!/^https?:\/\//i.test(url)) throw new Error("not a web link");
+    const link = document.createElement("a");
+    link.href = url;
+    link.textContent = new URL(url).hostname;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    line.append(link);
+  } catch {
+    // No usable link: the caption alone.
+  }
+  body.append(line);
+  return message;
 }
 
 /** A reply streaming in: update(text) as it arrives, then finish(html) or fail(). */
@@ -179,12 +236,13 @@ export function setBars(levels) {
 }
 
 /** Calls onSend(text) when you send; Enter sends, Shift+Enter adds a line. */
-export function setupComposer(onSend) {
+export function setupComposer(onSend, hasPhoto = () => false) {
   const grow = () => {
     input.style.height = "auto";
     input.style.height = `${input.scrollHeight}px`;
-    composer.classList.toggle("has-text", input.value.trim() !== "");
+    composer.classList.toggle("has-text", input.value.trim() !== "" || hasPhoto());
   };
+  composer.addEventListener("photo-changed", grow);
   input.addEventListener("input", grow);
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
@@ -195,10 +253,11 @@ export function setupComposer(onSend) {
   composer.addEventListener("submit", (event) => {
     event.preventDefault();
     const text = input.value.trim();
-    if (!text) return;
+    // A photo can go on its own.
+    if (!text && !hasPhoto()) return;
     input.value = "";
-    grow();
     onSend(text);
+    grow();
   });
 }
 

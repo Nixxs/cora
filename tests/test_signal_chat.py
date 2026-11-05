@@ -18,6 +18,7 @@ from greeting import signal_hook
 from messaging.container import ATTACHMENTS, delete_attachments
 from messaging.images import IMAGE_MAX_BYTES, IMAGES_PER_MESSAGE, read_images, readable_images
 from messaging.messages import SIGNAL_SORRY, image_seen_content, signal_content, signal_message_text
+from messaging.images import photo_described
 from messaging.receiver import WITHHELD_IMAGE, Attachment, IncomingMessage, SignalReceiver, parse_event
 from tools.look_at_screen import PASTE_QUESTION, SIGNAL_IMAGE_INSTRUCTIONS
 from messaging.setup import LINKED, OFF, SignalStatus
@@ -338,13 +339,19 @@ class SignalAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(fake_look.call_args.args[0], "Can I claim this?")
             app.signal.client.attachment.assert_awaited_once_with(CORA, "abc123.jpg")
             content = app.backend_chat.reply.await_args.kwargs["content"]
+            # Your own photo is kept in memory for look_again, and its description carries its id.
+            described = photo_described("img1", "A receipt for $42")
             self.assertEqual(content, [
                 {"type": "input_text", "text": "[image] Can I claim this? [1 attachment, not opened]"},
-                image_seen_content("A receipt for $42"),
+                image_seen_content(described),
             ])
-            # Saved and shown only as marked, like a pasted image; the description isn't kept.
+            self.assertIsNotNone(app.kept_images.get("img1"))
+            # Saved only as marked, like a pasted image; the description isn't saved, but a quiet
+            # note under the message carries it (and its id) into later turns.
             self.assertEqual(records[0], ("user", "[image] Can I claim this? [1 attachment, not opened]", "signal"))
-            self.assertFalse(any("$42" in str(entry) for entry in app.conversation.log_entries))
+            self.assertFalse(any("$42" in text for _, text, _ in records))
+            later = [item["content"][0]["text"] for item in app.conversation.get_reconnect_history()]
+            self.assertIn(f"(The photo I sent. {described})", later)
             app_areas.signal_chats.delete_attachments.assert_awaited_once_with(["abc123.jpg", "def456.pdf"])
             self.assertTrue(any(entry.endswith("Read 1 Signal image(s) for Cora.") for entry in app.activity.entries))
 

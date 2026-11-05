@@ -72,6 +72,7 @@ class ChatMixin:
 
     async def answer_person_in_writing(
         self, said: list[str], show_message, write, *, label: str, channel: str, where: str,
+        noted: str | None = None,
     ) -> str | None:
         """The person's own messages from away from the desk (Signal, the web page), answered as one Cora.
 
@@ -94,7 +95,9 @@ class ChatMixin:
             # Answered before she says hello, so the hello can follow on from it.
             self.signal_launch_exchanges.append((joined, text))
         try:
-            await self.live.note_signal_exchange(joined, text, where)
+            # noted: what voice Cora is told they said, when more than the chat shows (a photo's
+            # description, say).
+            await self.live.note_signal_exchange(noted or joined, text, where)
         except Exception as error:
             self.activity.write(f"Note to voice Cora failed ({type(error).__name__}).", f"{label} note failed")
         return text

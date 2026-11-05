@@ -233,6 +233,9 @@ class LiveSessionMixin:
         if not self.standby or self.closing or self.reconnecting:
             return
         if await self.conversation_persistence.end_conversation() and not self.closing:
+            # Photos belong to the conversation they came in.
+            self.kept_images.clear()
+            self.web_pictures.clear()
             self.process_finished_conversations()
 
     @work(group="database-startup")
@@ -318,6 +321,9 @@ class LiveSessionMixin:
         feed = getattr(self, "web_feed", None)
         if feed is not None:
             feed.set_status(state)
+        # Connected while a page talks (Talk woke her): she's told where the person is now.
+        if state == "active" and getattr(self, "web_voice", None) is not None:
+            self.web_voice_connected()
         # A page talking to her can't once she's in standby or disconnected: its call ends.
         if state in ("standby", "disconnected") and getattr(self, "web_voice", None) is not None:
             self.web_talk_lost_live()

@@ -64,6 +64,13 @@
 
       <form id="composer" class="frame" autocomplete="off">
         <span class="frame-label" id="composer-label">message</span>
+        <!-- On an iPhone this offers Take Photo or Photo Library. -->
+        <button type="button" id="photo-button" aria-label="Add a photo">+img</button>
+        <input type="file" id="photo-input" accept="image/*" hidden>
+        <span id="photo-chip" hidden>
+          <img id="photo-thumb" alt="The photo to send">
+          <button type="button" id="photo-remove" aria-label="Remove the photo">×</button>
+        </span>
         <textarea id="chat-input" rows="1" enterkeyhint="send"
                   placeholder="Type to Cora…" aria-labelledby="composer-label"></textarea>
         <button type="submit" id="send-button" aria-label="Send">⏎</button>

@@ -1,6 +1,7 @@
 """The title bar's view button switches between the chat and the dashboard. Mocked APIs only."""
 
 import asyncio
+from messaging.images import photo_described
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic
 import unittest
@@ -340,7 +341,9 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.wait_for(app.workers.wait_for_complete(), 3)
                 await pilot.pause()
                 self.assertEqual(app.live.send_text.await_args.args, ("What's this?",))
-                self.assertEqual(app.live.send_text.await_args.kwargs, {"image_seen": "A black square."})
+                # Kept for look_again: the description carries the photo's id.
+                self.assertEqual(app.live.send_text.await_args.kwargs,
+                                 {"image_seen": photo_described("img1", "A black square.")})
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(box.border_subtitle, "")
 
