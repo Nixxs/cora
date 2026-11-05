@@ -50,13 +50,15 @@ class MessageRecord(Base):
         UniqueConstraint("conversation_id", "sequence_number", name="messages_conversation_sequence_key"),
         CheckConstraint("sequence_number > 0", name="messages_sequence_check"),
         CheckConstraint("role IN ('user', 'assistant')", name="messages_role_check"),
-        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal', 'email')", name="messages_channel_check"),
+        CheckConstraint("channel IN ('voice', 'keyboard', 'screen', 'signal', 'email', 'web')", name="messages_channel_check"),
         CheckConstraint("status IN ('incomplete', 'completed', 'interrupted')", name="messages_status_check"),
         CheckConstraint(
             "delivery_status IN ('not_applicable', 'pending', 'sent', 'failed')",
             name="messages_delivery_status_check",
         ),
         CheckConstraint("btrim(text) <> ''", name="messages_text_check"),
+        CheckConstraint("device IS NULL OR (btrim(device) <> '' AND char_length(device) <= 60)",
+                        name="messages_device_check"),
         {"schema": "public"},
     )
 
@@ -71,6 +73,8 @@ class MessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
     status: Mapped[str] = mapped_column(Text, server_default="incomplete")
     delivery_status: Mapped[str] = mapped_column(Text, server_default="not_applicable")
+    # The paired device a web message was sent from; None otherwise.
+    device: Mapped[str | None] = mapped_column(Text)
 
     conversation: Mapped[ConversationRecord] = relationship(back_populates="messages")
 
@@ -726,7 +730,27 @@ class WebhookSettingRecord(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     public_url: Mapped[str | None] = mapped_column(Text)
     port: Mapped[int] = mapped_column(Integer, server_default=sql_text("8000"))
+    # The web interface, on the same listener and address.
+    web_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class WebDeviceRecord(Base):
+    """A device paired with the web interface: its name and the SHA-256 of the token in its cookie."""
+
+    __tablename__ = "web_devices"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="web_devices_token_hash_key"),
+        CheckConstraint("token_hash ~ '^[0-9a-f]{64}$'", name="web_devices_token_hash_check"),
+        CheckConstraint("btrim(name) <> '' AND char_length(name) <= 60", name="web_devices_name_check"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    name: Mapped[str] = mapped_column(Text)
+    token_hash: Mapped[str] = mapped_column(Text)
+    paired_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
 class SelfImageRecord(Base):

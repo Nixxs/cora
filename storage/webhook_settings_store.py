@@ -1,4 +1,5 @@
-"""Save Cora's webhook setup: whether she listens, the public address that reaches her, and her local port."""
+"""Save Cora's listener setup: webhooks and the web interface on or off, the public address that reaches
+her, and her local port."""
 
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -19,6 +20,13 @@ class WebhookSettings:
     # https://host[:port], without a path: Cora adds her own secret paths to it.
     public_url: str | None = None
     port: int = DEFAULT_PORT
+    # The web interface, served by the same listener at the same address.
+    web_enabled: bool = False
+
+    @property
+    def listening(self) -> bool:
+        """Whether the listener runs: something is on, and there's an address to reach it."""
+        return bool(self.public_url) and (self.enabled or self.web_enabled)
 
 
 def normalise_public_url(value: str) -> str:
@@ -49,7 +57,7 @@ class WebhookSettingsStore:
             row = session.execute(select(WebhookSettingRecord)).scalar_one_or_none()
         if row is None:
             return WebhookSettings()
-        return WebhookSettings(row.enabled, row.public_url, row.port)
+        return WebhookSettings(row.enabled, row.public_url, row.port, row.web_enabled)
 
     def _save(self, **values) -> None:
         statement = insert(WebhookSettingRecord).values(id=1, **values)
@@ -61,6 +69,9 @@ class WebhookSettingsStore:
 
     def set_enabled(self, enabled: bool) -> None:
         self._save(enabled=enabled)
+
+    def set_web_enabled(self, enabled: bool) -> None:
+        self._save(web_enabled=enabled)
 
     def set_address(self, public_url: str, port: int) -> None:
         self._save(public_url=normalise_public_url(public_url), port=check_port(port))

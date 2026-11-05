@@ -34,6 +34,12 @@ def typed_content(message: str, image_seen: str | None = None) -> list[dict]:
 NOTE_MAX_CHARS = 1400
 
 
+async def queued_chunks(audio: asyncio.Queue):
+    """A device's microphone on the web page: its PCM16 chunks as they arrive, until None."""
+    while (chunk := await audio.get()) is not None:
+        yield chunk
+
+
 def fit_note(text: str, max_chars: int) -> str:
     """The text, cut to max_chars with an ellipsis when longer."""
     return text if len(text) <= max_chars else text[:max_chars - 1].rstrip() + "…"
@@ -79,6 +85,10 @@ class CoraLive:
         self._voice_delegation_ids = set()
         self._tool_delegation_ids = set()
         self.speaker = None
+        # Devices listening on the web page (web/voice.py), set by the app; None for none. And the
+        # audio of the one talking there, heard instead of the desk mic while it does.
+        self.web_microphone: asyncio.Queue | None = None
+        self.voice_relay = None
         self.speaker_muted = False
         self.microphone_muted = False
         self._microphone_bands = ((), 0.0)
@@ -146,6 +156,14 @@ class CoraLive:
                                     self._voice_delegation_ids.add(event.delegation.id)
                             elif event.type == "error":
                                 self.pending_text_requests.discard(getattr(event.error, "client_event_id", None))
+                            elif event.type == "session.output_audio.delta" and self.voice_relay_active():
+                                # A device is listening on the web page: her voice plays there and the
+                                # desk speaker stays quiet, so she isn't heard twice.
+                                try:
+                                    self.voice_relay.play(event.delta)
+                                except Exception as error:
+                                    if on_audio_status is not None:
+                                        on_audio_status(True, f"Web voice relay error: {type(error).__name__}")
                             elif (
                                 event.type == "session.output_audio.delta"
                                 and not playback_failed and not self.speaker_muted
@@ -289,6 +307,39 @@ class CoraLive:
             self._tool_delegation_ids.add(delegation_id)
         if kind in ("response.completed", "response.failed", "response.incomplete"):
             self._voice_delegation_ids.discard(delegation_id)
+
+    async def use_web_microphone(self, audio: asyncio.Queue | None) -> None:
+        """Hear a device talking on the web page (a queue of its PCM16 chunks), or the desk mic
+        again (None). The microphone task restarts on the new source if Live is connected; a
+        connection made later starts on it anyway."""
+        if audio is self.web_microphone:
+            return
+        previous = self.web_microphone
+        self.web_microphone = audio
+        if previous is not None:
+            # Ends the previous device's chunks, so its task stops cleanly.
+            previous.put_nowait(None)
+        await self.stop_microphone()
+        connection = self.connection
+        if connection is not None and self.ready and self.on_mic_status is not None:
+            self.microphone_task = asyncio.create_task(self.send_microphone(connection, self.on_mic_status))
+
+    def voice_relay_active(self) -> bool:
+        """Whether a device on the web page is listening (see web/voice.py)."""
+        return self.voice_relay is not None and self.voice_relay.active
+
+    def playback_busy(self) -> bool:
+        """Whether her speech is still playing: on the desk speaker, or on a listening device."""
+        speaker = self.speaker
+        # A muted desk speaker isn't playing, whatever it still holds.
+        if speaker is not None and not self.speaker_muted and speaker.is_playback_busy():
+            return True
+        return self.voice_relay is not None and self.voice_relay.is_playback_busy()
+
+    def yield_speaker(self) -> None:
+        """A device has started listening: what the desk speaker still has queued stops now."""
+        if self.speaker is not None:
+            self.speaker.close()
 
     def set_speaker_muted(self, muted: bool) -> None:
         self.speaker_muted = muted
@@ -585,8 +636,9 @@ class CoraLive:
         chunk_count = 0
         opening = self.opening_microphone
         try:
-            if self.microphone_muted:
-                # Keep Live's timeline moving without opening a recording device.
+            if self.microphone_muted and self.web_microphone is None:
+                # Keep Live's timeline moving without opening a recording device. (Mute is the
+                # desk's privacy switch: a device talking on the web page is heard regardless.)
                 # 480 PCM16 samples at 24 kHz represent 20 ms of generated silence.
                 silence = base64.b64encode(bytes(480 * 2)).decode("ascii")
                 while True:
@@ -598,12 +650,18 @@ class CoraLive:
                     # device or send buffered room audio before Live is ready.
                     await self.started.wait()
                     self.trace("microphone.opening_handoff", buffered_chunks=opening.audio.qsize())
-                source = opening.chunks() if opening is not None else microphone_chunks()
+                if opening is not None:
+                    source = opening.chunks()
+                elif self.web_microphone is not None:
+                    # A device is talking on the web page: its microphone, not the desk's.
+                    source = queued_chunks(self.web_microphone)
+                else:
+                    source = microphone_chunks()
                 began = monotonic()
                 sent_seconds = 0.0
                 async with aclosing(source) as chunks:
                     async for chunk in chunks:
-                        if self.microphone_muted:
+                        if self.microphone_muted and self.web_microphone is None:
                             break
                         if opening is not None:
                             # Live drops audio beyond a 5 s burst or 1.2x real time; pace the

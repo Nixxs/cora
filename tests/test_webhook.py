@@ -21,7 +21,9 @@ from storage.webhook_settings_store import WebhookSettingsStore
 from mail import webhook
 from mail.account import READY, EmailStatus, GraphError, MailSubscription, Mailbox
 from mail.calendar_events import Calendar
-from mail.webhook import BODY_MAX_BYTES, WebhookServer, calendar_urls, mail_urls, webhook_app, webhook_secrets
+from mail.webhook import BODY_MAX_BYTES, calendar_urls, graph_routes, mail_urls, webhook_secrets
+from server.listener import Listener, build_app
+from web.routes import web_routes
 from storage.webhook_settings_store import WebhookSettings, check_port, normalise_public_url
 import test_keyboard_persistence as keyboard_tests
 from test_email import FakeClient, FakeResponse
@@ -30,12 +32,17 @@ PATH, STATE = "path-secret", "state-secret"
 EXPIRES = datetime(2026, 11, 2, 9, tzinfo=timezone.utc)
 
 
+def listener_app(*graph_args):
+    """The listener's app as Cora builds it: Graph notifications first, then the web page."""
+    return build_app(graph_routes(*graph_args), web_routes())
+
+
 class WebhookAppTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.on_mail, self.on_lifecycle = MagicMock(), MagicMock()
         self.on_calendar, self.on_calendar_lifecycle = MagicMock(), MagicMock()
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=webhook_app(
+            transport=httpx.ASGITransport(app=listener_app(
                 lambda: (PATH, STATE), self.on_mail, self.on_lifecycle, self.on_calendar, self.on_calendar_lifecycle,
             )),
             base_url="http://test",
@@ -72,8 +79,14 @@ class WebhookAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_wrong_paths_methods_and_oversized_bodies_are_refused(self):
         ours = [{"clientState": STATE}]
         self.assertEqual((await self.post("/webhooks/other/mail", ours)).status_code, 404)
-        self.assertEqual((await self.post("/", ours)).status_code, 404)
-        self.assertEqual((await self.client.get(f"/webhooks/{PATH}/mail")).status_code, 405)
+        # The web page lives at the root: it only answers GET, and paths outside it aren't served.
+        self.assertEqual((await self.post("/", ours)).status_code, 405)
+        self.assertEqual((await self.client.get("/../app.py")).status_code, 404)
+        # Only the page's own files: not the web package's Python beside them.
+        self.assertEqual((await self.client.get("/routes.py")).status_code, 404)
+        self.assertEqual((await self.client.get("/")).status_code, 200)
+        # A GET on a webhook route falls through to the page's files, which have nothing there.
+        self.assertEqual((await self.client.get(f"/webhooks/{PATH}/mail")).status_code, 404)
         big = json.dumps({"value": ours, "pad": "x" * BODY_MAX_BYTES})
         self.assertEqual((await self.post(f"/webhooks/{PATH}/mail", content=big)).status_code, 413)
         self.on_mail.assert_not_called()
@@ -147,16 +160,16 @@ class WebhookSetupTests(unittest.TestCase):
         taken.listen()
         try:
             with self.assertRaises(OSError):
-                WebhookServer(MagicMock(), taken.getsockname()[1]).open()
+                Listener(MagicMock(), taken.getsockname()[1]).open()
         finally:
             taken.close()
 
 
-class WebhookServerTests(unittest.IsolatedAsyncioTestCase):
+class ListenerTests(unittest.IsolatedAsyncioTestCase):
     async def test_it_serves_on_localhost_until_stopped(self):
         import asyncio
         on_mail = MagicMock()
-        server = WebhookServer(webhook_app(lambda: (PATH, STATE), on_mail, MagicMock()), 0)
+        server = Listener(listener_app(lambda: (PATH, STATE), on_mail, MagicMock()), 0)
         server.open()
         port = server.socket.getsockname()[1]
         self.assertEqual(server.socket.getsockname()[0], "127.0.0.1")

@@ -26,7 +26,10 @@ from storage.client_store import Client
 from storage.signal_settings_store import SignalSettings
 from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
-from mail.webhook import WebhookServer
+from server.listener import Listener
+from web.feed import MessageFeed
+from web.voice import VoiceRelay
+from web.pairing import Pairing
 from storage.webhook_settings_store import WebhookSettings
 from services.confirmation import Confirmations
 from services.connection import ServiceManager
@@ -62,6 +65,7 @@ from app_areas.tasks import TasksMixin
 from app_areas.email_account import EmailAccountMixin
 from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
+from app_areas.web_interface import WebInterfaceMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
@@ -95,7 +99,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -333,7 +337,7 @@ class CoraApp(
         # Webhooks: her local listener, its settings and secrets, Graph's subscription to new mail,
         # and what Settings shows of them. The lock keeps starting and stopping in order.
         self.webhook_settings = WebhookSettings()
-        self.webhook_server: WebhookServer | None = None
+        self.webhook_server: Listener | None = None
         self.webhook_worker = None
         self.webhook_secrets: tuple[str, str] | None = None
         self.webhook_lock = asyncio.Lock()
@@ -348,6 +352,31 @@ class CoraApp(
         self.calendar_notify_timer = None
         self.mail_notify_timer = None
         self.webhook_controls = None
+        # The web interface, on the same listener: the open pairing code (if any), the paired
+        # devices as Settings last loaded them, and what Settings shows.
+        self.web_pairing = Pairing()
+        # One web message answered at a time (see answer_on_web).
+        self.web_reply_lock = asyncio.Lock()
+        # The conversation as the web page sees it: every message said, and earlier ones loaded
+        # from the database the first time a page connects.
+        self.web_feed = MessageFeed()
+        # The desk's Live state so far (set_connection_state keeps it current from here).
+        status = self.query_one("#chat-status", Button)
+        self.web_feed.set_status(next(
+            (state for state in ("active", "standby", "connecting", "disconnecting")
+             if status.has_class(f"state-{state}")), "disconnected",
+        ))
+        self.web_feed_lock = asyncio.Lock()
+        # Requests for approval waiting on the page, by id (see ask_on_web).
+        self.web_approvals: dict[str, asyncio.Future] = {}
+        # Her voice for devices listening on the page; Live plays to it instead of the desk while any do.
+        self.web_voice = VoiceRelay()
+        self.live.voice_relay = self.web_voice
+        # Whether a page's Talk woke her from standby, so hanging up puts her back.
+        self.web_talk_woke = False
+        self.conversation.listeners.append(self.publish_to_web)
+        self.web_devices = []
+        self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
         self.signal_startup = None
         self.signal_last_message_at: float | None = None
@@ -359,6 +388,10 @@ class CoraApp(
         self.confirmations = Confirmations(
             show=self.show_confirmation, close=self.close_confirmation, write_activity=self.activity.write,
             remind=lambda request: self.tell_cora_approval_waiting(request.title, request.tool, reminder=True),
+            # How each ended goes in the chat, and into the history Cora is given later.
+            on_outcome=lambda request, outcome: self.conversation.show_approval_outcome(
+                f"{request.title} · {request.tool}", outcome,
+            ),
         )
         self.services = ServiceManager(
             schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),

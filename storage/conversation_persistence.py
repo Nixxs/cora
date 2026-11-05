@@ -51,15 +51,19 @@ class ConversationPersistence:
         async with self.lock:
             return await asyncio.to_thread(operation, *args)
 
-    def record_chat_message(self, role: str, text: str, channel: str) -> None:
+    def record_chat_message(self, role: str, text: str, channel: str, device: str | None = None) -> None:
         if self.recording_closed:
             return
         self.workers = [worker for worker in self.workers if not worker.is_finished]
-        self.workers.append(self.schedule_save(uuid4(), role, text, channel))
+        # The device only for a web message: other channels call each step as they always have.
+        extra = (device,) if device is not None else ()
+        self.workers.append(self.schedule_save(uuid4(), role, text, channel, *extra))
 
-    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str) -> None:
+    async def save_chat_message(self, message_id: UUID, role: str, text: str, channel: str,
+                                device: str | None = None) -> None:
         try:
-            await self.call_database(self.storage.save_chat_message, message_id, role, text, channel)
+            extra = (device,) if device is not None else ()
+            await self.call_database(self.storage.save_chat_message, message_id, role, text, channel, *extra)
         except Exception as error:
             self.write_activity(
                 f"Chat save failed ({type(error).__name__}); displayed text remains available.",

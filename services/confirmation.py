@@ -40,10 +40,14 @@ class Confirmations:
 
     def __init__(self, show: Callable, close: Callable, write_activity: Callable,
                  timeout: float = CONFIRM_SECONDS, remind: Callable = lambda request: None,
-                 remind_after: float = REMIND_SECONDS) -> None:
+                 remind_after: float = REMIND_SECONDS,
+                 on_outcome: Callable = lambda request, outcome: None) -> None:
         self.show = show
         self.close = close
         self.write_activity = write_activity
+        # Told how each request ended (APPROVED, DECLINED or TIMED_OUT), wherever it was asked: the
+        # app notes it in the conversation, so Cora knows in later turns what was approved.
+        self.on_outcome = on_outcome
         self.timeout = timeout
         # Called once when a showing request is still unanswered after remind_after seconds.
         self.remind = remind
@@ -91,11 +95,19 @@ class Confirmations:
                 if self.waiting:
                     self.show(self.waiting[0])
         self.write_activity(f"{request.title} tool {tool}: {outcome}.", f"{request.title} · {tool} {outcome}")
+        self.tell_outcome(request, outcome)
         return outcome
+
+    def tell_outcome(self, request: ConfirmationRequest, outcome: str) -> None:
+        try:
+            self.on_outcome(request, outcome)
+        except Exception as error:
+            # The answer itself still stands.
+            self.write_activity(f"Noting the approval failed ({type(error).__name__}).", "Approval note failed")
 
     async def ask_in_chat(self, request: ConfirmationRequest, route) -> str:
         self.write_activity(
-            f"{request.title} tool {request.tool} is waiting for your approval on Signal.",
+            f"{request.title} tool {request.tool} is waiting for your approval {getattr(route, 'asked_where', 'in the chat')}.",
             f"{request.title} · {request.tool} needs approval",
         )
         try:
@@ -105,6 +117,7 @@ class Confirmations:
             outcome = TIMED_OUT
         self.write_activity(f"{request.title} tool {request.tool}: {outcome}.",
                             f"{request.title} · {request.tool} {outcome}")
+        self.tell_outcome(request, outcome)
         return outcome
 
     def answer(self, request_id: int, approved: bool) -> None:
