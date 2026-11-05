@@ -120,8 +120,8 @@ class LiveSessionMixin:
         tools_busy = any(
             worker.group == "tool-actions" and not worker.is_finished for worker in self.workers
         )
-        speaker = self.live.speaker
-        playback_busy = speaker is not None and speaker.is_playback_busy()
+        # The desk speaker, or a device listening on the web page.
+        playback_busy = self.live.playback_busy()
         return [name for name, busy in (
             ("connection setup", connecting),
             ("typed submission", keyboard_busy),
@@ -249,10 +249,7 @@ class LiveSessionMixin:
                 user_activity = self.wake.has_request(event.delta)
             self.record_idle_activity(user_activity=user_activity)
             self.inactivity.record_output()
-        elif (
-            event.type == "session.output_audio.delta" and self.live.speaker is not None
-            and not self.live.speaker_muted and self.live.speaker.is_playback_busy()
-        ):
+        elif event.type == "session.output_audio.delta" and self.live.playback_busy():
             # Output audio is a continuous stream: silent chunks are not speech.
             self.last_live_activity = monotonic()
             self.record_idle_activity()

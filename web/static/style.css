@@ -225,6 +225,17 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 
 /* ── Chat ── */
 
+/* The conversation and the message box, kept together so the voice panel can sit above them
+   (narrow screens) or beside them (wide ones). */
+#main {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
 #chat-panel {
   flex: 1;
   min-height: 0;
@@ -232,6 +243,61 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   flex-direction: column;
   margin-top: 6px;
 }
+
+/* ── Voice: a strip above the conversation; a panel beside it on wide screens ── */
+
+#voice-panel {
+  flex-shrink: 0;
+  margin-top: 6px;
+}
+
+.voice-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 10px 10px 14px;
+}
+
+#voice-bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 28px;
+  flex-shrink: 0;
+}
+#voice-bars span {
+  width: 4px;
+  height: 100%;
+  border-radius: 2px;
+  /* Quiet: a dim flat line, like the TUI's when nothing plays. */
+  background: #4a5a74;
+  transform: scaleY(0.14);
+  transition: transform 0.08s linear, background 0.3s ease;
+}
+#voice-panel[data-state="listening"] #voice-bars span { background: var(--cora); }
+
+#voice-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--dim);
+  font-size: 13px;
+  line-height: 1.35;
+}
+#voice-panel[data-state="listening"] #voice-text { color: var(--text); }
+#voice-panel[data-state="connecting"] #voice-text { color: var(--waiting); }
+
+.voice-button {
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--cora);
+  border-radius: 7px;
+  color: var(--cora);
+  font-weight: 700;
+}
+.voice-button.on { border-color: var(--dim); color: var(--dim); }
+.voice-button:active { background: var(--bg-hover); }
 
 #chat-output {
   flex: 1;
@@ -469,6 +535,29 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   .message .body > p, .message .body > ul, .message .body > ol, .message .body > blockquote { max-width: 100ch; }
   .approval { max-width: 100ch; }
   #composer { padding-left: 18px; }
+
+  /* The conversation on the left, voice in a panel on the right, the status row below both. */
+  #app {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-areas: "main voice" "status status";
+  }
+  #main { grid-area: main; }
+  #voice-panel { grid-area: voice; display: flex; flex-direction: column; }
+  #status-bar { grid-area: status; }
+  .voice-body {
+    flex: 1;
+    flex-direction: column;
+    justify-content: center;
+    gap: 22px;
+    padding: 24px 20px;
+    text-align: center;
+  }
+  #voice-bars { height: 120px; gap: 6px; }
+  #voice-bars span { width: 9px; border-radius: 4px; }
+  #voice-text { flex: 0; }
+  .voice-button { align-self: stretch; min-height: 44px; }
 }
 
 /* Landscape phones: every line counts. */

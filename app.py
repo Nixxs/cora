@@ -28,6 +28,7 @@ from mail.account import EmailAccount, EmailStatus, Mailbox, CALENDAR_SCOPES
 from mail.calendar_events import Calendar
 from server.listener import Listener
 from web.feed import MessageFeed
+from web.voice import VoiceRelay
 from web.pairing import Pairing
 from storage.webhook_settings_store import WebhookSettings
 from services.confirmation import Confirmations
@@ -368,6 +369,9 @@ class CoraApp(
         self.web_feed_lock = asyncio.Lock()
         # Requests for approval waiting on the page, by id (see ask_on_web).
         self.web_approvals: dict[str, asyncio.Future] = {}
+        # Her voice for devices listening on the page; Live plays to it instead of the desk while any do.
+        self.web_voice = VoiceRelay()
+        self.live.voice_relay = self.web_voice
         self.conversation.listeners.append(self.publish_to_web)
         self.web_devices = []
         self.web_controls = None

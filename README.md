@@ -1048,7 +1048,9 @@ remembers them. When she wants to use a tool that changes things (sending an
 email, making an event), the page shows exactly what it would do with **Approve**
 and **Deny**; nothing happens until you answer, and after 10 minutes it lapses.
 The bottom row shows the desk's voice state (Active, Standby…) and whether the
-page is in touch with Cora. Messages sent from the page are labelled with the
+page is in touch with Cora. Tap **Listen here** in the Voice panel to hear her
+voice on that device while she's Active (the desk speaker goes quiet meanwhile);
+on iPhone it keeps the app in the foreground, as iOS stops sound when it locks. Messages sent from the page are labelled with the
 device they came from (`You · web · iPad`). Run `python migrate.py` once for
 migrations 0048, 0049 and 0050. Save the public address under **Webhooks** first, then turn on Settings >
 Services > **Web interface**. The listener runs when webhooks, the web interface
@@ -2579,11 +2581,10 @@ features it helps check, and package last.
         the desk's label early.
       - *Very wide windows:* checked in a PC browser, and the full-width
         layout stays as it is (no centring): the page fills the window and the
-        device name shows at the bottom right. Where the voice controls and
-        audio bars go is decided when voice is designed, responsively: the
-        idea so far is that on narrow screens the voice animation sits at the
-        top with the conversation below, and on wide screens voice moves to a
-        panel on the right. If a PC needs its own layout, it's told apart by its
+        device name shows at the bottom right. Voice is laid out responsively
+        (built with WV1): on narrow screens its panel is a strip above the
+        conversation, and on wide landscape screens a 280-pixel panel on the
+        right. If a PC needs its own layout, it's told apart by its
         mouse rather than its size: `(hover: hover) and (pointer: fine)` holds
         for a mouse or trackpad, not a finger, even on an iPad with a keyboard.
       - *Stronger sign-in, later:* a device unused for 30 days is already
@@ -2623,7 +2624,28 @@ features it helps check, and package last.
     be a second session without the desk's tools and context. The desk or the
     phone has the audio, one at a time. Hanging up or a dropped connection hands
     it back to the desk.
-    - WV1 hear her on the phone; interrupting her clears the phone's queue.
+    - WV1 hear her on the phone, **built**. Live sends her speech as one
+      continuous stream (silence included) and handles interruptions itself,
+      so a page just plays what arrives; no clearing was needed. A voice relay
+      ([web/voice.py](web/voice.py)) takes each audio chunk from Live while
+      any device listens, skips silent ones, and queues the rest for each
+      listening page; one more than 8 seconds behind is dropped rather than
+      drifting later. Pages listen over a WebSocket (`/api/voice`: raw 24 kHz
+      mono PCM16 as binary messages, a ping every 20 seconds), open only to a
+      paired device and only from Cora's own page (the `Origin` must match,
+      since a WebSocket isn't held to the cookie's same-site rule everywhere).
+      While any device listens the desk speaker is quiet, so she isn't heard
+      twice, and what it still had queued stops when the first starts; it
+      plays again when the last stops. Standby waits for her voice on a page
+      too: the relay knows how long what it sent takes to play, and
+      `CoraLive.playback_busy` counts both. On the page, a **Voice** panel
+      ([voice.js](web/static/voice.js)) sits above the conversation on narrow
+      screens and beside it on wide ones, with **Listen here**, a line saying
+      where her voice plays, and bars drawn from what's actually playing.
+      Listening starts from the tap (iOS allows sound only then), asks iOS to
+      play through the silent switch, and schedules each piece straight after
+      the one before; a locked phone or backgrounded app ends it, and the page
+      says so when it's back.
     - WV2 talk from the phone, with the switch of audio owner.
     - WV3 audio bars, mute, and standby/resume from the page.
   - *Voice limits:* iOS suspends the mic and the connection when the screen

@@ -79,6 +79,8 @@ class CoraLive:
         self._voice_delegation_ids = set()
         self._tool_delegation_ids = set()
         self.speaker = None
+        # Devices listening on the web page (web/voice.py), set by the app; None for none.
+        self.voice_relay = None
         self.speaker_muted = False
         self.microphone_muted = False
         self._microphone_bands = ((), 0.0)
@@ -146,6 +148,14 @@ class CoraLive:
                                     self._voice_delegation_ids.add(event.delegation.id)
                             elif event.type == "error":
                                 self.pending_text_requests.discard(getattr(event.error, "client_event_id", None))
+                            elif event.type == "session.output_audio.delta" and self.voice_relay_active():
+                                # A device is listening on the web page: her voice plays there and the
+                                # desk speaker stays quiet, so she isn't heard twice.
+                                try:
+                                    self.voice_relay.play(event.delta)
+                                except Exception as error:
+                                    if on_audio_status is not None:
+                                        on_audio_status(True, f"Web voice relay error: {type(error).__name__}")
                             elif (
                                 event.type == "session.output_audio.delta"
                                 and not playback_failed and not self.speaker_muted
@@ -289,6 +299,23 @@ class CoraLive:
             self._tool_delegation_ids.add(delegation_id)
         if kind in ("response.completed", "response.failed", "response.incomplete"):
             self._voice_delegation_ids.discard(delegation_id)
+
+    def voice_relay_active(self) -> bool:
+        """Whether a device on the web page is listening (see web/voice.py)."""
+        return self.voice_relay is not None and self.voice_relay.active
+
+    def playback_busy(self) -> bool:
+        """Whether her speech is still playing: on the desk speaker, or on a listening device."""
+        speaker = self.speaker
+        # A muted desk speaker isn't playing, whatever it still holds.
+        if speaker is not None and not self.speaker_muted and speaker.is_playback_busy():
+            return True
+        return self.voice_relay is not None and self.voice_relay.is_playback_busy()
+
+    def yield_speaker(self) -> None:
+        """A device has started listening: what the desk speaker still has queued stops now."""
+        if self.speaker is not None:
+            self.speaker.close()
 
     def set_speaker_muted(self, muted: bool) -> None:
         self.speaker_muted = muted

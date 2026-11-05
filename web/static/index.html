@@ -39,22 +39,34 @@
   </main>
 
   <main id="app" class="screen" hidden>
-    <section id="chat-panel" class="frame">
-      <header class="frame-title">
-        <span class="title-name">CORA</span>
-        <span class="title-fill" aria-hidden="true"></span>
-        <!-- Shown once it does something. -->
-        <button type="button" class="title-button" id="settings-button" hidden>settings</button>
-      </header>
-      <div id="chat-output" role="log" aria-live="polite"></div>
+    <!-- Her voice: above the conversation on narrow screens, beside it on wide ones. -->
+    <section id="voice-panel" class="frame">
+      <header class="frame-title"><span class="title-name">VOICE</span></header>
+      <div class="voice-body">
+        <div id="voice-bars" aria-hidden="true"></div>
+        <p id="voice-text">Her voice plays at the desk.</p>
+        <button type="button" id="listen-button" class="voice-button">Listen here</button>
+      </div>
     </section>
 
-    <form id="composer" class="frame" autocomplete="off">
-      <span class="frame-label" id="composer-label">message</span>
-      <textarea id="chat-input" rows="1" enterkeyhint="send"
-                placeholder="Type to Cora…" aria-labelledby="composer-label"></textarea>
-      <button type="submit" id="send-button" aria-label="Send">⏎</button>
-    </form>
+    <div id="main">
+      <section id="chat-panel" class="frame">
+        <header class="frame-title">
+          <span class="title-name">CORA</span>
+          <span class="title-fill" aria-hidden="true"></span>
+          <!-- Shown once it does something. -->
+          <button type="button" class="title-button" id="settings-button" hidden>settings</button>
+        </header>
+        <div id="chat-output" role="log" aria-live="polite"></div>
+      </section>
+
+      <form id="composer" class="frame" autocomplete="off">
+        <span class="frame-label" id="composer-label">message</span>
+        <textarea id="chat-input" rows="1" enterkeyhint="send"
+                  placeholder="Type to Cora…" aria-labelledby="composer-label"></textarea>
+        <button type="submit" id="send-button" aria-label="Send">⏎</button>
+      </form>
+    </div>
 
     <footer id="status-bar">
       <!-- The desk's Live state, shown once it arrives; the audio bars come with voice (WV3). -->

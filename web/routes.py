@@ -10,15 +10,19 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 
-from starlette.requests import Request
+from urllib.parse import urlsplit
+
+from starlette.requests import HTTPConnection, Request
 from starlette.responses import JSONResponse, Response, StreamingResponse
-from starlette.routing import BaseRoute, Mount, Route
+from starlette.routing import BaseRoute, Mount, Route, WebSocketRoute
+from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.staticfiles import StaticFiles
 
 from storage.web_device_store import WebDevice
 from .feed import MESSAGE, FeedMessage, MessageFeed, Status
 from .pairing import NO_CODE, PAIRED, Pairing, new_token, token_hash
 from .rendering import chat_html
+from .voice import VoiceRelay
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 COOKIE = "cora_device"
@@ -68,6 +72,9 @@ class WebAccess:
     feed_ready: Callable[[], Awaitable[None]] = lambda: asyncio.sleep(0)
     # answer_approval(id, approved) -> whether that request was still waiting.
     answer_approval: Callable[[str, bool], bool] | None = None
+    # Her voice for listening pages, and on_listening(device, listening) as a page starts or stops.
+    voice: VoiceRelay | None = None
+    on_listening: Callable[[WebDevice, bool], None] = lambda device, listening: None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -138,7 +145,7 @@ def api_routes(access: WebAccess) -> list[Route]:
     # Replies still being written, including any whose page has gone.
     replying: set[asyncio.Task] = set()
 
-    async def device_of(request: Request) -> WebDevice | None:
+    async def device_of(request: HTTPConnection) -> WebDevice | None:
         token = request.cookies.get(COOKIE)
         if not token or len(token) > 100:
             return None
@@ -266,13 +273,63 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "That request isn't waiting any more."}, 409)
         return answer({"answered": True})
 
+    async def voice(websocket: WebSocket) -> None:
+        """Her voice for this page: raw 24 kHz mono PCM16 as binary messages while she speaks, and
+        small JSON messages ({"type": "listening"}, {"type": "ping"}) to keep the line open."""
+        device = await device_of(websocket)
+        if device is None or access.voice is None or not same_origin(websocket):
+            # Refused before accepting: the browser sees the connection fail.
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        listener = access.voice.listen(device.name)
+        access.on_listening(device, True)
+
+        async def hear_hang_up() -> None:
+            # The page says nothing back yet; this only notices it going away.
+            try:
+                while True:
+                    await websocket.receive_text()
+            except (WebSocketDisconnect, RuntimeError):
+                return
+
+        hanging_up = asyncio.ensure_future(hear_hang_up())
+        try:
+            await websocket.send_json({"type": "listening"})
+            while not hanging_up.done():
+                try:
+                    chunk = await access.voice.next_chunk(listener, KEEP_ALIVE_SECONDS)
+                except TimeoutError:
+                    await websocket.send_json({"type": "ping"})
+                    continue
+                if chunk is None:
+                    # Fell too far behind: closed, so the page can start listening afresh.
+                    await websocket.close(code=1011)
+                    return
+                await websocket.send_bytes(chunk)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            hanging_up.cancel()
+            access.voice.stop(listener)
+            access.on_listening(device, False)
+
     return [
         Route("/api/session", session, methods=["GET"]),
         Route("/api/pair", pair, methods=["POST"]),
         Route("/api/messages", messages, methods=["POST"]),
         Route("/api/events", events, methods=["GET"]),
         Route("/api/approvals", approvals, methods=["POST"]),
+        WebSocketRoute("/api/voice", voice),
     ]
+
+
+def same_origin(websocket: WebSocket) -> bool:
+    """Whether the connection comes from Cora's own page: a WebSocket isn't held to the cookie's
+    same-site rule in every browser, so another site's page mustn't be able to listen in."""
+    origin = websocket.headers.get("origin")
+    host = websocket.headers.get("host")
+    return bool(origin and host) and urlsplit(origin).netloc == host
 
 
 def web_routes(access: WebAccess | None = None) -> list[BaseRoute]:

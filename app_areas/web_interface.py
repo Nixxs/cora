@@ -54,7 +54,23 @@ class WebInterfaceMixin:
 
         return WebAccess(self.web_pairing, add_device, find_device, self.on_web_paired,
                          send_message=self.answer_on_web, feed=self.web_feed, feed_ready=self.web_feed_ready,
-                         answer_approval=self.answer_web_approval)
+                         answer_approval=self.answer_web_approval, voice=self.web_voice,
+                         on_listening=self.on_web_listening)
+
+    def on_web_listening(self, device: WebDevice, listening: bool) -> None:
+        """A page started or stopped playing her voice: the desk speaker is quiet while any does."""
+        if listening:
+            if len(self.web_voice.listeners) == 1:
+                # What the desk was still about to say goes quiet too, rather than both at once.
+                self.live.yield_speaker()
+            self.activity.write(f"Cora's voice is playing on {device.name}; the desk speaker is quiet.",
+                                "Web voice")
+        else:
+            self.activity.write(
+                f"{device.name} stopped listening."
+                + ("" if self.web_voice.active else " The desk speaker plays her voice again."),
+                "Web voice",
+            )
 
     async def ask_on_web(self, request) -> bool:
         """A tool that changes things, asked about on the page: every open page shows the request
