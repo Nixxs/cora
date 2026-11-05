@@ -46,6 +46,8 @@
         <div id="voice-bars" aria-hidden="true"></div>
         <p id="voice-text">Tap Talk to talk to her here.</p>
         <div class="voice-buttons">
+          <!-- Only during a call: stops sending this device's mic; you still hear her. -->
+          <button type="button" id="mute-button" class="voice-button mute" aria-pressed="false" hidden>Mute</button>
           <button type="button" id="talk-button" class="voice-button talk">Talk</button>
         </div>
       </div>

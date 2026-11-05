@@ -1930,7 +1930,7 @@ features it helps check, and package last.
 20. Web interface WB0–WB4 (WB4 in two parts: approvals and status, then the wide-screen layout), then browser voice WV1–WV3: Cora on the iPhone and
     iPad mini as a home-screen web app, served by her webhook listener, in the
     same conversation as the desk and Signal (see Web interface in Details
-    below). WB5 (photos both ways) and WB6 (where you are, on demand) are built; next, WV3 (voice polish).
+    below). WB5 (photos both ways), WB6 (where you are) and WV3 (voice polish) are built; next, WB7 (maps on the page).
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below).
@@ -2709,12 +2709,22 @@ features it helps check, and package last.
         tap. If headphones come or go mid-call, the audio is rebuilt on the new
         route (not within 2 seconds of a start, as starting the mic can itself
         announce a device change).
-    - WV3 a mute for the device's own mic, and any polish testing turns up.
-      Done so far: the Voice panel's bars are split at a centre line, as the
+    - WV3 voice polish, **built**: the Voice panel's bars are split at a centre line, as the
       TUI's dashboard shows playback and microphone: her voice grows upward in
       her green, and what the device's mic picks up grows downward in the
       "You" blue (an analyser on the mic, read only, never played), so you can
       see you're being heard, and when you're talking over each other.
+      - *Mute:* a Mute button beside Hang up during a call. Muted, the mic's
+        track is disabled, so the page sends silence (the call stays open, she
+        carries on, and you still hear her); the button reads Unmute in the
+        waiting colour and the panel says she can't hear you. It stays muted
+        if headphones change mid-call, and a new call starts unmuted.
+      - *Mirrored bars:* while you're quiet (or muted), the lower half mirrors
+        her voice in her green, so her speech fills both halves as it did
+        before the split. Once the mic's loudness (RMS after noise
+        suppression) passes 0.02 the lower half shows your blue bars, held
+        for 0.6 seconds after you stop so it doesn't flicker; both values are
+        at the top of voice.js if testing shows they need tuning.
   - *Voice limits:* iOS suspends the mic and the connection when the screen
     locks or the app goes to the background, so voice works in the foreground
     only (only a native App Store app could avoid this). Starting audio needs a
@@ -2829,6 +2839,39 @@ features it helps check, and package last.
       contacts' chats, task coordinators or email threads (their allowlists
       don't include it). The coordinates go to OpenStreetMap's geocoder to
       name the place, and the place name to OpenAI as part of her context.
+  - WB7 maps on the page, planned: Cora can show a small map in the web chat
+    for a place, a route, or an area search ("cafes near Leederville").
+    - *How:* a `show_map` tool (mode: place, directions or search, with the
+      place, the origin and destination with a travel mode, or the search
+      text). On the page it shows as an interactive map from Google's Maps
+      Embed API (pan and zoom; a route shows its line, distance and time),
+      with an "Open in Google Maps" link underneath that opens the Maps app on
+      the iPhone for real navigation. "From here" can start from the place
+      `where_is_person` found (WB6).
+    - *Elsewhere:* like her pictures, it's saved to history as text
+      ("[map] route from Leederville to Fremantle, driving") so she remembers
+      showing it. The TUI shows that line with the same Google Maps link
+      (clickable), and on Signal she can send the link. Those links (Google
+      Maps URLs) need no key.
+    - *The key (a setting):* the Embed API is free with no usage limits but
+      needs a Google Cloud API key. It goes in Settings › Services › Web
+      interface ("Google Maps key"), kept in the system credential store like
+      her other secrets. Create it in Google Cloud Console with only the Maps
+      Embed API allowed and restricted to `https://cora.intelligis.io/*`, so
+      it's useless anywhere else (the page has to show it, as every embedded
+      map does). Without a key, `show_map` isn't offered, and she sends the
+      Google Maps link instead.
+    - *Privacy:* the embedded map loads from Google in your browser, so Google
+      sees what's mapped and your device's IP address, as when you open
+      Google Maps yourself. Nothing is sent to Google until she shows a map.
+    - *Not the same as a Maps MCP server:* a Google Maps MCP server (added
+      through MCP, item 18's services screen) would give her map data as
+      tools: real travel times, directions step by step, places with
+      opening hours and ratings. It doesn't draw maps. It needs the paid
+      Places and Routes APIs (Google gives a monthly free allowance), and
+      the text answers work everywhere, Signal and voice included. It's
+      worth adding on its own later; WB7 is only about showing the map, and
+      the two would share the same Google Cloud project.
   - *Calls with the phone locked:* not possible as a web app. iOS suspends web
     pages, Home Screen apps included, when the screen locks or another app
     comes to the front: the connection drops and the microphone stops. Only a

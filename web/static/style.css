@@ -289,6 +289,8 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 /* During a call: her voice in her colour, theirs in the "You" blue, as in the chat. */
 #voice-panel[data-state="talking"] #voice-bars .her { background: var(--cora); }
 #voice-panel[data-state="talking"] #voice-bars .you { background: var(--you); }
+/* While you're quiet (or muted), the lower half mirrors her voice, so it fills both halves. */
+#voice-panel[data-state="talking"] #voice-bars .you.mirror { background: var(--cora); }
 
 #voice-text {
   flex: 1;
@@ -315,6 +317,10 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 /* Talk in the TUI's "you" blue; Hang up in the warning colour while a call is on. */
 .voice-button.talk { border-color: var(--you); color: var(--you); }
 .voice-button.talk.on { border-color: var(--error); color: var(--error); }
+/* Mute in the dim colour; Muted stands out in the waiting colour so it isn't forgotten. */
+.voice-button.mute { border-color: var(--dim); color: var(--dim); }
+.voice-button.mute.on { border-color: var(--waiting); color: var(--waiting); }
+.voice-button[hidden] { display: none; }
 #voice-panel[data-state="talking"] #voice-text { color: var(--text); }
 
 #chat-output {
