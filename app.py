@@ -397,6 +397,10 @@ class CoraApp(
         # Phone calls to her number: Twilio's auth token (checks each call came from Twilio), or "".
         self.twilio_token = ""
         self.phone_controls = None
+        # One-time tokens given to calls Twilio is connecting, until their stream opens (see phone_calls).
+        self.phone_tokens: dict[str, float] = {}
+        # The phone call's place in the voice relay while a call is connected to her.
+        self.phone_listener = None
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None

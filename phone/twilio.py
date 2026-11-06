@@ -25,6 +25,8 @@ TOKEN_ACCOUNT = "phone:twilio-auth-token"
 # Twilio's auth tokens are 32 hexadecimal characters.
 TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 INCOMING_PATH = "/phone/incoming"
+# Where Twilio streams a call's audio once it's connected to her (a WebSocket).
+STREAM_PATH = "/phone/stream"
 
 # What Twilio's voice says: an Australian English voice.
 VOICE_LANGUAGE = "en-AU"
@@ -32,8 +34,8 @@ STRANGER_LINE = (
     "Hi, you've reached Cora, an A.I. assistant. I can only take calls from people I already know, "
     "sorry. Goodbye."
 )
-# P1a only: the person hears this until calls reach her (P1b).
-TEST_LINE = "Hi, it's Cora. I can hear it's you calling. Calls will reach me soon; for now this is only a test. Bye!"
+# A second call from the person while one is already connected to her.
+BUSY_LINE = "Sorry, Cora is already on a call with you. Goodbye."
 NOT_SET_UP_LINE = "Sorry, Cora can't take calls right now. Goodbye."
 
 
@@ -83,4 +85,20 @@ def say_and_hang_up(line: str) -> str:
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         f'<Response><Say language="{VOICE_LANGUAGE}">{escape(line)}</Say><Hangup/></Response>'
+    )
+
+
+def stream_url(public_url: str) -> str:
+    """The WebSocket address for a call's audio, from the public https address."""
+    return "wss://" + public_url.removeprefix("https://").rstrip("/") + STREAM_PATH
+
+
+def connect_stream(url: str, token: str) -> str:
+    """TwiML: connect the call's audio, both ways, to her listener's WebSocket, with a one-time
+    token so only this call's stream is let in. When the stream ends, so does the call."""
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Connect><Stream url="{escape(url)}">'
+        f'<Parameter name="token" value="{escape(token)}"/>'
+        '</Stream></Connect></Response>'
     )

@@ -540,6 +540,19 @@ class CoraLive:
             "mention this note, standby or the app."
         ))
 
+    async def send_phone_answer(self) -> None:
+        """Ask Cora to answer the phone: the person has just called her and the call is connected."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Live is not ready to answer a call")
+
+        event_id = f"greeting_{uuid4().hex}"
+        await self.append_commentary(connection, event_id, (
+            "Phone call note, not a message from the person. They've just rung your phone number "
+            "and the call is connected, so answer it as you would picking up their call, in a few "
+            "words of your own. Do not mention this note."
+        ))
+
     async def note_signal_exchange(self, message: str, reply: str, where: str = "messaged you on Signal") -> None:
         """Let voice Cora know about a written exchange (Signal, or email) that happened while she was connected."""
         connection = self.connection

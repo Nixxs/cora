@@ -26,6 +26,7 @@ from web import maps
 from web.feed import APPROVAL, APPROVAL_DONE, KEEP as FEED_KEEP, MAP, PHOTO, PICTURE
 from web.pairing import shown_code
 from web.routes import WebAccess
+from phone.routes import PHONE_DEVICE
 
 # The page's own mark for the message being answered, set for that answer's task only, so the
 # message and her reply reach the feed marked and that page doesn't show them twice.
@@ -57,6 +58,11 @@ def approval_detail(arguments: dict) -> str:
     return detail if len(detail) <= APPROVAL_DETAIL_MAX_CHARS else detail[:APPROVAL_DETAIL_MAX_CHARS - 1] + "…"
 
 
+def talk_kind(listener) -> str:
+    """The Activity heading for a talker: a phone call, or a page's Talk."""
+    return "Phone call" if listener.device == PHONE_DEVICE else "Web voice"
+
+
 class WebInterfaceMixin:
     """The web interface: turning it on, pairing devices and the list of them."""
 
@@ -75,9 +81,17 @@ class WebInterfaceMixin:
                          answer_location=lambda device, body: self.whereabouts.answer(device.name, body))
 
     def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
-        """A page starts or stops talking to her. Starting wakes her from standby (and hanging up
-        then puts her back), and Live hears that device's microphone instead of the desk's; only
-        one device talks at a time, so another taking over ends the first."""
+        """A page starts or stops talking to her (see voice_talk)."""
+        self.voice_talk(listener, talking, f"from {device.name}", f"{device.name} hung up.",
+                        TALKING_FROM.format(device=device.name))
+
+    def voice_talk(self, listener, talking: bool, from_where: str, hung_up: str, where: str,
+                   greeting: str = "welcome_back") -> None:
+        """A page or a phone call starts or stops talking to her. Starting wakes her from standby
+        (and hanging up then puts her back), and Live hears that microphone instead of the desk's;
+        only one talks at a time, so another taking over ends the first. greeting is how she
+        greets once woken ("phone": she answers the call, even if she was already on)."""
+        kind = talk_kind(listener)
         if talking:
             previous = self.web_voice.start_talking(listener)
             if previous is not None:
@@ -88,28 +102,31 @@ class WebInterfaceMixin:
                 if self.standby and not self.reconnecting:
                     self.action_reconnect()
                     if self.reconnecting:
-                        self.pending_greeting = "welcome_back"
+                        self.pending_greeting = greeting
+            if greeting == "phone" and self.live.ready and not self.standby:
+                # Already on: she still picks up the call.
+                self.send_greeting("phone")
             self.run_worker(self.live.use_web_microphone(listener.mic), group="web-talk", exit_on_error=False)
             self.web_voice.tell(listener, {"type": "talking"})
-            self.activity.write(f"Talking to Cora from {device.name}; the desk mic is quiet.", "Web voice")
-            self.tell_cora_where(TALKING_FROM.format(device=device.name))
+            self.activity.write(f"Talking to Cora {from_where}; the desk mic is quiet.", kind)
+            self.tell_cora_where(where)
             return
         if not self.web_voice.stop_talking(listener):
             return
-        self.end_web_talk(f"{device.name} hung up.")
+        self.end_web_talk(hung_up, kind)
         self.web_voice.tell(listener, {"type": "talk_ended", "reason": "hung up"})
 
-    def end_web_talk(self, why: str) -> None:
-        """The desk mic hears her again; if a page's Talk woke her, she goes back to standby
-        (once she's finished speaking and anything pending is done, as when she asks for it)."""
+    def end_web_talk(self, why: str, kind: str = "Web voice") -> None:
+        """The desk mic hears her again; if a page's Talk (or a call) woke her, she goes back to
+        standby (once she's finished speaking and anything pending is done, as when she asks for it)."""
         self.run_worker(self.live.use_web_microphone(None), group="web-talk", exit_on_error=False)
         woke = self.web_talk_woke
         self.web_talk_woke = False
         if woke and self.live.ready and not self.standby:
             self.request_standby()
-            self.activity.write(f"{why} Cora goes back to standby, as Talk woke her.", "Web voice")
+            self.activity.write(f"{why} Cora goes back to standby, as the call woke her.", kind)
         else:
-            self.activity.write(f"{why} The desk mic hears her again.", "Web voice")
+            self.activity.write(f"{why} The desk mic hears her again.", kind)
             # She stays on: she's told the person is back on the desk's mic and speaker.
             self.tell_cora_where(BACK_AT_DESK)
 
@@ -147,7 +164,7 @@ class WebInterfaceMixin:
         self.web_talk_where = None
         self.run_worker(self.live.use_web_microphone(None), group="web-talk", exit_on_error=False)
         self.web_voice.tell(talker, {"type": "talk_ended", "reason": "standby"})
-        self.activity.write(f"Talk on {talker.device} ended: Cora is in standby.", "Web voice")
+        self.activity.write(f"Talk on {talker.device} ended: Cora is in standby.", talk_kind(talker))
 
     def on_web_listening(self, device: WebDevice, listening: bool) -> None:
         """A page started or stopped playing her voice: the desk speaker is quiet while any does."""
@@ -213,7 +230,11 @@ class WebInterfaceMixin:
 
     async def locate_person(self, refresh: bool) -> dict:
         """where_is_person: the place the person's open page says they are, for Cora. Each check
-        shows a quiet line in the chat and on the page, and one in Activity (without the place)."""
+        shows a quiet line in the chat and on the page, and one in Activity (without the place).
+        Never during a phone call."""
+        if self.phone_listener is not None:
+            self.activity.write("Cora tried to check where you are: not during a phone call.", "Where you are")
+            return {"status": "unavailable", "message": WHERE_NOT["on_call"]}
         where, why_not, fresh = await self.whereabouts.check(refresh)
         if where is None:
             self.activity.write(f"Cora tried to check where you are: {why_not}.", "Where you are")

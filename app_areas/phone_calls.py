@@ -3,17 +3,35 @@ part of CoraApp (see app.py).
 
 Her phone number is a Twilio number, and Twilio asks her listener (the same one
 as the webhooks and the web page) what to do with each. Only the person's own number (the one set
-under Signal) reaches her; anyone else hears a short polite line. In P1a the person hears a test
-line; P1b connects the call to her voice.
+under Signal) reaches her; anyone else hears a short polite line.
+
+The person's call is connected to her voice: Twilio streams its audio to the listener, which hands
+it to the same relay as the web page's Talk (web/voice.py). So it's her usual session, tools and
+memory; a call wakes her from standby and hanging up puts her back. Each call gets a one-time
+token in its TwiML, so only that call's stream is let in.
 """
 
 import asyncio
+import secrets
+from time import monotonic
 
 from textual import work
 
 from phone import twilio
 from phone.routes import PhoneAccess
 from ui.model_settings import PhoneControls
+
+
+# Her note on a call, so she knows the person can only hear her (see voice_talk).
+ON_THE_PHONE = (
+    "they've rung your phone number and are talking to you on a phone call, so they can only hear "
+    "you: nothing shown on the desk's screen or the web page reaches them, so say what matters, "
+    "in a way that's easy to follow by ear. Where they are is never checked during a call; ask if "
+    "it matters. Tools that change things can't be approved on a call (never by saying yes): the "
+    "request waits on the desk's screen, so tell them it'll need doing from the desk."
+)
+# How long a call's token waits for its stream to open.
+TOKEN_SECONDS = 30
 
 
 def number_ending(number: str) -> str:
@@ -28,21 +46,47 @@ class PhoneCallsMixin:
     def phone_access(self) -> PhoneAccess:
         """What the phone routes may do, for the listener."""
         return PhoneAccess(token=lambda: self.twilio_token, public_url=lambda: self.webhook_settings.public_url or "",
-                           on_call=self.on_phone_call)
+                           on_call=self.on_phone_call, claim=self.claim_phone_token, voice=self.web_voice,
+                           on_stream=self.on_phone_stream)
 
     def on_phone_call(self, caller: str, call_id: str) -> str:
         """A call Twilio vouched for: the TwiML that answers it."""
         if not self.webhook_settings.phone_enabled:
             return twilio.say_and_hang_up(twilio.NOT_SET_UP_LINE)
         if twilio.same_number(caller, self.signal_settings.allowed_number):
-            self.activity.write("You called Cora's number; for now you hear a test line (calls reach her in P1b).",
-                                "Phone call")
-            self.notify("You're calling Cora's number.")
-            return twilio.say_and_hang_up(twilio.TEST_LINE)
+            if self.phone_listener is not None:
+                self.activity.write("You called Cora's number while already on a call with her.", "Phone call")
+                return twilio.say_and_hang_up(twilio.BUSY_LINE)
+            now = monotonic()
+            self.phone_tokens = {token: until for token, until in self.phone_tokens.items() if until > now}
+            token = secrets.token_urlsafe(32)
+            self.phone_tokens[token] = now + TOKEN_SECONDS
+            self.activity.write("You're calling Cora's number; connecting the call to her.", "Phone call")
+            return twilio.connect_stream(twilio.stream_url(self.webhook_settings.public_url or ""), token)
         # Strangers (and withheld numbers) are turned away, as on Signal.
         self.activity.write(f"A call from a number Cora doesn't know ({number_ending(caller)}) was turned away.",
                             "Phone call")
         return twilio.say_and_hang_up(twilio.STRANGER_LINE)
+
+    def claim_phone_token(self, token: str) -> bool:
+        """Whether a stream's token was given to a call moments ago; each works once."""
+        until = self.phone_tokens.pop(token, None)
+        return until is not None and until > monotonic() and self.webhook_settings.phone_enabled
+
+    def on_phone_stream(self, listener, connected: bool) -> None:
+        """A call's audio starts or stops reaching her: like a page's Talk, with the phone's
+        audio for her microphone and its line for her speaker (the desk is quiet meanwhile)."""
+        if connected:
+            self.phone_listener = listener
+            if len(self.web_voice.listeners) == 1:
+                # What the desk was still about to say goes quiet, rather than both at once.
+                self.live.yield_speaker()
+            self.notify("You're on a call with Cora.")
+            self.voice_talk(listener, True, "on a phone call", "", ON_THE_PHONE, greeting="phone")
+            return
+        if self.phone_listener is listener:
+            self.phone_listener = None
+        self.voice_talk(listener, False, "", "The phone call ended.", "")
 
     async def load_twilio_token(self) -> None:
         try:

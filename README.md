@@ -1934,7 +1934,8 @@ features it helps check, and package last.
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below). P1a (Twilio, and only your number gets
-    through) is built; next, P1b (the call reaches her).
+    through) and P1b (the call reaches her voice) are built; next, P1c
+    (approvals in Signal during a call).
     *Then a feature freeze:* about a month of using Cora day to day (desk,
     voice, Signal, the web page and calls) with no new features. Only fixes,
     polish from real use, documentation, and the housekeeping below. Ideas
@@ -2917,7 +2918,7 @@ features it helps check, and package last.
     native app using Apple's call framework (CallKit) could keep a call going,
     which means Xcode and Apple's developer programme. Calling her on her
     phone number (Phone calls, below) gets the same result without an app.
-- **Phone calls (Cora's own number), P1a built:** calling Cora like any contact,
+- **Phone calls (Cora's own number), P1a and P1b built:** calling Cora like any contact,
   which works with the phone locked, over Bluetooth and in the car, through
   iOS's own call handling; and later her calling places to get things done.
   - *Her phone number is a Twilio one:* a SIM can't be connected to software
@@ -2970,10 +2971,23 @@ features it helps check, and package last.
     calls from people I already know" and the call ends. Activity notes each
     call; a stranger's number only by its last three digits. Tested with a
     real Twilio number.
-  - P1b the call reaches her, next: the media stream (`<Connect><Stream>`, a
-    one-time token per call so only that call's stream is accepted), μ-law
-    and resampling both ways, barge-in (Twilio's `clear` when you talk over
-    her), waking and standby, and a note so she knows you're on a phone call.
+  - P1b the call reaches her, **built**: your call is answered with
+    `<Connect><Stream>` to `wss://…/phone/stream` on her listener, carrying a
+    one-time token (30 seconds, used once) so only that call's stream gets in.
+    The stream's 8 kHz μ-law becomes Live's 24 kHz PCM16 and back
+    ([phone/audio.py](phone/audio.py): numpy μ-law tables, and a short
+    low-pass filter for the exact 3× resampling, well under a millisecond of
+    delay; a general resampler buffered about 60 ms). The call plugs into the
+    web page's voice relay as a talker, so it's Talk by phone: the desk mic
+    and speaker go quiet, a call wakes her from standby and hanging up puts
+    her back, another device starting Talk ends the call, and her going into
+    standby hangs up. She answers like picking up (a "phone" greeting, even if
+    she was already on), and a note tells her you can only hear her, that
+    where you are isn't checked on calls (`where_is_person` refuses during
+    one), and that anything needing approval waits on the desk's screen
+    (never a yes on the call; Signal in P1c). Barge-in works as on the web
+    page: Live paces her speech and stops it when you talk, so nothing needs
+    clearing. A second call while one is connected hears a busy line.
   - P1c approvals in your Signal chat during a call, and polish from real calls.
   - *Setting up Twilio:*
     1. Sign up at twilio.com and upgrade from the trial (trial calls play a
@@ -3001,8 +3015,8 @@ features it helps check, and package last.
        Forwarding) instead of by code, try without Wi-Fi Calling, and check
        her SIM can call the Twilio number at all. Or skip forwarding and
        simply call the Twilio number: it reaches her the same way.
-    6. Call the Twilio number: Activity should say you called, and you hear
-       the test line. If it says a stranger was turned away, your number isn't
+    6. Call the Twilio number: Activity should say you're calling, and she
+       answers. If it says a stranger was turned away, your number isn't
        coming through as the one under Signal (Twilio shows the number it got
        in the call's log).
     - Caddy already passes everything for the address to her listener. If
