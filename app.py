@@ -68,6 +68,7 @@ from app_areas.email_account import EmailAccountMixin
 from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
 from app_areas.web_interface import WebInterfaceMixin
+from app_areas.phone_calls import PhoneCallsMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
@@ -101,7 +102,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -393,6 +394,9 @@ class CoraApp(
         self.whereabouts = Whereabouts(self.web_feed.ask_location)
         # The Google Maps key for maps on the page (Settings › Services › Web interface), or "".
         self.maps_key = ""
+        # Phone calls to her number: Twilio's auth token (checks each call came from Twilio), or "".
+        self.twilio_token = ""
+        self.phone_controls = None
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None

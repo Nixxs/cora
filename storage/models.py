@@ -732,6 +732,8 @@ class WebhookSettingRecord(Base):
     port: Mapped[int] = mapped_column(Integer, server_default=sql_text("8000"))
     # The web interface, on the same listener and address.
     web_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    # Phone calls to her number, through Twilio, on the same listener and address.
+    phone_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 

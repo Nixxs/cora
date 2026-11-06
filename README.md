@@ -1933,10 +1933,40 @@ features it helps check, and package last.
     below). WB5 (photos both ways), WB6 (where you are), WV3 (voice polish) and WB7 (maps on the page) are built.
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
-    Phone calls in Details below).
+    Phone calls in Details below). P1a (Twilio, and only your number gets
+    through) is built; next, P1b (the call reaches her).
+    *Then a feature freeze:* about a month of using Cora day to day (desk,
+    voice, Signal, the web page and calls) with no new features. Only fixes,
+    polish from real use, documentation, and the housekeeping below. Ideas
+    that come up go into this roadmap for afterwards, not into the code. Items
+    18 and 19 wait until after the freeze.
 22. Release.
 
 *After 1.0:* local models.
+
+*Housekeeping, any time (nothing is broken; these keep things healthy as she grows):*
+
+- **Tool audit.** She has about 26 tools of her own in a voice session, plus web
+  search and any MCP service tools switched on, and phone calls will add more.
+  She picks well today, but choices get less reliable as the list grows,
+  especially between similar tools. Before it grows much further:
+  - *Merge close relatives:* `recall_self`, `recall_interest` and
+    `recall_desire` into one `recall` (with what it's about as an argument);
+    `create_event`, `update_event`, `cancel_event` and `forward_event` into one
+    `change_calendar` (with the change as an argument); `send_signal_message`
+    and `message_person_on_signal` into one Signal tool. Each merged tool keeps
+    its approval rules for the changes that need them.
+  - *Offer only what's set up,* as `show_map` already is without a Google Maps
+    key (`unavailable_tools`): email and calendar tools without her email
+    signed in, Signal tools without Signal linked.
+  - *Measure it:* a small set of test requests, each with the tool she should
+    pick (or none), run against the real model before and after, so changes
+    to tools or their descriptions show whether her choices got better or
+    worse.
+  - That takes her from about 26 tools to about 18, and keeps per-chat
+    exclusions (Signal, email, contacts' allowlists) working as they do now.
+- **Flaky tests:** two timing-sensitive tests occasionally fail on a busy
+  machine (see Tests above); make them wait on events rather than time.
 
 #### Details, in order
 
@@ -2887,26 +2917,28 @@ features it helps check, and package last.
     native app using Apple's call framework (CallKit) could keep a call going,
     which means Xcode and Apple's developer programme. Calling her on her
     phone number (Phone calls, below) gets the same result without an app.
-- **Phone calls (Cora's own number), planned:** calling Cora like any contact,
+- **Phone calls (Cora's own number), P1a built:** calling Cora like any contact,
   which works with the phone locked, over Bluetooth and in the car, through
   iOS's own call handling; and later her calling places to get things done.
-  - *Her number stays:* it's the SIM in her Signal phone, and a SIM can't be
-    connected to software directly, so calls to it are forwarded by the carrier
-    to a telephony number (Twilio, say) that hands them to OpenAI's realtime
-    voice. People keep calling the number they know and Signal stays on the
-    SIM. Check with the carrier that forwarding keeps the caller's number, as
-    who's calling decides what follows. Costs: cents a minute for the line, on
-    top of Live.
+  - *Her phone number is a Twilio one:* a SIM can't be connected to software
+    directly, so calls go to a Twilio number (+61 485 008 128) that hands them
+    to her listener. Her Signal SIM (Kogan) keeps Signal and texts. Forwarding
+    the SIM's calls to Twilio was tried and dropped: Kogan accepted the setting
+    but failed every forwarded call before it reached Twilio (see step 5
+    below for what to try on another carrier). So she has two numbers: Signal
+    on the SIM, calls on Twilio. Costs: cents a minute for the line, on top of
+    Live, and the number's monthly fee.
   - *Who can call:* you (the same conversation as the desk, Signal and the web
     page, with her tools); contacts you've added (client mode, as in their
     Signal chats: professional, never your private life, in their own
     conversation); anyone else hears a short polite line and the call ends, as
     strangers get on Signal.
   - *Approvals never by voice on a phone call:* caller ID can be faked, so on a
-    call, tools that change things are approved only where they are now in a
-    written chat (on the web page or on Signal), never by saying yes on the
-    call. At the desk, approvals stay as they are with the TUI's voice (the
-    pop-up).
+    call, tools that change things are approved only in writing, never by
+    saying yes on the call. Decided: during a call they're asked in your
+    Signal chat (reply YES), which works with the phone at your ear or in
+    your pocket; she tells you on the call that it's waiting there. At the
+    desk, approvals stay as they are with the TUI's voice (the pop-up).
   - *Calling out for tasks:* like `send_signal_message` and `send_email` in a
     task, each call approved first (who and why); she says up front that she's
     an AI assistant calling on your behalf; the commitment check holds (she
@@ -2915,10 +2947,67 @@ features it helps check, and package last.
     thread, and she mentions that, as some Australian states require telling
     the other party a call is recorded; what she learns reaches the
     coordinator and comes back to you like an email reply.
-  - *Steps:* P1 you can call her (forwarding, the telephony number, your
+  - *Steps:* P1 you can call her (the telephony number, your
     number recognised, the same context as the desk); P2 contacts can call
     (client mode, strangers turned away); P3 she calls places for tasks
     (approval, disclosure, commitments, transcript, reporting back).
+  - *How a call reaches her (P1):* like Talk on the web page, the Live session
+    stays on the desk and only its audio moves: Twilio streams the call's
+    audio (8 kHz μ-law) over a WebSocket to her listener, which converts it to
+    and from Live's 24 kHz audio and plugs it into the same relay as the web
+    page's voice (`web/voice.py`). So it's the same conversation, tools and
+    memory as the desk; a call wakes her from standby and hanging up puts her
+    back, as Talk does. No location on calls (`where_is_person` says so).
+  - P1a Twilio and who gets through, **built**: Settings › Services › Phone
+    calls (on/off, Twilio's auth token in the system credential store, and
+    the address to give Twilio). Twilio asks `POST /phone/incoming` on her
+    listener ([phone/routes.py](phone/routes.py)) what to do with each call.
+    Every request's `X-Twilio-Signature` (HMAC-SHA1 of the public address and
+    the fields, with the auth token; checked against Twilio's own documented
+    example) is checked before anything else, so nobody else can pose as a
+    call. Then the caller's number: yours (the one under Signal) hears a test
+    line for now; anyone else, or a withheld number, hears "I can only take
+    calls from people I already know" and the call ends. Activity notes each
+    call; a stranger's number only by its last three digits. Tested with a
+    real Twilio number.
+  - P1b the call reaches her, next: the media stream (`<Connect><Stream>`, a
+    one-time token per call so only that call's stream is accepted), μ-law
+    and resampling both ways, barge-in (Twilio's `clear` when you talk over
+    her), waking and standby, and a note so she knows you're on a phone call.
+  - P1c approvals in your Signal chat during a call, and polish from real calls.
+  - *Setting up Twilio:*
+    1. Sign up at twilio.com and upgrade from the trial (trial calls play a
+       message first and only reach verified numbers: a call from any other
+       number fails with error 21264 before it reaches her; to test on a
+       trial, add your number under Phone Numbers › Manage › Verified Caller
+       IDs).
+    2. Buy a number (Phone Numbers › Buy a number). Australian numbers need a
+       Regulatory Bundle (an address and ID) that Twilio approves in a few
+       days. A mobile number looks most like a person's. Leave its
+       routing on the default US1 region (the auth token is for that region).
+    3. The number's Voice configuration: "A call comes in" › Webhook, HTTP
+       POST, the address Settings shows
+       (`https://cora.intelligis.io/phone/incoming`).
+    4. Console › Account info › Auth Token: paste it into Settings › Services
+       › Phone calls, and switch Phone calls on (it needs the public address
+       under Webhooks, and your number under Signal).
+    5. Optional (not used: Kogan wouldn't complete it): forward her SIM's
+       calls to the Twilio number, with the carrier's app or
+       `**21*<number>*11#` on most networks (`*11` is voice only, so texts
+       such as Signal's codes still reach the SIM; `*#21#` shows what's set,
+       `##21#` clears it). If calls then fail without appearing in Twilio's
+       Calls Log, the carrier isn't completing the forward: on VoLTE networks
+       (Kogan/Vodafone) set it in iOS (Settings › Apps › Phone › Call
+       Forwarding) instead of by code, try without Wi-Fi Calling, and check
+       her SIM can call the Twilio number at all. Or skip forwarding and
+       simply call the Twilio number: it reaches her the same way.
+    6. Call the Twilio number: Activity should say you called, and you hear
+       the test line. If it says a stranger was turned away, your number isn't
+       coming through as the one under Signal (Twilio shows the number it got
+       in the call's log).
+    - Caddy already passes everything for the address to her listener. If
+      Cloudflare's bot protection is on for the address, check Twilio's
+      requests aren't challenged (Security › Events).
 - **Installable Cora (paused):** an installer for non-technical users is not
   planned for now. Notes for if it returns: keep PostgreSQL rather than moving
   to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was

@@ -61,6 +61,7 @@ class SettingsMixin:
                 email=self.make_email_controls(has_email_app, email_tenant, has_sign_up_password),
                 webhooks=self.make_webhook_controls(),
                 web=self.make_web_controls(),
+                phone=self.make_phone_controls(),
             ), callback=self.settings_closed)
 
     def make_webhook_controls(self) -> WebhookControls:

@@ -233,6 +233,9 @@ class KeyboardPersistence:
     def save_web_enabled(self, enabled: bool) -> None:
         WebhookSettingsStore(self._get_store().engine).set_web_enabled(enabled)
 
+    def save_phone_enabled(self, enabled: bool) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_phone_enabled(enabled)
+
     def load_web_devices(self) -> list[WebDevice]:
         return WebDeviceStore(self._get_store().engine).devices()
 

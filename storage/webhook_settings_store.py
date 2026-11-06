@@ -1,4 +1,4 @@
-"""Save Cora's listener setup: webhooks and the web interface on or off, the public address that reaches
+"""Save Cora's listener setup: webhooks, the web interface and phone calls on or off, the public address that reaches
 her, and her local port."""
 
 from dataclasses import dataclass
@@ -22,11 +22,13 @@ class WebhookSettings:
     port: int = DEFAULT_PORT
     # The web interface, served by the same listener at the same address.
     web_enabled: bool = False
+    # Phone calls to her number: Twilio asks the same listener what to do with each one.
+    phone_enabled: bool = False
 
     @property
     def listening(self) -> bool:
         """Whether the listener runs: something is on, and there's an address to reach it."""
-        return bool(self.public_url) and (self.enabled or self.web_enabled)
+        return bool(self.public_url) and (self.enabled or self.web_enabled or self.phone_enabled)
 
 
 def normalise_public_url(value: str) -> str:
@@ -57,7 +59,7 @@ class WebhookSettingsStore:
             row = session.execute(select(WebhookSettingRecord)).scalar_one_or_none()
         if row is None:
             return WebhookSettings()
-        return WebhookSettings(row.enabled, row.public_url, row.port, row.web_enabled)
+        return WebhookSettings(row.enabled, row.public_url, row.port, row.web_enabled, row.phone_enabled)
 
     def _save(self, **values) -> None:
         statement = insert(WebhookSettingRecord).values(id=1, **values)
@@ -72,6 +74,9 @@ class WebhookSettingsStore:
 
     def set_web_enabled(self, enabled: bool) -> None:
         self._save(web_enabled=enabled)
+
+    def set_phone_enabled(self, enabled: bool) -> None:
+        self._save(phone_enabled=enabled)
 
     def set_address(self, public_url: str, port: int) -> None:
         self._save(public_url=normalise_public_url(public_url), port=check_port(port))
