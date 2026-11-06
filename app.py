@@ -418,6 +418,8 @@ class CoraApp(
             on_outcome=lambda request, outcome: self.conversation.show_approval_outcome(
                 f"{request.title} · {request.tool}", outcome,
             ),
+            # While the person is on a phone call: in their Signal chat, never by voice (see phone_calls).
+            elsewhere=lambda: self.phone_approval_route(),
         )
         self.services = ServiceManager(
             schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),

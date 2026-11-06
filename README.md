@@ -1934,8 +1934,8 @@ features it helps check, and package last.
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below). P1a (Twilio, and only your number gets
-    through) and P1b (the call reaches her voice) are built; next, P1c
-    (approvals in Signal during a call).
+    through), P1b (the call reaches her voice) and P1c (approvals in Signal
+    during a call) are built; next, polish from real calls, then P2.
     *Then a feature freeze:* about a month of using Cora day to day (desk,
     voice, Signal, the web page and calls) with no new features. Only fixes,
     polish from real use, documentation, and the housekeeping below. Ideas
@@ -2984,11 +2984,22 @@ features it helps check, and package last.
     standby hangs up. She answers like picking up (a "phone" greeting, even if
     she was already on), and a note tells her you can only hear her, that
     where you are isn't checked on calls (`where_is_person` refuses during
-    one), and that anything needing approval waits on the desk's screen
-    (never a yes on the call; Signal in P1c). Barge-in works as on the web
+    one), and that anything needing approval goes to your Signal chat (P1c).
+    Barge-in works as on the web
     page: Live paces her speech and stops it when you talk, so nothing needs
     clearing. A second call while one is connected hears a busy line.
-  - P1c approvals in your Signal chat during a call, and polish from real calls.
+    Tested on real calls; moving the number to Twilio's AU1 region cut the
+    delay noticeably.
+  - P1c approvals in your Signal chat during a call, **built**: while a call
+    is connected, voice Cora's requests to use tools that change things are
+    asked in your Signal chat (`Confirmations` takes the call's route when no
+    chat's route is set, `phone_approval_route`), answered only by your YES
+    there, and she's told it's waiting there so she can say so on the call.
+    Without Signal linked they wait on the desk's pop-up. Also: when a call
+    ends, Activity says how quickly her replies began (from the last moment
+    you were loud on the line to her first audio going back down it, so her
+    side: Live and this PC), to see where any delay is. Polish from real
+    calls continues here.
   - *Setting up Twilio:*
     1. Sign up at twilio.com and upgrade from the trial (trial calls play a
        message first and only reach verified numbers: a call from any other
@@ -2997,13 +3008,17 @@ features it helps check, and package last.
        IDs).
     2. Buy a number (Phone Numbers › Buy a number). Australian numbers need a
        Regulatory Bundle (an address and ID) that Twilio approves in a few
-       days. A mobile number looks most like a person's. Leave its
-       routing on the default US1 region (the auth token is for that region).
+       days. A mobile number looks most like a person's. Then move its
+       voice to the Australia (AU1) region (the number's page › Voice ›
+       active region): on US1 every word goes to the US and back, which a
+       conversation hears. Messaging stays on US1; she doesn't use it.
     3. The number's Voice configuration: "A call comes in" › Webhook, HTTP
        POST, the address Settings shows
        (`https://cora.intelligis.io/phone/incoming`).
-    4. Console › Account info › Auth Token: paste it into Settings › Services
-       › Phone calls, and switch Phone calls on (it needs the public address
+    4. The auth token for the number's region: Console › API keys & tokens,
+       Region set to Australia (AU1), Live credentials › Auth Token (each
+       region has its own; the US1 one makes every AU1 call fail with 403 /
+       error 11200). Paste it into Settings › Services › Phone calls, and switch Phone calls on (it needs the public address
        under Webhooks, and your number under Signal).
     5. Optional (not used: Kogan wouldn't complete it): forward her SIM's
        calls to the Twilio number, with the carrier's app or

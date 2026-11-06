@@ -11,6 +11,7 @@ without clicks.
 """
 
 import base64
+from time import monotonic
 
 import numpy as np
 
@@ -103,3 +104,55 @@ class CallAudio:
         kept = filtered[self.phase::FACTOR]
         self.phase = (self.phase - len(filtered)) % FACTOR
         return base64.b64encode(pcm_to_mulaw(to_int16(kept))).decode("ascii") if len(kept) else ""
+
+
+# A caller's 20 ms frame this loud (RMS of the 24 kHz PCM16) is them talking; a phone line's
+# background, after the handset's own noise suppression, is well under it.
+LOUD_RMS = 700
+# Her audio this long after her last counts as a new reply starting.
+REPLY_PAUSE_SECONDS = 0.5
+# Gaps shorter than this are her talking over the caller (or the line), not a reply.
+MIN_GAP_SECONDS = 0.1
+
+
+def loudness(pcm: bytes) -> float:
+    samples = np.frombuffer(pcm[: len(pcm) - len(pcm) % 2], dtype="<i2").astype(np.float64)
+    return float(np.sqrt(np.mean(samples * samples))) if len(samples) else 0.0
+
+
+class ReplyGaps:
+    """How long she takes to reply on a call: from the last moment the caller was loud on the line
+    to her first audio of the reply going back down it. That's her side (Live and this PC); the
+    line itself adds a little each way on top."""
+
+    def __init__(self, clock=monotonic) -> None:
+        self.clock = clock
+        self.last_loud: float | None = None
+        self.her_last: float | None = None
+        self.waiting = False
+        self.gaps: list[float] = []
+
+    def caller(self, pcm: bytes) -> None:
+        if loudness(pcm) >= LOUD_RMS:
+            self.last_loud = self.clock()
+            self.waiting = True
+
+    def her(self) -> None:
+        """One of her audible chunks is going down the line."""
+        now = self.clock()
+        starting = self.her_last is None or now - self.her_last > REPLY_PAUSE_SECONDS
+        self.her_last = now
+        if starting and self.waiting and self.last_loud is not None:
+            gap = now - self.last_loud
+            if gap >= MIN_GAP_SECONDS:
+                self.gaps.append(gap)
+                self.waiting = False
+
+    def summary(self) -> str:
+        """One line for Activity, or "" with no replies measured."""
+        if not self.gaps:
+            return ""
+        gaps = sorted(self.gaps)
+        middle = gaps[len(gaps) // 2]
+        return (f"Her replies began {middle:.1f} s after you stopped talking, typically "
+                f"({len(gaps)} replies, {gaps[0]:.1f}–{gaps[-1]:.1f} s; the line adds a little each way).")

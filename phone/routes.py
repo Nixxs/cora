@@ -14,7 +14,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from web.voice import Listener, VoiceRelay
 
-from .audio import CallAudio
+from .audio import CallAudio, ReplyGaps
 from .twilio import INCOMING_PATH, STREAM_PATH, valid_signature
 
 # Twilio's call requests are a few dozen short fields.
@@ -44,6 +44,8 @@ class PhoneAccess:
     voice: VoiceRelay | None = None
     # on_stream(listener, connected): a call's audio starts or stops reaching her.
     on_stream: Callable[[Listener, bool], None] | None = None
+    # on_gaps(summary): once a call ends, how quickly she replied on it ("" if not measured).
+    on_gaps: Callable[[str], None] | None = None
 
 
 def twiml(body: str, status: int = 200) -> Response:
@@ -99,6 +101,7 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
             await websocket.close(code=1008)
             return
         audio = CallAudio()
+        gaps = ReplyGaps()
         listener = access.voice.listen(PHONE_DEVICE)
         access.on_stream(listener, True)
 
@@ -122,9 +125,11 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
                         payload = media.get("payload")
                         if isinstance(payload, str):
                             try:
-                                access.voice.hear(listener, audio.for_live(payload))
+                                pcm = audio.for_live(payload)
                             except ValueError:
                                 continue
+                            gaps.caller(pcm)
+                            access.voice.hear(listener, pcm)
             except (WebSocketDisconnect, RuntimeError):
                 return
 
@@ -148,6 +153,7 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
                 if isinstance(chunk, bytes):
                     payload = audio.for_caller(chunk)
                     if payload:
+                        gaps.her()
                         await websocket.send_text(json.dumps(
                             {"event": "media", "streamSid": stream_id, "media": {"payload": payload}}))
         except (WebSocketDisconnect, RuntimeError):
@@ -156,6 +162,8 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
             hearing.cancel()
             access.voice.stop(listener)
             access.on_stream(listener, False)
+            if access.on_gaps is not None:
+                access.on_gaps(gaps.summary())
             try:
                 await websocket.close()
             except RuntimeError:

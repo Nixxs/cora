@@ -16,7 +16,9 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from phone import twilio
-from phone.audio import CallAudio, DECODE, mulaw_to_pcm, pcm_to_mulaw
+from messaging.setup import LINKED, NOT_LINKED, SignalStatus
+from phone.audio import CallAudio, DECODE, ReplyGaps, mulaw_to_pcm, pcm_to_mulaw
+from services.confirmation import APPROVED, Confirmations
 from phone.routes import PHONE_DEVICE, PhoneAccess, phone_routes
 from server.listener import build_app
 from storage.webhook_settings_store import WebhookSettings
@@ -108,6 +110,30 @@ class CallAudioTests(unittest.TestCase):
     def test_sound_above_the_phone_band_isnt_folded_back_into_it(self):
         phone = mulaw_to_pcm(base64.b64decode(CallAudio().for_caller(tone(6000, 0.5).tobytes())))
         self.assertLess(np.abs(phone[100:]).max(), 200)
+
+
+class ReplyGapTests(unittest.TestCase):
+    def test_a_reply_is_timed_from_when_the_caller_stopped_to_her_first_audio(self):
+        now = [0.0]
+        gaps = ReplyGaps(clock=lambda: now[0])
+        loud, quiet = tone(300, 0.02, level=4000).tobytes(), bytes(960)
+        for step in range(50):  # a second of the caller talking
+            now[0] = step * 0.02
+            gaps.caller(loud)
+        now[0] = 1.2
+        gaps.caller(quiet)
+        now[0] = 1.8
+        gaps.her()
+        now[0] = 1.9
+        gaps.her()  # the same reply going on
+        # Her talking over the caller isn't a reply.
+        now[0] = 3.0
+        gaps.caller(loud)
+        now[0] = 3.03
+        gaps.her()
+        self.assertEqual([round(gap, 2) for gap in gaps.gaps], [0.82])
+        self.assertIn("0.8 s after you stopped talking", gaps.summary())
+        self.assertEqual(ReplyGaps().summary(), "")
 
 
 class IncomingRouteTests(unittest.IsolatedAsyncioTestCase):
@@ -306,6 +332,33 @@ class PhoneCallAppTests(unittest.IsolatedAsyncioTestCase):
                 app.on_phone_stream(listener, False)
                 standby.assert_called_once_with()
             app.live.ready = False
+
+    async def test_on_a_call_approvals_go_to_the_signal_chat_never_the_call(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.signal.status = SignalStatus(LINKED, account="+61400000009")
+            app.signal_settings = replace(app.signal_settings, allowed_number=YOU)
+            self.assertIsNone(app.phone_approval_route())  # no call: the desk's pop-up
+            app.phone_listener = object()
+            asked = []
+
+            def asker(account, recipient, number):
+                async def ask(request):
+                    asked.append((account, number, request.tool))
+                    return True
+                return ask
+
+            with patch.object(app, "signal_approval_asker", side_effect=asker), \
+                    patch.object(app, "tell_cora_approval_waiting") as told, \
+                    patch.object(app, "show_confirmation") as pop_up:
+                outcome = await app.confirmations.ask("tasks", "send_email", {"to": "a@example.com"}, title="Email")
+                self.assertEqual(outcome, APPROVED)
+                self.assertEqual(asked, [("+61400000009", YOU, "send_email")])
+                told.assert_called_once_with("Email", "send_email", on_signal=True)
+                pop_up.assert_not_called()
+            # Without Signal linked, it waits on the desk instead.
+            app.signal.status = SignalStatus(NOT_LINKED)
+            self.assertIsNone(app.phone_approval_route())
+            app.phone_listener = None
 
     async def test_settings_say_what_is_still_needed(self):
         async with keyboard_tests.running_app() as (app, pilot):

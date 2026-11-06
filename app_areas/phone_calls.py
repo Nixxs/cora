@@ -9,14 +9,21 @@ The person's call is connected to her voice: Twilio streams its audio to the lis
 it to the same relay as the web page's Talk (web/voice.py). So it's her usual session, tools and
 memory; a call wakes her from standby and hanging up puts her back. Each call gets a one-time
 token in its TwiML, so only that call's stream is let in.
+
+Caller ID can be faked, so nothing is approved by voice on a call: while one is connected, her
+requests to use tools that change things go to the person's Signal chat (reply YES), as when they
+message her there; without Signal linked they wait on the desk's pop-up.
 """
 
 import asyncio
+from dataclasses import dataclass
 import secrets
 from time import monotonic
 
 from textual import work
 
+from messaging.messages import APPROVAL_SECONDS
+from messaging.setup import LINKED as SIGNAL_LINKED
 from phone import twilio
 from phone.routes import PhoneAccess
 from ui.model_settings import PhoneControls
@@ -27,11 +34,20 @@ ON_THE_PHONE = (
     "they've rung your phone number and are talking to you on a phone call, so they can only hear "
     "you: nothing shown on the desk's screen or the web page reaches them, so say what matters, "
     "in a way that's easy to follow by ear. Where they are is never checked during a call; ask if "
-    "it matters. Tools that change things can't be approved on a call (never by saying yes): the "
-    "request waits on the desk's screen, so tell them it'll need doing from the desk."
+    "it matters. Tools that change things are never approved by voice on a call: the request goes "
+    "to their Signal chat, where they reply YES."
 )
 # How long a call's token waits for its stream to open.
 TOKEN_SECONDS = 30
+
+
+@dataclass
+class OnCallApproval:
+    """How a request to use a tool is asked while the person is on a call (see Confirmations)."""
+
+    ask_approval: object
+    approval_seconds: float = APPROVAL_SECONDS
+    asked_where: str = "in your Signal chat (you're on a phone call)"
 
 
 def number_ending(number: str) -> str:
@@ -47,7 +63,8 @@ class PhoneCallsMixin:
         """What the phone routes may do, for the listener."""
         return PhoneAccess(token=lambda: self.twilio_token, public_url=lambda: self.webhook_settings.public_url or "",
                            on_call=self.on_phone_call, claim=self.claim_phone_token, voice=self.web_voice,
-                           on_stream=self.on_phone_stream)
+                           on_stream=self.on_phone_stream,
+                           on_gaps=lambda summary: summary and self.activity.write(summary, "Phone call"))
 
     def on_phone_call(self, caller: str, call_id: str) -> str:
         """A call Twilio vouched for: the TwiML that answers it."""
@@ -87,6 +104,24 @@ class PhoneCallsMixin:
         if self.phone_listener is listener:
             self.phone_listener = None
         self.voice_talk(listener, False, "", "The phone call ended.", "")
+
+    def phone_approval_route(self) -> OnCallApproval | None:
+        """While a call is connected, voice Cora's requests are asked in the person's Signal chat
+        (never by voice); None otherwise, or without Signal linked (the desk's pop-up, then)."""
+        if self.phone_listener is None:
+            return None
+        account, person = self.signal.status.account, self.signal_settings.person_recipient
+        if self.signal.status.state != SIGNAL_LINKED or not account or not person:
+            self.activity.write("A request for approval during the call waits on the desk: Signal isn't linked.",
+                                "Phone call")
+            return None
+        ask = self.signal_approval_asker(account, person, self.signal_settings.allowed_number)
+
+        async def ask_on_signal(request) -> bool:
+            self.tell_cora_approval_waiting(request.title, request.tool, on_signal=True)
+            return await ask(request)
+
+        return OnCallApproval(ask_on_signal)
 
     async def load_twilio_token(self) -> None:
         try:

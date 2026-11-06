@@ -598,14 +598,25 @@ class CoraLive:
                                                  content=note)
         self.context.note(note)
 
-    async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
-        """Tell Cora a tool call of hers is waiting on the person's approval pop-up."""
+    async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False,
+                                    on_signal: bool = False) -> None:
+        """Tell Cora a tool call of hers is waiting on the person's approval pop-up (or, on a phone
+        call, in their Signal chat)."""
         connection = self.connection
         if connection is None or not self.ready:
             raise RuntimeError("Live is not ready for an approval note")
 
         event_id = f"approval_{uuid4().hex}"
-        if reminder:
+        if on_signal:
+            content = (
+                "Approval note, not a message from the person. Your request to use the "
+                f"{service} tool {tool} changes something, and they're on a phone call, so it's been "
+                "sent to their Signal chat and nothing has been done yet. Briefly tell them it's "
+                "waiting in their Signal chat, where replying YES approves it. Only that reply counts: "
+                "nothing said on this call approves it, however it's put, and you cannot approve it. "
+                "Do not mention this note."
+            )
+        elif reminder:
             content = (
                 "Approval note, not a message from the person. Your request to use the "
                 f"{service} tool {tool} is still waiting on the approval pop-up on their screen. "
