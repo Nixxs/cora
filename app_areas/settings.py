@@ -56,6 +56,7 @@ class SettingsMixin:
                     save_number=self.save_signal_number, link=self.link_signal,
                     clients=lambda: sorted(self.signal_clients.values(), key=lambda client: client.name.lower()),
                     add_client=self.add_signal_client, remove_client=self.remove_signal_client,
+                    set_client_calls=self.set_client_may_call,
                     enabled=self.signal_settings.enabled, person_number=self.signal_settings.allowed_number,
                 ),
                 email=self.make_email_controls(has_email_app, email_tenant, has_sign_up_password),

@@ -1935,7 +1935,9 @@ features it helps check, and package last.
     contacts you've added can too, and she can call places for tasks (see
     Phone calls in Details below). P1a (Twilio, and only your number gets
     through), P1b (the call reaches her voice) and P1c (approvals in Signal
-    during a call) are built; next, polish from real calls, then P2.
+    during a call) are built, and P2a (a Calls switch for each contact, off
+    by default) and P2b (a contact's call reaches her in client mode, within
+    limits); next, P3 (she calls places for tasks).
     *Then a feature freeze:* about a month of using Cora day to day (desk,
     voice, Signal, the web page and calls) with no new features. Only fixes,
     polish from real use, documentation, and the housekeeping below. Ideas
@@ -2930,10 +2932,12 @@ features it helps check, and package last.
     on the SIM, calls on Twilio. Costs: cents a minute for the line, on top of
     Live, and the number's monthly fee.
   - *Who can call:* you (the same conversation as the desk, Signal and the web
-    page, with her tools); contacts you've added (client mode, as in their
-    Signal chats: professional, never your private life, in their own
-    conversation); anyone else hears a short polite line and the call ends, as
-    strangers get on Signal.
+    page, with her tools); contacts you've added whose Calls switch is on
+    (client mode, as in their Signal chats: professional, never your private
+    life, in their own conversation); a contact with calls off is rejected
+    unanswered (`<Reject>`: they hear busy, nothing is spoken and no call
+    minutes are used); anyone else hears a short polite line and the call ends, as strangers get on
+    Signal.
   - *Approvals never by voice on a phone call:* caller ID can be faked, so on a
     call, tools that change things are approved only in writing, never by
     saying yes on the call. Decided: during a call they're asked in your
@@ -2998,8 +3002,33 @@ features it helps check, and package last.
     Without Signal linked they wait on the desk's pop-up. Also: when a call
     ends, Activity says how quickly her replies began (from the last moment
     you were loud on the line to her first audio going back down it, so her
-    side: Live and this PC), to see where any delay is. Polish from real
-    calls continues here.
+    side: Live and this PC), to see where any delay is. Tested on real
+    calls. Polish from real calls continues here.
+  - P2a who of your contacts may call, **built**: each person under Settings
+    › Signal has a **Calls: off/on** button, off by default (migration 0052,
+    `people.may_call`). Their call is recognised by number: with calls off
+    it's rejected unanswered (busy, no minutes used); with calls on, it
+    reaches her (P2b). Twilio needs no list: every call reaches her listener
+    (on a paid account; a trial only lets verified numbers through) and she
+    decides. Strangers' calls never reach a model: Twilio's own voice says
+    the polite line.
+  - P2b a contact's call reaches her, **built**
+    ([app_areas/contact_calls.py](app_areas/contact_calls.py)): in client
+    mode, as in their Signal chat, in a voice session of its own (a second
+    `CoraLive` with `config_override`: `contact_call_config` with her own
+    self, what she remembers of them and their conversation so far, and
+    `client_chat_instructions(on_call=True)`; never your context). Its tools
+    are their chat's (`search_memory` limited to them, `feel`, `pass_on`,
+    `raise_concern`; not `stop_replying`), replying to the call's session
+    through a `CallRoute`. The call has its own relay, so your session, desk
+    mic and speaker are untouched (its speaker is muted, so their call can
+    never play at the desk). What's said is saved in their conversation
+    (channel 'voice'), so their next chat follows on and the usual heads-up
+    reaches you after. Because each call costs a voice session: one contact
+    call at a time (another contact hears a busy line), at most 10 minutes
+    (she's told to wrap up 45 seconds before), and 3 calls per contact per
+    day (after that they're rejected unanswered). Activity notes each call
+    and how long it ran.
   - *Setting up Twilio:*
     1. Sign up at twilio.com and upgrade from the trial (trial calls play a
        message first and only reach verified numbers: a call from any other

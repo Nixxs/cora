@@ -174,6 +174,9 @@ class KeyboardPersistence:
     def save_signal_person_id(self, signal_id: str) -> None:
         SignalSettingsStore(self._get_store().engine).set_allowed_signal_id(signal_id)
 
+    def save_client_may_call(self, person_id: UUID, may_call: bool) -> None:
+        ClientStore(self._get_store().engine).set_may_call(person_id, may_call)
+
     def remove_client(self, person_id: UUID) -> None:
         ClientStore(self._get_store().engine).remove(person_id)
 
@@ -199,8 +202,8 @@ class KeyboardPersistence:
         FeelingStore(store.engine).record(feeling, strength, reason, now=datetime.now(timezone.utc),
                                           conversation_id=conversation_id)
 
-    def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
-        ClientStore(self._get_store().engine).save(conversation_id, role, text)
+    def save_client_message(self, conversation_id: UUID, role: str, text: str, channel: str = "signal") -> None:
+        ClientStore(self._get_store().engine).save(conversation_id, role, text, channel)
 
     def load_client_memory_context(self, person_id: UUID, name: str) -> str:
         """What Cora remembers from a client's own chats, and what the person meant for them."""

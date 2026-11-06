@@ -47,6 +47,8 @@ class Client:
     number: str
     # Their Signal ID once learned; messages go to it, so a hidden number doesn't matter.
     signal_id: str | None = None
+    # Whether they may reach her by phone: off unless the person turns it on.
+    may_call: bool = False
 
     @property
     def recipient(self) -> str:
@@ -71,6 +73,7 @@ class ClientStore:
         with Session(self.engine) as session:
             rows = session.execute(select(
                 PersonRecord.id, PersonRecord.display_name, PersonRecord.signal_number, PersonRecord.signal_id,
+                PersonRecord.may_call,
             ).where(
                 PersonRecord.kind == "client", PersonRecord.signal_number.is_not(None),
             ).order_by(PersonRecord.display_name, PersonRecord.id)).all()
@@ -94,6 +97,12 @@ class ClientStore:
             session.execute(update(PersonRecord).where(
                 PersonRecord.id == person_id, PersonRecord.kind == "client",
             ).values(signal_number=None, signal_id=None))
+
+    def set_may_call(self, person_id: UUID, may_call: bool) -> None:
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(PersonRecord).where(
+                PersonRecord.id == person_id, PersonRecord.kind == "client",
+            ).values(may_call=may_call))
 
     def set_signal_id(self, person_id: UUID, signal_id: str) -> None:
         with Session(self.engine) as session, session.begin():
@@ -143,9 +152,10 @@ class ClientStore:
                 ).values(status="closed", ended_at=func.current_timestamp()))
         return len(quiet)
 
-    def save(self, conversation_id: UUID, role: str, text: str) -> None:
+    def save(self, conversation_id: UUID, role: str, text: str, channel: str = "signal") -> None:
+        """A message in their conversation: from their chat, or ("voice") said on a phone call."""
         ConversationStore(self.engine).save_message(
-            conversation_id, message_id=uuid4(), role=role, text=text, channel="signal", status="completed",
+            conversation_id, message_id=uuid4(), role=role, text=text, channel=channel, status="completed",
         )
 
     def history(self, conversation_id: UUID) -> list[dict]:

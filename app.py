@@ -69,6 +69,7 @@ from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
 from app_areas.web_interface import WebInterfaceMixin
 from app_areas.phone_calls import PhoneCallsMixin
+from app_areas.contact_calls import ContactCallsMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
@@ -102,7 +103,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -401,6 +402,9 @@ class CoraApp(
         self.phone_tokens: dict[str, float] = {}
         # The phone call's place in the voice relay while a call is connected to her.
         self.phone_listener = None
+        # A contact's call while it's on (one at a time), and how many each has made today.
+        self.contact_call = None
+        self.contact_calls_today: dict = {}
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None

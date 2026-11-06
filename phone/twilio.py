@@ -34,6 +34,10 @@ STRANGER_LINE = (
     "Hi, you've reached Cora, an A.I. assistant. I can only take calls from people I already know, "
     "sorry. Goodbye."
 )
+# Someone the person added, calling while another contact's call is on. (With calls from them off,
+# or today's calls used up, their call is rejected unanswered: see reject.)
+CONTACT_BUSY_LINE = ("Hi {name}, it's Cora. I'm on another call just now; try me again a bit later, or "
+                     "message me on Signal. Bye.")
 # A second call from the person while one is already connected to her.
 BUSY_LINE = "Sorry, Cora is already on a call with you. Goodbye."
 NOT_SET_UP_LINE = "Sorry, Cora can't take calls right now. Goodbye."
@@ -102,3 +106,9 @@ def connect_stream(url: str, token: str) -> str:
         f'<Parameter name="token" value="{escape(token)}"/>'
         '</Stream></Connect></Response>'
     )
+
+
+def reject() -> str:
+    """TwiML: refuse the call without answering it, so nothing is said and no call minutes are used
+    (the caller hears it as busy)."""
+    return '<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="busy"/></Response>'

@@ -62,6 +62,22 @@ class SignalSetupMixin:
         await self.learn_signal_ids()
 
     @work(group="signal-save")
+    async def set_client_may_call(self, number: str, may_call: bool) -> None:
+        """Whether this person may reach her by phone (Settings › Signal, their Calls switch)."""
+        client = self.signal_clients.get(number)
+        if client is None:
+            return
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_client_may_call, client.id, may_call)
+        except Exception as error:
+            self.activity.write(f"Saving {client.name}'s calls setting failed ({type(error).__name__}).", "Signal error")
+            self.notify("That couldn't be saved. Check Activity.", severity="error")
+            return
+        self.signal_clients[number] = replace(client, may_call=may_call)
+        self.activity.write(f"{client.name} {'may now call Cora' if may_call else 'can no longer call Cora'}.",
+                            "Phone calls")
+
+    @work(group="signal-save")
     async def remove_signal_client(self, number: str) -> None:
         client = self.signal_clients.get(number)
         if client is None:

@@ -179,6 +179,8 @@ class PersonRecord(Base):
     signal_number: Mapped[str | None] = mapped_column(Text)
     # Their Signal ID once learned: still identifies them if they hide their number.
     signal_id: Mapped[str | None] = mapped_column(Text)
+    # Whether a client may reach her by phone (the person turns it on for each one).
+    may_call: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
 
 
 # The person Cora works with, never a client; and conversations with them, never a client's.

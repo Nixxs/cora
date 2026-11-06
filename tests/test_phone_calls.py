@@ -6,9 +6,11 @@ import base64
 from dataclasses import replace
 import json
 import re
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import urlencode
+from uuid import uuid4
 
 import httpx2 as httpx
 import numpy as np
@@ -18,8 +20,10 @@ from starlette.websockets import WebSocketDisconnect
 from phone import twilio
 from messaging.setup import LINKED, NOT_LINKED, SignalStatus
 from phone.audio import CallAudio, DECODE, ReplyGaps, mulaw_to_pcm, pcm_to_mulaw
-from services.confirmation import APPROVED, Confirmations
-from phone.routes import PHONE_DEVICE, PhoneAccess, phone_routes
+from services.confirmation import APPROVED
+from storage.client_store import Client
+from phone.routes import PHONE_DEVICE, CallLink, PhoneAccess, phone_routes
+from app_areas.contact_calls import CALLS_PER_DAY, CallRoute, ContactCall, Transcript
 from server.listener import build_app
 from storage.webhook_settings_store import WebhookSettings
 from web.voice import VoiceRelay
@@ -181,12 +185,6 @@ class StreamSocketTests(unittest.TestCase):
         self.tokens = {"good"}
         self.streams = []
 
-        def claim(token):
-            if token in self.tokens:
-                self.tokens.discard(token)
-                return True
-            return False
-
         def on_stream(listener, connected):
             self.streams.append((listener.device, connected))
             if connected:
@@ -194,8 +192,14 @@ class StreamSocketTests(unittest.TestCase):
             else:
                 self.relay.stop_talking(listener)
 
+        def claim(token):
+            if token in self.tokens:
+                self.tokens.discard(token)
+                return CallLink(self.relay, on_stream)
+            return None
+
         access = PhoneAccess(token=lambda: TOKEN, public_url=lambda: PUBLIC, on_call=lambda caller, call: "",
-                             claim=claim, voice=self.relay, on_stream=on_stream)
+                             claim=claim)
         self.client = TestClient(build_app(phone_routes(access)))
 
     def start(self, socket, token="good"):
@@ -265,10 +269,10 @@ class PhoneCallAppTests(unittest.IsolatedAsyncioTestCase):
             answer = app.on_phone_call(YOU, "CA1")
             self.assertIn('<Stream url="wss://cora.example.com/phone/stream">', answer)
             token = re.search(r'name="token" value="([^"]+)"', answer).group(1)
-            # Each call's token lets its stream in once.
-            self.assertTrue(app.claim_phone_token(token))
-            self.assertFalse(app.claim_phone_token(token))
-            self.assertFalse(app.claim_phone_token("made-up"))
+            # Each call's token lets its stream in once, to her own session's relay.
+            self.assertIs(app.claim_phone_token(token).voice, app.web_voice)
+            self.assertIsNone(app.claim_phone_token(token))
+            self.assertIsNone(app.claim_phone_token("made-up"))
             # Already on a call with her: a second call is told so.
             app.phone_listener = object()
             self.assertIn("already on a call", app.on_phone_call(YOU, "CA5"))
@@ -280,6 +284,11 @@ class PhoneCallAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("…123", logged)
             self.assertNotIn("61499999123", logged)
             self.assertIn("I can only take calls", app.on_phone_call("", "CA3"))
+            # Someone the person added: off unless calls from them are turned on.
+            sarah = Client(uuid4(), "Sarah", "+61400000003")
+            app.signal_clients = {sarah.number: sarah}
+            # Off: rejected unanswered, so nothing is said and no minutes are used.
+            self.assertIn('<Reject reason="busy"/>', app.on_phone_call("+61400000003", "CA6"))
             app.webhook_settings = replace(app.webhook_settings, phone_enabled=False)
             self.assertIn("can't take calls right now", app.on_phone_call(YOU, "CA4"))
 
@@ -376,6 +385,104 @@ class PhoneCallAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(app.phone_status(), ("● answering calls", ""))
             app.webhook_settings = WebhookSettings(public_url=PUBLIC)
             self.assertEqual(app.phone_status(), ("", ""))
+
+
+SARAH_NUMBER = "+61400000003"
+
+
+def live_event(kind, **fields):
+    return SimpleNamespace(type=kind, **fields)
+
+
+class TranscriptTests(unittest.TestCase):
+    def test_turns_end_when_the_other_one_starts_talking(self):
+        transcript = Transcript()
+        self.assertIsNone(transcript.add("user", "Hi Cora, "))
+        self.assertIsNone(transcript.add("user", "is Nick around?"))
+        self.assertEqual(transcript.add("assistant", "Hi Sarah!"), ("user", "Hi Cora, is Nick around?"))
+        self.assertEqual(transcript.finish(), ("assistant", "Hi Sarah!"))
+        self.assertIsNone(transcript.finish())
+
+
+class ContactCallTests(unittest.IsolatedAsyncioTestCase):
+    async def test_a_contact_with_calls_on_gets_their_own_session_within_limits(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.webhook_settings = WebhookSettings(public_url=PUBLIC, phone_enabled=True)
+            app.signal_settings = replace(app.signal_settings, allowed_number=YOU)
+            sarah = Client(uuid4(), "Sarah", SARAH_NUMBER, may_call=True)
+            tom = Client(uuid4(), "Tom", "+61400000004", may_call=True)
+            app.signal_clients = {sarah.number: sarah, tom.number: tom}
+            answer = app.on_phone_call(SARAH_NUMBER, "CA1")
+            self.assertIn("<Connect><Stream", answer)
+            link = app.claim_phone_token(re.search(r'name="token" value="([^"]+)"', answer).group(1))
+            # Her own relay and session for the call: never the person's.
+            self.assertIsNotNone(link)
+            self.assertIsNot(link.voice, app.web_voice)
+            self.assertIs(app.contact_call.client, sarah)
+            # One contact call at a time.
+            self.assertIn("I'm on another call", app.on_phone_call(tom.number, "CA2"))
+            app.contact_call = None
+            # A few calls each a day; past that, unanswered.
+            for _ in range(CALLS_PER_DAY - 1):
+                self.assertIn("<Connect>", app.on_phone_call(SARAH_NUMBER, "CA3"))
+            self.assertIn("<Reject", app.on_phone_call(SARAH_NUMBER, "CA4"))
+            self.assertIn("<Connect>", app.on_phone_call(tom.number, "CA5"))
+
+    async def test_the_call_is_client_mode_with_their_tools_and_saved_in_their_conversation(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            sarah = Client(uuid4(), "Sarah", SARAH_NUMBER, may_call=True)
+            conversation = uuid4()
+            app.persistence.client_conversation.return_value = conversation
+            app.persistence.load_client_history.return_value = []
+            app.client_sections = AsyncMock(return_value={"memory": "\n\nSarah likes sailing."})
+            app.live.person_name = "Nick"
+            app.live.memory_context = "Nick's private plans."
+            call = ContactCall(sarah)
+            listener = call.relay.listen(PHONE_DEVICE)
+            seen = {}
+
+            async def run(on_event, on_mic_status, on_audio_status=None):
+                seen["config"], _ = call.live.config_override(call.live.tool_schemas())
+                seen["schemas"] = call.live.tool_schemas()
+                call.live.connection = MagicMock()
+                call.live.connection.session.commentary.append = AsyncMock()
+                for event in (live_event("session.started"),
+                              live_event("session.input_transcript.delta", delta="Hi Cora, is Nick around?"),
+                              live_event("session.output_transcript.delta", delta="Hi Sarah! He's out."),
+                              live_event("response.event", delegation_id="d1", event={
+                                  "type": "response.output_item.done",
+                                  "item": {"type": "function_call", "name": "pass_on", "call_id": "c1",
+                                           "arguments": "{}"}})):
+                    on_event(event)
+                await pilot.pause()
+                call.live.connection = None
+
+            call.live.run = run
+            with patch.object(app.tools, "handle_function_call") as handle:
+                app.contact_call = call
+                app.on_contact_stream(call, listener, True)
+                await pilot.pause()
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+                await pilot.pause()
+                route = handle.call_args.kwargs["route"]
+                self.assertIsInstance(route, CallRoute)
+                self.assertEqual(route.memory_scope, (sarah.id, "Sarah"))
+            config = seen["config"]
+            self.assertIn('rang your number', config["instructions"])
+            self.assertIn("Sarah likes sailing.", config["instructions"])
+            self.assertNotIn("Nick's private plans.", config["instructions"] + config["delegation"]["responses"]["instructions"])
+            names = {schema["name"] for schema in seen["schemas"]}
+            self.assertEqual(names, {"search_memory", "feel", "pass_on", "raise_concern"})
+            # Their call's audio only: never the desk's speaker or mic.
+            self.assertTrue(call.live.speaker_muted)
+            self.assertIs(call.live.voice_relay, call.relay)
+            self.assertIs(call.live.web_microphone, listener.mic)
+            saved = [entry.args for entry in app.persistence.save_client_message.call_args_list]
+            self.assertEqual(saved, [(conversation, "user", "Hi Cora, is Nick around?", "voice"),
+                                     (conversation, "assistant", "Hi Sarah! He's out.", "voice")])
+            # Ended at her side: the stream is told, so the call ends; another contact can call.
+            self.assertEqual(await call.relay.next_chunk(listener, 1), {"type": "talk_ended", "reason": "ended"})
+            self.assertIsNone(app.contact_call)
 
 
 if __name__ == "__main__":

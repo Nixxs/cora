@@ -25,7 +25,7 @@ from textual import work
 from messaging.messages import APPROVAL_SECONDS
 from messaging.setup import LINKED as SIGNAL_LINKED
 from phone import twilio
-from phone.routes import PhoneAccess
+from phone.routes import CallLink, PhoneAccess
 from ui.model_settings import PhoneControls
 
 
@@ -62,9 +62,7 @@ class PhoneCallsMixin:
     def phone_access(self) -> PhoneAccess:
         """What the phone routes may do, for the listener."""
         return PhoneAccess(token=lambda: self.twilio_token, public_url=lambda: self.webhook_settings.public_url or "",
-                           on_call=self.on_phone_call, claim=self.claim_phone_token, voice=self.web_voice,
-                           on_stream=self.on_phone_stream,
-                           on_gaps=lambda summary: summary and self.activity.write(summary, "Phone call"))
+                           on_call=self.on_phone_call, claim=self.claim_phone_token)
 
     def on_phone_call(self, caller: str, call_id: str) -> str:
         """A call Twilio vouched for: the TwiML that answers it."""
@@ -74,21 +72,51 @@ class PhoneCallsMixin:
             if self.phone_listener is not None:
                 self.activity.write("You called Cora's number while already on a call with her.", "Phone call")
                 return twilio.say_and_hang_up(twilio.BUSY_LINE)
-            now = monotonic()
-            self.phone_tokens = {token: until for token, until in self.phone_tokens.items() if until > now}
-            token = secrets.token_urlsafe(32)
-            self.phone_tokens[token] = now + TOKEN_SECONDS
             self.activity.write("You're calling Cora's number; connecting the call to her.", "Phone call")
-            return twilio.connect_stream(twilio.stream_url(self.webhook_settings.public_url or ""), token)
+            return twilio.connect_stream(twilio.stream_url(self.webhook_settings.public_url or ""),
+                                         self.give_phone_token(None))
+        contact = next((client for client in self.signal_clients.values()
+                        if twilio.same_number(caller, client.number)), None)
+        if contact is not None:
+            if not contact.may_call:
+                self.activity.write(f"{contact.name} called; calls from them are off, so it wasn't answered.",
+                                    "Phone call")
+                return twilio.reject()
+            if self.contact_call is not None:
+                self.activity.write(f"{contact.name} called while another contact's call was on.", "Phone call")
+                return twilio.say_and_hang_up(twilio.CONTACT_BUSY_LINE.format(name=contact.name))
+            if not self.contact_call_allowed(contact):
+                self.activity.write(f"{contact.name} called again; today's calls from them are used up, so it "
+                                    "wasn't answered.", "Phone call")
+                return twilio.reject()
+            self.count_contact_call(contact)
+            self.activity.write(f"{contact.name} is calling; connecting them to Cora.", "Phone call")
+            return twilio.connect_stream(twilio.stream_url(self.webhook_settings.public_url or ""),
+                                         self.give_phone_token(contact))
         # Strangers (and withheld numbers) are turned away, as on Signal.
         self.activity.write(f"A call from a number Cora doesn't know ({number_ending(caller)}) was turned away.",
                             "Phone call")
         return twilio.say_and_hang_up(twilio.STRANGER_LINE)
 
-    def claim_phone_token(self, token: str) -> bool:
-        """Whether a stream's token was given to a call moments ago; each works once."""
-        until = self.phone_tokens.pop(token, None)
-        return until is not None and until > monotonic() and self.webhook_settings.phone_enabled
+    def give_phone_token(self, contact) -> str:
+        """A one-time token for a call being connected: the person's (contact None), or a contact's."""
+        now = monotonic()
+        self.phone_tokens = {token: given for token, given in self.phone_tokens.items() if given[0] > now}
+        token = secrets.token_urlsafe(32)
+        self.phone_tokens[token] = (now + TOKEN_SECONDS, contact)
+        return token
+
+    def claim_phone_token(self, token: str) -> CallLink | None:
+        """Where a stream's call goes, if its token was given to a call moments ago (each works once):
+        the person's call to her own session, a contact's to a session of its own."""
+        given = self.phone_tokens.pop(token, None)
+        if given is None or given[0] <= monotonic() or not self.webhook_settings.phone_enabled:
+            return None
+        contact = given[1]
+        if contact is not None:
+            return self.contact_call_link(contact)
+        return CallLink(self.web_voice, self.on_phone_stream,
+                        on_gaps=lambda summary: summary and self.activity.write(summary, "Phone call"))
 
     def on_phone_stream(self, listener, connected: bool) -> None:
         """A call's audio starts or stops reaching her: like a page's Talk, with the phone's

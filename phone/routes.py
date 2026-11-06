@@ -30,6 +30,18 @@ KEEP_ALIVE_SECONDS = 15
 
 
 @dataclass
+class CallLink:
+    """Where a connected call's audio goes: the relay to her voice session (the person's own call
+    shares the web page's; a contact's call has its own), and what to tell the app."""
+
+    voice: VoiceRelay
+    # on_stream(listener, connected): the call's audio starts or stops reaching her.
+    on_stream: Callable[[Listener, bool], None]
+    # on_gaps(summary): once the call ends, how quickly she replied on it ("" if not measured).
+    on_gaps: Callable[[str], None] = lambda summary: None
+
+
+@dataclass
 class PhoneAccess:
     """What the routes need from the app."""
 
@@ -38,14 +50,8 @@ class PhoneAccess:
     public_url: Callable[[], str]
     # on_call(caller, call_id) -> the TwiML answer for a call that Twilio has vouched for.
     on_call: Callable[[str, str], str]
-    # claim(token) -> whether it's a one-time token on_call gave out (and it's now used up).
-    claim: Callable[[str], bool] | None = None
-    # Her voice, and the caller's for her (the same relay as the web page's voice).
-    voice: VoiceRelay | None = None
-    # on_stream(listener, connected): a call's audio starts or stops reaching her.
-    on_stream: Callable[[Listener, bool], None] | None = None
-    # on_gaps(summary): once a call ends, how quickly she replied on it ("" if not measured).
-    on_gaps: Callable[[str], None] | None = None
+    # claim(token) -> the call's link if it's a one-time token on_call gave out (now used up), else None.
+    claim: Callable[[str], CallLink | None] | None = None
 
 
 def twiml(body: str, status: int = 200) -> Response:
@@ -89,7 +95,7 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
     async def stream(websocket: WebSocket) -> None:
         """A connected call's audio (Twilio's media stream): the caller's voice for her, and hers
         for the caller. Only a stream carrying a token on_call gave out, unused, gets in."""
-        if access.voice is None or access.claim is None or access.on_stream is None:
+        if access.claim is None:
             await websocket.close(code=1008)
             return
         await websocket.accept()
@@ -97,13 +103,14 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
         parameters = (start or {}).get("customParameters") or {}
         stream_id = (start or {}).get("streamSid")
         token = parameters.get("token") if isinstance(parameters, dict) else None
-        if not isinstance(stream_id, str) or not isinstance(token, str) or not access.claim(token):
+        link = access.claim(token) if isinstance(stream_id, str) and isinstance(token, str) else None
+        if link is None:
             await websocket.close(code=1008)
             return
         audio = CallAudio()
         gaps = ReplyGaps()
-        listener = access.voice.listen(PHONE_DEVICE)
-        access.on_stream(listener, True)
+        listener = link.voice.listen(PHONE_DEVICE)
+        link.on_stream(listener, True)
 
         async def hear_caller() -> None:
             """The caller's audio, until the call ends."""
@@ -129,14 +136,14 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
                             except ValueError:
                                 continue
                             gaps.caller(pcm)
-                            access.voice.hear(listener, pcm)
+                            link.voice.hear(listener, pcm)
             except (WebSocketDisconnect, RuntimeError):
                 return
 
         hearing = asyncio.ensure_future(hear_caller())
         try:
             while True:
-                sending = asyncio.ensure_future(access.voice.next_chunk(listener, KEEP_ALIVE_SECONDS))
+                sending = asyncio.ensure_future(link.voice.next_chunk(listener, KEEP_ALIVE_SECONDS))
                 await asyncio.wait({sending, hearing}, return_when=asyncio.FIRST_COMPLETED)
                 if hearing.done():
                     # The caller hung up: stop at once, so the desk gets its mic and speaker back.
@@ -160,10 +167,9 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
             pass
         finally:
             hearing.cancel()
-            access.voice.stop(listener)
-            access.on_stream(listener, False)
-            if access.on_gaps is not None:
-                access.on_gaps(gaps.summary())
+            link.voice.stop(listener)
+            link.on_stream(listener, False)
+            link.on_gaps(gaps.summary())
             try:
                 await websocket.close()
             except RuntimeError:

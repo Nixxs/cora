@@ -55,6 +55,8 @@ class SignalControls:
     clients: Callable[[], list] = lambda: []
     add_client: Callable[[str, str], None] = lambda name, number: None
     remove_client: Callable[[str], None] = lambda number: None
+    # set_client_calls(number, on): whether they may reach her by phone (off unless turned on).
+    set_client_calls: Callable[[str, bool], None] = lambda number, on: None
 
 
 @dataclass
@@ -342,7 +344,7 @@ class ModelSettingsScreen(ModalScreen):
         self.shown_pair_link: str | None = None
         self.shown_devices: list | None = None
         self.shown_link_uri: str | None = None
-        self.shown_clients: list[tuple[str, str]] | None = None
+        self.shown_clients: list[tuple[str, str, bool]] | None = None
         self.shown_tools: dict[str, tuple] = {}
         self.tool_switches: dict[str, list[str]] = {}
 
@@ -544,7 +546,7 @@ class ModelSettingsScreen(ModalScreen):
             self.set_interval(0.5, self.show_services)
 
     async def show_signal_clients(self) -> None:
-        clients = [(client.name, client.number) for client in self.signal.clients()]
+        clients = [(client.name, client.number, client.may_call) for client in self.signal.clients()]
         if clients == self.shown_clients:
             return
         self.shown_clients = clients
@@ -554,10 +556,12 @@ class ModelSettingsScreen(ModalScreen):
         await listing.mount_all(
             Horizontal(
                 Static(f"{name} · {number}", classes="tool-label"),
+                Button("Calls: on" if may_call else "Calls: off", id=f"signal-calls-{index}",
+                       classes="calls-on" if may_call else ""),
                 Button("Remove", id=f"signal-remove-{index}"),
                 classes="tool-row",
             )
-            for index, (name, number) in enumerate(clients)
+            for index, (name, number, may_call) in enumerate(clients)
         ) if clients else listing.mount(Static(Text("Nobody added yet.", style="#8f98a8")))
 
     async def show_signal(self) -> None:
@@ -933,8 +937,11 @@ class ModelSettingsScreen(ModalScreen):
         elif button == "signal-add-client":
             self.add_client()
         elif button.startswith("signal-remove-"):
-            _, number = self.shown_clients[int(button.removeprefix("signal-remove-"))]
+            _, number, _ = self.shown_clients[int(button.removeprefix("signal-remove-"))]
             self.signal.remove_client(number)
+        elif button.startswith("signal-calls-"):
+            _, number, may_call = self.shown_clients[int(button.removeprefix("signal-calls-"))]
+            self.signal.set_client_calls(number, not may_call)
         elif button.startswith("service-save-"):
             self.save_service_token(button.removeprefix("service-save-"))
         elif button.startswith("service-forget-"):
