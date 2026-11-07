@@ -68,6 +68,32 @@ class GoodbyeWatchTests(unittest.TestCase):
         self.later(goodbye.QUIET_SECONDS + 1)
         self.assertFalse(self.watch.due(playing=False))
 
+    def test_what_she_adds_after_goodbyes_both_ways_doesnt_keep_it_open(self):
+        # A real call: she said "have a good rest of your day", they said bye, and she carried on.
+        self.watch.heard("assistant", "Thanks for helping us test. Have a good rest of your day.")
+        self.watch.heard("user", "Okay Thank you. Bye")
+        self.watch.heard("assistant", "Bye! Yep. All right. I'll pass that on and hang up.")
+        self.later(goodbye.QUIET_SECONDS + 1)
+        self.assertTrue(self.watch.due(playing=False))
+
+    def test_their_bye_first_then_hers_with_more(self):
+        self.watch.heard("assistant", "Tuesday at nine then.")
+        self.watch.heard("user", "Great, bye!")
+        self.watch.heard("assistant", "Bye, thanks so much, I'll let Nick know.")
+        self.later(goodbye.QUIET_SECONDS + 1)
+        self.assertTrue(self.watch.due(playing=False))
+
+    def test_more_from_them_after_goodbyes_reopens_it(self):
+        self.watch.heard("assistant", "Have a good day.")
+        self.watch.heard("user", "Bye")
+        self.watch.heard("assistant", "Bye! I'll pass that on.")
+        self.watch.heard("user", "Sorry, actually, can you also ask him about Friday?")
+        self.later(goodbye.QUIET_SECONDS + 1)
+        self.assertFalse(self.watch.due(playing=False))
+        self.watch.heard("assistant", "Sure, I'll ask him about Friday.")
+        self.later(goodbye.QUIET_SECONDS + 1)
+        self.assertFalse(self.watch.due(playing=False))
+
     def test_no_goodbye_no_hang_up(self):
         self.watch.heard("assistant", "What time suits you?")
         self.later(60)

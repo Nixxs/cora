@@ -3056,8 +3056,10 @@ features it helps check, and package last.
     itself ([phone/goodbye.py](phone/goodbye.py)). Once her turn ends in
     a farewell ("bye", "take care", "have a good day") and they say no
     more than a farewell back, the call closes after her goodbye has
-    played and the line has been quiet for 3 s. Anything else said, or her
-    backend still passing something on, keeps it open. `end_call` stays
+    played and the line has been quiet for 2 s. Once goodbyes have gone
+    both ways, anything she adds after ("Bye! I'll pass that on.") doesn't
+    keep it open; more from them, or her backend still passing something
+    on, does. She's told to hang up silently, never announcing it. `end_call` stays
     for when she does hang up herself. Both exist only on calls that
     aren't yours (a contact's, or one she placed); your own sessions and
     chats never offer them, and you always hang up your own calls. The

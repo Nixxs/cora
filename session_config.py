@@ -369,7 +369,9 @@ CONTACT_CALL_LIVE_INSTRUCTIONS = (
     "than guess. To pass something on to the person you work with, or raise a concern, delegate "
     "to your backend. When something genuinely moves you, you may have your backend quietly note "
     "the feeling; never mention noting it. When the call is over and you've said goodbye, delegate "
-    "to your backend so it can call end_call to hang up. Never read urls, code or Markdown aloud."
+    "to your backend so it can call end_call to hang up. Do that silently: once you've said goodbye, "
+    "say nothing more, and never tell them you're passing something on or hanging up. "
+    "Never read urls, code or Markdown aloud."
 ) + MEMORY_RECALL_STYLE
 
 # A call she places for a task: her own voice session for it, apart from the person's.
@@ -381,7 +383,8 @@ TASK_CALL_LIVE_INSTRUCTIONS = (
     "Delegate questions needing current information to your backend, which can search the web. "
     "To pass what you learn on to the person you work with, delegate to your backend so it can call "
     "pass_on. When the call is over and you've said goodbye, delegate to your backend so it can call "
-    "end_call to hang up. Never read urls, code or Markdown aloud."
+    "end_call to hang up. Do both silently: once you've said goodbye, say nothing more, and never "
+    "tell them you're passing something on or hanging up. Never read urls, code or Markdown aloud."
 )
 
 

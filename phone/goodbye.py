@@ -4,7 +4,8 @@ On calls that aren't the person's, end_call needs her voice model to delegate th
 often doesn't bother once it has said goodbye. So the call watches what's said: when her turn ends
 in a farewell ("bye", "take care", "have a good day"), and the other end says nothing more than a
 farewell back, the call ends once her goodbye has played and the line has been quiet for
-QUIET_SECONDS. Anything else said (by either side), or work she's still doing in her backend
+QUIET_SECONDS. Once goodbyes have gone both ways, anything she adds after ("Bye! I'll pass that
+on.") doesn't keep it open; only more from them does. Anything else said (by either side), or work she's still doing in her backend
 (such as passing on what she learned), keeps the call open.
 """
 
@@ -31,6 +32,12 @@ def ends_in_farewell(text: str) -> bool:
     return bool(FAREWELL.search(" ".join(text.split())[-TAIL_CHARS:]))
 
 
+def short_farewell(text: str) -> bool:
+    """A reply that's only a farewell ("Okay, thank you. Bye"), not more conversation."""
+    said = " ".join(text.split())
+    return len(said) <= SHORT_REPLY_CHARS and ends_in_farewell(said)
+
+
 class GoodbyeWatch:
     """Fed the call's transcript and events; due() says when to hang up."""
 
@@ -39,6 +46,9 @@ class GoodbyeWatch:
         self.her_text = ""
         self.their_text = ""
         self.her_farewell = False
+        # Their last turn was only a farewell, and whether goodbyes have gone both ways.
+        self.they_said_bye = False
+        self.goodbyes_said = False
         self.last_activity = clock()
         self.last_playing = clock()
         self.delegating_since: float | None = None
@@ -49,10 +59,14 @@ class GoodbyeWatch:
         self.last_activity = self.clock()
         if role == "assistant":
             if self.their_text:
-                # A new turn of hers.
+                # A new turn of hers: did their last one say goodbye, or carry on?
+                self.they_said_bye = short_farewell(self.their_text)
+                self.goodbyes_said = self.they_said_bye and (self.goodbyes_said or self.her_farewell)
                 self.her_text, self.their_text = "", ""
             self.her_text += delta
             self.her_farewell = ends_in_farewell(self.her_text)
+            if self.they_said_bye and FAREWELL.search(self.her_text):
+                self.goodbyes_said = True
         else:
             self.their_text += delta
 
@@ -66,10 +80,9 @@ class GoodbyeWatch:
 
     @property
     def armed(self) -> bool:
-        if not self.her_farewell:
+        if not (self.her_farewell or self.goodbyes_said):
             return False
-        said = " ".join(self.their_text.split())
-        return not said or (len(said) <= SHORT_REPLY_CHARS and ends_in_farewell(said))
+        return not self.their_text.strip() or short_farewell(self.their_text)
 
     def due(self, playing: bool) -> bool:
         """Whether to hang up now; `playing` is whether her audio is still playing down the line."""
