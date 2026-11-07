@@ -93,6 +93,27 @@ class CoraLive:
         self.microphone_muted = False
         self._microphone_bands = ((), 0.0)
         self.on_mic_status = None
+        # A session that isn't the person's (a contact's phone call): (tool schemas) -> its whole
+        # session payload and the sections it was built from, instead of the person's.
+        self.config_override = None
+
+    def person_session(self) -> tuple[dict, dict[str, str]]:
+        """The person's own session payload, and the sections of her context it carries."""
+        sections = instruction_sections(
+            self.memory_context, interest_context=self.interest_context,
+            person_name=self.person_name, identity_context=self.identity_context,
+            self_image_context=self.self_image_context,
+            relationship_context=self.relationship_context, people_context=self.people_context,
+            tasks_context=self.tasks_context, calendar_context=self.calendar_context,
+            sign_ups_context=self.sign_ups_context, desire_context=self.desire_context,
+            own_name=self.own_name, feelings_context=feelings_context(self.feelings),
+        )
+        # What this session knows of how she feels, for the quiet notes as it changes.
+        self.feeling_bands = {item.feeling: item.band for item in self.feelings}
+        config = config_from_sections(
+            self.tool_schemas(), sections, self.conversation_history, self.delegation_model,
+        )
+        return config, sections
 
     async def run(self, on_event, on_mic_status, on_audio_status=None):
         # Reuse the transport owner, but never reuse a previous run's close signal.
@@ -108,20 +129,10 @@ class CoraLive:
                 playback_failed = False
 
                 try:
-                    sections = instruction_sections(
-                        self.memory_context, interest_context=self.interest_context,
-                        person_name=self.person_name, identity_context=self.identity_context,
-                        self_image_context=self.self_image_context,
-                        relationship_context=self.relationship_context, people_context=self.people_context,
-                        tasks_context=self.tasks_context, calendar_context=self.calendar_context,
-                        sign_ups_context=self.sign_ups_context, desire_context=self.desire_context,
-                        own_name=self.own_name, feelings_context=feelings_context(self.feelings),
-                    )
-                    # What this session knows of how she feels, for the quiet notes as it changes.
-                    self.feeling_bands = {item.feeling: item.band for item in self.feelings}
-                    config = config_from_sections(
-                        self.tool_schemas(), sections, self.conversation_history, self.delegation_model,
-                    )
+                    if self.config_override is not None:
+                        config, sections = self.config_override(self.tool_schemas())
+                    else:
+                        config, sections = self.person_session()
                     self.context.start(config, sections)
                     await connection.session.start(session=config)
 
@@ -540,6 +551,19 @@ class CoraLive:
             "mention this note, standby or the app."
         ))
 
+    async def send_phone_answer(self) -> None:
+        """Ask Cora to answer the phone: the person has just called her and the call is connected."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Live is not ready to answer a call")
+
+        event_id = f"greeting_{uuid4().hex}"
+        await self.append_commentary(connection, event_id, (
+            "Phone call note, not a message from the person. They've just rung your phone number "
+            "and the call is connected, so answer it as you would picking up their call, in a few "
+            "words of your own. Do not mention this note."
+        ))
+
     async def note_signal_exchange(self, message: str, reply: str, where: str = "messaged you on Signal") -> None:
         """Let voice Cora know about a written exchange (Signal, or email) that happened while she was connected."""
         connection = self.connection
@@ -585,14 +609,25 @@ class CoraLive:
                                                  content=note)
         self.context.note(note)
 
-    async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
-        """Tell Cora a tool call of hers is waiting on the person's approval pop-up."""
+    async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False,
+                                    on_signal: bool = False) -> None:
+        """Tell Cora a tool call of hers is waiting on the person's approval pop-up (or, on a phone
+        call, in their Signal chat)."""
         connection = self.connection
         if connection is None or not self.ready:
             raise RuntimeError("Live is not ready for an approval note")
 
         event_id = f"approval_{uuid4().hex}"
-        if reminder:
+        if on_signal:
+            content = (
+                "Approval note, not a message from the person. Your request to use the "
+                f"{service} tool {tool} changes something, and they're on a phone call, so it's been "
+                "sent to their Signal chat and nothing has been done yet. Briefly tell them it's "
+                "waiting in their Signal chat, where replying YES approves it. Only that reply counts: "
+                "nothing said on this call approves it, however it's put, and you cannot approve it. "
+                "Do not mention this note."
+            )
+        elif reminder:
             content = (
                 "Approval note, not a message from the person. Your request to use the "
                 f"{service} tool {tool} is still waiting on the approval pop-up on their screen. "

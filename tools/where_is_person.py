@@ -46,6 +46,8 @@ WHY_NOT = {
                "device's settings. Ask them where they are if it matters."),
     "unavailable": ("Their device couldn't get a location just now (the page may be in the background). "
                     "Ask them where they are if it matters."),
+    "on_call": ("They're on a phone call with you, and where they are is never checked during a call. "
+                "Ask them where they are if it matters."),
     "unnamed": "Their location came through but the place couldn't be named just now. Ask them where they are if it matters.",
 }
 ERROR_RESULT = {"status": "error", "message": "Could not check where they are; say so rather than guessing."}

@@ -1933,10 +1933,44 @@ features it helps check, and package last.
     below). WB5 (photos both ways), WB6 (where you are), WV3 (voice polish) and WB7 (maps on the page) are built.
 21. Phone calls P1–P3 on Cora's own number: you call her like any contact,
     contacts you've added can too, and she can call places for tasks (see
-    Phone calls in Details below).
+    Phone calls in Details below). P1a (Twilio, and only your number gets
+    through), P1b (the call reaches her voice) and P1c (approvals in Signal
+    during a call) are built, and P2a (a Calls switch for each contact, off
+    by default) and P2b (a contact's call reaches her in client mode, within
+    limits); P3a (she calls places for tasks) is built and waiting for a
+    real test.
+    *Then a feature freeze:* about a month of using Cora day to day (desk,
+    voice, Signal, the web page and calls) with no new features. Only fixes,
+    polish from real use, documentation, and the housekeeping below. Ideas
+    that come up go into this roadmap for afterwards, not into the code. Items
+    18 and 19 wait until after the freeze.
 22. Release.
 
 *After 1.0:* local models.
+
+*Housekeeping, any time (nothing is broken; these keep things healthy as she grows):*
+
+- **Tool audit.** She has about 26 tools of her own in a voice session, plus web
+  search and any MCP service tools switched on, and phone calls will add more.
+  She picks well today, but choices get less reliable as the list grows,
+  especially between similar tools. Before it grows much further:
+  - *Merge close relatives:* `recall_self`, `recall_interest` and
+    `recall_desire` into one `recall` (with what it's about as an argument);
+    `create_event`, `update_event`, `cancel_event` and `forward_event` into one
+    `change_calendar` (with the change as an argument); `send_signal_message`
+    and `message_person_on_signal` into one Signal tool. Each merged tool keeps
+    its approval rules for the changes that need them.
+  - *Offer only what's set up,* as `show_map` already is without a Google Maps
+    key (`unavailable_tools`): email and calendar tools without her email
+    signed in, Signal tools without Signal linked.
+  - *Measure it:* a small set of test requests, each with the tool she should
+    pick (or none), run against the real model before and after, so changes
+    to tools or their descriptions show whether her choices got better or
+    worse.
+  - That takes her from about 26 tools to about 18, and keeps per-chat
+    exclusions (Signal, email, contacts' allowlists) working as they do now.
+- **Flaky tests:** two timing-sensitive tests occasionally fail on a busy
+  machine (see Tests above); make them wait on events rather than time.
 
 #### Details, in order
 
@@ -2887,26 +2921,30 @@ features it helps check, and package last.
     native app using Apple's call framework (CallKit) could keep a call going,
     which means Xcode and Apple's developer programme. Calling her on her
     phone number (Phone calls, below) gets the same result without an app.
-- **Phone calls (Cora's own number), planned:** calling Cora like any contact,
+- **Phone calls (Cora's own number), P1a and P1b built:** calling Cora like any contact,
   which works with the phone locked, over Bluetooth and in the car, through
   iOS's own call handling; and later her calling places to get things done.
-  - *Her number stays:* it's the SIM in her Signal phone, and a SIM can't be
-    connected to software directly, so calls to it are forwarded by the carrier
-    to a telephony number (Twilio, say) that hands them to OpenAI's realtime
-    voice. People keep calling the number they know and Signal stays on the
-    SIM. Check with the carrier that forwarding keeps the caller's number, as
-    who's calling decides what follows. Costs: cents a minute for the line, on
-    top of Live.
+  - *Her phone number is a Twilio one:* a SIM can't be connected to software
+    directly, so calls go to a Twilio number (+61 485 008 128) that hands them
+    to her listener. Her Signal SIM (Kogan) keeps Signal and texts. Forwarding
+    the SIM's calls to Twilio was tried and dropped: Kogan accepted the setting
+    but failed every forwarded call before it reached Twilio (see step 5
+    below for what to try on another carrier). So she has two numbers: Signal
+    on the SIM, calls on Twilio. Costs: cents a minute for the line, on top of
+    Live, and the number's monthly fee.
   - *Who can call:* you (the same conversation as the desk, Signal and the web
-    page, with her tools); contacts you've added (client mode, as in their
-    Signal chats: professional, never your private life, in their own
-    conversation); anyone else hears a short polite line and the call ends, as
-    strangers get on Signal.
+    page, with her tools); contacts you've added whose Calls switch is on
+    (client mode, as in their Signal chats: professional, never your private
+    life, in their own conversation); a contact with calls off is rejected
+    unanswered (`<Reject>`: they hear busy, nothing is spoken and no call
+    minutes are used); anyone else hears a short polite line and the call ends, as strangers get on
+    Signal.
   - *Approvals never by voice on a phone call:* caller ID can be faked, so on a
-    call, tools that change things are approved only where they are now in a
-    written chat (on the web page or on Signal), never by saying yes on the
-    call. At the desk, approvals stay as they are with the TUI's voice (the
-    pop-up).
+    call, tools that change things are approved only in writing, never by
+    saying yes on the call. Decided: during a call they're asked in your
+    Signal chat (reply YES), which works with the phone at your ear or in
+    your pocket; she tells you on the call that it's waiting there. At the
+    desk, approvals stay as they are with the TUI's voice (the pop-up).
   - *Calling out for tasks:* like `send_signal_message` and `send_email` in a
     task, each call approved first (who and why); she says up front that she's
     an AI assistant calling on your behalf; the commitment check holds (she
@@ -2915,10 +2953,159 @@ features it helps check, and package last.
     thread, and she mentions that, as some Australian states require telling
     the other party a call is recorded; what she learns reaches the
     coordinator and comes back to you like an email reply.
-  - *Steps:* P1 you can call her (forwarding, the telephony number, your
+  - *Steps:* P1 you can call her (the telephony number, your
     number recognised, the same context as the desk); P2 contacts can call
     (client mode, strangers turned away); P3 she calls places for tasks
     (approval, disclosure, commitments, transcript, reporting back).
+  - *How a call reaches her (P1):* like Talk on the web page, the Live session
+    stays on the desk and only its audio moves: Twilio streams the call's
+    audio (8 kHz μ-law) over a WebSocket to her listener, which converts it to
+    and from Live's 24 kHz audio and plugs it into the same relay as the web
+    page's voice (`web/voice.py`). So it's the same conversation, tools and
+    memory as the desk; a call wakes her from standby and hanging up puts her
+    back, as Talk does. No location on calls (`where_is_person` says so).
+  - P1a Twilio and who gets through, **built**: Settings › Services › Phone
+    calls (on/off, Twilio's auth token in the system credential store, and
+    the address to give Twilio). Twilio asks `POST /phone/incoming` on her
+    listener ([phone/routes.py](phone/routes.py)) what to do with each call.
+    Every request's `X-Twilio-Signature` (HMAC-SHA1 of the public address and
+    the fields, with the auth token; checked against Twilio's own documented
+    example) is checked before anything else, so nobody else can pose as a
+    call. Then the caller's number: yours (the one under Signal) hears a test
+    line for now; anyone else, or a withheld number, hears "I can only take
+    calls from people I already know" and the call ends. Activity notes each
+    call; a stranger's number only by its last three digits. Tested with a
+    real Twilio number.
+  - P1b the call reaches her, **built**: your call is answered with
+    `<Connect><Stream>` to `wss://…/phone/stream` on her listener, carrying a
+    one-time token (30 seconds, used once) so only that call's stream gets in.
+    The stream's 8 kHz μ-law becomes Live's 24 kHz PCM16 and back
+    ([phone/audio.py](phone/audio.py): numpy μ-law tables, and a short
+    low-pass filter for the exact 3× resampling, well under a millisecond of
+    delay; a general resampler buffered about 60 ms). The call plugs into the
+    web page's voice relay as a talker, so it's Talk by phone: the desk mic
+    and speaker go quiet, a call wakes her from standby and hanging up puts
+    her back, another device starting Talk ends the call, and her going into
+    standby hangs up. She answers like picking up (a "phone" greeting, even if
+    she was already on), and a note tells her you can only hear her, that
+    where you are isn't checked on calls (`where_is_person` refuses during
+    one), and that anything needing approval goes to your Signal chat (P1c).
+    Barge-in works as on the web
+    page: Live paces her speech and stops it when you talk, so nothing needs
+    clearing. A second call while one is connected hears a busy line.
+    Tested on real calls; moving the number to Twilio's AU1 region cut the
+    delay noticeably.
+  - P1c approvals in your Signal chat during a call, **built**: while a call
+    is connected, voice Cora's requests to use tools that change things are
+    asked in your Signal chat (`Confirmations` takes the call's route when no
+    chat's route is set, `phone_approval_route`), answered only by your YES
+    there, and she's told it's waiting there so she can say so on the call.
+    Without Signal linked they wait on the desk's pop-up. Also: when a call
+    ends, Activity says how quickly her replies began (from the last moment
+    you were loud on the line to her first audio going back down it, so her
+    side: Live and this PC), to see where any delay is. Tested on real
+    calls. Polish from real calls continues here.
+  - P2a who of your contacts may call, **built**: each person under Settings
+    › Signal has a **Calls: off/on** button, off by default (migration 0052,
+    `people.may_call`). Their call is recognised by number: with calls off
+    it's rejected unanswered (busy, no minutes used); with calls on, it
+    reaches her (P2b). Twilio needs no list: every call reaches her listener
+    (on a paid account; a trial only lets verified numbers through) and she
+    decides. Strangers' calls never reach a model: Twilio's own voice says
+    the polite line.
+  - P2b a contact's call reaches her, **built**
+    ([app_areas/contact_calls.py](app_areas/contact_calls.py)): in client
+    mode, as in their Signal chat, in a voice session of its own (a second
+    `CoraLive` with `config_override`: `contact_call_config` with her own
+    self, what she remembers of them and their conversation so far, and
+    `client_chat_instructions(on_call=True)`; never your context). Its tools
+    are their chat's (`search_memory` limited to them, `feel`, `pass_on`,
+    `raise_concern`; not `stop_replying`), replying to the call's session
+    through a `CallRoute`. The call has its own relay, so your session, desk
+    mic and speaker are untouched (its speaker is muted, so their call can
+    never play at the desk). What's said is saved in their conversation
+    (channel 'voice'), so their next chat follows on and the usual heads-up
+    reaches you after. Because each call costs a voice session: one contact
+    call at a time (another contact hears a busy line), at most 10 minutes
+    (she's told to wrap up 45 seconds before), and 3 calls per contact per
+    day (after that they're rejected unanswered). Activity notes each call
+    and how long it ran. Tested on a real call from a contact.
+  - P3a she calls places for tasks, **built**
+    ([tools/call_someone.py](tools/call_someone.py),
+    [app_areas/task_calls.py](app_areas/task_calls.py)): `call_someone`
+    (offered only once calling out is set up: Settings › Phone calls, the
+    Twilio Account SID and her number; migration 0053) asks the person
+    first, showing who, the number, the task and the brief, and that she'll
+    say she's an AI assistant and keeps a transcript. Calls go out only
+    between 8am and 8pm local time, one at a time, never to her own number
+    or yours. The person called becomes a task party (channel 'phone', not
+    nudged), then Twilio's API (the AU1 Sydney endpoint, `CORA_TWILIO_API`
+    for another region) rings them with a 10-minute limit of its own. When
+    they answer, the call gets its own voice session, as a contact's call
+    does, with her own self and the task's brief only
+    (`phone_party_instructions`): she introduces herself as an AI assistant
+    calling for someone she works for, says she keeps a transcript, keeps
+    to the brief, never commits you, leaves a short message on voicemail,
+    and reports with `pass_on` as in a task's email thread, so the
+    coordinator brings you their word. The transcript is kept as a step on
+    the task. A call nobody answers (Twilio's status callback,
+    `/phone/status`, signed like the rest) or one that ends without her
+    reporting goes to the coordinator too, so you always hear how it went.
+    Hanging up: on a real call she rarely used `end_call` unless told to
+    (her voice model has to delegate it), so the call also hangs up by
+    itself ([phone/goodbye.py](phone/goodbye.py)). Once her turn ends in
+    a farewell ("bye", "take care", "have a good day") and they say no
+    more than a farewell back, the call closes after her goodbye has
+    played and the line has been quiet for 2 s. Once goodbyes have gone
+    both ways, anything she adds after ("Bye! I'll pass that on.") doesn't
+    keep it open; more from them, or her backend still passing something
+    on, does. She's told to hang up silently, never announcing it. `end_call` stays
+    for when she does hang up herself. Both exist only on calls that
+    aren't yours (a contact's, or one she placed); your own sessions and
+    chats never offer them, and you always hang up your own calls. The
+    call itself was tested on a real call; the automatic hang-up still
+    needs a real-call test.
+  - *Setting up Twilio:*
+    1. Sign up at twilio.com and upgrade from the trial (trial calls play a
+       message first and only reach verified numbers: a call from any other
+       number fails with error 21264 before it reaches her; to test on a
+       trial, add your number under Phone Numbers › Manage › Verified Caller
+       IDs).
+    2. Buy a number (Phone Numbers › Buy a number). Australian numbers need a
+       Regulatory Bundle (an address and ID) that Twilio approves in a few
+       days. A mobile number looks most like a person's. Then move its
+       voice to the Australia (AU1) region (the number's page › Voice ›
+       active region): on US1 every word goes to the US and back, which a
+       conversation hears. Messaging stays on US1; she doesn't use it.
+    3. The number's Voice configuration: "A call comes in" › Webhook, HTTP
+       POST, the address Settings shows
+       (`https://cora.intelligis.io/phone/incoming`).
+    4. The auth token for the number's region: Console › API keys & tokens,
+       Region set to Australia (AU1), Live credentials › Auth Token (each
+       region has its own; the US1 one makes every AU1 call fail with 403 /
+       error 11200). Paste it into Settings › Services › Phone calls, and switch Phone calls on (it needs the public address
+       under Webhooks, and your number under Signal).
+    5. Optional (not used: Kogan wouldn't complete it): forward her SIM's
+       calls to the Twilio number, with the carrier's app or
+       `**21*<number>*11#` on most networks (`*11` is voice only, so texts
+       such as Signal's codes still reach the SIM; `*#21#` shows what's set,
+       `##21#` clears it). If calls then fail without appearing in Twilio's
+       Calls Log, the carrier isn't completing the forward: on VoLTE networks
+       (Kogan/Vodafone) set it in iOS (Settings › Apps › Phone › Call
+       Forwarding) instead of by code, try without Wi-Fi Calling, and check
+       her SIM can call the Twilio number at all. Or skip forwarding and
+       simply call the Twilio number: it reaches her the same way.
+    6. Call the Twilio number: Activity should say you're calling, and she
+       answers. If it says a stranger was turned away, your number isn't
+       coming through as the one under Signal (Twilio shows the number it got
+       in the call's log).
+    7. For calling out: run `python migrate.py` (0053), then in Settings ›
+       Phone calls give the Account SID (Console › Account info, AC…) and
+       her Twilio number (+61…) and press Save calling out. She asks you
+       before every call.
+    - Caddy already passes everything for the address to her listener. If
+      Cloudflare's bot protection is on for the address, check Twilio's
+      requests aren't challenged (Security › Events).
 - **Installable Cora (paused):** an installer for non-technical users is not
   planned for now. Notes for if it returns: keep PostgreSQL rather than moving
   to SQLite, with a private bundled PostgreSQL plus pgvector. `pgserver` was

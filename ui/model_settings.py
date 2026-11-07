@@ -55,6 +55,8 @@ class SignalControls:
     clients: Callable[[], list] = lambda: []
     add_client: Callable[[str, str], None] = lambda name, number: None
     remove_client: Callable[[str], None] = lambda number: None
+    # set_client_calls(number, on): whether they may reach her by phone (off unless turned on).
+    set_client_calls: Callable[[str, bool], None] = lambda number, on: None
 
 
 @dataclass
@@ -116,6 +118,36 @@ class WebControls:
     has_maps_key: bool = False
     save_maps_key: Callable[[str], None] = lambda key: None
 
+
+@dataclass
+class PhoneControls:
+    """What the Phone calls row reads and does; the app owns the listener and who may call."""
+
+    # status() -> (the line for the row, a detail line such as what's still missing); either may be "".
+    status: Callable[[], tuple[str, str]]
+    set_enabled: Callable[[bool], None]
+    # save_token(token): "" forgets it.
+    save_token: Callable[[str], None]
+    # The address to give Twilio for incoming calls, or "" until the public address is saved.
+    incoming_url: Callable[[], str]
+    enabled: bool = False
+    has_token: bool = False
+    # Calling out for tasks: the Twilio account and her number, and save_account(sid, number) ("" clears).
+    account_sid: str = ""
+    phone_number: str = ""
+    save_account: Callable[[str, str], None] = lambda account_sid, number: None
+
+
+PHONE_INTRO = (
+    "Calls to Cora's phone number, a Twilio number. Only your number (the one "
+    "under Signal) reaches her; anyone else hears a short polite line. Approvals during a call are "
+    "asked in your Signal chat, never by voice."
+)
+PHONE_CALLING_OUT_HELP = (
+    "Calling out for tasks (she asks you first, every time): the Account SID (Twilio console › Account "
+    "info, AC…) and her Twilio number to call from. Leave both empty and she can't call out."
+)
+PHONE_TOKEN_HELP = "Twilio auth token (Twilio console › Account info), to check each call really comes from Twilio."
 
 WEB_INTRO = (
     "Cora on your phone, tablet or laptop, in a browser, at the public address under Webhooks below. "
@@ -244,6 +276,14 @@ def web_line(status: str) -> Text:
     return Text(f"● {status}", style="#8fcf8f")
 
 
+def phone_line(status: str) -> Text:
+    if not status:
+        return Text("○ off", style="#8f98a8")
+    if status.startswith("●"):
+        return Text(status, style="#8fcf8f")
+    return Text(status, style="#e07a7a")
+
+
 def device_text(device) -> str:
     paired = device.paired_at.astimezone()
     seen = device.last_seen_at.astimezone()
@@ -296,6 +336,7 @@ class ModelSettingsScreen(ModalScreen):
         self, models: dict, save, screen_looking: bool, set_screen_looking, services: ServiceControls | None = None,
         signal: SignalControls | None = None, email: EmailControls | None = None,
         webhooks: WebhookControls | None = None, web: WebControls | None = None,
+        phone: PhoneControls | None = None,
     ) -> None:
         super().__init__()
         self.models = dict(models)
@@ -307,10 +348,11 @@ class ModelSettingsScreen(ModalScreen):
         self.email = email
         self.webhooks = webhooks
         self.web = web
+        self.phone = phone
         self.shown_pair_link: str | None = None
         self.shown_devices: list | None = None
         self.shown_link_uri: str | None = None
-        self.shown_clients: list[tuple[str, str]] | None = None
+        self.shown_clients: list[tuple[str, str, bool]] | None = None
         self.shown_tools: dict[str, tuple] = {}
         self.tool_switches: dict[str, list[str]] = {}
 
@@ -339,6 +381,8 @@ class ModelSettingsScreen(ModalScreen):
                                 yield from self.compose_email()
                             if self.web is not None:
                                 yield from self.compose_web()
+                            if self.phone is not None:
+                                yield from self.compose_phone()
                             if self.webhooks is not None:
                                 yield from self.compose_webhooks()
             yield Button("Close", id="model-settings-close")
@@ -431,6 +475,29 @@ class ModelSettingsScreen(ModalScreen):
                 yield Button("Save key", id="web-maps-save")
                 yield Button("Forget", id="web-maps-forget")
 
+    def compose_phone(self) -> ComposeResult:
+        with Horizontal(classes="service-heading", id="service-heading-phone"):
+            yield Label("▸ Phone calls", classes="service-title", id="service-title-phone")
+            yield Static(id="phone-status", classes="service-status")
+            yield Switch(value=self.phone.enabled, id="phone-enabled")
+        with Vertical(classes="service-details", id="service-details-phone"):
+            yield Static(Text(PHONE_INTRO, style="#8f98a8"), classes="service-help")
+            yield Static(id="phone-detail", classes="service-reason")
+            yield Label(PHONE_TOKEN_HELP, classes="model-settings-label service-help")
+            yield Input(
+                id="phone-token", password=True,
+                placeholder="token saved · paste to replace" if self.phone.has_token else "32 letters and digits",
+            )
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save token", id="phone-save-token")
+                yield Button("Forget", id="phone-forget-token")
+            yield Label(PHONE_CALLING_OUT_HELP, classes="model-settings-label service-help")
+            with Horizontal(classes="service-buttons"):
+                yield Input(value=self.phone.account_sid, id="phone-account-sid", placeholder="Account SID, AC…")
+                yield Input(value=self.phone.phone_number, id="phone-number", placeholder="her Twilio number, +61…")
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save calling out", id="phone-save-account")
+
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
             yield Label("▸ Webhooks", classes="service-title", id="service-title-webhooks")
@@ -482,7 +549,8 @@ class ModelSettingsScreen(ModalScreen):
         details = self.query_one(f"#service-details-{service_id}")
         details.display = not details.display
         arrow = "▾" if details.display else "▸"
-        titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks", "web": "Web interface"}
+        titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks", "web": "Web interface",
+                  "phone": "Phone calls"}
         title = titles.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
@@ -492,7 +560,7 @@ class ModelSettingsScreen(ModalScreen):
             self.set_interval(0.5, self.show_services)
 
     async def show_signal_clients(self) -> None:
-        clients = [(client.name, client.number) for client in self.signal.clients()]
+        clients = [(client.name, client.number, client.may_call) for client in self.signal.clients()]
         if clients == self.shown_clients:
             return
         self.shown_clients = clients
@@ -502,10 +570,12 @@ class ModelSettingsScreen(ModalScreen):
         await listing.mount_all(
             Horizontal(
                 Static(f"{name} · {number}", classes="tool-label"),
+                Button("Calls: on" if may_call else "Calls: off", id=f"signal-calls-{index}",
+                       classes="calls-on" if may_call else ""),
                 Button("Remove", id=f"signal-remove-{index}"),
                 classes="tool-row",
             )
-            for index, (name, number) in enumerate(clients)
+            for index, (name, number, may_call) in enumerate(clients)
         ) if clients else listing.mount(Static(Text("Nobody added yet.", style="#8f98a8")))
 
     async def show_signal(self) -> None:
@@ -594,6 +664,20 @@ class ModelSettingsScreen(ModalScreen):
             (f"Or go to {address} and type the code.\n", "#8f98a8"), (WEB_PAIR_HINT, "#8f98a8"),
         ))
 
+    def show_phone(self) -> None:
+        line, detail = self.phone.status()
+        self.query_one("#phone-status", Static).update(phone_line(line))
+        url = self.phone.incoming_url()
+        text = Text()
+        if detail:
+            text.append(detail + "\n", style="#d7a06a")
+        if url:
+            text.append("In Twilio, set the number's \"A call comes in\" webhook (HTTP POST) to\n", style="#8f98a8")
+            text.append(url, style="bold #e0e6ef")
+        widget = self.query_one("#phone-detail", Static)
+        widget.display = bool(text.plain)
+        widget.update(text)
+
     async def show_services(self) -> None:
         if self.signal is not None:
             await self.show_signal()
@@ -603,6 +687,8 @@ class ModelSettingsScreen(ModalScreen):
             self.show_webhooks()
         if self.web is not None:
             await self.show_web()
+        if self.phone is not None:
+            self.show_phone()
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -653,6 +739,16 @@ class ModelSettingsScreen(ModalScreen):
                 return
             self.web.enabled = event.value
             self.web.set_enabled(event.value)
+            return
+        if event.switch.id == "phone-enabled":
+            if event.value == self.phone.enabled:
+                return
+            if event.value and not (self.webhooks is not None and self.webhooks.public_url):
+                self.notify("Save the public address under Webhooks first.", severity="warning")
+                event.switch.value = False
+                return
+            self.phone.enabled = event.value
+            self.phone.set_enabled(event.value)
             return
         if event.switch.id == "webhooks-enabled":
             if event.value == self.webhooks.enabled:
@@ -768,6 +864,16 @@ class ModelSettingsScreen(ModalScreen):
         field_.value = ""
         field_.placeholder = "password saved · type to replace"
 
+    def save_phone_token(self) -> None:
+        field_ = self.query_one("#phone-token", Input)
+        if not field_.value.strip():
+            self.notify("Paste the Twilio auth token first.", severity="warning")
+            return
+        # Straight to the credential store; the field never keeps it.
+        self.phone.save_token(field_.value)
+        field_.value = ""
+        field_.placeholder = "token saved · paste to replace"
+
     def save_maps_key(self) -> None:
         field_ = self.query_one("#web-maps-key", Input)
         if not field_.value.strip():
@@ -830,6 +936,14 @@ class ModelSettingsScreen(ModalScreen):
             self.web.start_pairing()
         elif button == "web-pair-cancel":
             self.web.cancel_pairing()
+        elif button == "phone-save-token":
+            self.save_phone_token()
+        elif button == "phone-save-account":
+            self.phone.save_account(self.query_one("#phone-account-sid", Input).value,
+                                    self.query_one("#phone-number", Input).value)
+        elif button == "phone-forget-token":
+            self.phone.save_token("")
+            self.query_one("#phone-token", Input).placeholder = "32 letters and digits"
         elif button == "web-maps-save":
             self.save_maps_key()
         elif button == "web-maps-forget":
@@ -840,8 +954,11 @@ class ModelSettingsScreen(ModalScreen):
         elif button == "signal-add-client":
             self.add_client()
         elif button.startswith("signal-remove-"):
-            _, number = self.shown_clients[int(button.removeprefix("signal-remove-"))]
+            _, number, _ = self.shown_clients[int(button.removeprefix("signal-remove-"))]
             self.signal.remove_client(number)
+        elif button.startswith("signal-calls-"):
+            _, number, may_call = self.shown_clients[int(button.removeprefix("signal-calls-"))]
+            self.signal.set_client_calls(number, not may_call)
         elif button.startswith("service-save-"):
             self.save_service_token(button.removeprefix("service-save-"))
         elif button.startswith("service-forget-"):

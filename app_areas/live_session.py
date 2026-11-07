@@ -277,7 +277,7 @@ class LiveSessionMixin:
                 self.send_greeting(kind)  # clears pending_greeting once it is sent
             else:
                 self.pending_greeting = None
-                if kind == "welcome_back":
+                if kind in ("welcome_back", "phone"):
                     self.send_greeting(kind)
 
         elif event.type == "session.commentary.appended":

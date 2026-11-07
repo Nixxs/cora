@@ -24,10 +24,15 @@ class ServicesMixin:
         self.tell_cora_approval_waiting(request.title, request.tool)
 
     @work(group="approval-notes")
-    async def tell_cora_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
-        """Let Cora know her request waits on the pop-up, so she can ask the person to click it."""
+    async def tell_cora_approval_waiting(self, service: str, tool: str, reminder: bool = False,
+                                         on_signal: bool = False) -> None:
+        """Let Cora know her request waits on the pop-up (or, on a call, in the Signal chat), so she
+        can tell the person."""
         try:
-            await self.live.send_approval_waiting(service, tool, reminder=reminder)
+            if on_signal:
+                await self.live.send_approval_waiting(service, tool, on_signal=True)
+            else:
+                await self.live.send_approval_waiting(service, tool, reminder=reminder)
         except Exception as error:
             # The pop-up still works without her mentioning it.
             self.activity.write(f"Approval note to Cora failed ({type(error).__name__}).", "Approval note failed")

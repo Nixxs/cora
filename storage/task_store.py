@@ -89,6 +89,13 @@ class EmailParty:
 
 
 @dataclass(frozen=True)
+class PhoneParty:
+    """Someone called for a task: not a contact, so who they are (and their number) travels with the row."""
+    number: str
+    name: str | None
+
+
+@dataclass(frozen=True)
 class EmailThread:
     """An email party of an open task, for the mail check: mail in their thread after `since` is new."""
     party_id: UUID
@@ -154,8 +161,14 @@ class TaskStore:
         session.add(TaskStepRecord(task_id=task_id, text=clean(text, STEP_MAX_CHARS, "A step")))
 
     @staticmethod
-    def _party(task_id: UUID, who: UUID | EmailParty, brief: str) -> dict:
-        """A party row's values: a contact (by person ID) on Signal, or an EmailParty."""
+    def _party(task_id: UUID, who, brief: str) -> dict:
+        """A party row's values: a contact (by person ID) on Signal, an EmailParty or a PhoneParty."""
+        if isinstance(who, PhoneParty):
+            return {
+                "task_id": task_id, "channel": "phone", "address": clean(who.number, ADDRESS_MAX_CHARS, "A number"),
+                "name": None if not who.name or not who.name.strip() else clean(who.name, NAME_MAX_CHARS, "A name"),
+                "brief": brief,
+            }
         if not isinstance(who, EmailParty):
             return {"task_id": task_id, "channel": "signal", "person_id": who, "brief": brief}
         return {
@@ -186,18 +199,34 @@ class TaskStore:
         again = {"brief": brief, "status": "waiting", "contacted_at": func.current_timestamp(), "nudges": 0}
         if isinstance(who, EmailParty):
             again |= {"name": values["name"], "thread_id": values["thread_id"]}
+        elif isinstance(who, PhoneParty):
+            again |= {"name": values["name"]}
         with Session(self.engine) as session, session.begin():
             task = session.get(TaskRecord, task_id, with_for_update=True)
             if task is None or task.status not in OPEN:
                 raise LookupError("No such open task")
             session.execute(insert(TaskPartyRecord).values(**values).on_conflict_do_update(
-                constraint="task_parties_address_key" if isinstance(who, EmailParty) else "task_parties_person_key",
+                constraint=("task_parties_address_key" if isinstance(who, (EmailParty, PhoneParty))
+                            else "task_parties_person_key"),
                 set_=again,
             ))
             task.status, task.updated_at = "waiting", func.current_timestamp()
             if deadline is not None:
                 task.deadline, task.deadline_warned_at, task.deadline_passed_at = deadline, None, None
             self._step(session, task_id, step)
+
+    def party_id(self, task_id: UUID, address: str) -> UUID | None:
+        """An email or phone party's row, by their address or number, for reporting their word."""
+        with Session(self.engine) as session:
+            return session.scalar(select(TaskPartyRecord.id).where(
+                TaskPartyRecord.task_id == task_id, TaskPartyRecord.address == address))
+
+    def add_step(self, task_id: UUID, text: str) -> None:
+        """Something that happened on a task, such as a call's transcript, for the coordinator."""
+        with Session(self.engine) as session, session.begin():
+            self._step(session, task_id, text)
+            session.execute(update(TaskRecord).where(TaskRecord.id == task_id).values(
+                updated_at=func.current_timestamp()))
 
     def goal(self, task_id: UUID) -> str | None:
         """An open task's goal, or None."""
@@ -466,7 +495,8 @@ class TaskStore:
         statuses = {task.id: task.status for task in tasks}
         for party, name in parties:
             due = None
-            if party.status == "waiting" and statuses[party.task_id] == "waiting":
+            # Someone called isn't nudged: what they said is already in (the coordinator takes it on).
+            if party.status == "waiting" and statuses[party.task_id] == "waiting" and party.channel != "phone":
                 # As quiet_parties counts it: from whichever came last of asked, heard from and nudged.
                 since = max((time for time in (party.contacted_at, party.last_heard_at, party.nudged_at) if time),
                             default=None)

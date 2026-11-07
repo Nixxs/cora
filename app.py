@@ -47,6 +47,7 @@ from subconscious.desires.opportunities import release_opportunity_now
 from inactivity import InactivityController, read_idle_timeout
 from live import CoraLive
 from backend_chat import BackendChat
+from tools.end_call import CALL_ONLY
 from tools.pass_on import CLIENT_ONLY
 from live_events import LiveEventHandler
 from storage.conversation_persistence import ConversationPersistence
@@ -68,6 +69,9 @@ from app_areas.email_account import EmailAccountMixin
 from app_areas.mail import MailMixin
 from app_areas.webhooks import WebhooksMixin
 from app_areas.web_interface import WebInterfaceMixin
+from app_areas.phone_calls import PhoneCallsMixin
+from app_areas.contact_calls import ContactCallsMixin
+from app_areas.task_calls import TaskCallsMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
@@ -101,7 +105,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
 ):
 
     live_trace = None
@@ -274,6 +278,8 @@ class CoraApp(
             kept_images=self.kept_images,
             locate_person=lambda refresh: self.locate_person(refresh),
             show_map=lambda view: self.show_map(view),
+            can_call=lambda number: self.can_call_out(number),
+            place_call=lambda *args, **options: self.place_task_call(*args, **options),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -291,7 +297,7 @@ class CoraApp(
             note_feeling=self.note_feeling,
         )
         # Live never sees client-only tools such as pass_on.
-        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY | self.unavailable_tools()),
+        self.live = CoraLive(tool_schemas=lambda: self.tools.schemas(excluding=CLIENT_ONLY | CALL_ONLY | self.unavailable_tools()),
                              on_trace=self.trace_live)
         # Outside services over MCP. The tools switched on in Settings join Cora's at her next connect.
         self.service_tool_choices: dict[str, set[str]] = {}
@@ -393,6 +399,18 @@ class CoraApp(
         self.whereabouts = Whereabouts(self.web_feed.ask_location)
         # The Google Maps key for maps on the page (Settings › Services › Web interface), or "".
         self.maps_key = ""
+        # Phone calls to her number: Twilio's auth token (checks each call came from Twilio), or "".
+        self.twilio_token = ""
+        self.phone_controls = None
+        # One-time tokens given to calls Twilio is connecting, until their stream opens (see phone_calls).
+        self.phone_tokens: dict[str, float] = {}
+        # The phone call's place in the voice relay while a call is connected to her.
+        self.phone_listener = None
+        # A contact's call while it's on (one at a time), and how many each has made today.
+        self.contact_call = None
+        self.contact_calls_today: dict = {}
+        # A call she placed for a task, from placing it until it's over (one at a time).
+        self.task_call = None
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
@@ -410,6 +428,8 @@ class CoraApp(
             on_outcome=lambda request, outcome: self.conversation.show_approval_outcome(
                 f"{request.title} · {request.tool}", outcome,
             ),
+            # While the person is on a phone call: in their Signal chat, never by voice (see phone_calls).
+            elsewhere=lambda: self.phone_approval_route(),
         )
         self.services = ServiceManager(
             schedule=lambda run: self.run_worker(run, group="services", exit_on_error=False),

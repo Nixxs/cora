@@ -8,6 +8,7 @@ from textual import work
 from mail.account import READY as EMAIL_READY, EmailNotReady, GraphError
 from mail.webhook import calendar_urls, graph_routes, webhook_secrets
 from server.listener import Listener, build_app
+from phone.routes import phone_routes
 from web.routes import web_routes
 from subconscious.event_bus import CalendarChangedEvent
 from app_areas.shared import (
@@ -89,8 +90,11 @@ class WebhooksMixin:
             except Exception as error:
                 self.activity.write(f"Webhook settings didn't load ({type(error).__name__}).", "Webhooks")
                 return
-            # The Google Maps key, for maps on the web page.
+            # The Google Maps key, for maps on the web page, and Twilio's token, for phone calls.
             await self.load_maps_key()
+            await self.load_twilio_token()
+            if self.phone_controls is not None:
+                self.phone_controls.enabled = self.webhook_settings.phone_enabled
             if self.webhook_controls is not None:
                 self.webhook_controls.enabled = self.webhook_settings.enabled
                 self.webhook_controls.public_url = self.webhook_settings.public_url or ""
@@ -114,6 +118,8 @@ class WebhooksMixin:
                     self.activity.write("New webhook secrets made.", "Webhooks")
                 groups.append(graph_routes(lambda: self.webhook_secrets, self.on_mail_webhook, self.on_mail_lifecycle,
                                            self.on_calendar_webhook, self.on_calendar_lifecycle))
+            if settings.phone_enabled:
+                groups.append(phone_routes(self.phone_access()))
             if settings.web_enabled:
                 # Last: the page sits at the root.
                 groups.append(web_routes(self.web_access()))
@@ -129,7 +135,8 @@ class WebhooksMixin:
             self.webhook_worker = self.run_worker(server.serve(), group="webhook", exit_on_error=False)
             self.webhook_status = f"Listening on 127.0.0.1:{settings.port}"
             serving = " and ".join(name for name, on in (("webhooks", settings.enabled),
-                                                          ("the web interface", settings.web_enabled)) if on)
+                                                          ("the web interface", settings.web_enabled),
+                                                          ("phone calls", settings.phone_enabled)) if on)
             self.activity.write(f"Listening for {serving} on 127.0.0.1:{settings.port}.", "Webhooks")
         self.ensure_mail_subscription()
         self.ensure_calendar_subscription()

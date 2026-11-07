@@ -41,8 +41,12 @@ class Confirmations:
     def __init__(self, show: Callable, close: Callable, write_activity: Callable,
                  timeout: float = CONFIRM_SECONDS, remind: Callable = lambda request: None,
                  remind_after: float = REMIND_SECONDS,
-                 on_outcome: Callable = lambda request, outcome: None) -> None:
+                 on_outcome: Callable = lambda request, outcome: None,
+                 elsewhere: Callable = lambda: None) -> None:
         self.show = show
+        # A route that asks somewhere other than the pop-up for requests from voice Cora (the
+        # person's Signal chat while they're on a phone call), or None for the pop-up.
+        self.elsewhere = elsewhere
         self.close = close
         self.write_activity = write_activity
         # Told how each request ended (APPROVED, DECLINED or TIMED_OUT), wherever it was asked: the
@@ -66,6 +70,8 @@ class Confirmations:
 
         request = ConfirmationRequest(service_id, tool, dict(arguments), title)
         route = current_route.get()
+        if route is None:
+            route = self.elsewhere()
         if route is not None and getattr(route, "ask_approval", None) is not None:
             return await self.ask_in_chat(request, route)
         self.waiting.append(request)
