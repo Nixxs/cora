@@ -375,6 +375,18 @@ class TaskStoreDatabaseTests(unittest.TestCase):
             return [row[0] for row in connection.execute(
                 text("SELECT text FROM public.task_steps WHERE task_id = :t ORDER BY id"), {"t": task_id})]
 
+    def test_someone_called_is_a_party_with_steps_and_their_word(self):
+        from storage.task_store import PhoneParty
+        task_id = self.tasks.start("Find a plumber", PhoneParty("+61299999999", "Ace Plumbing"), "Ask about Tuesday.",
+                                   "Calling Ace Plumbing.")
+        party_id = self.tasks.party_id(task_id, "+61299999999")
+        self.assertIsNotNone(party_id)
+        self.tasks.add_step(task_id, "Call with Ace Plumbing (2 min), transcript:\nThem: Tuesday's fine.")
+        self.assertEqual(self.tasks.report_email(task_id, party_id, "Tuesday 9am, $120"), "Find a plumber")
+        self.assertIn("Ace Plumbing reported: Tuesday 9am, $120", self.steps(task_id))
+        # Nobody called is nudged.
+        self.assertIsNone(self.tasks.open_tasks()[0].parties[0].due_at)
+
     def test_a_task_runs_from_first_contact_to_done_at_the_coordinators_word(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah: when?")
         self.assertEqual(self.tasks.goal(task_id), "Lesson for Sarah")

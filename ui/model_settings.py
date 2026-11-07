@@ -132,12 +132,20 @@ class PhoneControls:
     incoming_url: Callable[[], str]
     enabled: bool = False
     has_token: bool = False
+    # Calling out for tasks: the Twilio account and her number, and save_account(sid, number) ("" clears).
+    account_sid: str = ""
+    phone_number: str = ""
+    save_account: Callable[[str, str], None] = lambda account_sid, number: None
 
 
 PHONE_INTRO = (
     "Calls to Cora's phone number, a Twilio number. Only your number (the one "
     "under Signal) reaches her; anyone else hears a short polite line. Approvals during a call are "
     "asked in your Signal chat, never by voice."
+)
+PHONE_CALLING_OUT_HELP = (
+    "Calling out for tasks (she asks you first, every time): the Account SID (Twilio console › Account "
+    "info, AC…) and her Twilio number to call from. Leave both empty and she can't call out."
 )
 PHONE_TOKEN_HELP = "Twilio auth token (Twilio console › Account info), to check each call really comes from Twilio."
 
@@ -483,6 +491,12 @@ class ModelSettingsScreen(ModalScreen):
             with Horizontal(classes="service-buttons"):
                 yield Button("Save token", id="phone-save-token")
                 yield Button("Forget", id="phone-forget-token")
+            yield Label(PHONE_CALLING_OUT_HELP, classes="model-settings-label service-help")
+            with Horizontal(classes="service-buttons"):
+                yield Input(value=self.phone.account_sid, id="phone-account-sid", placeholder="Account SID, AC…")
+                yield Input(value=self.phone.phone_number, id="phone-number", placeholder="her Twilio number, +61…")
+            with Horizontal(classes="service-buttons"):
+                yield Button("Save calling out", id="phone-save-account")
 
     def compose_webhooks(self) -> ComposeResult:
         with Horizontal(classes="service-heading", id="service-heading-webhooks"):
@@ -924,6 +938,9 @@ class ModelSettingsScreen(ModalScreen):
             self.web.cancel_pairing()
         elif button == "phone-save-token":
             self.save_phone_token()
+        elif button == "phone-save-account":
+            self.phone.save_account(self.query_one("#phone-account-sid", Input).value,
+                                    self.query_one("#phone-number", Input).value)
         elif button == "phone-forget-token":
             self.phone.save_token("")
             self.query_one("#phone-token", Input).placeholder = "32 letters and digits"

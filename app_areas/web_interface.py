@@ -253,8 +253,12 @@ class WebInterfaceMixin:
                 "from_device": where.device, "checked_minutes_ago": minutes, "note": WHERE_NOTE}
 
     def unavailable_tools(self) -> frozenset[str]:
-        """Tools not set up, so not offered anywhere: show_map without a Google Maps key."""
-        return frozenset() if self.maps_key else frozenset({"show_map"})
+        """Tools not set up, so not offered anywhere: show_map without a Google Maps key, and
+        call_someone until calling out is set up."""
+        missing = set() if self.maps_key else {"show_map"}
+        if self.calling_out_problem():
+            missing.add("call_someone")
+        return frozenset(missing)
 
     def show_map(self, view: maps.MapView) -> bool:
         """show_map: the map on every open page, and its caption and link in the desk's chat.

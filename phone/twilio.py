@@ -14,9 +14,11 @@ The auth token is kept in the system credential store. Blocking calls: run them 
 import base64
 import hashlib
 import hmac
+from os import getenv
 import re
 from xml.sax.saxutils import escape
 
+import httpx2 as httpx
 import keyring
 from keyring.errors import PasswordDeleteError
 
@@ -27,6 +29,14 @@ TOKEN_PATTERN = re.compile(r"[0-9a-fA-F]{32}")
 INCOMING_PATH = "/phone/incoming"
 # Where Twilio streams a call's audio once it's connected to her (a WebSocket).
 STREAM_PATH = "/phone/stream"
+# Where Twilio says how a call she placed ended (answered or not).
+STATUS_PATH = "/phone/status"
+# Twilio's API for the region her number is in: Australia (AU1) through its Sydney edge, where the
+# auth token in Settings belongs. CORA_TWILIO_API sets another (https://api.twilio.com for US1).
+API_BASE = getenv("CORA_TWILIO_API", "https://api.sydney.au1.twilio.com").rstrip("/")
+# How long a call she places rings before it counts as not answered.
+RING_SECONDS = 30
+API_SECONDS = 15
 
 # What Twilio's voice says: an Australian English voice.
 VOICE_LANGUAGE = "en-AU"
@@ -112,3 +122,36 @@ def reject() -> str:
     """TwiML: refuse the call without answering it, so nothing is said and no call minutes are used
     (the caller hears it as busy)."""
     return '<?xml version="1.0" encoding="UTF-8"?><Response><Reject reason="busy"/></Response>'
+
+
+class TwilioError(Exception):
+    """Twilio refused a request: its error code and HTTP status, never the message (it may echo numbers)."""
+
+    def __init__(self, status: int, code) -> None:
+        super().__init__(f"Twilio said {status}" + (f" (error {code})" if code else ""))
+        self.status = status
+        self.code = code
+
+
+async def place_call(account_sid: str, token: str, from_number: str, to_number: str, twiml: str,
+                     status_url: str, time_limit: int, transport=None) -> str:
+    """Ask Twilio to ring someone from her number; once they answer it does what the TwiML says.
+    Returns the call's ID. Twilio itself ends the call after time_limit seconds, whatever happens
+    here, and tells status_url how it ended."""
+    async with httpx.AsyncClient(timeout=API_SECONDS, transport=transport) as client:
+        response = await client.post(
+            f"{API_BASE}/2010-04-01/Accounts/{account_sid}/Calls.json",
+            auth=(account_sid, token),
+            data={
+                "To": to_number, "From": from_number, "Twiml": twiml,
+                "StatusCallback": status_url, "StatusCallbackMethod": "POST",
+                "Timeout": str(RING_SECONDS), "TimeLimit": str(time_limit),
+            },
+        )
+    if response.status_code >= 300:
+        try:
+            code = response.json().get("code")
+        except ValueError:
+            code = None
+        raise TwilioError(response.status_code, code)
+    return response.json()["sid"]

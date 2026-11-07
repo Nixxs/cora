@@ -78,6 +78,12 @@ class KeyboardPersistence:
                    deadline: datetime | None = None) -> UUID:
         return TaskStore(self._get_store().engine).start(goal, who, brief, step, deadline)
 
+    def task_party_id(self, task_id: UUID, address: str) -> UUID | None:
+        return TaskStore(self._get_store().engine).party_id(task_id, address)
+
+    def add_task_step(self, task_id: UUID, text: str) -> None:
+        TaskStore(self._get_store().engine).add_step(task_id, text)
+
     def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str,
                        deadline: datetime | None = None) -> None:
         TaskStore(self._get_store().engine).add_party(task_id, who, brief, step, deadline)
@@ -238,6 +244,9 @@ class KeyboardPersistence:
 
     def save_phone_enabled(self, enabled: bool) -> None:
         WebhookSettingsStore(self._get_store().engine).set_phone_enabled(enabled)
+
+    def save_twilio_account(self, account_sid: str, phone_number: str) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_twilio_account(account_sid, phone_number)
 
     def load_web_devices(self) -> list[WebDevice]:
         return WebDeviceStore(self._get_store().engine).devices()

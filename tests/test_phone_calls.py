@@ -382,7 +382,11 @@ class PhoneCallAppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("your number under Signal", missing)
                 app.twilio_token = TOKEN
                 app.signal_settings = replace(app.signal_settings, allowed_number=YOU)
-                self.assertEqual(app.phone_status(), ("● answering calls", ""))
+                self.assertEqual(app.phone_status()[0], "● answering calls")
+                self.assertIn("Not calling out", app.phone_status()[1])
+                app.webhook_settings = replace(app.webhook_settings, twilio_account_sid="AC" + "0" * 32,
+                                               phone_number="+61485008128")
+                self.assertEqual(app.phone_status()[1], "Calling out for tasks from +61485008128.")
             app.webhook_settings = WebhookSettings(public_url=PUBLIC)
             self.assertEqual(app.phone_status(), ("", ""))
 
@@ -472,7 +476,7 @@ class ContactCallTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Sarah likes sailing.", config["instructions"])
             self.assertNotIn("Nick's private plans.", config["instructions"] + config["delegation"]["responses"]["instructions"])
             names = {schema["name"] for schema in seen["schemas"]}
-            self.assertEqual(names, {"search_memory", "feel", "pass_on", "raise_concern"})
+            self.assertEqual(names, {"search_memory", "feel", "pass_on", "raise_concern", "end_call"})
             # Their call's audio only: never the desk's speaker or mic.
             self.assertTrue(call.live.speaker_muted)
             self.assertIs(call.live.voice_relay, call.relay)

@@ -26,6 +26,7 @@ from messaging.messages import APPROVAL_SECONDS
 from messaging.setup import LINKED as SIGNAL_LINKED
 from phone import twilio
 from phone.routes import CallLink, PhoneAccess
+from app_areas.task_calls import TaskCall
 from ui.model_settings import PhoneControls
 
 
@@ -62,7 +63,7 @@ class PhoneCallsMixin:
     def phone_access(self) -> PhoneAccess:
         """What the phone routes may do, for the listener."""
         return PhoneAccess(token=lambda: self.twilio_token, public_url=lambda: self.webhook_settings.public_url or "",
-                           on_call=self.on_phone_call, claim=self.claim_phone_token)
+                           on_call=self.on_phone_call, claim=self.claim_phone_token, on_status=self.on_twilio_status)
 
     def on_phone_call(self, caller: str, call_id: str) -> str:
         """A call Twilio vouched for: the TwiML that answers it."""
@@ -98,12 +99,13 @@ class PhoneCallsMixin:
                             "Phone call")
         return twilio.say_and_hang_up(twilio.STRANGER_LINE)
 
-    def give_phone_token(self, contact) -> str:
-        """A one-time token for a call being connected: the person's (contact None), or a contact's."""
+    def give_phone_token(self, target, seconds: float = TOKEN_SECONDS) -> str:
+        """A one-time token for a call being connected: the person's (target None), a contact's (their
+        Client), or one she placed for a task (its TaskCall)."""
         now = monotonic()
         self.phone_tokens = {token: given for token, given in self.phone_tokens.items() if given[0] > now}
         token = secrets.token_urlsafe(32)
-        self.phone_tokens[token] = (now + TOKEN_SECONDS, contact)
+        self.phone_tokens[token] = (now + seconds, target)
         return token
 
     def claim_phone_token(self, token: str) -> CallLink | None:
@@ -112,9 +114,11 @@ class PhoneCallsMixin:
         given = self.phone_tokens.pop(token, None)
         if given is None or given[0] <= monotonic() or not self.webhook_settings.phone_enabled:
             return None
-        contact = given[1]
-        if contact is not None:
-            return self.contact_call_link(contact)
+        target = given[1]
+        if isinstance(target, TaskCall):
+            return self.task_call_link(target)
+        if target is not None:
+            return self.contact_call_link(target)
         return CallLink(self.web_voice, self.on_phone_stream,
                         on_gaps=lambda summary: summary and self.activity.write(summary, "Phone call"))
 
@@ -198,7 +202,10 @@ class PhoneCallsMixin:
         ) if not there]
         if missing:
             return "● on · not answering yet", "Still needed: " + " and ".join(missing) + "."
-        return "● answering calls", ""
+        calling_out = self.webhook_settings
+        if calling_out.twilio_account_sid and calling_out.phone_number:
+            return "● answering calls", f"Calling out for tasks from {calling_out.phone_number}."
+        return "● answering calls", "Not calling out: give the Account SID and her number below for that."
 
     def phone_incoming_url(self) -> str:
         url = self.webhook_settings.public_url
@@ -208,6 +215,7 @@ class PhoneCallsMixin:
         self.phone_controls = PhoneControls(
             status=self.phone_status, set_enabled=self.set_phone_enabled, save_token=self.save_twilio_token,
             incoming_url=self.phone_incoming_url, enabled=self.webhook_settings.phone_enabled,
-            has_token=bool(self.twilio_token),
+            has_token=bool(self.twilio_token), account_sid=self.webhook_settings.twilio_account_sid or "",
+            phone_number=self.webhook_settings.phone_number or "", save_account=self.save_twilio_account,
         )
         return self.phone_controls

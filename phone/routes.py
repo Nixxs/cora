@@ -15,7 +15,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from web.voice import Listener, VoiceRelay
 
 from .audio import CallAudio, ReplyGaps
-from .twilio import INCOMING_PATH, STREAM_PATH, valid_signature
+from .twilio import INCOMING_PATH, STATUS_PATH, STREAM_PATH, valid_signature
 
 # Twilio's call requests are a few dozen short fields.
 BODY_MAX_BYTES = 16 * 1024
@@ -52,6 +52,8 @@ class PhoneAccess:
     on_call: Callable[[str, str], str]
     # claim(token) -> the call's link if it's a one-time token on_call gave out (now used up), else None.
     claim: Callable[[str], CallLink | None] | None = None
+    # on_status(call_id, status): how a call she placed ended ("completed", "no-answer", "busy", "failed"...).
+    on_status: Callable[[str, str], None] = lambda call_id, status: None
 
 
 def twiml(body: str, status: int = 200) -> Response:
@@ -75,8 +77,8 @@ async def call_started(websocket: WebSocket) -> dict | None:
 
 
 def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
-    async def incoming(request: Request) -> Response:
-        """A call to Cora's number. Only Twilio, signing with the account's auth token, gets an answer."""
+    async def signed_fields(request: Request, path: str) -> dict | Response:
+        """The request's fields if Twilio signed it with the account's auth token, else the refusal."""
         if request.headers.get("content-type", "").split(";")[0].strip() != "application/x-www-form-urlencoded":
             return Response(status_code=415)
         body = b""
@@ -86,11 +88,25 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
                 return Response(status_code=413)
         params = parse_qsl(body.decode("utf-8", errors="replace"), keep_blank_values=True)
         # Signed over the address Twilio was given (the public one), not the one the proxy passes on.
-        url = access.public_url() + INCOMING_PATH
+        url = access.public_url() + path
         if not valid_signature(access.token(), url, params, request.headers.get("x-twilio-signature")):
             return Response(status_code=403)
-        fields = dict(params)
+        return dict(params)
+
+    async def incoming(request: Request) -> Response:
+        """A call to Cora's number. Only Twilio, signing with the account's auth token, gets an answer."""
+        fields = await signed_fields(request, INCOMING_PATH)
+        if isinstance(fields, Response):
+            return fields
         return twiml(access.on_call(fields.get("From", ""), fields.get("CallSid", "")))
+
+    async def status(request: Request) -> Response:
+        """How a call she placed ended, from Twilio."""
+        fields = await signed_fields(request, STATUS_PATH)
+        if isinstance(fields, Response):
+            return fields
+        access.on_status(fields.get("CallSid", ""), fields.get("CallStatus", ""))
+        return Response(status_code=204)
 
     async def stream(websocket: WebSocket) -> None:
         """A connected call's audio (Twilio's media stream): the caller's voice for her, and hers
@@ -175,4 +191,5 @@ def phone_routes(access: PhoneAccess) -> list[BaseRoute]:
             except RuntimeError:
                 pass
 
-    return [Route(INCOMING_PATH, incoming, methods=["POST"]), WebSocketRoute(STREAM_PATH, stream)]
+    return [Route(INCOMING_PATH, incoming, methods=["POST"]), Route(STATUS_PATH, status, methods=["POST"]),
+            WebSocketRoute(STREAM_PATH, stream)]

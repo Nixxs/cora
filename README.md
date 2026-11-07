@@ -1937,7 +1937,8 @@ features it helps check, and package last.
     through), P1b (the call reaches her voice) and P1c (approvals in Signal
     during a call) are built, and P2a (a Calls switch for each contact, off
     by default) and P2b (a contact's call reaches her in client mode, within
-    limits); next, P3 (she calls places for tasks).
+    limits); P3a (she calls places for tasks) is built and waiting for a
+    real test.
     *Then a feature freeze:* about a month of using Cora day to day (desk,
     voice, Signal, the web page and calls) with no new features. Only fixes,
     polish from real use, documentation, and the housekeeping below. Ideas
@@ -3028,7 +3029,40 @@ features it helps check, and package last.
     call at a time (another contact hears a busy line), at most 10 minutes
     (she's told to wrap up 45 seconds before), and 3 calls per contact per
     day (after that they're rejected unanswered). Activity notes each call
-    and how long it ran.
+    and how long it ran. Tested on a real call from a contact.
+  - P3a she calls places for tasks, **built**
+    ([tools/call_someone.py](tools/call_someone.py),
+    [app_areas/task_calls.py](app_areas/task_calls.py)): `call_someone`
+    (offered only once calling out is set up: Settings › Phone calls, the
+    Twilio Account SID and her number; migration 0053) asks the person
+    first, showing who, the number, the task and the brief, and that she'll
+    say she's an AI assistant and keeps a transcript. Calls go out only
+    between 8am and 8pm local time, one at a time, never to her own number
+    or yours. The person called becomes a task party (channel 'phone', not
+    nudged), then Twilio's API (the AU1 Sydney endpoint, `CORA_TWILIO_API`
+    for another region) rings them with a 10-minute limit of its own. When
+    they answer, the call gets its own voice session, as a contact's call
+    does, with her own self and the task's brief only
+    (`phone_party_instructions`): she introduces herself as an AI assistant
+    calling for someone she works for, says she keeps a transcript, keeps
+    to the brief, never commits you, leaves a short message on voicemail,
+    and reports with `pass_on` as in a task's email thread, so the
+    coordinator brings you their word. The transcript is kept as a step on
+    the task. A call nobody answers (Twilio's status callback,
+    `/phone/status`, signed like the rest) or one that ends without her
+    reporting goes to the coordinator too, so you always hear how it went.
+    Hanging up: on a real call she rarely used `end_call` unless told to
+    (her voice model has to delegate it), so the call also hangs up by
+    itself ([phone/goodbye.py](phone/goodbye.py)). Once her turn ends in
+    a farewell ("bye", "take care", "have a good day") and they say no
+    more than a farewell back, the call closes after her goodbye has
+    played and the line has been quiet for 3 s. Anything else said, or her
+    backend still passing something on, keeps it open. `end_call` stays
+    for when she does hang up herself. Both exist only on calls that
+    aren't yours (a contact's, or one she placed); your own sessions and
+    chats never offer them, and you always hang up your own calls. The
+    call itself was tested on a real call; the automatic hang-up still
+    needs a real-call test.
   - *Setting up Twilio:*
     1. Sign up at twilio.com and upgrade from the trial (trial calls play a
        message first and only reach verified numbers: a call from any other
@@ -3063,6 +3097,10 @@ features it helps check, and package last.
        answers. If it says a stranger was turned away, your number isn't
        coming through as the one under Signal (Twilio shows the number it got
        in the call's log).
+    7. For calling out: run `python migrate.py` (0053), then in Settings ›
+       Phone calls give the Account SID (Console › Account info, AC…) and
+       her Twilio number (+61…) and press Save calling out. She asks you
+       before every call.
     - Caddy already passes everything for the address to her listener. If
       Cloudflare's bot protection is on for the address, check Twilio's
       requests aren't challenged (Security › Events).

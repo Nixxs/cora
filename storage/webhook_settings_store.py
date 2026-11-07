@@ -2,6 +2,7 @@
 her, and her local port."""
 
 from dataclasses import dataclass
+import re
 from urllib.parse import urlsplit
 
 from sqlalchemy import Engine, func, select
@@ -24,6 +25,9 @@ class WebhookSettings:
     web_enabled: bool = False
     # Phone calls to her number: Twilio asks the same listener what to do with each one.
     phone_enabled: bool = False
+    # Calling out for tasks: the Twilio account (AC...) and her own number (+61...) to call from.
+    twilio_account_sid: str | None = None
+    phone_number: str | None = None
 
     @property
     def listening(self) -> bool:
@@ -40,6 +44,25 @@ def normalise_public_url(value: str) -> str:
         raise ValueError("Give only the address, such as https://cora.example.com, without a path.")
     host = parts.hostname.lower()
     return f"https://{host}" + (f":{parts.port}" if parts.port else "")
+
+
+ACCOUNT_SID = re.compile(r"AC[0-9a-fA-F]{32}")
+PHONE_NUMBER = re.compile(r"\+[1-9][0-9]{7,14}")
+
+
+def check_account_sid(value: str) -> str:
+    value = value.strip()
+    if value and not ACCOUNT_SID.fullmatch(value):
+        raise ValueError("That isn't a Twilio Account SID (AC and 32 letters and digits, from the Twilio console).")
+    return value
+
+
+def check_phone_number(value: str) -> str:
+    """'+61 485 008 128' -> '+61485008128'; ValueError for anything not a full international number."""
+    value = "".join(value.split())
+    if value and not PHONE_NUMBER.fullmatch(value):
+        raise ValueError("Give the number in full international form, such as +61485008128.")
+    return value
 
 
 def check_port(port: int) -> int:
@@ -59,7 +82,8 @@ class WebhookSettingsStore:
             row = session.execute(select(WebhookSettingRecord)).scalar_one_or_none()
         if row is None:
             return WebhookSettings()
-        return WebhookSettings(row.enabled, row.public_url, row.port, row.web_enabled, row.phone_enabled)
+        return WebhookSettings(row.enabled, row.public_url, row.port, row.web_enabled, row.phone_enabled,
+                               row.twilio_account_sid, row.phone_number)
 
     def _save(self, **values) -> None:
         statement = insert(WebhookSettingRecord).values(id=1, **values)
@@ -77,6 +101,11 @@ class WebhookSettingsStore:
 
     def set_phone_enabled(self, enabled: bool) -> None:
         self._save(phone_enabled=enabled)
+
+    def set_twilio_account(self, account_sid: str, phone_number: str) -> None:
+        """Both checked; empty clears them (she can't call out then)."""
+        self._save(twilio_account_sid=check_account_sid(account_sid) or None,
+                   phone_number=check_phone_number(phone_number) or None)
 
     def set_address(self, public_url: str, port: int) -> None:
         self._save(public_url=normalise_public_url(public_url), port=check_port(port))

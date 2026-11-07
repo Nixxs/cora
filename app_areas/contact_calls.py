@@ -18,6 +18,7 @@ from time import monotonic
 from uuid import uuid4
 
 from live import CoraLive
+from phone.goodbye import GoodbyeWatch
 from phone.routes import CallLink
 from session_config import client_chat_instructions, contact_call_config
 from storage.client_store import Client
@@ -29,7 +30,12 @@ CALLS_PER_DAY = 3
 # How long before the end she's told to wrap up.
 WRAP_UP_SECONDS = 45
 # The tools a contact's call has: as in their Signal chat, but she can't end a chat by voice.
-CALL_TOOLS = frozenset({"search_memory", "feel", *CLIENT_ONLY}) - {"stop_replying"}
+CALL_TOOLS = frozenset({"search_memory", "feel", "end_call", *CLIENT_ONLY}) - {"stop_replying"}
+# How long after end_call she may still be starting her goodbye, and the longest it may take to play.
+GOODBYE_START_SECONDS = 1.5
+GOODBYE_MAX_SECONDS = 15
+# How often a call checks whether it's time to hang up after goodbye.
+GOODBYE_CHECK_SECONDS = 0.25
 
 ANSWER_NOTE = (
     "Phone call note, not something they said. {name} has just rung you and the call is connected, "
@@ -64,16 +70,33 @@ class Transcript:
         return (role, text) if role and text else None
 
 
+def note_for_goodbye(watch: GoodbyeWatch, event) -> None:
+    """What the goodbye watch needs from a call's session events."""
+    if event.type in ("session.input_transcript.delta", "session.output_transcript.delta"):
+        watch.heard("user" if event.type == "session.input_transcript.delta" else "assistant", event.delta)
+    elif event.type == "session.delegation.created":
+        watch.delegation(True)
+    elif event.type == "response.event":
+        if (event.event or {}).get("type") in ("response.completed", "response.failed", "response.incomplete"):
+            watch.delegation(False)
+        else:
+            watch.activity()
+
+
 @dataclass(eq=False)
 class CallRoute:
     """Looks like a Live connection to her tools: their results go back to the call's own session."""
 
     live: CoraLive
     excluded: frozenset[str]
-    memory_scope: tuple
+    # A contact's call: (their id, their name), so memory search only finds what they may know.
+    memory_scope: tuple | None = None
+    # A call she placed for a task: (party id, task id, who), so pass_on reports their word on it.
+    email_party: tuple | None = None
+    # end_call(): hang up once her goodbye has been heard.
+    end_call: object = None
     ask_approval = None
     approval_seconds = 0
-    email_party = None
     tool_seconds = None
 
     @property
@@ -90,6 +113,7 @@ class ContactCall:
     started: float = field(default_factory=monotonic)
     conversation_id: object = None
     transcript: Transcript = field(default_factory=Transcript)
+    goodbye: GoodbyeWatch = field(default_factory=GoodbyeWatch)
 
 
 class ContactCallsMixin:
@@ -139,7 +163,8 @@ class ContactCallsMixin:
                 return
             if call.listener is None:
                 return  # they hung up while it was getting ready
-            route = CallRoute(call.live, frozenset(self.tools.names()) - CALL_TOOLS, (client.id, client.name))
+            route = CallRoute(call.live, frozenset(self.tools.names()) - CALL_TOOLS, memory_scope=(client.id, client.name),
+                              end_call=lambda: self.hang_up(call.live, call.relay, client.name))
             rules = client_chat_instructions(client.name, self.live.person_name, self.live.own_name, on_call=True)
             live = call.live
             live.tool_schemas = lambda: self.tools.schemas(excluding=route.excluded)
@@ -151,7 +176,8 @@ class ContactCallsMixin:
             live.speaker_muted = True
             self.activity.write(f"{client.name} is on a call with Cora (client mode, their own conversation).",
                                 "Phone call")
-            cap = asyncio.ensure_future(self.contact_call_cap(call))
+            cap = asyncio.ensure_future(self.call_cap(call.live, client.name))
+            goodbye = asyncio.ensure_future(self.watch_goodbye(call.live, call.relay, call.goodbye, client.name))
             try:
                 await live.run(lambda event: self.on_contact_call_event(call, route, event),
                                lambda *status: None)
@@ -159,6 +185,7 @@ class ContactCallsMixin:
                 self.activity.write(f"{client.name}'s call to Cora failed ({type(error).__name__}).", "Phone call")
             finally:
                 cap.cancel()
+                goodbye.cancel()
         finally:
             await self.save_call_turn(call, call.transcript.finish())
             if call.listener is not None:
@@ -169,20 +196,41 @@ class ContactCallsMixin:
             minutes = (monotonic() - call.started) / 60
             self.activity.write(f"{client.name}'s call ended after {minutes:.0f} min.", "Phone call")
 
-    async def contact_call_cap(self, call: ContactCall) -> None:
-        """Calls are kept to CALL_MINUTES: she's told to wrap up, then the call ends."""
+    def hang_up(self, live: CoraLive, relay: VoiceRelay, who: str) -> None:
+        """She ended the call (end_call): once her goodbye has been heard, it closes."""
+        async def after_goodbye() -> None:
+            await asyncio.sleep(GOODBYE_START_SECONDS)
+            waited = 0.0
+            while relay.is_playback_busy() and waited < GOODBYE_MAX_SECONDS:
+                await asyncio.sleep(0.2)
+                waited += 0.2
+            self.activity.write(f"Cora hung up the call with {who}.", "Phone call")
+            await live.close()
+
+        self.run_worker(after_goodbye(), group="call-hang-up", exit_on_error=False)
+
+    async def watch_goodbye(self, live: CoraLive, relay: VoiceRelay, watch: GoodbyeWatch, who: str) -> None:
+        """Hang up once she's said goodbye and the line has gone quiet (see phone/goodbye.py)."""
+        while not watch.due(relay.is_playback_busy()):
+            await asyncio.sleep(GOODBYE_CHECK_SECONDS)
+        self.activity.write(f"Cora said goodbye and hung up the call with {who}.", "Phone call")
+        await live.close()
+
+    async def call_cap(self, live: CoraLive, who: str) -> None:
+        """Calls that aren't the person's are kept to CALL_MINUTES: she's told to wrap up, then the call ends."""
         await asyncio.sleep(CALL_MINUTES * 60 - WRAP_UP_SECONDS)
-        connection = call.live.connection
-        if connection is not None and call.live.ready:
+        connection = live.connection
+        if connection is not None and live.ready:
             try:
-                await call.live.append_commentary(connection, f"wrap_up_{uuid4().hex}", WRAP_UP_NOTE)
+                await live.append_commentary(connection, f"wrap_up_{uuid4().hex}", WRAP_UP_NOTE)
             except Exception as error:
                 self.activity.write(f"Telling Cora to wrap up the call failed ({type(error).__name__}).", "Phone call")
         await asyncio.sleep(WRAP_UP_SECONDS)
-        self.activity.write(f"{call.client.name}'s call reached its {CALL_MINUTES}-minute limit.", "Phone call")
-        await call.live.close()
+        self.activity.write(f"The call with {who} reached its {CALL_MINUTES}-minute limit.", "Phone call")
+        await live.close()
 
     def on_contact_call_event(self, call: ContactCall, route: CallRoute, event) -> None:
+        note_for_goodbye(call.goodbye, event)
         if event.type == "session.started":
             self.run_worker(self.answer_contact_call(call), group="contact-call-notes", exit_on_error=False)
         elif event.type in ("session.input_transcript.delta", "session.output_transcript.delta"):

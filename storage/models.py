@@ -736,6 +736,9 @@ class WebhookSettingRecord(Base):
     web_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
     # Phone calls to her number, through Twilio, on the same listener and address.
     phone_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    # Calling out (P3): the Twilio account she places calls through, and her number to call from.
+    twilio_account_sid: Mapped[str | None] = mapped_column(Text)
+    phone_number: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
@@ -854,10 +857,11 @@ class TaskPartyRecord(Base):
 
     __tablename__ = "task_parties"
     __table_args__ = (
-        CheckConstraint("channel IN ('signal', 'email')", name="task_parties_channel_check"),
+        CheckConstraint("channel IN ('signal', 'email', 'phone')", name="task_parties_channel_check"),
         CheckConstraint(
             "(channel = 'signal' AND person_id IS NOT NULL AND address IS NULL) "
-            "OR (channel = 'email' AND person_id IS NULL AND btrim(address) <> '' AND char_length(address) <= 320)",
+            "OR (channel IN ('email', 'phone') AND person_id IS NULL AND btrim(address) <> '' "
+            "AND char_length(address) <= 320)",
             name="task_parties_who_check",
         ),
         CheckConstraint("btrim(brief) <> '' AND char_length(brief) <= 2000", name="task_parties_brief_check"),
