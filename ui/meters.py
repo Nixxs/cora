@@ -165,3 +165,116 @@ class CalendarHeatmap(Widget):
         count = self.days[-1 - days_ago]
         day = date.today() - timedelta(days=days_ago)
         self.tooltip = f"{day:%a %d %b}: {count} message{'' if count == 1 else 's'}"
+
+
+SPEND_BAR_ROWS = 4
+BAR_EIGHTHS = " ▁▂▃▄▅▆▇█"
+MONTH_INITIALS = "JFMAMJJASOND"
+PAST_MONTH_STYLE = "#6fa888"
+THIS_MONTH_STYLE = "#8fcca6"
+NO_SPEND_HINT = (
+    "To see what Cora costs each month, add an OpenAI Admin key (Restricted, Usage API: Read) "
+    "in Settings > General."
+)
+
+
+def money(amount: float, currency: str = "usd") -> str:
+    return f"${amount:,.2f}" if currency.lower() == "usd" else f"{amount:,.2f} {currency.upper()}"
+
+
+class SpendChart(Widget):
+    """This month's OpenAI spend, and a bar per month for the last year; hover a bar for its amount.
+
+    Without an Admin key (or when costs can't be read) it shows a short line instead, whose
+    tooltip and click say what's needed.
+    """
+
+    spend = reactive(None, layout=True)  # an openai_spend.Spend, or None
+    message = reactive("loading…", layout=True)  # shown instead of the chart, with `hint` explaining it
+    hint = reactive("")
+
+    def show(self, spend=None, message: str = "", hint: str = "") -> None:
+        self.spend, self.message, self.hint = spend, message, hint
+        self.tooltip = hint or None
+
+    def chart_width(self) -> int:
+        """As wide as the heatmap above it: its initials and its weeks, without the last gap."""
+        return max(1 + 2 * min(max((self.size.width - 2) // 2, 0), MAX_WEEKS), 0)
+
+    def visible_months(self) -> int:
+        """Months that fit, each at least a bar and a gap; the latest are kept."""
+        return min((self.chart_width() + 1) // 2, len(self.spend.months)) if self.spend else 0
+
+    def bar_spans(self) -> list[tuple[int, int]]:
+        """(first column, width) of each visible month's bar: equal bars spread across the chart's
+        width, the first at its left edge and the last ending at its right; spare columns go into the gaps."""
+        visible, width = self.visible_months(), self.chart_width()
+        if not visible:
+            return []
+        bar = max((width + 1) // visible - 1, 1)
+        if visible == 1:
+            return [(width - bar, bar)]
+        return [(round(index * (width - bar) / (visible - 1)), bar) for index in range(visible)]
+
+    def get_content_height(self, container, viewport, width: int) -> int:
+        return 1 if self.spend is None else SPEND_BAR_ROWS + 2
+
+    def render(self) -> Text:
+        if self.spend is None:
+            return Text.assemble(("OpenAI spend · ", LABEL_STYLE), (self.message, TRACK_STYLE))
+        spans = self.bar_spans()
+        months = self.spend.months[-len(spans):] if spans else ()
+        this_month = self.spend.months[-1][1]
+        text = Text.assemble(("OpenAI this month ", LABEL_STYLE),
+                             (money(this_month, self.spend.currency), "bold #e0e6ef"))
+        highest = max((amount for _, amount in months), default=0.0)
+        levels = SPEND_BAR_ROWS * 8
+        for row in range(SPEND_BAR_ROWS):
+            text.append("\n")
+            column = 0
+            for index, ((_, amount), (start, width)) in enumerate(zip(months, spans)):
+                text.append(" " * (start - column))
+                column = start + width
+                level = math.ceil(amount / highest * levels) if highest and amount else 0
+                filled = min(max(level - (SPEND_BAR_ROWS - 1 - row) * 8, 0), 8)
+                if not filled and row == SPEND_BAR_ROWS - 1:
+                    # A month with no spend: a dot in the middle of its bar.
+                    cell, style = f"{'·':^{width}}", TRACK_STYLE
+                else:
+                    style = THIS_MONTH_STYLE if index == len(months) - 1 else PAST_MONTH_STYLE
+                    cell = BAR_EIGHTHS[filled] * width
+                text.append(cell, style=style)
+        text.append("\n")
+        column = 0
+        for (month, _), (start, width) in zip(months, spans):
+            text.append(" " * (start - column))
+            text.append(f"{MONTH_INITIALS[month.month - 1]:^{width}}", style=LABEL_STYLE)
+            column = start + width
+        return text
+
+    def month_at(self, x: int, y: int) -> int | None:
+        """The index into spend.months of the bar at (x, y), or None off a bar."""
+        if self.spend is None or not 1 <= y <= SPEND_BAR_ROWS + 1:
+            return None
+        spans = self.bar_spans()
+        for index, (start, width) in enumerate(spans):
+            if start <= x < start + width:
+                return len(self.spend.months) - len(spans) + index
+        return None
+
+    def on_mouse_move(self, event: MouseMove) -> None:
+        if self.spend is None:
+            self.tooltip = self.hint or None
+            return
+        index = self.month_at(event.x, event.y)
+        if index is None:
+            self.tooltip = (f"Spend for {self.spend.whose}, from OpenAI's costs (a few hours behind)"
+                            if event.y == 0 else None)
+            return
+        month, amount = self.spend.months[index]
+        so_far = " so far" if index == len(self.spend.months) - 1 else ""
+        self.tooltip = f"{month:%b %Y}{so_far}: {money(amount, self.spend.currency)}"
+
+    def on_click(self, event: Click) -> None:
+        if self.spend is None and self.hint:
+            self.app.notify(self.hint, timeout=10)

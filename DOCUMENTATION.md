@@ -202,7 +202,10 @@ it. "Whose spend" chooses a project: Automatic (the default) uses the one projec
 Cora once it has spend in the last 90 days, else all projects; projects are listed from the
 costs themselves, so one appears once it has spent something (costs lag a few hours). Only
 the choice is kept, in `app_settings`; no costs are stored
-([openai_spend.py](openai_spend.py)). Showing it on the dashboard comes next.
+([openai_spend.py](openai_spend.py)). The dashboard's conversations box shows it: this month
+so far and a bar per calendar month (UTC) for the last 12, read in one costs listing grouped
+by project, kept in memory for 15 minutes and refreshed every 30 while the dashboard is open.
+Without an Admin key it isn't asked for at all; a short placeholder says to add one.
 - **Pictures from the web:** ask to see something ("show me the cafe"), or she may show
   one herself. She picks a page from web search, and the app fetches that page's preview
   image (`og:image`, public https sites only) and draws it small in the chat with a caption
@@ -326,7 +329,7 @@ top right (● active, ○ standby) enters standby or resumes.
 | interests | Live interests by strength: ↑ reinforced or new in the last 3 days, ↓ only fading, ✦ one of her own; and the newest finding |
 | identity | Active traits, most confident first; traits still forming (below 50%) are dimmed |
 | desires | Live desires, strongest first: pursuing, held, or forming (dimmed) |
-| conversations | Your messages per day over the last year, a week per column |
+| conversations | OpenAI spend this month and a bar per month for the last year (hover a bar for its amount), or a placeholder whose hover and click say to add an Admin key; below it, your messages per day over the last year, a week per column |
 | tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups |
 | context | How full each model's context is (measured by the API), then each item's estimated share; click an item to read its text |
 | background | When each background job last saved something, and when the timed ones are next due |

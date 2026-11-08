@@ -856,3 +856,8 @@ ContextScreen {
 #api-key-buttons Button {
     width: 1fr;
 }
+
+#spend-chart {
+    height: auto;
+    margin: 1 0 0 0;
+}

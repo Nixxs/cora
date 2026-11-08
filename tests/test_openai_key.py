@@ -12,7 +12,7 @@ from session_config import VOICE, VOICE_CHOICES, config_from_sections, contact_c
 from storage.app_settings_store import AppSettingsStore
 from ui.api_key_view import ApiKeyScreen
 from ui.model_settings import ModelSettingsScreen
-from textual.widgets import Input, Select, Static, TabbedContent
+from textual.widgets import Button, Input, Select, Static, TabbedContent
 import test_keyboard_persistence as keyboard_tests
 from test_model_settings_screen import MODELS
 
@@ -96,7 +96,8 @@ class FirstStartTests(unittest.IsolatedAsyncioTestCase):
             app.connect_to_cora.assert_not_called()
             with patch.object(openai_key, "check_key", return_value="OpenAI didn't accept that key.") as check:
                 app.screen.query_one("#api-key-input", Input).value = "sk-wrong-key-0000"
-                await pilot.click("#api-key-save")
+                app.screen.query_one("#api-key-save", Button).press()
+                await pilot.pause()
                 await asyncio.wait_for(app.workers.wait_for_complete(), 3)
                 await pilot.pause()
             check.assert_called_once_with("sk-wrong-key-0000")
@@ -107,7 +108,8 @@ class FirstStartTests(unittest.IsolatedAsyncioTestCase):
             with patch.object(openai_key, "check_key", return_value=None), \
                     patch.object(openai_key, "save_key") as save:
                 app.screen.query_one("#api-key-input", Input).value = "sk-right-key-1234"
-                await pilot.click("#api-key-save")
+                app.screen.query_one("#api-key-save", Button).press()
+                await pilot.pause()
                 await asyncio.wait_for(app.workers.wait_for_complete(), 3)
                 await pilot.pause()
             save.assert_called_once_with("sk-right-key-1234")

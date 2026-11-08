@@ -18,7 +18,7 @@ from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.context_view import ContextScreen
-from ui.meters import LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, ContextMeters, Meters, ToneRibbon
+from ui.meters import LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, ContextMeters, Meters, SpendChart, ToneRibbon
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -26,6 +26,8 @@ FALL_PER_TICK = 0.08
 
 # How often the open dashboard re-reads the database.
 REFRESH_SECONDS = 30
+# OpenAI's costs move slowly (a few hours behind), so the spend chart asks far less often.
+SPEND_REFRESH_SECONDS = 30 * 60
 
 RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 
@@ -164,8 +166,11 @@ def sign_up_lines(sign_ups, now) -> Text:
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
-    def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context) -> None:
+    def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
+                 load_spend=None) -> None:
         super().__init__()
+        # Reads (Spend or None, message, hint) for the spend chart off the UI thread; None leaves it out.
+        self.load_spend = load_spend
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
         # or an empty tuple for silence.
         self.voice_bands = voice_bands
@@ -267,6 +272,8 @@ class DashboardScreen(Screen):
                     yield Static("recent tone", classes="dashboard-label")
                     yield ToneRibbon(id="relationship-tones")
                 with Vertical(id="conversations-box", classes="dashboard-box"):
+                    if self.load_spend is not None:
+                        yield SpendChart(id="spend-chart")
                     yield Static("your messages per day", classes="dashboard-label")
                     yield CalendarHeatmap(id="conversation-days")
                 with Vertical(id="tasks-box", classes="dashboard-box"):
@@ -299,8 +306,19 @@ class DashboardScreen(Screen):
         self.query_one("#dashboard-input", ChatComposer).focus()
         self.refresh_snapshot()
         self.set_interval(REFRESH_SECONDS, self.refresh_snapshot)
+        if self.load_spend is not None:
+            self.refresh_spend()
+            self.set_interval(SPEND_REFRESH_SECONDS, self.refresh_spend)
         self.show_context()
         self.set_interval(1, self.show_context)
+
+    @work(group="dashboard-spend", exclusive=True)
+    async def refresh_spend(self) -> None:
+        spend, message, hint = await self.load_spend()
+        chart = self.query_one("#spend-chart", SpendChart)
+        # A failed refresh keeps the last chart it had rather than blanking it.
+        if spend is not None or chart.spend is None:
+            chart.show(spend, message, hint)
 
     @work(group="dashboard-snapshot")
     async def refresh_snapshot(self) -> None:

@@ -1,6 +1,7 @@
 """The Settings screen and model choices: part of CoraApp (see app.py)."""
 
 import asyncio
+from time import monotonic
 
 from textual import work
 
@@ -10,8 +11,13 @@ from ui.model_settings import (
     EmailControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
 )
 from services.catalogue import SERVICES
+from ui.meters import NO_SPEND_HINT
 from services.credentials import get_token
 from sign_ups import password as passwords
+
+
+# How long the dashboard reuses the spend it read; OpenAI's costs are hours behind anyway.
+SPEND_CACHE_SECONDS = 15 * 60
 
 
 class SettingsMixin:
@@ -158,6 +164,30 @@ class SettingsMixin:
                 f"project{'' if count == 1 else 's'} with spend in the last "
                 f"{openai_spend.PROJECT_LOOKBACK_DAYS} days.")
 
+    async def load_spend(self):
+        """(Spend or None, message, hint) for the dashboard's spend chart; cached briefly, since
+        OpenAI's costs are hours behind anyway. Without an Admin key it's a placeholder and its hint."""
+        cached = getattr(self, "spend_cache", None)
+        if cached is not None and monotonic() - cached[0] < SPEND_CACHE_SECONDS:
+            return cached[1]
+        key = await asyncio.to_thread(openai_spend.saved_admin_key)
+        if not key:
+            return None, "add an Admin key", NO_SPEND_HINT
+        try:
+            chosen = await self.conversation_persistence.call_database(self.persistence.load_spend_project)
+            spend = await asyncio.to_thread(openai_spend.monthly_spend, key, chosen)
+        except openai_spend.AdminKeyError as error:
+            return None, "unavailable", f"{error} (Settings > General)"
+        except Exception as error:
+            self.activity.write(f"OpenAI spend didn't load ({type(error).__name__}).", "OpenAI spend")
+            return None, "unavailable", "OpenAI spend didn't load; see Activity."
+        result = spend, "", ""
+        self.spend_cache = (monotonic(), result)
+        return result
+
+    def forget_spend_cache(self) -> None:
+        self.spend_cache = None
+
     @work(group="spend-projects", exclusive=True)
     async def load_spend_projects(self, key: str) -> None:
         """The projects an Admin key can see, for Settings' "Whose spend" (asked after Settings opens)."""
@@ -186,6 +216,7 @@ class SettingsMixin:
             problem = "The Admin key couldn't be checked or saved; see Activity."
         else:
             self.activity.write(f"OpenAI Admin key saved ({openai_spend.masked(key)}).", "OpenAI spend")
+            self.forget_spend_cache()
             if isinstance(self.screen, ModelSettingsScreen):
                 self.screen.show_spend(self.spend_status(key, projects), projects)
             self.notify("Admin key saved.")
@@ -198,6 +229,7 @@ class SettingsMixin:
     @work(group="admin-key", exclusive=True)
     async def forget_admin_key(self) -> None:
         await asyncio.to_thread(openai_spend.forget_admin_key)
+        self.forget_spend_cache()
         self.activity.write("OpenAI Admin key removed.", "OpenAI spend")
         if isinstance(self.screen, ModelSettingsScreen):
             self.screen.show_spend("No Admin key: the dashboard doesn't show spend.", [])
@@ -212,6 +244,7 @@ class SettingsMixin:
             self.activity.write(f"Spend setting save failed ({type(error).__name__}).", "OpenAI spend")
             self.notify("Could not save whose spend to show. Check Activity.", severity="error")
             return
+        self.forget_spend_cache()
         self.activity.write("The dashboard's spend is now " + (chosen or "automatic") + ".", "OpenAI spend")
 
     def api_key_given(self, saved: bool | None) -> None:

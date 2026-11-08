@@ -3,7 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx2
 from textual.widgets import Button, Input, Select, Static, TabbedContent
@@ -11,6 +11,7 @@ from textual.widgets import Button, Input, Select, Static, TabbedContent
 import openai_spend
 from openai_spend import ALL_PROJECTS, AdminKeyError
 from storage.app_settings_store import AppSettingsStore
+from ui.meters import NO_SPEND_HINT, SpendChart
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 from test_model_settings_screen import MODELS
@@ -159,3 +160,85 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MonthlySpendTests(unittest.TestCase):
+    def test_month_starts_cross_the_year(self):
+        starts = openai_spend.month_starts(datetime(2026, 2, 10, tzinfo=timezone.utc), 4)
+        self.assertEqual([(start.year, start.month) for start in starts], [(2025, 11), (2025, 12), (2026, 1), (2026, 2)])
+
+    def test_months_add_up_for_the_chosen_project_or_everyone(self):
+        def day(year, month, *results):
+            return {**bucket(*results), "start_time": int(datetime(year, month, 3, tzinfo=timezone.utc).timestamp())}
+        pages = [{"data": [day(2026, 10, ("proj_a", "Cora", 1.25), ("proj_b", "Website", 5.0)),
+                           day(2026, 10, ("proj_a", "Cora", 0.75)),
+                           day(2026, 11, ("proj_a", "Cora", "2.50"))], "has_more": False}]
+        requests = []
+        spend = openai_spend.monthly_spend("sk-admin-k", None, now=NOW, transport=transport(pages, requests))
+        self.assertEqual(requests[0].url.params["group_by"], "project_id")
+        self.assertEqual(datetime.fromtimestamp(int(requests[0].url.params["start_time"]), timezone.utc),
+                         datetime(2025, 12, 1, tzinfo=timezone.utc))
+        self.assertEqual(spend.whose, "Cora")
+        self.assertEqual(len(spend.months), openai_spend.SPEND_MONTHS)
+        self.assertEqual(spend.months[-1][1], 2.5)
+        self.assertEqual(spend.months[-2][1], 2.0)
+        self.assertEqual(spend.months[0][1], 0.0)
+        everyone = openai_spend.monthly_spend("sk-admin-k", ALL_PROJECTS, now=NOW, transport=transport(pages))
+        self.assertEqual((everyone.whose, everyone.months[-2][1]), ("all projects", 7.0))
+
+
+class SpendChartTests(unittest.IsolatedAsyncioTestCase):
+    async def open_dashboard(self, app, pilot, result):
+        app.load_spend = AsyncMock(return_value=result)
+        await pilot.click("#view-button")
+        await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+        await pilot.pause()
+        return app.screen.query_one("#spend-chart", SpendChart)
+
+    async def test_without_an_admin_key_a_placeholder_says_what_to_add(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            chart = await self.open_dashboard(app, pilot, (None, "add an Admin key", NO_SPEND_HINT))
+            self.assertIn("add an Admin key", str(chart.render()))
+            self.assertIn("Settings > General", chart.tooltip)
+
+    async def test_this_month_and_a_bar_per_month_with_hover(self):
+        months = tuple((start, float(index)) for index, start in enumerate(openai_spend.month_starts(NOW, 12)))
+        spend = openai_spend.Spend(months, "Cora")
+        async with keyboard_tests.running_app() as (app, pilot):
+            chart = await self.open_dashboard(app, pilot, (spend, "", ""))
+            text = str(chart.render())
+            self.assertIn("OpenAI this month $11.00", text)
+            self.assertTrue(text.splitlines()[-1].strip().endswith("N"))
+            spans = chart.bar_spans()
+            self.assertGreater(len(spans), 0)
+            # The bars end where the heatmap above ends.
+            heatmap = app.screen.query_one("CalendarHeatmap")
+            heatmap_width = 2 + 2 * heatmap.visible_weeks() - 1  # initials, then cells and gaps
+            last_start, last_width = spans[-1]
+            self.assertEqual(last_start + last_width, heatmap_width)
+            chart.on_mouse_move(MagicMock(x=last_start + last_width - 1, y=2))
+            self.assertEqual(chart.tooltip, "Nov 2026 so far: $11.00")
+            chart.on_mouse_move(MagicMock(x=spans[-2][0], y=2))
+            self.assertEqual(chart.tooltip, "Oct 2026: $10.00")
+            chart.on_mouse_move(MagicMock(x=last_start - 1, y=2))
+            self.assertIsNone(chart.tooltip)
+
+    async def test_the_app_shows_a_placeholder_without_asking_openai_when_theres_no_key(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            with patch.object(openai_spend, "monthly_spend") as monthly:
+                spend, message, hint = await app.load_spend()
+            monthly.assert_not_called()
+            self.assertIsNone(spend)
+            self.assertEqual(hint, NO_SPEND_HINT)
+
+    async def test_the_app_caches_spend_until_a_setting_changes(self):
+        spend = openai_spend.Spend(((datetime(2026, 11, 1).date(), 1.0),), "Cora")
+        async with keyboard_tests.running_app() as (app, pilot):
+            with patch.object(openai_spend, "saved_admin_key", return_value="sk-admin-k"), \
+                    patch.object(openai_spend, "monthly_spend", return_value=spend) as monthly:
+                self.assertIs((await app.load_spend())[0], spend)
+                await app.load_spend()
+                monthly.assert_called_once_with("sk-admin-k", None)
+                app.forget_spend_cache()
+                await app.load_spend()
+                self.assertEqual(monthly.call_count, 2)

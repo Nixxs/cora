@@ -613,7 +613,7 @@ class CoraApp(
                 self.push_screen(DashboardScreen(
                     self.voice_bands, self.conversation, self.audio_status,
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
-                    self.live.context,
+                    self.live.context, load_spend=self.load_spend,
                 ))
         elif event.button.id == "chat-status":
             if self.standby:

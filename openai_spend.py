@@ -8,7 +8,8 @@ credential store; the database only keeps which project's spend to show.
 Blocking calls: run them off the UI thread.
 """
 
-from datetime import datetime, timedelta, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta, timezone
 
 import httpx2 as httpx
 import keyring
@@ -23,6 +24,8 @@ API_SECONDS = 20
 PAGE_DAYS = 180
 # How far back to look for projects with spend, when choosing whose spend to show.
 PROJECT_LOOKBACK_DAYS = 90
+# Months of spend on the dashboard, this one included.
+SPEND_MONTHS = 12
 # The spend setting's value for the whole organisation rather than one project; without a saved
 # choice it's automatic (see shown_project).
 ALL_PROJECTS = "all"
@@ -124,3 +127,54 @@ def shown_project(chosen: str | None, projects: list[tuple[str, str]]) -> str:
     if chosen:
         return chosen
     return likely_cora_project(projects) or ALL_PROJECTS
+
+
+@dataclass(frozen=True)
+class Spend:
+    """Spend per calendar month (UTC), oldest first, ending with this month so far; and whose it is."""
+    months: tuple[tuple[date, float], ...]
+    whose: str  # a project's name, or "all projects"
+    currency: str = "usd"
+
+
+def month_starts(now: datetime, count: int) -> list[date]:
+    """The first day of each of the last `count` months, oldest first, this month last."""
+    year, month = now.year, now.month
+    starts = []
+    for _ in range(count):
+        starts.append(date(year, month, 1))
+        year, month = (year, month - 1) if month > 1 else (year - 1, 12)
+    return starts[::-1]
+
+
+def monthly_spend(key: str, chosen: str | None, *, now: datetime | None = None, transport=None) -> Spend:
+    """The last SPEND_MONTHS months' spend for the chosen project (automatic when None).
+
+    One listing grouped by project serves both choosing the project and adding up its months.
+    Raises AdminKeyError with a reason for the person when it can't be read.
+    """
+    now = now or datetime.now(timezone.utc)
+    starts = month_starts(now, SPEND_MONTHS)
+    first = datetime(starts[0].year, starts[0].month, 1, tzinfo=timezone.utc)
+    buckets = costs(key, first, group_by_project=True, transport=transport)
+    names: dict[str, str] = {}
+    for bucket in buckets:
+        for result in bucket.get("results") or []:
+            if result.get("project_id"):
+                names[result["project_id"]] = result.get("project_name") or result["project_id"]
+    shown = shown_project(chosen, sorted(names.items(), key=lambda project: project[1].lower()))
+    totals = dict.fromkeys(starts, 0.0)
+    currency = "usd"
+    for bucket in buckets:
+        day = datetime.fromtimestamp(int(bucket.get("start_time") or 0), timezone.utc)
+        month = date(day.year, day.month, 1)
+        if month not in totals:
+            continue
+        for result in bucket.get("results") or []:
+            if shown != ALL_PROJECTS and result.get("project_id") != shown:
+                continue
+            amount = result.get("amount") or {}
+            totals[month] += float(amount.get("value") or 0)
+            currency = amount.get("currency") or currency
+    whose = "all projects" if shown == ALL_PROJECTS else names.get(shown, shown)
+    return Spend(tuple(totals.items()), whose, currency)
