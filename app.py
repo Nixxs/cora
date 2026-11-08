@@ -57,6 +57,7 @@ from storage.conversation_persistence import ConversationPersistence
 from ui.chat_submission import ChatSubmission
 from tools import create_tool_registry
 from tools.route import routed
+from tools.use_browser import BrowserHelper, UseBrowserTool
 from wake.controller import WakeController
 from app_areas.voice import VoiceMixin
 from app_areas.live_session import LiveSessionMixin
@@ -310,6 +311,15 @@ class CoraApp(
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
         self.service_tools_changed = False
+        # The browser's own tools, {name: (schema, run)}, for her browser helper while the browser is
+        # connected; she has use_browser instead of them (see sync_service_tools).
+        self.browser_tools: dict = {}
+        self.browser_helper = BrowserHelper(
+            lambda: self.browser_tools, self.browser_model, self.details_for_forms, self.activity.write,
+        )
+        self.use_browser = UseBrowserTool(
+            self.tool_connection, lambda: self.closing or self.reconnecting, self.activity.write, self.browser_helper,
+        )
         # Set when her voice changed in Settings; closing Settings reconnects with it.
         self.voice_changed = False
         # Live's connect; None until the first, which waits for an OpenAI key if there isn't one.

@@ -25,6 +25,7 @@ AREA_LABELS = {
     "memory": "Memory (memories and summaries)",
     "subconscious": "Relationship, interests and identity",
     "utility": "Duplicate check and small jobs",
+    "browser": "Browser (looking things up on sites, forms, sign-ups)",
 }
 
 
@@ -380,7 +381,7 @@ class ModelSettingsScreen(ModalScreen):
             with TabbedContent():
                 with TabPane("Models", id="settings-models"):
                     for area, label in AREA_LABELS.items():
-                        yield Label(label, classes="model-settings-label")
+                        yield Label(label, classes="model-settings-label model-area-label")
                         yield Select(
                             [(model, model) for model in MODEL_CHOICES], value=self.models[area],
                             allow_blank=False, id=f"model-{area}",

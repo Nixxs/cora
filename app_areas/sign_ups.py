@@ -93,7 +93,7 @@ class SignUpsMixin:
             self.live.person_name, self.email_person, self.signal_settings.allowed_number,
         ))))
         self.activity.write(f"Signing up to {site} ({what}).", "Sign-up")
-        self.sign_up_worker = self.run_sign_up(record, details, models["delegation"], asyncio.get_running_loop())
+        self.sign_up_worker = self.run_sign_up(record, details, models["browser"], asyncio.get_running_loop())
         return ("They said yes. You're signing up in the background now, and the person will hear how it "
                 "went, so don't say it's done yet.")
 

@@ -130,7 +130,7 @@ others.
 
 ### Choosing models
 
-**Settings** (on the top border) has a model for each of four areas. A change saves straight
+**Settings** (on the top border) has a model for each of five areas. A change saves straight
 away, in the `model_settings` table.
 
 | Area | Covers | Takes effect |
@@ -139,6 +139,7 @@ away, in the `model_settings` table.
 | Memory | Memory extraction and conversation summaries | The next memory pass |
 | Relationship, interests and identity | Conversation appraisals, her view of contacts, interest evolution and exploration, identity and desire reflection | Each process's next run |
 | Duplicate check and small jobs | The memory checks (duplicates, corrections, fading, who it was meant for) and spotting chances for her desires | The next run |
+| Browser | Her browser helper (`use_browser`) and her sign-ups | The next browsing job or sign-up |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list `MODEL_CHOICES` in
 [session_config.py](session_config.py); a saved model no longer in that list falls back to
@@ -944,7 +945,19 @@ connection isn't retried; switch it off and on, or save a new token.
     a mistake contained, and every address passes the address guard.
   - She reaches for the browser when only a site's own live pages can tell (fares for exact
     dates, availability, stock, what a booking page offers), running the site's own search;
-    web search covers general and current information. Its error output goes to
+    web search covers general and current information.
+  - **A helper browses for her.** She doesn't get the browser's tools herself: while the
+    browser is connected she has one tool, `use_browser(job, start_url)`
+    ([tools/use_browser.py](tools/use_browser.py)), and a helper on the Browser model does the
+    job and reports back. Each step of browsing is a request, and in her own chat each would
+    re-send her whole context on the Delegation model; the helper sees only the job, your name
+    and key details (for forms), and its last 3 results (older pages are dropped). The helper
+    calls the same tool handlers she did, so the address guard, paged results and the approval
+    before sending all still apply, asked wherever she's talking with you. At most 30 actions
+    and about 8 minutes a job, one job at a time; then it reports what it found or did and what
+    it couldn't. Activity shows each action's tool name, never the job, pages or your details;
+    her written chats wait up to 9 minutes for the report. The tools switched on in Settings
+    are the helper's. Its error output goes to
     `%LOCALAPPDATA%\cora\services\playwright.log` (`~/.local/state/cora/services/` on Linux).
 
 ### Signal

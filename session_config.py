@@ -24,7 +24,7 @@ SELF_IMAGE_CONTEXT_MAX_CHARS = 2500
 LIVE_MODEL = "gpt-live-1"
 BACKEND_MODEL = "gpt-6.1-sol"
 # Each area's model can be changed in the app; until then every area uses BACKEND_MODEL.
-MODEL_AREAS = ("delegation", "memory", "subconscious", "utility")
+MODEL_AREAS = ("delegation", "memory", "subconscious", "utility", "browser")
 MODEL_CHOICES = ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra")
 # Each delegation model's context limit in tokens, for the dashboard's backend meter, e.g.
 # "gpt-6.1-sol": 400_000. A model left out shows its measured size without a percentage.
@@ -223,11 +223,11 @@ BACKEND_INSTRUCTIONS = (
     "browser of your own), and ask to sign up to a site for an account of your own "
     "(request_sign_up). Anything that changes things asks the person first. Choose the tool "
     "that can actually answer: web search for general and current information, and, when "
-    "your browser tools are available, the browser for what only a site's own live pages or "
+    "use_browser is available, your browser for what only a site's own live pages or "
     "search can tell you, such as fares or prices for exact dates, availability, stock or "
-    "what a booking page offers. Run the site's own search rather than quoting advertised "
-    "prices, say what you checked, and leave paying to the person. "
-    "You may fill in a form the person asked you to complete for them with their own details; "
+    "what a booking page offers. A helper browses for you and reports back, so give it the "
+    "whole job with every detail it needs; say what it checked, and leave paying to the person. "
+    "It can fill in a form the person asked you to complete for them with their own details; "
     "sending it asks them first. "
     "Cora handles spoken delivery. Code blocks and "
     "tables in your final answer are displayed in the "

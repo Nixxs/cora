@@ -652,6 +652,11 @@ ModelSettingsScreen {
     max-height: 40;
 }
 
+/* Five models stacked, without the gap above each, so Close stays in view on a small window. */
+.model-area-label {
+    margin: 0;
+}
+
 .signal-clients {
     height: auto;
     margin: 1 0 0 0;

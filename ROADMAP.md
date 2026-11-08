@@ -7,7 +7,8 @@ the history of how each part was built is in Git.
 
 - **Talking to her:** voice and typing in one conversation, standby and the local wake
   word, the opening greeting, images (pasting, the screen, pictures from the web), the
-  dashboard (with OpenAI spend, given an Admin key) and a model per area. See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
+  dashboard (with OpenAI spend, given an Admin key) and a model per area (browsing has its
+  own, run by a helper with a small context). See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
 - **Her inner life:** memory (with corrections and fading), key details she keeps to hand
   (your and your family's emails, phones and addresses), interests and exploration,
   desires, a developing self, how she pictures herself, a relationship with you, and
@@ -30,10 +31,9 @@ an installer is paused. Local models follow after 1.0.
    web page and calls) with no new features. Only fixes, polish from real use, documentation
    and the housekeeping below. Ideas that come up go into this roadmap, not the code.
    Polish in progress:
-   - *Model choices to cut spend:* a Browser model, with her browsing handed to a helper on
-     it (a small context instead of her whole one each step); and model choices for looking
-     at images (which ignores the settings now), contacts and tasks (split from delegation)
-     and exploring (split from reflection).
+   - *Model choices to cut spend:* the Browser model and her browsing helper are done; still
+     to come are model choices for looking at images (which ignores the settings now),
+     contacts and tasks (split from delegation) and exploring (split from reflection).
    - *Full text on the dashboard:* clicking an item in the feelings, interests and tasks
      boxes opens a pop-up with its full text, as the context box already does.
 2. **Services screen and in-app settings (MCP M4):** a list of supported services for
