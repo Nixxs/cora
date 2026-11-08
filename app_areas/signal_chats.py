@@ -346,7 +346,7 @@ class SignalChatsMixin:
         """Professional mode: her own identity and interests and what she remembers of them, none of the person's."""
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history,
-            sections=await self.client_sections(client, batch), model=self.live.delegation_model,
+            sections=await self.client_sections(client, batch), model=await self.contacts_model(),
             # Web search, memory search limited to what they may know, noting her own feelings, and
             # passing things on to the person; no services, nothing at the desk.
             route=BackendRoute(

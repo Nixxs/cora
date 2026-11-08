@@ -14,6 +14,8 @@ from services.catalogue import SERVICES
 from ui.meters import NO_SPEND_HINT
 from services.credentials import get_token
 from sign_ups import password as passwords
+from session_config import MODEL_CHOICES
+from tools.look_at_screen import set_image_model
 
 
 # How long the dashboard reuses the spend it read; OpenAI's costs are hours behind anyway.
@@ -285,6 +287,18 @@ class SettingsMixin:
             "Screen looking on" if enabled else "Screen looking off",
         )
 
+    async def contacts_model(self) -> str:
+        """The model for contacts and tasks (their chats, emails and calls, and coordinating tasks),
+        from Settings > Models; her Delegation model if it can't be read."""
+        try:
+            models = await self.conversation_persistence.call_database(self.persistence.load_models)
+        except Exception as error:
+            self.activity.write(f"Contacts model load failed ({type(error).__name__}); using Delegation's.",
+                                "Model settings error")
+            return self.live.delegation_model
+        model = models.get("contacts") if isinstance(models, dict) else None
+        return model if model in MODEL_CHOICES else self.live.delegation_model
+
     @work(group="model-settings-save")
     async def save_model_setting(self, area: str, model: str) -> None:
         try:
@@ -294,6 +308,8 @@ class SettingsMixin:
             self.notify("Could not save the model setting. Check Activity.", severity="error")
             return
         self.activity.write(f"The {area} model is now {model}.", "Model settings saved")
+        if area == "images":
+            set_image_model(model)
         # Live's session config holds the delegation model; restart Live so it applies now.
         # In standby or while disconnected, the next connect loads it anyway.
         if area == "delegation" and self.live.ready and not self.standby:

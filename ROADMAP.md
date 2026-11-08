@@ -7,8 +7,8 @@ the history of how each part was built is in Git.
 
 - **Talking to her:** voice and typing in one conversation, standby and the local wake
   word, the opening greeting, images (pasting, the screen, pictures from the web), the
-  dashboard (with OpenAI spend, given an Admin key) and a model per area (browsing has its
-  own, run by a helper with a small context). See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
+  dashboard (with OpenAI spend, given an Admin key) and a model per area (eight, including
+  contacts and tasks, exploring, images, and browsing run by a helper with a small context). See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
 - **Her inner life:** memory (with corrections and fading), key details she keeps to hand
   (your and your family's emails, phones and addresses), interests and exploration,
   desires, a developing self, how she pictures herself, a relationship with you, and
@@ -31,9 +31,6 @@ an installer is paused. Local models follow after 1.0.
    web page and calls) with no new features. Only fixes, polish from real use, documentation
    and the housekeeping below. Ideas that come up go into this roadmap, not the code.
    Polish in progress:
-   - *Model choices to cut spend:* the Browser model and her browsing helper are done; still
-     to come are model choices for looking at images (which ignores the settings now),
-     contacts and tasks (split from delegation) and exploring (split from reflection).
    - *Full text on the dashboard:* clicking an item in the feelings, interests and tasks
      boxes opens a pop-up with its full text, as the context box already does.
 2. **Services screen and in-app settings (MCP M4):** a list of supported services for
@@ -46,6 +43,13 @@ an installer is paused. Local models follow after 1.0.
    service's own sign-in; Gmail needs planning, since Google restricts mail access for
    public apps. A hand-edited `mcp.json` may come for custom servers, and a router tool if
    there are many.
+   - *A finer look for Settings:* it works but looks coarse, so it gets the dashboard's polish.
+     Long labels are cut off at the edge (her voice, the API key, the spend lines), so they
+     should wrap or become a short label with the detail underneath in a dimmer line. Buttons
+     are full-width blocks, so they should be compact and sit beside their input (Save,
+     Remove). Switches need their label beside them, statuses need one style (what's in use,
+     what's wrong), and spacing should be even, with sections grouped under small headings.
+     Applies to all three tabs.
 3. **Her picture in Settings:** setting [how she pictures herself](DOCUMENTATION.md#how-she-pictures-herself)
    is command-line only. A "Her picture" section would let you pick an image and enter her
    description for `self` and `work`, see what's saved, and set her Signal profile picture.

@@ -489,7 +489,7 @@ def run_exploration_cycle(*, should_stop: Callable[[], bool], browser: BrowserAc
         if should_stop():
             return None
         engine = build_engine()
-        model = ModelSettingsStore(engine).model_for("subconscious")
+        model = ModelSettingsStore(engine).model_for("exploring")
         with OpenAI(max_retries=0) as client:
             outcome = explore_next(ExplorationStore(engine), client, model=model, now=utc_now(), browser=browser)
     except Exception as error:

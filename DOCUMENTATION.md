@@ -130,16 +130,21 @@ others.
 
 ### Choosing models
 
-**Settings** (on the top border) has a model for each of five areas. A change saves straight
-away, in the `model_settings` table.
+**Settings** (on the top border) has a model for each of eight areas, two to a row; hovering
+one says what it covers. A change saves straight away, in the `model_settings` table. Spending
+less is mostly a matter of putting the busy, simpler areas (Browser, Small jobs, Looking at
+images) on a cheaper model.
 
 | Area | Covers | Takes effect |
 | --- | --- | --- |
-| Delegation | Cora-prime's backend, her written chats (desk, Signal, web, contacts), task threads and calls | Straight away: Live reconnects if it's Active; otherwise at the next connect |
+| Delegation | Cora-prime's backend while you talk, and her written chats with you (desk, Signal, web) | Straight away: Live reconnects if it's Active; otherwise at the next connect |
+| Contacts and tasks | Her chats, emails and calls with your contacts (client mode and task threads), and the task coordinator | The next message or call |
 | Memory | Memory extraction and conversation summaries | The next memory pass |
-| Relationship, interests and identity | Conversation appraisals, her view of contacts, interest evolution and exploration, identity and desire reflection | Each process's next run |
-| Duplicate check and small jobs | The memory checks (duplicates, corrections, fading, who it was meant for) and spotting chances for her desires | The next run |
+| Reflection | Conversation appraisals, her view of contacts, interest evolution, identity and desire reflection | Each process's next run |
+| Exploring | Exploring her interests on her own, by reading or browsing | The next exploration |
 | Browser | Her browser helper (`use_browser`) and her sign-ups | The next browsing job or sign-up |
+| Looking at images | `look_at_screen`, `look_again`, and photos pasted at the desk or sent on Signal or the web page (a photo seen on the turn it's sent is in her own chat, on Delegation) | Straight away |
+| Small jobs | The memory checks (duplicates, corrections, fading, who it was meant for), the commitment check, sorting mail and spotting chances for her desires | The next run |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list `MODEL_CHOICES` in
 [session_config.py](session_config.py); a saved model no longer in that list falls back to

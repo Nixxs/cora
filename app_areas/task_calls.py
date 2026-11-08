@@ -174,8 +174,9 @@ class TaskCallsMixin:
             rules = phone_party_instructions(call.who, call.number, self.live.person_name, self.live.own_name)
             live = call.live
             live.tool_schemas = lambda: self.tools.schemas(excluding=route.excluded)
+            model = await self.contacts_model()
             live.config_override = lambda schemas: (contact_call_config(
-                schemas, sections, [], self.live.delegation_model, rules,
+                schemas, sections, [], model, rules,
                 live_instructions=TASK_CALL_LIVE_INSTRUCTIONS, voice=self.live.voice), sections)
             # The call's audio only: never the desk's mic or speaker.
             live.voice_relay = call.relay

@@ -674,7 +674,8 @@ class ModelSettingRecord(Base):
     __tablename__ = "model_settings"
     __table_args__ = (
         CheckConstraint(
-            "area IN ('delegation', 'memory', 'subconscious', 'utility', 'browser')", name="model_settings_area_check",
+            "area IN ('delegation', 'memory', 'subconscious', 'utility', 'browser', 'contacts', 'exploring', 'images')",
+            name="model_settings_area_check",
         ),
         CheckConstraint("btrim(model) <> ''", name="model_settings_model_check"),
         {"schema": "public"},

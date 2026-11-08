@@ -652,9 +652,17 @@ ModelSettingsScreen {
     max-height: 40;
 }
 
-/* Five models stacked, without the gap above each, so Close stays in view on a small window. */
-.model-area-label {
-    margin: 0;
+/* The models two to a row, so all of them and Close fit a small window. */
+#models-grid {
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: auto;
+    grid-gutter: 0 2;
+    height: auto;
+}
+
+.model-cell {
+    height: auto;
 }
 
 .signal-clients {

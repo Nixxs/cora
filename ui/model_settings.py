@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
@@ -20,12 +20,17 @@ from session_config import MODEL_CHOICES, VOICE_CHOICES
 from storage.signal_settings_store import normalise_number
 
 
+# Each area's short label in Settings > Models, and what it covers (shown on hover), in the order shown.
 AREA_LABELS = {
-    "delegation": "Delegation (Cora's backend work)",
-    "memory": "Memory (memories and summaries)",
-    "subconscious": "Relationship, interests and identity",
-    "utility": "Duplicate check and small jobs",
-    "browser": "Browser (looking things up on sites, forms, sign-ups)",
+    "delegation": ("Delegation", "Her backend while you talk, and her written chats with you (desk, Signal, web)."),
+    "contacts": ("Contacts and tasks", "Her chats, emails and calls with your contacts, and coordinating tasks."),
+    "memory": ("Memory", "Picking out memories and summarising conversations."),
+    "subconscious": ("Reflection", "Her relationship with you, her view of contacts, her interests, identity and desires."),
+    "exploring": ("Exploring", "Exploring her interests on her own, by reading or browsing."),
+    "browser": ("Browser", "Her browser helper (use_browser) and her sign-ups."),
+    "images": ("Looking at images", "The screen, look_again, and photos pasted or sent to her."),
+    "utility": ("Small jobs", "Memory checks (duplicates, corrections, fading), commitment checks, "
+                              "sorting mail and spotting chances for her desires."),
 }
 
 
@@ -380,12 +385,18 @@ class ModelSettingsScreen(ModalScreen):
             yield Label("Settings", id="model-settings-title")
             with TabbedContent():
                 with TabPane("Models", id="settings-models"):
-                    for area, label in AREA_LABELS.items():
-                        yield Label(label, classes="model-settings-label model-area-label")
-                        yield Select(
-                            [(model, model) for model in MODEL_CHOICES], value=self.models[area],
-                            allow_blank=False, id=f"model-{area}",
-                        )
+                    with Grid(id="models-grid"):
+                        for area, (label, covers) in AREA_LABELS.items():
+                            with Vertical(classes="model-cell"):
+                                area_label = Label(label, classes="model-settings-label model-area-label")
+                                area_label.tooltip = covers
+                                yield area_label
+                                choice = Select(
+                                    [(model, model) for model in MODEL_CHOICES], value=self.models[area],
+                                    allow_blank=False, id=f"model-{area}",
+                                )
+                                choice.tooltip = covers
+                                yield choice
                 with TabPane("General", id="settings-general"):
                     with VerticalScroll(id="general-scroll"):
                         yield Label("Let Cora look at the screen", classes="model-settings-label")

@@ -57,6 +57,7 @@ from storage.conversation_persistence import ConversationPersistence
 from ui.chat_submission import ChatSubmission
 from tools import create_tool_registry
 from tools.route import routed
+from tools.look_at_screen import set_image_model
 from tools.use_browser import BrowserHelper, UseBrowserTool
 from wake.controller import WakeController
 from app_areas.voice import VoiceMixin
@@ -197,6 +198,7 @@ class CoraApp(
             set_own_name=lambda name: setattr(self.live, "own_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
             set_voice=lambda voice: setattr(self.live, "voice", voice),
+            set_image_model=set_image_model,
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )

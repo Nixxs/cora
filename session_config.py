@@ -24,7 +24,7 @@ SELF_IMAGE_CONTEXT_MAX_CHARS = 2500
 LIVE_MODEL = "gpt-live-1"
 BACKEND_MODEL = "gpt-6.1-sol"
 # Each area's model can be changed in the app; until then every area uses BACKEND_MODEL.
-MODEL_AREAS = ("delegation", "memory", "subconscious", "utility", "browser")
+MODEL_AREAS = ("delegation", "memory", "subconscious", "utility", "browser", "contacts", "exploring", "images")
 MODEL_CHOICES = ("gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra")
 # Each delegation model's context limit in tokens, for the dashboard's backend meter, e.g.
 # "gpt-6.1-sol": 400_000. A model left out shows its measured size without a percentage.
