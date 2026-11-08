@@ -13,6 +13,7 @@ from mail.account import EmailStatus
 from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
+from openai_spend import likely_cora_project
 from services.catalogue import SERVICES
 from services.connection import CONNECTED, CONNECTING, FAILED, ServiceStatus
 from session_config import MODEL_CHOICES, VOICE_CHOICES
@@ -35,6 +36,12 @@ class GeneralControls:
     save_key: Callable[[str], None]
     voice: str
     save_voice: Callable[[str], None]
+    # OpenAI spend on the dashboard: an optional Admin key, and whose spend (a project, "all" or "auto").
+    admin_status: str = ""
+    save_admin_key: Callable[[str], None] = lambda key: None
+    forget_admin_key: Callable[[], None] = lambda: None
+    spend_project: str = "auto"
+    save_spend_project: Callable[[str], None] = lambda project: None
 
 
 @dataclass
@@ -379,10 +386,11 @@ class ModelSettingsScreen(ModalScreen):
                             allow_blank=False, id=f"model-{area}",
                         )
                 with TabPane("General", id="settings-general"):
-                    yield Label("Let Cora look at the screen", classes="model-settings-label")
-                    yield Switch(value=self.screen_looking, id="screen-looking")
-                    if self.general is not None:
-                        yield from self.compose_general()
+                    with VerticalScroll(id="general-scroll"):
+                        yield Label("Let Cora look at the screen", classes="model-settings-label")
+                        yield Switch(value=self.screen_looking, id="screen-looking")
+                        if self.general is not None:
+                            yield from self.compose_general()
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
                         with VerticalScroll(id="services-scroll"):
@@ -538,6 +546,50 @@ class ModelSettingsScreen(ModalScreen):
         yield Input(password=True, id="openai-key", placeholder="paste a new key to replace it")
         with Horizontal(classes="service-buttons"):
             yield Button("Save key", id="openai-key-save")
+        yield Label("OpenAI spend on the dashboard · optional: a Restricted Admin key with only "
+                    "Usage API: Read (platform.openai.com > Settings > Admin keys)", classes="model-settings-label")
+        yield Static(self.general.admin_status, id="admin-key-status", classes="service-reason")
+        yield Input(password=True, id="admin-key", placeholder="paste an Admin key (sk-admin-…)")
+        with Horizontal(classes="service-buttons"):
+            yield Button("Save admin key", id="admin-key-save")
+            yield Button("Remove", id="admin-key-forget")
+        yield Label("Whose spend", classes="model-settings-label")
+        yield Select(self.spend_options([]), value=self.general.spend_project, allow_blank=False,
+                     id="spend-project")
+
+    def spend_options(self, projects: list[tuple[str, str]]) -> list[tuple[str, str]]:
+        cora = likely_cora_project(projects)
+        automatic = (f"Automatic (now {dict(projects)[cora]!r}, the project named for Cora)" if cora
+                     else "Automatic (all projects until one named for Cora has spend)")
+        options = [(automatic, "auto"), ("All projects", "all")]
+        options += [(name, project_id) for project_id, name in projects]
+        chosen = self.general.spend_project
+        if chosen not in {value for _, value in options}:
+            # A chosen project with no spend lately still shows, by its id.
+            options.append((chosen, chosen))
+        return options
+
+    def show_spend(self, status: str, projects: list[tuple[str, str]] | None = None) -> None:
+        """The app's word on the Admin key, and the projects it can see once known."""
+        if self.general is None:
+            return
+        self.general.admin_status = status
+        self.query_one("#admin-key-status", Static).update(status)
+        if projects is not None:
+            select = self.query_one("#spend-project", Select)
+            select.set_options(self.spend_options(projects))
+            select.value = self.general.spend_project
+
+    def save_admin_key(self) -> None:
+        field_ = self.query_one("#admin-key", Input)
+        key = field_.value.strip()
+        if not key:
+            self.notify("Paste an Admin key first.", severity="warning")
+            return
+        # The key goes to the app to check and save; the field never keeps it.
+        field_.value = ""
+        self.show_spend("Checking the Admin key with OpenAI…")
+        self.general.save_admin_key(key)
 
     def show_key_status(self, status: str) -> None:
         """The app's word once a key is checked and saved (or not)."""
@@ -835,6 +887,11 @@ class ModelSettingsScreen(ModalScreen):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if event.select.id == "spend-project":
+            if self.general is not None and event.value != self.general.spend_project:
+                self.general.spend_project = event.value
+                self.general.save_spend_project(event.value)
+            return
         if event.select.id == "voice":
             # Select also reports its starting value on mount; only real changes are saved.
             if self.general is not None and event.value != self.general.voice:
@@ -862,6 +919,8 @@ class ModelSettingsScreen(ModalScreen):
             self.add_client()
         elif event.input.id == "openai-key":
             self.save_openai_key()
+        elif event.input.id == "admin-key":
+            self.save_admin_key()
         else:
             self.save_service_token(event.input.id.removeprefix("service-token-"))
 
@@ -958,6 +1017,10 @@ class ModelSettingsScreen(ModalScreen):
         button = event.button.id or ""
         if button == "openai-key-save":
             self.save_openai_key()
+        elif button == "admin-key-save":
+            self.save_admin_key()
+        elif button == "admin-key-forget":
+            self.general.forget_admin_key()
         elif button == "signal-save-number":
             self.save_person_number()
         elif button == "signal-link":

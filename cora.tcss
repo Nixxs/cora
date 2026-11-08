@@ -647,7 +647,7 @@ ModelSettingsScreen {
     width: 1fr;
 }
 
-#services-scroll {
+#services-scroll, #general-scroll {
     height: auto;
     max-height: 40;
 }

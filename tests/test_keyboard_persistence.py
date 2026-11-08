@@ -122,6 +122,7 @@ async def running_app(persistence=None, has_key=True):
             background_models_stubbed(), \
             patch("services.credentials.keyring"), \
             patch("openai_key.keyring") as openai_keyring, \
+            patch("openai_spend.keyring") as admin_keyring, \
             patch("app.has_key", return_value=has_key), \
             patch("sign_ups.password.keyring") as sign_up_keyring, \
             patch("app.EmailAccount"), \
@@ -137,6 +138,7 @@ async def running_app(persistence=None, has_key=True):
             app.email_account.signature.return_value = ""
             sign_up_keyring.get_password.return_value = None
             openai_keyring.get_password.return_value = None
+            admin_keyring.get_password.return_value = None
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
@@ -151,6 +153,7 @@ async def running_app(persistence=None, has_key=True):
                 persistence.load_sign_ups_context.return_value = ""
                 persistence.load_key_details_context.return_value = ""
                 persistence.load_voice.return_value = "marin"
+                persistence.load_spend_project.return_value = None
                 persistence.load_desire_context.return_value = ""
                 persistence.load_feelings.return_value = []
                 persistence.load_own_name.return_value = "Cora"

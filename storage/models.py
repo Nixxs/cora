@@ -784,7 +784,7 @@ class AppSettingRecord(Base):
 
     __tablename__ = "app_settings"
     __table_args__ = (
-        CheckConstraint("key IN ('voice')", name="app_settings_key_check"),
+        CheckConstraint("key IN ('voice', 'spend_project')", name="app_settings_key_check"),
         CheckConstraint("btrim(value) <> '' AND char_length(value) <= 200", name="app_settings_value_check"),
         {"schema": "public"},
     )

@@ -5,6 +5,7 @@ import asyncio
 from textual import work
 
 import openai_key
+import openai_spend
 from ui.model_settings import (
     EmailControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
 )
@@ -40,6 +41,8 @@ class SettingsMixin:
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
             self.email_signature = await asyncio.to_thread(self.email_account.signature)
             voice = await self.conversation_persistence.call_database(self.persistence.load_voice)
+            spend_project = await self.conversation_persistence.call_database(self.persistence.load_spend_project)
+            admin_key = await asyncio.to_thread(openai_spend.saved_admin_key)
             has_sign_up_password = bool(await asyncio.to_thread(passwords.sign_up_password))
             self.live.own_name = await asyncio.to_thread(passwords.sign_up_name)
         except Exception as error:
@@ -70,8 +73,15 @@ class SettingsMixin:
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,
                     voice=voice, save_voice=self.save_voice_setting,
+                    admin_status=(f"Admin key saved ({openai_spend.masked(admin_key)}) · checking…" if admin_key
+                                  else "No Admin key: the dashboard doesn't show spend."),
+                    save_admin_key=self.save_admin_key, forget_admin_key=self.forget_admin_key,
+                    spend_project=spend_project or openai_spend.AUTOMATIC,
+                    save_spend_project=self.save_spend_project,
                 ),
             ), callback=self.settings_closed)
+            if admin_key:
+                self.load_spend_projects(admin_key)
 
     def make_webhook_controls(self) -> WebhookControls:
         self.webhook_controls = WebhookControls(
@@ -139,6 +149,70 @@ class SettingsMixin:
             return
         self.notify("Key saved.")
         self.start_with_new_key()
+
+    @staticmethod
+    def spend_status(key: str, projects: list[tuple[str, str]]) -> str:
+        """What Settings says about the Admin key, never the key."""
+        count = len(projects)
+        return (f"Admin key saved ({openai_spend.masked(key)}) · it can read costs · {count} "
+                f"project{'' if count == 1 else 's'} with spend in the last "
+                f"{openai_spend.PROJECT_LOOKBACK_DAYS} days.")
+
+    @work(group="spend-projects", exclusive=True)
+    async def load_spend_projects(self, key: str) -> None:
+        """The projects an Admin key can see, for Settings' "Whose spend" (asked after Settings opens)."""
+        try:
+            projects = await asyncio.to_thread(openai_spend.projects_with_spend, key)
+        except openai_spend.AdminKeyError as error:
+            status = f"Admin key saved ({openai_spend.masked(key)}), but: {error}"
+            projects = None
+        except Exception as error:
+            self.activity.write(f"OpenAI projects didn't load ({type(error).__name__}).", "OpenAI spend")
+            status, projects = f"Admin key saved ({openai_spend.masked(key)}); projects didn't load.", None
+        else:
+            status = self.spend_status(key, projects)
+        if isinstance(self.screen, ModelSettingsScreen):
+            self.screen.show_spend(status, projects)
+
+    @work(group="admin-key", exclusive=True)
+    async def save_admin_key(self, key: str) -> None:
+        try:
+            projects = await asyncio.to_thread(openai_spend.check_admin_key, key)
+            await asyncio.to_thread(openai_spend.save_admin_key, key)
+        except openai_spend.AdminKeyError as error:
+            problem = str(error)
+        except Exception as error:
+            self.activity.write(f"Admin key save failed ({type(error).__name__}).", "OpenAI spend")
+            problem = "The Admin key couldn't be checked or saved; see Activity."
+        else:
+            self.activity.write(f"OpenAI Admin key saved ({openai_spend.masked(key)}).", "OpenAI spend")
+            if isinstance(self.screen, ModelSettingsScreen):
+                self.screen.show_spend(self.spend_status(key, projects), projects)
+            self.notify("Admin key saved.")
+            return
+        if isinstance(self.screen, ModelSettingsScreen):
+            saved = await asyncio.to_thread(openai_spend.saved_admin_key)
+            self.screen.show_spend(problem + (" The saved key is unchanged." if saved else ""))
+        self.notify(problem, severity="error")
+
+    @work(group="admin-key", exclusive=True)
+    async def forget_admin_key(self) -> None:
+        await asyncio.to_thread(openai_spend.forget_admin_key)
+        self.activity.write("OpenAI Admin key removed.", "OpenAI spend")
+        if isinstance(self.screen, ModelSettingsScreen):
+            self.screen.show_spend("No Admin key: the dashboard doesn't show spend.", [])
+        self.notify("Admin key removed.")
+
+    @work(group="model-settings-save")
+    async def save_spend_project(self, project: str) -> None:
+        chosen = None if project == openai_spend.AUTOMATIC else project
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_spend_project, chosen)
+        except Exception as error:
+            self.activity.write(f"Spend setting save failed ({type(error).__name__}).", "OpenAI spend")
+            self.notify("Could not save whose spend to show. Check Activity.", severity="error")
+            return
+        self.activity.write("The dashboard's spend is now " + (chosen or "automatic") + ".", "OpenAI spend")
 
     def api_key_given(self, saved: bool | None) -> None:
         """The first-start pop-up closed: start with the key, or say where to add one later."""

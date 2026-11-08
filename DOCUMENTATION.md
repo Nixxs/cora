@@ -193,6 +193,16 @@ four characters only) and replaces it. A saved key goes to the system credential
 wins over `.env`'s; it reaches every OpenAI call from then on, and a disconnected Cora
 connects with it straight away ([openai_key.py](openai_key.py)). The command-line tools
 load it the same way.
+
+**OpenAI spend (optional).** OpenAI's Costs API answers only an organisation Admin key, never
+a project's API key, so it has its own field in Settings > General. Make it Restricted with
+one permission, Usage API: Read; it then can't change anything in the organisation. It's
+checked with a costs request before it's saved to the credential store, and Remove forgets
+it. "Whose spend" chooses a project: Automatic (the default) uses the one project named for
+Cora once it has spend in the last 90 days, else all projects; projects are listed from the
+costs themselves, so one appears once it has spent something (costs lag a few hours). Only
+the choice is kept, in `app_settings`; no costs are stored
+([openai_spend.py](openai_spend.py)). Showing it on the dashboard comes next.
 - **Pictures from the web:** ask to see something ("show me the cafe"), or she may show
   one herself. She picks a page from web search, and the app fetches that page's preview
   image (`og:image`, public https sites only) and draws it small in the chat with a caption
@@ -866,7 +876,7 @@ contact asks.
 ### Secrets and what's kept
 
 - **Tokens and keys** (GitHub, Twilio, the Google Maps key, her sign-up password, webhook
-  secrets, the email app ID, and the OpenAI API key when saved in the app) are kept in the system credential store (Windows Credential
+  secrets, the email app ID, and the OpenAI API and Admin keys when saved in the app) are kept in the system credential store (Windows Credential
   Manager), never in a file, `.env` or the database. Her email sign-in is too big for it, so
   it's in a file encrypted for your Windows user (`%LOCALAPPDATA%\cora\email-sign-in.bin`).
   Paired web devices are kept only as SHA-256 hashes of their tokens.

@@ -1,6 +1,6 @@
 """General settings from Settings > General, such as her voice; one without a saved value uses its default."""
 
-from sqlalchemy import Engine, func, select
+from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -36,3 +36,18 @@ class AppSettingsStore:
         if voice not in VOICE_CHOICES:
             raise ValueError(f"Unknown voice: {voice}")
         self._set("voice", voice)
+
+    def spend_project(self) -> str | None:
+        """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""
+        return self._get("spend_project")
+
+    def set_spend_project(self, project: str | None) -> None:
+        """Save whose spend to show; None goes back to automatic."""
+        if project is None:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "spend_project"))
+            return
+        project = project.strip()
+        if not project or len(project) > 200 or any(character.isspace() for character in project):
+            raise ValueError("A project needs its id")
+        self._set("spend_project", project)

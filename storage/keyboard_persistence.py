@@ -164,6 +164,12 @@ class KeyboardPersistence:
     def save_voice(self, voice: str) -> None:
         AppSettingsStore(self._get_store().engine).set_voice(voice)
 
+    def load_spend_project(self) -> str | None:
+        return AppSettingsStore(self._get_store().engine).spend_project()
+
+    def save_spend_project(self, project: str | None) -> None:
+        AppSettingsStore(self._get_store().engine).set_spend_project(project)
+
     def load_models(self) -> dict:
         return ModelSettingsStore(self._get_store().engine).models()
 
