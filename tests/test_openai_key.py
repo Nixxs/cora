@@ -167,6 +167,9 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
                 app.screen.query_one(TabbedContent).active = "settings-general"
                 await pilot.pause()
                 app.screen.query_one("#openai-key", Input).value = "sk-new-key-4321"
+                # General is taller than the test window: scroll to it, as you would.
+                app.screen.query_one("#openai-key-save").scroll_visible(animate=False)
+                await pilot.pause()
                 await pilot.click("#openai-key-save")
                 await asyncio.wait_for(app.workers.wait_for_complete(), 3)
                 await pilot.pause()

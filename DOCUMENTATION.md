@@ -105,7 +105,7 @@ yours, and none of your private context.
 | Feelings | Every minute while Active, voice Cora is told of feelings that began, changed or passed |
 | Hourly round | Calendar refresh, contacts' quiet chats closed, waiting heads-ups retried, tasks checked, stalled sign-ups noticed |
 | Task mail | Every 10 minutes (the fallback for webhooks), with Microsoft's subscriptions renewed when due |
-| Inactivity | Standby after `CORA_IDLE_TIMEOUT_SECONDS` of quiet (default 5 minutes) |
+| Inactivity | Standby after the quiet set in Settings > General (default 5 minutes) |
 
 Each background process is single-flight: a slow run delays the next check rather than
 overlapping it.
@@ -265,17 +265,20 @@ resumes with recent chat as context.
 
 - **Starting in it:** Settings > General > "When the app opens" can start her in Standby
   instead of Active (saved as `start_mode` in `app_settings`; Active if unset or unreadable).
+  The standby settings (`idle_minutes`, `standby_farewell`, `wake_word`) are applied at launch
+  too; one never set in the app keeps its old `.env` value.
   Launch does everything else as usual (checks, summaries, services, Signal, mail) but doesn't
   connect Live; she waits as after any standby, and waking her connects with her context.
 - **Asking for it:** say something like "go to standby", or she may choose it herself once
   a conversation has clearly wound down (after you say goodnight). She signs off briefly,
   then goes once speech and pending work finish; if that takes over 30 seconds she stays
   Active and Activity says so.
-- **Automatic standby:** after `CORA_IDLE_TIMEOUT_SECONDS` of inactivity (default 300; `0`
-  turns it off). Typing, cursor movement, sending, speech and the audio controls reset the
+- **Automatic standby:** after the minutes of quiet chosen in Settings > General > Standby
+  (default 5, or Off); a change applies straight away. Typing, cursor movement, sending, speech and the audio controls reset the
   clock; setup, pending work and audible playback hold it off, and work finishing gives a
   fresh full period. An untouched draft doesn't hold it off and is kept.
-- **Heads-up:** with `CORA_STANDBY_FAREWELL=1`, she briefly says she's leaving you to it
+- **Heads-up:** with "Say a short goodbye before automatic standby" on (Settings > General),
+  she briefly says she's leaving you to it
   before automatic standby, then leaves a few seconds to answer. Speaking, typing or the
   controls cancel it. Manual standby has no farewell.
 - **Typing in Standby:** a typed message is answered in writing ("Cora · written") straight
@@ -286,7 +289,7 @@ resumes with recent chat as context.
   closing the app and standby. Writing keeps the conversation open; it ends only after
   `CORA_CONVERSATION_GAP_MINUTES` (default 60) without any.
 - **Wake word:** click **Wake off** to turn on local "Hey Cora" detection in Standby; it
-  shows **Wake on** in green while listening. Detection runs on your PC with a local Whisper
+  shows **Wake on** in green while listening, and stays as you left it at the next launch. Detection runs on your PC with a local Whisper
   model (no room audio goes to OpenAI), accepts Cora/Kora/Korra, and keeps your opening
   words through reconnection. Microphone mute stops it, and turning Wake on never unmutes
   the microphone. Setup: [Local wake-word setup](README.md#local-wake-word-setup).

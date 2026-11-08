@@ -170,6 +170,21 @@ class KeyboardPersistence:
     def save_start_mode(self, mode: str) -> None:
         AppSettingsStore(self._get_store().engine).set_start_mode(mode)
 
+    def load_standby_settings(self) -> dict:
+        """{"idle_minutes", "farewell", "wake_word"}: each None when never set in Settings."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"idle_minutes": store.idle_minutes(), "farewell": store.standby_farewell(),
+                "wake_word": store.wake_word()}
+
+    def save_idle_minutes(self, minutes: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_idle_minutes(minutes)
+
+    def save_standby_farewell(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_standby_farewell(on)
+
+    def save_wake_word(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_wake_word(on)
+
     def load_spend_project(self) -> str | None:
         return AppSettingsStore(self._get_store().engine).spend_project()
 

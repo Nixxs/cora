@@ -551,8 +551,8 @@ class CoraApp(
         self.feeling_timer = self.set_interval(FEELING_CHECK_SECONDS, self.check_feelings)
         self.background_round_timer = self.set_interval(BACKGROUND_ROUND_SECONDS, self.background_round)
         self.task_mail_timer = self.set_interval(TASK_MAIL_CHECK_SECONDS, self.mail_round)
-        if self.inactivity.timeout_seconds > 0:
-            self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
+        # Always running: Settings can turn automatic standby on at any time (the check skips while it's off).
+        self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
 
     def record_idle_activity(self, *, user_activity: bool = False) -> None:
         self.inactivity.record_activity()
@@ -650,6 +650,8 @@ class CoraApp(
             else:
                 self.start_wake_listener()
             self.update_wake_control()
+            # Remembered for the next launch.
+            self.save_wake_word(self.wake.enabled)
             self.query_one("#chat-input", ChatComposer).focus()
         elif (event.button.id in ("mic-status", "speaker-status") and not self.closing
               and (not self.reconnecting or event.button.id == "mic-status")):

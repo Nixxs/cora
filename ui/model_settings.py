@@ -45,6 +45,11 @@ class GeneralControls:
     # How she starts when the app opens: "active" or "standby".
     start_mode: str = "active"
     save_start_mode: Callable[[str], None] = lambda mode: None
+    # Automatic standby after this many quiet minutes (0 is off), and her heads-up before it; both apply now.
+    idle_minutes: int = 5
+    save_idle_minutes: Callable[[int], None] = lambda minutes: None
+    farewell: bool = False
+    save_farewell: Callable[[bool], None] = lambda on: None
     # OpenAI spend on the dashboard: an optional Admin key, and whose spend (a project, "all" or "auto").
     admin_status: str = ""
     save_admin_key: Callable[[str], None] = lambda key: None
@@ -398,6 +403,16 @@ def entry(**options) -> Input:
     return Input(compact=True, **options)
 
 
+IDLE_CHOICES = (0, 2, 5, 10, 15, 30, 60)
+
+
+def idle_options(current: int) -> list[tuple[str, int]]:
+    """Automatic standby's choices, with the current one even if it came from .env."""
+    minutes = sorted(set(IDLE_CHOICES) | {current})
+    return [("Off", 0) if value == 0 else (f"After {value} minute{'' if value == 1 else 's'}", value)
+            for value in minutes]
+
+
 def general_status(message: str) -> Text:
     """The OpenAI and Admin key lines in the same style as the services' statuses."""
     if message.startswith("Checking") or message.endswith("checking…"):
@@ -593,13 +608,23 @@ class ModelSettingsScreen(ModalScreen):
             yield note(WEBHOOK_SECRET_HELP)
 
     def compose_general(self) -> ComposeResult:
+        yield field("Her voice", "She reconnects with it when you close Settings.")
+        yield Select([(label, voice) for voice, label in VOICE_CHOICES.items()], value=self.general.voice,
+                     allow_blank=False, id="voice", compact=True)
+        yield heading("Standby")
         yield field("When the app opens", "In standby she connects only when you wake her (the status button, "
                     "Ctrl+R or her wake word); typing gets written replies. From the next launch.")
         yield Select([("Start active, ready to talk", "active"), ("Start in standby", "standby")],
                      value=self.general.start_mode, allow_blank=False, id="start-mode", compact=True)
-        yield field("Her voice", "She reconnects with it when you close Settings.")
-        yield Select([(label, voice) for voice, label in VOICE_CHOICES.items()], value=self.general.voice,
-                     allow_blank=False, id="voice", compact=True)
+        yield field("Automatic standby", "After this long with nothing said, typed or playing, she goes to "
+                    "standby, ending the voice session's cost.")
+        yield Select(idle_options(self.general.idle_minutes), value=self.general.idle_minutes,
+                     allow_blank=False, id="idle-minutes", compact=True)
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.general.farewell, id="standby-farewell")
+            yield Label("Say a short goodbye before automatic standby", classes="settings-label")
+        yield note("Her wake word is turned on and off with the Wake button at the bottom right, "
+                   "and stays as you left it next time.")
         yield heading("OpenAI")
         yield field("API key", "Checked with OpenAI, then kept in the system credential store.")
         yield Static(general_status(self.general.key_status), id="openai-key-status", classes="settings-status")
@@ -700,7 +725,20 @@ class ModelSettingsScreen(ModalScreen):
         title = titles.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
+    # Rows around the scrolling tabs: the border, title, tab bar and the footer with Close.
+    CHROME_ROWS = 12
+
+    def fit_scrolls(self) -> None:
+        """Keep the long tabs' scrolling areas inside the window, so Close always shows."""
+        rows = max(6, min(40, self.app.size.height - self.CHROME_ROWS))
+        for scroll in self.query("#general-scroll, #services-scroll"):
+            scroll.styles.max_height = rows
+
+    def on_resize(self) -> None:
+        self.fit_scrolls()
+
     async def on_mount(self) -> None:
+        self.fit_scrolls()
         if self.services is not None:
             await self.show_services()
             self.set_interval(0.5, self.show_services)
@@ -906,6 +944,11 @@ class ModelSettingsScreen(ModalScreen):
             self.webhooks.enabled = event.value
             self.webhooks.set_enabled(event.value)
             return
+        if event.switch.id == "standby-farewell":
+            if self.general is not None and event.value != self.general.farewell:
+                self.general.farewell = event.value
+                self.general.save_farewell(event.value)
+            return
         if event.switch.id == "screen-looking":
             if event.value == self.screen_looking:
                 return
@@ -944,6 +987,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.spend_project:
                 self.general.spend_project = event.value
                 self.general.save_spend_project(event.value)
+            return
+        if event.select.id == "idle-minutes":
+            if self.general is not None and event.value != self.general.idle_minutes:
+                self.general.idle_minutes = event.value
+                self.general.save_idle_minutes(event.value)
             return
         if event.select.id == "start-mode":
             if self.general is not None and event.value != self.general.start_mode:

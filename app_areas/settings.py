@@ -83,6 +83,9 @@ class SettingsMixin:
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,
                     voice=voice, save_voice=self.save_voice_setting,
                     start_mode=start_mode, save_start_mode=self.save_start_mode,
+                    idle_minutes=round(self.inactivity.timeout_seconds / 60),
+                    save_idle_minutes=self.save_idle_minutes,
+                    farewell=self.inactivity.farewell_enabled, save_farewell=self.save_standby_farewell,
                     admin_status=(f"Admin key saved ({openai_spend.masked(admin_key)}) · checking…" if admin_key
                                   else "No Admin key: the dashboard doesn't show spend."),
                     save_admin_key=self.save_admin_key, forget_admin_key=self.forget_admin_key,
@@ -269,6 +272,27 @@ class SettingsMixin:
             self.connection_worker = self.connect_to_cora()
         elif not self.live.ready and not self.standby:
             self.action_reconnect()
+
+    @work(group="model-settings-save")
+    async def save_idle_minutes(self, minutes: int) -> None:
+        # Applies now; the quiet so far still counts.
+        self.inactivity.timeout_seconds = minutes * 60.0
+        self.activity.write("Automatic standby is off." if not minutes
+                            else f"Automatic standby after {minutes} minutes of quiet.", "Settings changed")
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_idle_minutes, minutes)
+        except Exception as error:
+            self.activity.write(f"Standby setting save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save automatic standby; it applies until Cora closes.", severity="error")
+
+    @work(group="model-settings-save")
+    async def save_standby_farewell(self, on: bool) -> None:
+        self.inactivity.farewell_enabled = on
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_standby_farewell, on)
+        except Exception as error:
+            self.activity.write(f"Standby setting save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save the goodbye setting; it applies until Cora closes.", severity="error")
 
     @work(group="model-settings-save")
     async def save_start_mode(self, mode: str) -> None:

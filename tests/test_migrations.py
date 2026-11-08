@@ -140,6 +140,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0058_add_model_areas.sql",
             "0059_longer_feeling_reasons.sql",
             "0060_add_start_mode.sql",
+            "0061_add_standby_settings.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

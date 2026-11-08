@@ -50,6 +50,7 @@ class LiveSessionMixin:
                 self.check_email_account()
                 self.restart_webhooks()
                 self.daily_backup()
+                await self.apply_standby_settings()
                 if await self.starts_in_standby():
                     self.start_in_standby()
                     return
@@ -82,6 +83,28 @@ class LiveSessionMixin:
                     self.wake.connection_timer.stop()
                 await self.stop_wake_listener()
                 self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
+
+    async def apply_standby_settings(self) -> None:
+        """Settings > General's standby settings, once at launch; one never set there keeps .env's value."""
+        try:
+            saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
+        except Exception as error:
+            self.activity.write(f"Standby settings unavailable ({type(error).__name__}); using .env.", "Settings")
+            return
+        if saved["idle_minutes"] is not None:
+            self.inactivity.timeout_seconds = saved["idle_minutes"] * 60.0
+        if saved["farewell"] is not None:
+            self.inactivity.farewell_enabled = saved["farewell"]
+        if saved["wake_word"] is not None and saved["wake_word"] != self.wake.enabled:
+            self.wake.enabled = saved["wake_word"]
+            self.update_wake_control()
+
+    @work(group="model-settings-save")
+    async def save_wake_word(self, on: bool) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_wake_word, on)
+        except Exception as error:
+            self.activity.write(f"Wake setting save failed ({type(error).__name__}).", "Settings error")
 
     async def starts_in_standby(self) -> bool:
         """Settings > General: whether she starts in standby at launch (active if it can't be read)."""

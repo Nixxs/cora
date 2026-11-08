@@ -101,15 +101,14 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 ## Configuration
 
 Settings that live in `.env` (restart Cora to apply a change). Everything else is set in the
-app's **Settings**.
+app's **Settings**. Automatic standby, her goodbye before it and the wake word moved to
+Settings; their old `.env` lines (`CORA_IDLE_TIMEOUT_SECONDS`, `CORA_STANDBY_FAREWELL`,
+`CORA_WAKE_ENABLED`) still apply until you change them there, then can be deleted.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | (none) | Your OpenAI API key, if you'd rather not enter it in the app; one saved in Settings > General wins |
-| `CORA_IDLE_TIMEOUT_SECONDS` | `300` | Quiet seconds before automatic standby; `0` turns it off. Invalid values turn it off and warn in Activity |
-| `CORA_STANDBY_FAREWELL` | `0` | `1`: she says she's leaving you to it before automatic standby |
 | `CORA_CONVERSATION_GAP_MINUTES` | `60` | How long a quiet ends a conversation (in Standby, and contacts' chats); below 1 falls back to 60 |
-| `CORA_WAKE_ENABLED` | `0` | `1`: local "Hey Cora" listening is on at each launch |
 | `CORA_WAKE_DEBUG` | `1` | Wake diagnostics in Activity (what Whisper heard, a heartbeat); `0` hides them |
 | `CORA_BACKUP_COPY_DIR` | (none) | A second folder every backup is copied to |
 | `CORA_EMAIL_CLIENT_ID`, `CORA_EMAIL_TENANT` | (none) | Fallbacks for the email app ID and directory, normally saved in Settings |
@@ -126,8 +125,8 @@ no room audio goes to OpenAI while she listens in Standby.
    [Systran/faster-whisper-base.en](https://huggingface.co/Systran/faster-whisper-base.en/tree/main)
    into `models/wake/faster-whisper-base.en/` (ignored by Git). Nothing downloads by itself;
    missing files stop the listener with an Activity error.
-2. Click **Wake off** in the bottom row to turn it on for this run, or set
-   `CORA_WAKE_ENABLED=1` to have it on at each launch.
+2. Click **Wake off** in the bottom row to turn it on. It stays as you left it at the next
+   launch.
 3. Enter Standby and say "Hey Cora" (or Kora, Korra). With `CORA_WAKE_DEBUG=1`, Activity
    shows what Whisper heard and a heartbeat every five seconds, to check the microphone is
    being heard.
