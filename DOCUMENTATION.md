@@ -74,6 +74,7 @@ limit rather than letting the context grow.
 | Block | Limit (characters) |
 | --- | --- |
 | Your name, and how she introduces herself | — |
+| Your key details (all of them) | 25,200 (40 entries) |
 | How she pictures herself | 2,500 |
 | What she knows about herself (identity) | 4,000 |
 | How she feels about you (relationship) | 1,000 |
@@ -369,6 +370,28 @@ makes no claim about consciousness.
    [memory/store.py](memory/store.py)), so a strong match can still bring an old memory
    back. One whose day has passed drops to the floor, is marked `faded`, and is left out of
    the snapshot and greetings.
+
+**Key details.** Things she should always have to hand once you've told her, such as your
+email, phone and address or your wife's email and mobile, aren't left to the memory pass.
+When you give or correct one she saves it at once with `note_detail`: a free-form label
+saying whose it is and what it is ("Nick's email", "Wife (Sarah) mobile", "Car
+registration") and its value; a label is one entry whatever its case, so saving it again
+replaces it, and a null value forgets it. Every one is in her context in your own chats
+(voice, desk, Signal, web, email from you, your phone calls), so she fills in forms and
+writes emails without asking again. They're kept apart from memories, in the `key_details`
+table ([storage/key_details_store.py](storage/key_details_store.py)), at most 40 entries of
+100-character labels and 500-character values. Her tool note says never to save passwords,
+card or bank details, and only what you said yourself, never something from a web page, an
+email or someone else's message. Contacts' chats and task work never get the tool or the
+list (they offer allowlists of tools, and their context is built without it); she's told
+they're private and shared with someone else only when you asked, for that task. There's no
+screen for them in the app yet:
+
+```powershell
+python -m storage.key_details_store                       # show what's saved
+python -m storage.key_details_store set "Nick's email" nick@example.com
+python -m storage.key_details_store forget "Nick's email"
+```
 
 Memories link back to the message they came from and its verbatim evidence. A contact's
 chats make memories of their own, tied to them: in their chat, `search_memory` only finds
@@ -830,8 +853,8 @@ contact asks.
   Manager), never in a file, `.env` or the database. Her email sign-in is too big for it, so
   it's in a file encrypted for your Windows user (`%LOCALAPPDATA%\cora\email-sign-in.bin`).
   Paired web devices are kept only as SHA-256 hashes of their tokens.
-- **The database** (Docker volume) holds conversations, memories and everything she's built
-  up; **her Signal keys** live in the `signal-data` volume. Back both up (see
+- **The database** (Docker volume) holds conversations, memories, your key details and
+  everything she's built up; **her Signal keys** live in the `signal-data` volume. Back both up (see
   [Backups](README.md#backups)).
 - **Never saved:** images (pasted, sent, screenshots, web pictures and maps are held in
   memory for the conversation only), call audio, your location (named, held for 10 minutes,

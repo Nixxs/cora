@@ -133,6 +133,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0051_add_phone_calls.sql",
             "0052_add_contact_calls.sql",
             "0053_add_calling_out.sql",
+            "0054_create_key_details.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

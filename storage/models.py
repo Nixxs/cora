@@ -779,6 +779,26 @@ class SelfImageRecord(Base):
     chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
+class KeyDetailRecord(Base):
+    """Something the person told Cora to keep to hand, such as their email or their wife's phone."""
+
+    __tablename__ = "key_details"
+    __table_args__ = (
+        CheckConstraint("label = btrim(label) AND label <> '' AND char_length(label) <= 100",
+                        name="key_details_label_check"),
+        CheckConstraint("value = btrim(value) AND value <> '' AND char_length(value) <= 500",
+                        name="key_details_value_check"),
+        Index("key_details_label_key", sql_text("lower(label)"), unique=True),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    label: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
 class ImpressionRecord(Base):
     """Cora's own view of someone she talks with as a client, and a one-line opinion fit for anyone."""
 

@@ -184,6 +184,7 @@ class CoraApp(
             set_people_context=lambda context: setattr(self.live, "people_context", context),
             set_tasks_context=lambda context: setattr(self.live, "tasks_context", context),
             set_sign_ups_context=lambda context: setattr(self.live, "sign_ups_context", context),
+            set_key_details_context=lambda context: setattr(self.live, "key_details_context", context),
             set_desire_context=lambda context: setattr(self.live, "desire_context", context),
             set_feelings=lambda feelings: setattr(self.live, "feelings", feelings),
             set_person_name=lambda name: setattr(self.live, "person_name", name),

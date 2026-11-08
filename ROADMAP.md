@@ -8,13 +8,15 @@ the history of how each part was built is in Git.
 - **Talking to her:** voice and typing in one conversation, standby and the local wake
   word, the opening greeting, images (pasting, the screen, pictures from the web), the
   dashboard and a model per area. See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
-- **Her inner life:** memory (with corrections and fading), interests and exploration,
+- **Her inner life:** memory (with corrections and fading), key details she keeps to hand
+  (your and your family's emails, phones and addresses), interests and exploration,
   desires, a developing self, how she pictures herself, a relationship with you, and
   short-lived feelings. See [Her inner life](DOCUMENTATION.md#her-inner-life).
 - **People and tasks:** contacts in client mode, impressions and heads-ups, tasks with
   briefs, a coordinator, nudges, deadlines and the commitment check. See
   [People, tasks and reaching you](DOCUMENTATION.md#people-tasks-and-reaching-you).
-- **Services:** MCP (GitHub, the browser), Signal, email and calendar, signing up to sites,
+- **Services:** MCP (GitHub, the browser, filling in forms for you with sending approved),
+  Signal, email and calendar, signing up to sites,
   webhooks, the web interface (text, voice, photos, location and maps) and phone calls (you,
   contacts, and calls she places for tasks). See [Services](DOCUMENTATION.md#services).
 
@@ -40,7 +42,8 @@ an installer is paused. Local models follow after 1.0.
    is command-line only. A "Her picture" section would let you pick an image and enter her
    description for `self` and `work`, see what's saved, and set her Signal profile picture.
 4. **Dashboard editing:** for example removing a wrong memory, with a detail view for
-   picking out the item to change.
+   picking out the item to change; seeing and editing her key details (command-line only for
+   now), and a one-off pass suggesting ones she already learned in past chats.
 5. **Release.**
 
 Waiting on devices at home: **Home Assistant** (starting with its demo devices) and
