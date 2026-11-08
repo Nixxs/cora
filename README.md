@@ -146,8 +146,8 @@ never to a file or the database. Run `python migrate.py` after updating, as alwa
 1. On GitHub, create a fine-grained personal access token (Settings › Developer settings ›
    Fine-grained tokens), read-only, for the repositories Cora may see: Contents, Issues, Pull
    requests and Metadata are enough to start.
-2. In Settings › Services › **GitHub**, paste it and press **Save token**. **Forget token**
-   removes it.
+2. In Settings › Services › **GitHub**, paste it under Access token and press **Save**.
+   **Forget** removes it.
 3. Switch the service on. Click its row to see its tools, and switch on the ones you want her
    to have (all start off). Tools that change things ask you each time.
 
@@ -276,8 +276,8 @@ your own number (under Signal).
    was turned away, your number isn't coming through as the one under Signal (Twilio's Calls
    Log shows the number it got).
 7. For calling out (she calls places for tasks, asking you first each time), enter the Account
-   SID (Console › Account info, `AC…`) and her Twilio number (`+61…`) under Phone calls and
-   press **Save calling out**. If the number isn't in Sydney (AU1), set `CORA_TWILIO_API`.
+   SID (Console › Account info, `AC…`) and her Twilio number (`+61…`) under Phone calls › Calling
+   out and press **Save**. If the number isn't in Sydney (AU1), set `CORA_TWILIO_API`.
 
 If Cloudflare's bot protection covers the address, check Twilio's requests aren't challenged
 (Security › Events). Forwarding a SIM's calls to the Twilio number is possible on some

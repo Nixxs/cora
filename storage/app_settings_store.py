@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from session_config import VOICE, VOICE_CHOICES
 from .models import AppSettingRecord
 
+START_MODES = ("active", "standby")
+
 
 class AppSettingsStore:
     """Use a caller-owned engine; each operation owns and closes its session."""
@@ -36,6 +38,16 @@ class AppSettingsStore:
         if voice not in VOICE_CHOICES:
             raise ValueError(f"Unknown voice: {voice}")
         self._set("voice", voice)
+
+    def start_mode(self) -> str:
+        """How she starts when the app opens: 'active' (the default) or 'standby'."""
+        saved = self._get("start_mode")
+        return saved if saved in START_MODES else "active"
+
+    def set_start_mode(self, mode: str) -> None:
+        if mode not in START_MODES:
+            raise ValueError(f"Unknown start mode: {mode}")
+        self._set("start_mode", mode)
 
     def spend_project(self) -> str | None:
         """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""

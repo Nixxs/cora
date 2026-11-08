@@ -8,11 +8,28 @@ from textual.widgets import Input, Select, Switch, TabbedContent
 
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.keyboard_persistence import KeyboardPersistence
-from ui.model_settings import ModelSettingsScreen
+from ui.model_settings import BAD, BUSY, GOOD, ModelSettingsScreen, general_status
 import test_keyboard_persistence as keyboard_tests
 
 
 MODELS = {area: BACKEND_MODEL for area in MODEL_AREAS}
+
+
+class GeneralStatusTests(unittest.TestCase):
+    def test_key_lines_share_the_services_marks_and_colours(self):
+        cases = [
+            ("In use: saved in Cora (…abcd).", "●", GOOD),
+            ("Checking the key with OpenAI…", "◌", BUSY),
+            ("Admin key saved (…abcd) · checking…", "◌", BUSY),
+            ("Admin key saved (…abcd) · it can read costs · 2 projects with spend in the last 30 days.", "●", GOOD),
+            ("Admin key saved (…abcd), but: it can't read costs.", "×", BAD),
+            ("That key didn't work.", "×", BAD),
+        ]
+        for message, mark, colour in cases:
+            with self.subTest(message=message):
+                text = general_status(message)
+                self.assertEqual(text.plain, f"{mark} {message}")
+                self.assertEqual(str(text.style), colour)
 
 
 class ModelSettingsAdapterTests(unittest.TestCase):

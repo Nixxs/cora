@@ -32,29 +32,19 @@ an installer is paused. Local models follow after 1.0.
    web page and calls) with no new features. Only fixes, polish from real use, documentation
    and the housekeeping below. Ideas that come up go into this roadmap, not the code.
    Polish in progress: none right now; new items from real use go here.
-2. **Services screen and in-app settings (MCP M4):** a list of supported services for
-   non-technical users, each with an on/off switch that runs its sign-in, and whether Cora
-   watches it (off, digest only, or may interrupt), reusing the dashboard's look; the
-   settings still in `.env` move into the app (the OpenAI key and her voice already have, in
-   Settings > General, with the general `app_settings` table ready for more). Each service is a catalogue entry (mostly
-   data): its server, how it signs in, which tools are read-only or ask first, watch
-   defaults and short guidance for her. Hosted servers are reached remotely with the
-   service's own sign-in; Gmail needs planning, since Google restricts mail access for
-   public apps. A hand-edited `mcp.json` may come for custom servers, and a router tool if
-   there are many.
-   - *A finer look for Settings:* it works but looks coarse, so it gets the dashboard's polish.
-     Long labels are cut off at the edge (her voice, the API key, the spend lines), so they
-     should wrap or become a short label with the detail underneath in a dimmer line. Buttons
-     are full-width blocks, so they should be compact and sit beside their input (Save,
-     Remove). Switches need their label beside them, statuses need one style (what's in use,
-     what's wrong), and spacing should be even, with sections grouped under small headings.
-     Applies to all three tabs.
-3. **Her picture in Settings:** setting [how she pictures herself](DOCUMENTATION.md#how-she-pictures-herself)
+2. **A finer look for Settings:** it works but looks coarse, so it gets the dashboard's polish.
+   Long labels are cut off at the edge (her voice, the API key, the spend lines), so they
+   should wrap or become a short label with the detail underneath in a dimmer line. Buttons
+   are full-width blocks, so they should be compact and sit beside their input (Save,
+   Remove). Switches need their label beside them, statuses need one style (what's in use,
+   what's wrong), and spacing should be even, with sections grouped under small headings.
+   Applies to all three tabs. The Services tab's workings stay as they are.
+3. **The rest of `.env` into Settings:** the settings still in `.env` move into the app, one
+   at a time, as the OpenAI key and her voice already have (Settings > General, with the
+   general `app_settings` table ready for more; secrets in the credential store).
+4. **Her picture in Settings:** setting [how she pictures herself](DOCUMENTATION.md#how-she-pictures-herself)
    is command-line only. A "Her picture" section would let you pick an image and enter her
    description for `self` and `work`, see what's saved, and set her Signal profile picture.
-4. **Dashboard editing:** for example removing a wrong memory, with a detail view for
-   picking out the item to change; seeing and editing her key details (command-line only for
-   now), and a one-off pass suggesting ones she already learned in past chats.
 5. **Release.**
 
 Waiting on devices at home: **Home Assistant** (starting with its demo devices) and

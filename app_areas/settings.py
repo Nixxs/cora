@@ -49,6 +49,7 @@ class SettingsMixin:
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
             self.email_signature = await asyncio.to_thread(self.email_account.signature)
             voice = await self.conversation_persistence.call_database(self.persistence.load_voice)
+            start_mode = await self.conversation_persistence.call_database(self.persistence.load_start_mode)
             spend_project = await self.conversation_persistence.call_database(self.persistence.load_spend_project)
             admin_key = await asyncio.to_thread(openai_spend.saved_admin_key)
             has_sign_up_password = bool(await asyncio.to_thread(passwords.sign_up_password))
@@ -81,6 +82,7 @@ class SettingsMixin:
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,
                     voice=voice, save_voice=self.save_voice_setting,
+                    start_mode=start_mode, save_start_mode=self.save_start_mode,
                     admin_status=(f"Admin key saved ({openai_spend.masked(admin_key)}) · checking…" if admin_key
                                   else "No Admin key: the dashboard doesn't show spend."),
                     save_admin_key=self.save_admin_key, forget_admin_key=self.forget_admin_key,
@@ -267,6 +269,17 @@ class SettingsMixin:
             self.connection_worker = self.connect_to_cora()
         elif not self.live.ready and not self.standby:
             self.action_reconnect()
+
+    @work(group="model-settings-save")
+    async def save_start_mode(self, mode: str) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_start_mode, mode)
+        except Exception as error:
+            self.activity.write(f"Start setting save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save how Cora starts. Check Activity.", severity="error")
+            return
+        self.activity.write(f"Cora will start {'in standby' if mode == 'standby' else 'active'} from the next launch.",
+                            "Settings changed")
 
     @work(group="model-settings-save")
     async def save_voice_setting(self, voice: str) -> None:

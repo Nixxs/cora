@@ -50,6 +50,9 @@ class LiveSessionMixin:
                 self.check_email_account()
                 self.restart_webhooks()
                 self.daily_backup()
+                if await self.starts_in_standby():
+                    self.start_in_standby()
+                    return
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
                 self.startup_worker = self.load_session_context()
@@ -79,6 +82,23 @@ class LiveSessionMixin:
                     self.wake.connection_timer.stop()
                 await self.stop_wake_listener()
                 self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
+
+    async def starts_in_standby(self) -> bool:
+        """Settings > General: whether she starts in standby at launch (active if it can't be read)."""
+        try:
+            return await self.conversation_persistence.call_database(self.persistence.load_start_mode) == "standby"
+        except Exception as error:
+            self.activity.write(f"Start setting unavailable ({type(error).__name__}); starting active.", "Settings")
+            return False
+
+    def start_in_standby(self) -> None:
+        """Launch without connecting to Live: she waits, as after standby, for the wake word, a
+        message or the status button. Waking connects with the usual context reload."""
+        self.standby = True
+        self.handle_mic_status(False)
+        self.set_connection_state("standby")
+        self.activity.write("Started in standby (Settings > General); not connected to Live.", "Standby")
+        self.start_wake_listener()
 
     def action_reconnect(self) -> None:
         self.record_idle_activity(user_activity=True)

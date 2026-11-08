@@ -42,6 +42,9 @@ class GeneralControls:
     save_key: Callable[[str], None]
     voice: str
     save_voice: Callable[[str], None]
+    # How she starts when the app opens: "active" or "standby".
+    start_mode: str = "active"
+    save_start_mode: Callable[[str], None] = lambda mode: None
     # OpenAI spend on the dashboard: an optional Admin key, and whose spend (a project, "all" or "auto").
     admin_status: str = ""
     save_admin_key: Callable[[str], None] = lambda key: None
@@ -350,6 +353,64 @@ def tools_heading(status: ServiceStatus, on: set[str]) -> Text:
     )
 
 
+# The settings look: a field's short name in light text, its detail underneath in a dimmer line.
+FIELD = "#c8d0dc"
+DIM = "#8f98a8"
+WARN = "#d7a06a"
+GOOD = "#8fcf8f"
+BAD = "#e07a7a"
+BUSY = "#d7c27a"
+
+
+def heading(text: str) -> Label:
+    """A small heading over a group of settings."""
+    return Label(text, classes="settings-heading")
+
+
+def field(title: str, detail: str = "", *, warn: bool = False, id: str | None = None) -> Static:
+    """A setting's name, with what it is in a dimmer line underneath (wrapped, never cut off)."""
+    text = Text(title, style=FIELD)
+    if detail:
+        text.append(f"\n{detail}", style=WARN if warn else DIM)
+    return Static(text, classes="settings-field", id=id)
+
+
+def note(text: str, *, warn: bool = False, id: str | None = None) -> Static:
+    """A paragraph on its own: what a service is, or a caution."""
+    return Static(Text(text, style=WARN if warn else DIM), classes="settings-note", id=id)
+
+
+def row(*widgets, id: str | None = None) -> Horizontal:
+    """An input with its buttons beside it."""
+    return Horizontal(*widgets, classes="settings-row", id=id)
+
+
+def actions(*buttons) -> Horizontal:
+    """A few buttons on their own, set apart from the field above."""
+    return Horizontal(*buttons, classes="settings-row settings-actions")
+
+
+def button(label: str, id: str) -> Button:
+    return Button(label, id=id, compact=True)
+
+
+def entry(**options) -> Input:
+    return Input(compact=True, **options)
+
+
+def general_status(message: str) -> Text:
+    """The OpenAI and Admin key lines in the same style as the services' statuses."""
+    if message.startswith("Checking") or message.endswith("checking…"):
+        return Text(f"◌ {message}", style=BUSY)
+    if message.startswith("No key"):
+        return Text(f"○ {message}", style=WARN)
+    if message.startswith("No "):
+        return Text(f"○ {message}", style=DIM)
+    if message.startswith("In use") or (message.startswith("Admin key saved") and "it can read costs" in message):
+        return Text(f"● {message}", style=GOOD)
+    return Text(f"× {message}", style=BAD)
+
+
 class ModelSettingsScreen(ModalScreen):
     """Settings pages: model pickers, general switches and services. Changes apply straight away."""
 
@@ -385,189 +446,173 @@ class ModelSettingsScreen(ModalScreen):
             yield Label("Settings", id="model-settings-title")
             with TabbedContent():
                 with TabPane("Models", id="settings-models"):
+                    yield note("Which model each part of Cora uses. Hover over one to see what it covers.")
                     with Grid(id="models-grid"):
                         for area, (label, covers) in AREA_LABELS.items():
                             with Vertical(classes="model-cell"):
-                                area_label = Label(label, classes="model-settings-label model-area-label")
+                                area_label = Label(label, classes="settings-label model-area-label")
                                 area_label.tooltip = covers
                                 yield area_label
                                 choice = Select(
                                     [(model, model) for model in MODEL_CHOICES], value=self.models[area],
-                                    allow_blank=False, id=f"model-{area}",
+                                    allow_blank=False, id=f"model-{area}", compact=True,
                                 )
                                 choice.tooltip = covers
                                 yield choice
                 with TabPane("General", id="settings-general"):
                     with VerticalScroll(id="general-scroll"):
-                        yield Label("Let Cora look at the screen", classes="model-settings-label")
-                        yield Switch(value=self.screen_looking, id="screen-looking")
+                        yield heading("Cora")
+                        with Horizontal(classes="switch-row"):
+                            yield Switch(value=self.screen_looking, id="screen-looking")
+                            yield Label("Let her look at the screen", classes="settings-label")
                         if self.general is not None:
                             yield from self.compose_general()
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
                         with VerticalScroll(id="services-scroll"):
+                            yield heading("Her tools")
                             for service in SERVICES.values():
                                 yield from self.compose_service(service)
+                            if self.signal is not None or self.email is not None:
+                                yield heading("Her accounts")
                             if self.signal is not None:
                                 yield from self.compose_signal()
                             if self.email is not None:
                                 yield from self.compose_email()
+                            if any(part is not None for part in (self.web, self.phone, self.webhooks)):
+                                yield heading("Reaching her from outside")
                             if self.web is not None:
                                 yield from self.compose_web()
                             if self.phone is not None:
                                 yield from self.compose_phone()
                             if self.webhooks is not None:
                                 yield from self.compose_webhooks()
-            yield Button("Close", id="model-settings-close")
+            with Horizontal(id="model-settings-footer"):
+                yield Static("changes save straight away · esc closes", id="model-settings-hint")
+                yield button("Close", "model-settings-close")
+
+    @staticmethod
+    def service_heading(key: str, title: str, status_id: str, switch: Switch | None) -> Horizontal:
+        """One row per service; clicking it (anywhere but the switch) opens or closes its details."""
+        parts = [Label(f"▸ {title}", classes="service-title", id=f"service-title-{key}"),
+                 Static(id=status_id, classes="service-status")]
+        if switch is not None:
+            parts.append(switch)
+        return Horizontal(*parts, classes="service-heading", id=f"service-heading-{key}")
 
     def compose_signal(self) -> ComposeResult:
-        with Horizontal(classes="service-heading", id="service-heading-signal"):
-            yield Label("▸ Signal", classes="service-title", id="service-title-signal")
-            yield Static(id="signal-status", classes="service-status")
-            yield Switch(value=self.signal.enabled, id="signal-enabled")
+        yield self.service_heading("signal", "Signal", "signal-status",
+                                   Switch(value=self.signal.enabled, id="signal-enabled"))
         with Vertical(classes="service-details", id="service-details-signal"):
-            yield Static(Text(SIGNAL_INTRO, style="#d7a06a"), classes="service-help")
+            yield note(SIGNAL_INTRO, warn=True)
             yield Static(id="signal-reason", classes="service-reason")
-            yield Label("Your own number: the only one she answers for now", classes="model-settings-label")
-            yield Input(
-                value=self.signal.person_number or "", placeholder="+61400000000", id="signal-person",
-            )
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save your number", id="signal-save-number")
-                yield Button("Link Cora's phone", id="signal-link")
+            yield field("Your number", "The only one she answers as you.")
+            yield row(entry(value=self.signal.person_number or "", placeholder="+61400000000", id="signal-person"),
+                      button("Save", "signal-save-number"), button("Link Cora's phone", "signal-link"))
             yield Static(id="signal-qr", classes="signal-qr")
-            yield Label(SIGNAL_SCAN_HINT, id="signal-scan-hint", classes="model-settings-label service-help")
-            yield Label("People she may talk with, as clients", classes="model-settings-label")
-            yield Static(Text(SIGNAL_CLIENTS_HELP, style="#8f98a8"), classes="service-help")
+            yield note(SIGNAL_SCAN_HINT, id="signal-scan-hint")
+            yield field("Clients", SIGNAL_CLIENTS_HELP)
             # One row per person, filled from the app's list.
             yield Vertical(id="signal-clients", classes="signal-clients")
-            with Horizontal(classes="service-buttons"):
-                yield Input(placeholder="name", id="signal-client-name")
-                yield Input(placeholder="+61400000000", id="signal-client-number")
-            yield Button("Add person", id="signal-add-client")
+            yield row(entry(placeholder="name", id="signal-client-name"),
+                      entry(placeholder="+61400000000", id="signal-client-number"),
+                      button("Add", "signal-add-client"))
 
     def compose_email(self) -> ComposeResult:
-        with Horizontal(classes="service-heading", id="service-heading-email"):
-            yield Label("▸ Email", classes="service-title", id="service-title-email")
-            yield Static(id="email-status", classes="service-status")
+        yield self.service_heading("email", "Email", "email-status", None)
         with Vertical(classes="service-details", id="service-details-email"):
-            yield Static(Text(EMAIL_INTRO, style="#d7a06a"), classes="service-help")
+            yield note(EMAIL_INTRO, warn=True)
             yield Static(id="email-reason", classes="service-reason")
-            yield Label(EMAIL_APP_HELP, classes="model-settings-label service-help")
-            yield Input(
-                id="email-client-id",
-                placeholder="app ID saved · paste to replace" if self.email.has_client_id else "paste the app ID",
-            )
-            yield Label(EMAIL_TENANT_HELP, classes="model-settings-label service-help")
-            yield Input(value=self.email.tenant, id="email-tenant", placeholder="example.com · empty for personal")
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save", id="email-save-id")
-                yield Button("Sign Cora in", id="email-sign-in")
-                yield Button("Sign out", id="email-sign-out")
+            yield field("App ID", EMAIL_APP_HELP)
+            yield entry(id="email-client-id",
+                        placeholder="app ID saved · paste to replace" if self.email.has_client_id
+                        else "paste the app ID")
+            yield field("Organisation", EMAIL_TENANT_HELP)
+            yield row(entry(value=self.email.tenant, id="email-tenant", placeholder="example.com · empty for personal"),
+                      button("Save", "email-save-id"))
+            yield actions(button("Sign Cora in", "email-sign-in"), button("Sign out", "email-sign-out"))
             yield Static(id="email-code", classes="service-reason")
-            yield Label(EMAIL_PERSON_HELP, classes="model-settings-label service-help")
-            yield Input(value=self.email.person_address, id="email-person", placeholder="you@example.com")
-            yield Button("Save your address", id="email-save-person")
-            yield Label(EMAIL_SIGNATURE_HELP, classes="model-settings-label service-help")
+            yield field("Your address", EMAIL_PERSON_HELP)
+            yield row(entry(value=self.email.person_address, id="email-person", placeholder="you@example.com"),
+                      button("Save", "email-save-person"))
+            yield field("Her signature", EMAIL_SIGNATURE_HELP)
             yield TextArea(self.email.signature, id="email-signature", soft_wrap=True)
-            yield Button("Save signature", id="email-save-signature")
-            yield Label(EMAIL_SIGN_UP_HELP, classes="model-settings-label service-help")
-            yield Input(
-                id="email-sign-up-password", password=True,
-                placeholder="password saved · type to replace" if self.email.has_sign_up_password
-                else "at least 12 characters",
-            )
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save sign-up password", id="email-save-sign-up-password")
-                yield Button("Forget", id="email-forget-sign-up-password")
-            yield Label(EMAIL_SIGN_UP_NAME_HELP, classes="model-settings-label service-help")
-            yield Input(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora")
-            yield Button("Save her name", id="email-save-sign-up-name")
+            yield actions(button("Save signature", "email-save-signature"))
+            yield field("Her sign-up password", EMAIL_SIGN_UP_HELP)
+            yield row(entry(id="email-sign-up-password", password=True,
+                            placeholder="password saved · type to replace" if self.email.has_sign_up_password
+                            else "at least 12 characters"),
+                      button("Save", "email-save-sign-up-password"), button("Forget", "email-forget-sign-up-password"))
+            yield field("Her full name", EMAIL_SIGN_UP_NAME_HELP)
+            yield row(entry(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora"),
+                      button("Save", "email-save-sign-up-name"))
 
     def compose_web(self) -> ComposeResult:
-        with Horizontal(classes="service-heading", id="service-heading-web"):
-            yield Label("▸ Web interface", classes="service-title", id="service-title-web")
-            yield Static(id="web-status", classes="service-status")
-            yield Switch(value=self.web.enabled, id="web-enabled")
+        yield self.service_heading("web", "Web interface", "web-status",
+                                   Switch(value=self.web.enabled, id="web-enabled"))
         with Vertical(classes="service-details", id="service-details-web"):
-            yield Static(Text(WEB_INTRO, style="#8f98a8"), classes="service-help")
-            with Horizontal(classes="service-buttons"):
-                yield Button("Pair a device", id="web-pair")
-                yield Button("Cancel", id="web-pair-cancel")
+            yield note(WEB_INTRO)
+            yield actions(button("Pair a device", "web-pair"), button("Cancel", "web-pair-cancel"))
             yield Static(id="web-qr", classes="signal-qr")
             yield Static(id="web-code", classes="service-reason")
-            yield Label("Paired devices", classes="model-settings-label")
+            yield field("Paired devices")
             # One row per device, filled from the app's list.
             yield Vertical(id="web-devices", classes="signal-clients")
-            yield Label(WEB_MAPS_HELP, classes="model-settings-label service-help")
-            yield Input(
-                id="web-maps-key", password=True,
-                placeholder="key saved · paste to replace" if self.web.has_maps_key else "AIza…",
-            )
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save key", id="web-maps-save")
-                yield Button("Forget", id="web-maps-forget")
+            yield field("Google Maps key", WEB_MAPS_HELP)
+            yield row(entry(id="web-maps-key", password=True,
+                            placeholder="key saved · paste to replace" if self.web.has_maps_key else "AIza…"),
+                      button("Save", "web-maps-save"), button("Forget", "web-maps-forget"))
 
     def compose_phone(self) -> ComposeResult:
-        with Horizontal(classes="service-heading", id="service-heading-phone"):
-            yield Label("▸ Phone calls", classes="service-title", id="service-title-phone")
-            yield Static(id="phone-status", classes="service-status")
-            yield Switch(value=self.phone.enabled, id="phone-enabled")
+        yield self.service_heading("phone", "Phone calls", "phone-status",
+                                   Switch(value=self.phone.enabled, id="phone-enabled"))
         with Vertical(classes="service-details", id="service-details-phone"):
-            yield Static(Text(PHONE_INTRO, style="#8f98a8"), classes="service-help")
+            yield note(PHONE_INTRO)
             yield Static(id="phone-detail", classes="service-reason")
-            yield Label(PHONE_TOKEN_HELP, classes="model-settings-label service-help")
-            yield Input(
-                id="phone-token", password=True,
-                placeholder="token saved · paste to replace" if self.phone.has_token else "32 letters and digits",
-            )
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save token", id="phone-save-token")
-                yield Button("Forget", id="phone-forget-token")
-            yield Label(PHONE_CALLING_OUT_HELP, classes="model-settings-label service-help")
-            with Horizontal(classes="service-buttons"):
-                yield Input(value=self.phone.account_sid, id="phone-account-sid", placeholder="Account SID, AC…")
-                yield Input(value=self.phone.phone_number, id="phone-number", placeholder="her Twilio number, +61…")
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save calling out", id="phone-save-account")
+            yield field("Twilio auth token", PHONE_TOKEN_HELP)
+            yield row(entry(id="phone-token", password=True,
+                            placeholder="token saved · paste to replace" if self.phone.has_token
+                            else "32 letters and digits"),
+                      button("Save", "phone-save-token"), button("Forget", "phone-forget-token"))
+            yield field("Calling out", PHONE_CALLING_OUT_HELP)
+            yield row(entry(value=self.phone.account_sid, id="phone-account-sid", placeholder="Account SID, AC…"),
+                      entry(value=self.phone.phone_number, id="phone-number", placeholder="her number, +61…"),
+                      button("Save", "phone-save-account"))
 
     def compose_webhooks(self) -> ComposeResult:
-        with Horizontal(classes="service-heading", id="service-heading-webhooks"):
-            yield Label("▸ Webhooks", classes="service-title", id="service-title-webhooks")
-            yield Static(id="webhooks-status", classes="service-status")
-            yield Switch(value=self.webhooks.enabled, id="webhooks-enabled")
+        yield self.service_heading("webhooks", "Webhooks", "webhooks-status",
+                                   Switch(value=self.webhooks.enabled, id="webhooks-enabled"))
         with Vertical(classes="service-details", id="service-details-webhooks"):
-            yield Static(Text(WEBHOOK_INTRO, style="#d7a06a"), classes="service-help")
+            yield note(WEBHOOK_INTRO, warn=True)
             yield Static(id="webhooks-mail", classes="service-reason")
-            yield Label(WEBHOOK_URL_HELP, classes="model-settings-label service-help")
-            yield Input(value=self.webhooks.public_url, id="webhooks-url", placeholder="https://cora.example.com")
-            yield Label("Local port (on 127.0.0.1)", classes="model-settings-label")
-            yield Input(value=str(self.webhooks.port), id="webhooks-port", placeholder="8000")
-            yield Static(Text(WEBHOOK_SECRET_HELP, style="#8f98a8"), classes="service-help")
-            with Horizontal(classes="service-buttons"):
-                yield Button("Save", id="webhooks-save")
-                yield Button("New secrets", id="webhooks-rotate")
+            yield field("Public address", WEBHOOK_URL_HELP)
+            yield entry(value=self.webhooks.public_url, id="webhooks-url", placeholder="https://cora.example.com")
+            yield field("Local port", "On 127.0.0.1, where your proxy or tunnel sends it.")
+            yield row(entry(value=str(self.webhooks.port), id="webhooks-port", placeholder="8000"),
+                      button("Save", "webhooks-save"), button("New secrets", "webhooks-rotate"))
+            yield note(WEBHOOK_SECRET_HELP)
 
     def compose_general(self) -> ComposeResult:
-        yield Label("Cora's voice · she reconnects with it when you close Settings", classes="model-settings-label")
+        yield field("When the app opens", "In standby she connects only when you wake her (the status button, "
+                    "Ctrl+R or her wake word); typing gets written replies. From the next launch.")
+        yield Select([("Start active, ready to talk", "active"), ("Start in standby", "standby")],
+                     value=self.general.start_mode, allow_blank=False, id="start-mode", compact=True)
+        yield field("Her voice", "She reconnects with it when you close Settings.")
         yield Select([(label, voice) for voice, label in VOICE_CHOICES.items()], value=self.general.voice,
-                     allow_blank=False, id="voice")
-        yield Label("OpenAI API key · checked with OpenAI, kept in the system credential store",
-                    classes="model-settings-label")
-        yield Static(self.general.key_status, id="openai-key-status", classes="service-reason")
-        yield Input(password=True, id="openai-key", placeholder="paste a new key to replace it")
-        with Horizontal(classes="service-buttons"):
-            yield Button("Save key", id="openai-key-save")
-        yield Label("OpenAI spend on the dashboard · optional: a Restricted Admin key with only "
-                    "Usage API: Read (platform.openai.com > Settings > Admin keys)", classes="model-settings-label")
-        yield Static(self.general.admin_status, id="admin-key-status", classes="service-reason")
-        yield Input(password=True, id="admin-key", placeholder="paste an Admin key (sk-admin-…)")
-        with Horizontal(classes="service-buttons"):
-            yield Button("Save admin key", id="admin-key-save")
-            yield Button("Remove", id="admin-key-forget")
-        yield Label("Whose spend", classes="model-settings-label")
+                     allow_blank=False, id="voice", compact=True)
+        yield heading("OpenAI")
+        yield field("API key", "Checked with OpenAI, then kept in the system credential store.")
+        yield Static(general_status(self.general.key_status), id="openai-key-status", classes="settings-status")
+        yield row(entry(password=True, id="openai-key", placeholder="paste a new key to replace it"),
+                  button("Save", "openai-key-save"))
+        yield field("Admin key (optional)", "For OpenAI spend on the dashboard: a Restricted Admin key with only "
+                    "Usage API: Read (platform.openai.com › Settings › Admin keys).")
+        yield Static(general_status(self.general.admin_status), id="admin-key-status", classes="settings-status")
+        yield row(entry(password=True, id="admin-key", placeholder="paste an Admin key (sk-admin-…)"),
+                  button("Save", "admin-key-save"), button("Remove", "admin-key-forget"))
+        yield field("Whose spend", "Which project's costs the dashboard shows.")
         yield Select(self.spend_options([]), value=self.general.spend_project, allow_blank=False,
-                     id="spend-project")
+                     id="spend-project", compact=True)
 
     def spend_options(self, projects: list[tuple[str, str]]) -> list[tuple[str, str]]:
         cora = likely_cora_project(projects)
@@ -586,7 +631,7 @@ class ModelSettingsScreen(ModalScreen):
         if self.general is None:
             return
         self.general.admin_status = status
-        self.query_one("#admin-key-status", Static).update(status)
+        self.query_one("#admin-key-status", Static).update(general_status(status))
         if projects is not None:
             select = self.query_one("#spend-project", Select)
             select.set_options(self.spend_options(projects))
@@ -607,7 +652,7 @@ class ModelSettingsScreen(ModalScreen):
         """The app's word once a key is checked and saved (or not)."""
         if self.general is not None:
             self.general.key_status = status
-            self.query_one("#openai-key-status", Static).update(status)
+            self.query_one("#openai-key-status", Static).update(general_status(status))
 
     def save_openai_key(self) -> None:
         field_ = self.query_one("#openai-key", Input)
@@ -621,23 +666,19 @@ class ModelSettingsScreen(ModalScreen):
         self.general.save_key(key)
 
     def compose_service(self, service) -> ComposeResult:
-        # One row per service; clicking it (anywhere but the switch) opens or closes its details.
-        with Horizontal(classes="service-heading", id=f"service-heading-{service.id}"):
-            yield Label(f"▸ {service.title}", classes="service-title", id=f"service-title-{service.id}")
-            yield Static(id=f"service-status-{service.id}", classes="service-status")
-            yield Switch(value=service.id in self.services.enabled, id=f"service-enabled-{service.id}")
+        yield self.service_heading(service.id, service.title, f"service-status-{service.id}",
+                                   Switch(value=service.id in self.services.enabled, id=f"service-enabled-{service.id}"))
         with Vertical(classes="service-details", id=f"service-details-{service.id}"):
             yield Static(id=f"service-reason-{service.id}", classes="service-reason")
-            yield Label(service.token_help, classes="model-settings-label service-help")
             # A local service runs on this PC and has no token to save.
             if service.needs_token:
-                yield Input(
-                    password=True, id=f"service-token-{service.id}",
-                    placeholder="token saved · paste to replace" if service.id in self.services.has_token else "paste a token",
-                )
-                with Horizontal(classes="service-buttons"):
-                    yield Button("Save token", id=f"service-save-{service.id}")
-                    yield Button("Forget token", id=f"service-forget-{service.id}")
+                yield field("Access token", service.token_help)
+                yield row(entry(password=True, id=f"service-token-{service.id}",
+                                placeholder="token saved · paste to replace" if service.id in self.services.has_token
+                                else "paste a token"),
+                          button("Save", f"service-save-{service.id}"), button("Forget", f"service-forget-{service.id}"))
+            else:
+                yield note(service.token_help)
             yield Static(id=f"service-tools-heading-{service.id}", classes="service-tools-heading")
             # Filled with one row per tool once connected.
             yield VerticalScroll(classes="service-tools", id=f"service-tools-{service.id}")
@@ -675,9 +716,9 @@ class ModelSettingsScreen(ModalScreen):
         await listing.mount_all(
             Horizontal(
                 Static(f"{name} · {number}", classes="tool-label"),
-                Button("Calls: on" if may_call else "Calls: off", id=f"signal-calls-{index}",
+                Button("Calls: on" if may_call else "Calls: off", id=f"signal-calls-{index}", compact=True,
                        classes="calls-on" if may_call else ""),
-                Button("Remove", id=f"signal-remove-{index}"),
+                Button("Remove", id=f"signal-remove-{index}", compact=True),
                 classes="tool-row",
             )
             for index, (name, number, may_call) in enumerate(clients)
@@ -739,7 +780,7 @@ class ModelSettingsScreen(ModalScreen):
         await listing.mount_all(
             Horizontal(
                 Static(device_text(device), classes="tool-label"),
-                Button("Remove", id=f"web-remove-{index}"),
+                Button("Remove", id=f"web-remove-{index}", compact=True),
                 classes="tool-row",
             )
             for index, device in enumerate(devices)
@@ -903,6 +944,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.spend_project:
                 self.general.spend_project = event.value
                 self.general.save_spend_project(event.value)
+            return
+        if event.select.id == "start-mode":
+            if self.general is not None and event.value != self.general.start_mode:
+                self.general.start_mode = event.value
+                self.general.save_start_mode(event.value)
             return
         if event.select.id == "voice":
             # Select also reports its starting value on mount; only real changes are saved.

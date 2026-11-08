@@ -135,6 +135,12 @@ one says what it covers. A change saves straight away, in the `model_settings` t
 less is mostly a matter of putting the busy, simpler areas (Browser, Small jobs, Looking at
 images) on a cheaper model.
 
+Settings is laid out like the dashboard: small headings group its parts (General has Cora and
+OpenAI; Services has her tools, her accounts, and ways of reaching her from outside). Each
+setting has a short name with what it does in a dimmer line underneath. Inputs and their
+buttons sit on one line. Statuses share one style: ● working, ◌ busy, ○ off or not set up,
+× wrong. Clicking a service's row opens its details, indented under it.
+
 | Area | Covers | Takes effect |
 | --- | --- | --- |
 | Delegation | Cora-prime's backend while you talk, and her written chats with you (desk, Signal, web) | Straight away: Live reconnects if it's Active; otherwise at the next connect |
@@ -257,6 +263,10 @@ Standby closes the Live session (ending its billing) but keeps the app, chat, dr
 mute settings. Click **Active** to enter it and **Standby** or Ctrl+R to resume; she
 resumes with recent chat as context.
 
+- **Starting in it:** Settings > General > "When the app opens" can start her in Standby
+  instead of Active (saved as `start_mode` in `app_settings`; Active if unset or unreadable).
+  Launch does everything else as usual (checks, summaries, services, Signal, mail) but doesn't
+  connect Live; she waits as after any standby, and waking her connects with her context.
 - **Asking for it:** say something like "go to standby", or she may choose it herself once
   a conversation has clearly wound down (after you say goodnight). She signs off briefly,
   then goes once speech and pending work finish; if that takes over 30 seconds she stays
@@ -710,7 +720,7 @@ she treats them the way a professional treats a client.
 
 ### Contacts (client mode)
 
-Add people under Settings > Services > **Signal** > "People she may talk with": a name and
+Add people under Settings > Services > **Signal** > **Clients**: a name and
 their Signal number (not yours or hers). Each has a **Calls** switch, off by default, for
 whether they may phone her (see [Phone calls](#phone-calls)).
 
