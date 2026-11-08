@@ -64,6 +64,7 @@ class CoraLive:
         self.tasks_context = ""
         # Her sign-ups and how each stands.
         self.sign_ups_context = ""
+        self.key_details_context = ""
         self.desire_context = ""
         # How she feels now (FeelingNow, strongest first), and the band of each as her voice
         # session last heard it, so a change can be passed on quietly.
@@ -107,6 +108,7 @@ class CoraLive:
             tasks_context=self.tasks_context, calendar_context=self.calendar_context,
             sign_ups_context=self.sign_ups_context, desire_context=self.desire_context,
             own_name=self.own_name, feelings_context=feelings_context(self.feelings),
+            key_details_context=self.key_details_context,
         )
         # What this session knows of how she feels, for the quiet notes as it changes.
         self.feeling_bands = {item.feeling: item.band for item in self.feelings}

@@ -16,6 +16,7 @@ class ConversationPersistence:
                  set_memory_context, set_interest_context, set_identity_context, set_relationship_context,
                  set_self_image_context=lambda context: None, set_people_context=lambda context: None,
                  set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
+                 set_key_details_context=lambda context: None,
                  set_desire_context=lambda context: None, set_feelings=lambda feelings: None,
                  set_own_name=lambda name: None, set_person_name, set_delegation_model, write_activity, notify):
         self.storage = storage
@@ -28,6 +29,7 @@ class ConversationPersistence:
         self.set_people_context = set_people_context
         self.set_tasks_context = set_tasks_context
         self.set_sign_ups_context = set_sign_ups_context
+        self.set_key_details_context = set_key_details_context
         self.set_desire_context = set_desire_context
         self.set_feelings = set_feelings
         self.set_relationship_context = set_relationship_context
@@ -248,6 +250,21 @@ class ConversationPersistence:
         else:
             if not self.is_closing():
                 self.set_tasks_context(context)
+
+        # The person's key details (their email, phone, address...), so she needn't ask again.
+        if self.is_closing():
+            return
+        self.set_key_details_context("")
+        try:
+            context = await self.call_database(self.storage.load_key_details_context)
+        except Exception as error:
+            self.write_activity(
+                f"Key details load failed ({type(error).__name__}); connecting without them.",
+                "Key details unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_key_details_context(context)
 
         # Her sign-ups, so she knows which accounts she has and which are stuck.
         if self.is_closing():

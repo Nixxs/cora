@@ -131,6 +131,7 @@ class ChatMixin:
             tasks_context=self.live.tasks_context, calendar_context=self.live.calendar_context,
             sign_ups_context=self.live.sign_ups_context, desire_context=self.live.desire_context,
             own_name=self.live.own_name, feelings_context=feelings_context(self.live.feelings) if feelings else "",
+            key_details_context=self.live.key_details_context,
         )
 
     @work(group="text-chat")

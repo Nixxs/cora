@@ -11,6 +11,7 @@ from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .key_details_store import KeyDetailsStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
@@ -286,6 +287,9 @@ class KeyboardPersistence:
 
     def claim_stalled_sign_ups(self) -> list[SignUp]:
         return SignUpStore(self._get_store().engine).claim_stalled(datetime.now(timezone.utc))
+
+    def load_key_details_context(self) -> str:
+        return KeyDetailsStore(self._get_store().engine).get_startup_context()
 
     def load_sign_ups_context(self) -> str:
         return SignUpStore(self._get_store().engine).context()

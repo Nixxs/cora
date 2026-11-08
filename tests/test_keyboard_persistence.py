@@ -146,6 +146,7 @@ async def running_app(persistence=None):
                 persistence.load_client_people_context.return_value = ""
                 persistence.load_tasks_context.return_value = ""
                 persistence.load_sign_ups_context.return_value = ""
+                persistence.load_key_details_context.return_value = ""
                 persistence.load_desire_context.return_value = ""
                 persistence.load_feelings.return_value = []
                 persistence.load_own_name.return_value = "Cora"

@@ -23,6 +23,7 @@ from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_argumen
 from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
 from .feel import FeelTool, SCHEMA as FEEL_SCHEMA, validate_arguments as validate_feel_arguments
 from .note_desire import NoteDesireTool, SCHEMA as NOTE_DESIRE_SCHEMA, validate_arguments as validate_note_desire_arguments
+from .note_detail import NoteDetailTool, SCHEMA as NOTE_DETAIL_SCHEMA, validate_arguments as validate_note_detail_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
@@ -141,4 +142,7 @@ def create_tool_registry(
         registry.register(schema, validate, tool.handle)
     sign_up = RequestSignUpTool(get_connection, is_closing, write_debug, check_sign_up, confirm, begin_sign_up)
     registry.register(SIGN_UP_SCHEMA, validate_sign_up_arguments, sign_up.handle)
+    # The person's own chats only: clients' chats and task work offer allowlists without it.
+    note_detail = NoteDetailTool(get_connection, is_closing, write_debug)
+    registry.register(NOTE_DETAIL_SCHEMA, validate_note_detail_arguments, note_detail.handle)
     return registry
