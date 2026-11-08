@@ -76,7 +76,7 @@ class RelationshipCliTests(unittest.TestCase):
     def run_cli(self, store, *args, answer=""):
         output = io.StringIO()
         with patch("sys.argv", ["relationship_store", *args]), \
-                patch.object(relationship_store, "load_dotenv"), \
+                patch.object(relationship_store, "load_environment"), \
                 patch.object(relationship_store, "build_engine"), patch("sys.stderr", io.StringIO()), \
                 patch.object(relationship_store, "RelationshipStore", return_value=store), \
                 patch("builtins.input", return_value=answer) as prompt, redirect_stdout(output):

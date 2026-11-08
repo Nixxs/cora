@@ -250,7 +250,7 @@ class EmbedMemoryTests(unittest.TestCase):
         saved = self.store.save_embedding.return_value
         engine = MagicMock()
         with patch("sys.argv", ["embed_memory.py", str(saved.id)]), \
-                patch("memory.embed_memory.load_dotenv", side_effect=lambda: events.append("dotenv")), \
+                patch("memory.embed_memory.load_environment", side_effect=lambda: events.append("dotenv")), \
                 patch("memory.embed_memory.build_engine", side_effect=lambda: events.append("engine") or engine), \
                 patch("memory.embed_memory.MemoryStore", return_value=self.store) as factory, \
                 patch("memory.embed_memory.embed_memory", return_value=saved) as embed, \
@@ -266,7 +266,7 @@ class EmbedMemoryTests(unittest.TestCase):
     def test_cli_help_and_bad_arguments_do_not_load_settings_or_connect(self):
         cases = [(["--help"], 0), ([], 2), (["not-a-uuid"], 2),
                  ([str(uuid4()), str(uuid4())], 2), (["--conversation-id", str(uuid4())], 2)]
-        with patch("memory.embed_memory.load_dotenv") as dotenv, \
+        with patch("memory.embed_memory.load_environment") as dotenv, \
             patch("memory.embed_memory.build_engine") as engine, \
             patch.dict(os.environ, {"COLUMNS": "200"}):  # argparse wraps help to the terminal width
             for args, code in cases:
@@ -287,7 +287,7 @@ class EmbedMemoryTests(unittest.TestCase):
             with self.subTest(stage=stage):
                 engine = MagicMock()
                 with patch("sys.argv", ["embed_memory.py", str(self.memory.id)]), \
-                        patch("memory.embed_memory.load_dotenv"), \
+                        patch("memory.embed_memory.load_environment"), \
                         patch("memory.embed_memory.build_engine", return_value=engine), \
                         patch("memory.embed_memory.MemoryStore", return_value=self.store) as factory, \
                         patch("memory.embed_memory.embed_memory") as embed, \
@@ -306,7 +306,7 @@ class EmbedMemoryTests(unittest.TestCase):
 
     def test_cli_engine_creation_failure_is_redacted_before_store_or_api(self):
         with patch("sys.argv", ["embed_memory.py", str(self.memory.id)]), \
-                patch("memory.embed_memory.load_dotenv"), \
+                patch("memory.embed_memory.load_environment"), \
                 patch("memory.embed_memory.build_engine", side_effect=ValueError("secret database credentials")), \
                 patch("memory.embed_memory.MemoryStore") as factory, \
                 patch("sys.stdout", new_callable=StringIO) as output:

@@ -176,7 +176,7 @@ class TaskCallsMixin:
             live.tool_schemas = lambda: self.tools.schemas(excluding=route.excluded)
             live.config_override = lambda schemas: (contact_call_config(
                 schemas, sections, [], self.live.delegation_model, rules,
-                live_instructions=TASK_CALL_LIVE_INSTRUCTIONS), sections)
+                live_instructions=TASK_CALL_LIVE_INSTRUCTIONS, voice=self.live.voice), sections)
             # The call's audio only: never the desk's mic or speaker.
             live.voice_relay = call.relay
             live.web_microphone = call.listener.mic if call.listener is not None else None

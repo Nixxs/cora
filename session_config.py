@@ -36,6 +36,32 @@ BACKEND_CONTEXT_TOKENS: dict[str, int] = {
     "gpt-5.6-terra": 1050000
 }
 VOICE = "marin"
+# The Live model's voices, from OpenAI's Live conversations guide, as shown in Settings > General.
+# A voice is set when a session starts, so a change is heard from her next connect.
+VOICE_CHOICES: dict[str, str] = {
+    "marin": "Marin (default)",
+    "gleam": "Gleam · English, North American, feminine",
+    "meridian": "Meridian · English, North American, masculine",
+    "quartz": "Quartz · English, Australian, feminine",
+    "ripple": "Ripple · English, Australian, masculine",
+    "vesper": "Vesper · English, British, masculine",
+    "willow": "Willow · English, Irish, feminine",
+    "stone": "Stone · English, Irish, masculine",
+    "delta": "Delta · English, Southern U.S., feminine",
+    "cinder": "Cinder · English, Southern U.S., masculine",
+    "beacon": "Beacon · English, Filipino, masculine",
+    "bossa": "Bossa · Portuguese, Brazilian, feminine",
+    "tempo": "Tempo · Portuguese, Brazilian, masculine",
+    "nuri": "Nuri · German, feminine",
+    "juni": "Juni · German, feminine",
+    "flitz": "Flitz · German, masculine",
+    "brise": "Brise · French, feminine",
+    "sillage": "Sillage · French, masculine",
+    "nira": "Nira · Hindi, feminine",
+    "harema": "Harema · Japanese, feminine",
+    "shida": "Shida · Japanese, masculine",
+    "noeul": "Noeul · Korean, feminine",
+}
 AUDIO_SAMPLE_RATE = 24000
 
 # Cora's fixed character, written into code so nothing at runtime can edit it.
@@ -393,7 +419,7 @@ TASK_CALL_LIVE_INSTRUCTIONS = (
 
 def contact_call_config(tool_schemas: list[dict], sections: dict[str, str], history: list[dict],
                         delegation_model: str, rules: str,
-                        live_instructions: str = CONTACT_CALL_LIVE_INSTRUCTIONS) -> dict:
+                        live_instructions: str = CONTACT_CALL_LIVE_INSTRUCTIONS, voice: str = VOICE) -> dict:
     """The session payload for a call that isn't the person's (a contact's, or one she placed for a
     task): her own self and what that call may know (sections), its conversation so far, and its
     rules (client_chat_instructions with on_call, or phone_party_instructions) for both models;
@@ -414,7 +440,7 @@ def contact_call_config(tool_schemas: list[dict], sections: dict[str, str], hist
         },
         "audio": {
             "format": {"type": "audio/pcm", "rate": AUDIO_SAMPLE_RATE},
-            "output": {"voice": VOICE},
+            "output": {"voice": voice},
         },
     }
     if history:
@@ -718,7 +744,7 @@ def instruction_sections(
 
 def config_from_sections(
     tool_schemas: list[dict], sections: dict[str, str], conversation_history: list[dict] | None = None,
-    delegation_model: str = BACKEND_MODEL,
+    delegation_model: str = BACKEND_MODEL, voice: str = VOICE,
 ) -> dict:
     """The session payload; both models' instructions end with the same startup sections."""
     memory_instructions = "".join(sections.values())
@@ -737,7 +763,7 @@ def config_from_sections(
         },
         "audio": {
             "format": {"type": "audio/pcm", "rate": AUDIO_SAMPLE_RATE},
-            "output": {"voice": VOICE},
+            "output": {"voice": voice},
         },
     }
     if conversation_history:

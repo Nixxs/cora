@@ -817,3 +817,42 @@ ContextScreen {
     width: auto;
     height: auto;
 }
+#api-key-view {
+    width: 72;
+    height: auto;
+    max-height: 90%;
+    padding: 0 2 1 2;
+    background: #141820;
+    border: round #7799cc;
+}
+
+#api-key-title {
+    width: 1fr;
+    margin: 1 0 1 0;
+    color: #e0e6ef;
+    text-style: bold;
+}
+
+#api-key-help {
+    color: #8f98a8;
+}
+
+#api-key-input {
+    width: 1fr;
+    margin: 1 0 0 0;
+}
+
+#api-key-problem {
+    height: auto;
+    margin: 1 0 0 0;
+    color: #e07a7a;
+}
+
+#api-key-buttons {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+#api-key-buttons Button {
+    width: 1fr;
+}

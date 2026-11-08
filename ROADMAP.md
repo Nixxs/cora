@@ -32,7 +32,8 @@ an installer is paused. Local models follow after 1.0.
 2. **Services screen and in-app settings (MCP M4):** a list of supported services for
    non-technical users, each with an on/off switch that runs its sign-in, and whether Cora
    watches it (off, digest only, or may interrupt), reusing the dashboard's look; the
-   settings still in `.env` move into the app. Each service is a catalogue entry (mostly
+   settings still in `.env` move into the app (the OpenAI key and her voice already have, in
+   Settings > General, with the general `app_settings` table ready for more). Each service is a catalogue entry (mostly
    data): its server, how it signs in, which tools are read-only or ask first, watch
    defaults and short guidance for her. Hosted servers are reached remotely with the
    service's own sign-in; Gmail needs planning, since Google restricts mail access for

@@ -4,7 +4,10 @@ import asyncio
 
 from textual import work
 
-from ui.model_settings import EmailControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls
+import openai_key
+from ui.model_settings import (
+    EmailControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+)
 from services.catalogue import SERVICES
 from services.credentials import get_token
 from sign_ups import password as passwords
@@ -36,6 +39,7 @@ class SettingsMixin:
             email_tenant = await asyncio.to_thread(self.email_account.tenant)
             self.email_person = await asyncio.to_thread(self.email_account.person_address)
             self.email_signature = await asyncio.to_thread(self.email_account.signature)
+            voice = await self.conversation_persistence.call_database(self.persistence.load_voice)
             has_sign_up_password = bool(await asyncio.to_thread(passwords.sign_up_password))
             self.live.own_name = await asyncio.to_thread(passwords.sign_up_name)
         except Exception as error:
@@ -63,6 +67,10 @@ class SettingsMixin:
                 webhooks=self.make_webhook_controls(),
                 web=self.make_web_controls(),
                 phone=self.make_phone_controls(),
+                general=GeneralControls(
+                    key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,
+                    voice=voice, save_voice=self.save_voice_setting,
+                ),
             ), callback=self.settings_closed)
 
     def make_webhook_controls(self) -> WebhookControls:
@@ -94,10 +102,74 @@ class SettingsMixin:
     def settings_closed(self, _result=None) -> None:
         # A pairing code lives only while Settings is open.
         self.web_pairing.cancel()
-        # Tool changes reach Cora at a connect, so reconnect once now rather than after every switch.
-        if self.service_tools_changed and self.live.ready and not self.standby and not self.closing:
-            self.activity.write("Reconnecting so Cora has the service tools you changed.", "Service tools changed")
+        # Tool and voice changes reach Cora at a connect, so reconnect once now rather than after every change.
+        voice_changed, self.voice_changed = self.voice_changed, False
+        if (self.service_tools_changed or voice_changed) and self.live.ready and not self.standby and not self.closing:
+            what = "the service tools you changed" if self.service_tools_changed else "her new voice"
+            self.activity.write(f"Reconnecting so Cora has {what}.", "Settings changed")
             self.action_reconnect()
+
+    @staticmethod
+    def key_status() -> str:
+        """What Settings shows of the OpenAI key in use, never the key itself."""
+        if not openai_key.has_key():
+            return "No key yet: Cora can't connect until one is saved."
+        where = "saved in Cora" if openai_key.saved_key() else "from .env"
+        return f"In use: {where} ({openai_key.masked()})."
+
+    async def check_and_save_openai_key(self, key: str) -> str | None:
+        """Check a key with OpenAI and save it: None when saved, else why not (never the key)."""
+        problem = await asyncio.to_thread(openai_key.check_key, key)
+        if problem is None:
+            try:
+                await asyncio.to_thread(openai_key.save_key, key)
+            except Exception as error:
+                self.activity.write(f"OpenAI key save failed ({type(error).__name__}).", "OpenAI key")
+                return "The key works but couldn't be saved to the credential store; see Activity."
+            self.activity.write(f"OpenAI key saved ({openai_key.masked()}).", "OpenAI key")
+        return problem
+
+    @work(group="openai-key", exclusive=True)
+    async def save_openai_key(self, key: str) -> None:
+        problem = await self.check_and_save_openai_key(key)
+        if isinstance(self.screen, ModelSettingsScreen):
+            self.screen.show_key_status(problem or await asyncio.to_thread(self.key_status))
+        if problem is not None:
+            self.notify(problem, severity="error")
+            return
+        self.notify("Key saved.")
+        self.start_with_new_key()
+
+    def api_key_given(self, saved: bool | None) -> None:
+        """The first-start pop-up closed: start with the key, or say where to add one later."""
+        if saved:
+            self.notify("Key saved. Starting Cora.")
+            self.start_with_new_key()
+        else:
+            self.notify("Cora can't start without an OpenAI API key; add one in Settings > General.",
+                        severity="warning", timeout=15)
+
+    def start_with_new_key(self) -> None:
+        """A new key: connect if Cora never started for want of one, or reconnect if she's disconnected.
+        A session already running keeps going; later calls use the new key."""
+        if self.closing:
+            return
+        if self.connection_worker is None:
+            self.connection_worker = self.connect_to_cora()
+        elif not self.live.ready and not self.standby:
+            self.action_reconnect()
+
+    @work(group="model-settings-save")
+    async def save_voice_setting(self, voice: str) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_voice, voice)
+        except Exception as error:
+            self.activity.write(f"Voice setting save failed ({type(error).__name__}).", "Voice settings error")
+            self.notify("Could not save her voice. Check Activity.", severity="error")
+            return
+        self.activity.write(f"Cora's voice is now {voice}.", "Voice saved")
+        # A session keeps the voice it began with; closing Settings reconnects with the new one.
+        self.voice_changed = True
 
     def set_screen_looking(self, enabled: bool) -> None:
         self.screen_looking = enabled

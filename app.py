@@ -11,12 +11,15 @@ from textual.worker import WorkerError
 
 from dotenv import load_dotenv
 
+from openai_key import apply_api_key, has_key
+
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
 from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
+from ui.api_key_view import ApiKeyScreen
 from ui.model_settings import EmailControls
 from messaging.container import signal_port, start_container, stop_container
 from messaging.receiver import IncomingMessage, SignalReceiver
@@ -79,6 +82,8 @@ from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
 load_dotenv()
+# A key saved in the app wins over .env's; without either, Cora asks for one at start.
+apply_api_key()
 
 # Cheap when not due: the 24-hour gate is one database read. Also lets memories extracted
 # at startup clear the store's 5-minute commit margin before the first check.
@@ -190,6 +195,7 @@ class CoraApp(
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_own_name=lambda name: setattr(self.live, "own_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
+            set_voice=lambda voice: setattr(self.live, "voice", voice),
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )
@@ -304,6 +310,10 @@ class CoraApp(
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
         self.service_tools_changed = False
+        # Set when her voice changed in Settings; closing Settings reconnects with it.
+        self.voice_changed = False
+        # Live's connect; None until the first, which waits for an OpenAI key if there isn't one.
+        self.connection_worker = None
         # Cora's own Signal account: off and unused unless set up in Settings > Services.
         self.signal_settings = SignalSettings()
         self.signal = SignalSetup(
@@ -512,7 +522,12 @@ class CoraApp(
                     f"Diagnostic trace: {self.live_trace.path.name} (IDs/state only; no chat text or audio).",
                     "Diagnostic trace enabled",
                 )
-        self.connection_worker = self.connect_to_cora()
+        if has_key():
+            self.connection_worker = self.connect_to_cora()
+        else:
+            # Without a key nothing can reach OpenAI: ask before connecting.
+            self.activity.write("No OpenAI API key yet; asking for one before connecting.", "OpenAI key needed")
+            self.push_screen(ApiKeyScreen(self.check_and_save_openai_key), callback=self.api_key_given)
         self.update_wake_control()
         self.observation_timer = self.set_interval(0.5, self.check_observations)
         self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)

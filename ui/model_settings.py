@@ -15,7 +15,7 @@ from messaging.qr import qr_text
 from messaging.setup import SignalStatus
 from services.catalogue import SERVICES
 from services.connection import CONNECTED, CONNECTING, FAILED, ServiceStatus
-from session_config import MODEL_CHOICES
+from session_config import MODEL_CHOICES, VOICE_CHOICES
 from storage.signal_settings_store import normalise_number
 
 
@@ -25,6 +25,16 @@ AREA_LABELS = {
     "subconscious": "Relationship, interests and identity",
     "utility": "Duplicate check and small jobs",
 }
+
+
+@dataclass
+class GeneralControls:
+    """Her OpenAI key and voice; the app checks and saves a key, and loads the voice at her next connect."""
+
+    key_status: str  # what's in use, such as "saved in Cora (…abcd)", never the key
+    save_key: Callable[[str], None]
+    voice: str
+    save_voice: Callable[[str], None]
 
 
 @dataclass
@@ -336,9 +346,10 @@ class ModelSettingsScreen(ModalScreen):
         self, models: dict, save, screen_looking: bool, set_screen_looking, services: ServiceControls | None = None,
         signal: SignalControls | None = None, email: EmailControls | None = None,
         webhooks: WebhookControls | None = None, web: WebControls | None = None,
-        phone: PhoneControls | None = None,
+        phone: PhoneControls | None = None, general: GeneralControls | None = None,
     ) -> None:
         super().__init__()
+        self.general = general
         self.models = dict(models)
         self.save = save
         self.screen_looking = screen_looking
@@ -370,6 +381,8 @@ class ModelSettingsScreen(ModalScreen):
                 with TabPane("General", id="settings-general"):
                     yield Label("Let Cora look at the screen", classes="model-settings-label")
                     yield Switch(value=self.screen_looking, id="screen-looking")
+                    if self.general is not None:
+                        yield from self.compose_general()
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
                         with VerticalScroll(id="services-scroll"):
@@ -514,6 +527,34 @@ class ModelSettingsScreen(ModalScreen):
             with Horizontal(classes="service-buttons"):
                 yield Button("Save", id="webhooks-save")
                 yield Button("New secrets", id="webhooks-rotate")
+
+    def compose_general(self) -> ComposeResult:
+        yield Label("Cora's voice · she reconnects with it when you close Settings", classes="model-settings-label")
+        yield Select([(label, voice) for voice, label in VOICE_CHOICES.items()], value=self.general.voice,
+                     allow_blank=False, id="voice")
+        yield Label("OpenAI API key · checked with OpenAI, kept in the system credential store",
+                    classes="model-settings-label")
+        yield Static(self.general.key_status, id="openai-key-status", classes="service-reason")
+        yield Input(password=True, id="openai-key", placeholder="paste a new key to replace it")
+        with Horizontal(classes="service-buttons"):
+            yield Button("Save key", id="openai-key-save")
+
+    def show_key_status(self, status: str) -> None:
+        """The app's word once a key is checked and saved (or not)."""
+        if self.general is not None:
+            self.general.key_status = status
+            self.query_one("#openai-key-status", Static).update(status)
+
+    def save_openai_key(self) -> None:
+        field_ = self.query_one("#openai-key", Input)
+        key = field_.value.strip()
+        if not key:
+            self.notify("Paste a key first.", severity="warning")
+            return
+        # The key goes to the app to check and save; the field never keeps it.
+        field_.value = ""
+        self.show_key_status("Checking the key with OpenAI…")
+        self.general.save_key(key)
 
     def compose_service(self, service) -> ComposeResult:
         # One row per service; clicking it (anywhere but the switch) opens or closes its details.
@@ -794,6 +835,12 @@ class ModelSettingsScreen(ModalScreen):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if event.select.id == "voice":
+            # Select also reports its starting value on mount; only real changes are saved.
+            if self.general is not None and event.value != self.general.voice:
+                self.general.voice = event.value
+                self.general.save_voice(event.value)
+            return
         area = event.select.id.removeprefix("model-")
         # Select also reports its starting value on mount; only real changes are saved.
         if event.value == self.models[area]:
@@ -813,6 +860,8 @@ class ModelSettingsScreen(ModalScreen):
             self.save_webhook_address()
         elif event.input.id in ("signal-client-name", "signal-client-number"):
             self.add_client()
+        elif event.input.id == "openai-key":
+            self.save_openai_key()
         else:
             self.save_service_token(event.input.id.removeprefix("service-token-"))
 
@@ -907,7 +956,9 @@ class ModelSettingsScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         button = event.button.id or ""
-        if button == "signal-save-number":
+        if button == "openai-key-save":
+            self.save_openai_key()
+        elif button == "signal-save-number":
             self.save_person_number()
         elif button == "signal-link":
             self.signal.link()

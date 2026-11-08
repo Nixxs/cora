@@ -779,6 +779,21 @@ class SelfImageRecord(Base):
     chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
+class AppSettingRecord(Base):
+    """One general setting from Settings > General, such as her voice."""
+
+    __tablename__ = "app_settings"
+    __table_args__ = (
+        CheckConstraint("key IN ('voice')", name="app_settings_key_check"),
+        CheckConstraint("btrim(value) <> '' AND char_length(value) <= 200", name="app_settings_value_check"),
+        {"schema": "public"},
+    )
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
 class KeyDetailRecord(Base):
     """Something the person told Cora to keep to hand, such as their email or their wife's phone."""
 

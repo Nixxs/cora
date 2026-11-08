@@ -123,7 +123,7 @@ class SummarizerTests(unittest.TestCase):
         engine = MagicMock()
         summary = SimpleNamespace(conversation_id=self.conversation_id, text="Saved summary")
         args = ["summarize.py", str(self.conversation_id), "--model", "chosen-model"]
-        with patch("memory.summarize.load_dotenv"), patch("memory.summarize.build_engine", return_value=engine), \
+        with patch("memory.summarize.load_environment"), patch("memory.summarize.build_engine", return_value=engine), \
             patch("memory.summarize.ConversationStore", return_value=self.store), \
             patch("memory.summarize.summarize_conversation", return_value=summary) as generate, \
                 patch("sys.argv", args), patch("builtins.print") as output:

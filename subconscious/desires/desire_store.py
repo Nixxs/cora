@@ -16,7 +16,7 @@ from math import isfinite
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from sqlalchemy import Engine, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -493,7 +493,7 @@ class DesireStore:
 
 
 def main() -> None:
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

@@ -11,6 +11,7 @@ from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .app_settings_store import AppSettingsStore
 from .key_details_store import KeyDetailsStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
@@ -156,6 +157,12 @@ class KeyboardPersistence:
 
     def load_delegation_model(self) -> str:
         return ModelSettingsStore(self._get_store().engine).model_for("delegation")
+
+    def load_voice(self) -> str:
+        return AppSettingsStore(self._get_store().engine).voice()
+
+    def save_voice(self, voice: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_voice(voice)
 
     def load_models(self) -> dict:
         return ModelSettingsStore(self._get_store().engine).models()

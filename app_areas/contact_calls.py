@@ -169,7 +169,8 @@ class ContactCallsMixin:
             live = call.live
             live.tool_schemas = lambda: self.tools.schemas(excluding=route.excluded)
             live.config_override = lambda schemas: (
-                contact_call_config(schemas, sections, history, self.live.delegation_model, rules), sections)
+                contact_call_config(schemas, sections, history, self.live.delegation_model, rules,
+                                    voice=self.live.voice), sections)
             # Their call's audio only: never the desk's mic or speaker.
             live.voice_relay = call.relay
             live.web_microphone = call.listener.mic

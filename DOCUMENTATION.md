@@ -24,7 +24,7 @@ the same app, so there is always one Cora with one memory, however you reach her
 **Cora-prime** is the part of Cora you talk to: two models working together in one Live
 session.
 
-- **Live (`gpt-live-1`, voice `marin`)** listens, holds the conversation and speaks. It
+- **Live (`gpt-live-1`, voice `marin` unless you choose another)** listens, holds the conversation and speaks. It
   answers directly when it can.
 - **The backend** is a Responses model (the *Delegation* model in
   [Choosing models](#choosing-models)). Live hands it anything that needs more: current
@@ -176,6 +176,23 @@ Speaking and typing go into the same conversation.
   She takes one screenshot of the main monitor and asks a one-off model request about it;
   only the short answer enters her session, and the screenshot is never saved. Activity
   shows "Screen captured" each time. Settings > General turns it off until the next launch.
+
+**Her voice** is chosen in Settings > General from the Live model's voices (from OpenAI's
+Live conversations guide, each labelled by language, accent and style; `marin` is the
+default). A voice is fixed when a session starts, so closing Settings reconnects her with
+the new one; it's used everywhere she speaks (desk, web page, phone calls, contacts' calls).
+It's saved in the `app_settings` table; one no longer offered falls back to `marin`
+(`VOICE_CHOICES` in [session_config.py](session_config.py)).
+
+**The OpenAI API key.** Without one nothing can reach OpenAI, so at the first start (no key
+saved in the app and none in `.env`) a welcome pop-up asks for it before she connects. The
+key is checked with OpenAI (listing models) before it's saved, so a mistyped one says so
+instead of failing later; "Later" leaves her waiting until one is saved in Settings >
+General, which also shows which key is in use (saved in the app or from `.env`, by its last
+four characters only) and replaces it. A saved key goes to the system credential store and
+wins over `.env`'s; it reaches every OpenAI call from then on, and a disconnected Cora
+connects with it straight away ([openai_key.py](openai_key.py)). The command-line tools
+load it the same way.
 - **Pictures from the web:** ask to see something ("show me the cafe"), or she may show
   one herself. She picks a page from web search, and the app fetches that page's preview
   image (`og:image`, public https sites only) and draws it small in the chat with a caption
@@ -849,7 +866,7 @@ contact asks.
 ### Secrets and what's kept
 
 - **Tokens and keys** (GitHub, Twilio, the Google Maps key, her sign-up password, webhook
-  secrets, the email app ID) are kept in the system credential store (Windows Credential
+  secrets, the email app ID, and the OpenAI API key when saved in the app) are kept in the system credential store (Windows Credential
   Manager), never in a file, `.env` or the database. Her email sign-in is too big for it, so
   it's in a file encrypted for your Windows user (`%LOCALAPPDATA%\cora\email-sign-in.bin`).
   Paired web devices are kept only as SHA-256 hashes of their tokens.

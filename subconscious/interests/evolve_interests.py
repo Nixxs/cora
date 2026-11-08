@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 import sys
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from session_config import BACKEND_MODEL
@@ -109,7 +109,7 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Show the model's proposal without saving it")
     parser.add_argument("--model", default=BACKEND_MODEL)
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     run = preview_interests if args.dry_run else evolve_interests
     try:
         engine = build_engine()

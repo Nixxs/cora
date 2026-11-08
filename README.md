@@ -27,7 +27,9 @@ Copy-Item .env.database.example .env.database
 ```
 
 Only copy the example on a fresh setup; keep an existing database configuration.
-Create a local `.env` file containing `OPENAI_API_KEY=your-key`.
+Cora asks for your OpenAI API key the first time she starts, checks it with OpenAI and keeps
+it in the Windows credential store; you can replace it later in Settings > General.
+(`OPENAI_API_KEY=your-key` in a local `.env` file also works; a key saved in the app wins.)
 In `.env.database`, choose a private database password **before storing personal
 conversations**. Both settings files are ignored by Git; never commit credentials.
 
@@ -103,7 +105,7 @@ app's **Settings**.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | (required) | Your OpenAI API key |
+| `OPENAI_API_KEY` | (none) | Your OpenAI API key, if you'd rather not enter it in the app; one saved in Settings > General wins |
 | `CORA_IDLE_TIMEOUT_SECONDS` | `300` | Quiet seconds before automatic standby; `0` turns it off. Invalid values turn it off and warn in Activity |
 | `CORA_STANDBY_FAREWELL` | `0` | `1`: she says she's leaving you to it before automatic standby |
 | `CORA_CONVERSATION_GAP_MINUTES` | `60` | How long a quiet ends a conversation (in Standby, and contacts' chats); below 1 falls back to 60 |

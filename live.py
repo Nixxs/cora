@@ -13,7 +13,7 @@ from devices.audio_bands import audio_bands
 from devices.microphone import microphone_chunks
 from devices.speaker import Speaker
 from context_window import ContextTracker
-from session_config import BACKEND_MODEL, config_from_sections, instruction_sections
+from session_config import BACKEND_MODEL, VOICE, config_from_sections, instruction_sections
 from subconscious.emotions.feeling_rules import feelings_context
 
 
@@ -77,6 +77,8 @@ class CoraLive:
         self.relationship_context = ""
         self.person_name = None
         self.delegation_model = BACKEND_MODEL
+        # Her voice from Settings > General, loaded before each connect; a session keeps the one it began with.
+        self.voice = VOICE
         self.conversation_history = []
         # What the last connection started with, for the dashboard's context box.
         self.context = ContextTracker()
@@ -114,6 +116,7 @@ class CoraLive:
         self.feeling_bands = {item.feeling: item.band for item in self.feelings}
         config = config_from_sections(
             self.tool_schemas(), sections, self.conversation_history, self.delegation_model,
+            voice=self.voice,
         )
         return config, sections
 
