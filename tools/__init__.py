@@ -23,6 +23,7 @@ from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_argumen
 from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
 from .feel import FeelTool, SCHEMA as FEEL_SCHEMA, validate_arguments as validate_feel_arguments
 from .note_desire import NoteDesireTool, SCHEMA as NOTE_DESIRE_SCHEMA, validate_arguments as validate_note_desire_arguments
+from .note_detail import NoteDetailTool, SCHEMA as NOTE_DETAIL_SCHEMA, validate_arguments as validate_note_detail_arguments
 from .registry import ToolRegistry
 from .search_memory import SearchMemoryTool, SCHEMA as SEARCH_SCHEMA, validate_arguments as validate_search_arguments
 from .set_person_name import SetPersonNameTool, SCHEMA as NAME_SCHEMA, validate_arguments as validate_name_arguments
@@ -32,6 +33,8 @@ from .send_signal_message import SendSignalMessageTool, SCHEMA as SIGNAL_SCHEMA,
 from .message_person_on_signal import (
     MessagePersonOnSignalTool, SCHEMA as MESSAGE_PERSON_SCHEMA, validate_arguments as validate_message_person_arguments,
 )
+from .end_call import SCHEMA as END_CALL_SCHEMA, EndCallTool, validate_arguments as validate_end_call_arguments
+from .call_someone import SCHEMA as CALL_SOMEONE_SCHEMA, CallSomeoneTool, validate_arguments as validate_call_arguments
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
 from .show_map import ShowMapTool, SCHEMA as MAP_SCHEMA, validate_arguments as validate_map_arguments
@@ -63,6 +66,7 @@ def create_tool_registry(
     calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
     signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
     kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
+    can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -121,6 +125,11 @@ def create_tool_registry(
         email_signature,
     )
     registry.register(SEND_EMAIL_SCHEMA, validate_send_email_arguments, send_email.handle)
+    call_someone = CallSomeoneTool(get_connection, is_closing, write_debug, confirm,
+                                   task_goal or _not_set_up, can_call, place_call)
+    registry.register(CALL_SOMEONE_SCHEMA, validate_call_arguments, call_someone.handle)
+    end_call = EndCallTool(get_connection, is_closing, write_debug)
+    registry.register(END_CALL_SCHEMA, validate_end_call_arguments, end_call.handle)
     check_calendar = CheckCalendarTool(get_connection, is_closing, write_debug, get_calendar)
     registry.register(CHECK_CALENDAR_SCHEMA, validate_check_calendar_arguments, check_calendar.handle)
     for schema, validate, tool_type in (
@@ -133,4 +142,7 @@ def create_tool_registry(
         registry.register(schema, validate, tool.handle)
     sign_up = RequestSignUpTool(get_connection, is_closing, write_debug, check_sign_up, confirm, begin_sign_up)
     registry.register(SIGN_UP_SCHEMA, validate_sign_up_arguments, sign_up.handle)
+    # The person's own chats only: clients' chats and task work offer allowlists without it.
+    note_detail = NoteDetailTool(get_connection, is_closing, write_debug)
+    registry.register(NOTE_DETAIL_SCHEMA, validate_note_detail_arguments, note_detail.handle)
     return registry

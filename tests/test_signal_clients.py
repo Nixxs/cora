@@ -325,6 +325,16 @@ class ClientAppTests(unittest.IsolatedAsyncioTestCase):
             app.persistence.add_client.assert_called_once_with("Tom", "+61400000004")
             rows = [str(row.render()) for row in app.screen.query("#signal-clients .tool-label").results(Static)]
             self.assertEqual(rows, [f"Sarah · {SARAH}", "Tom · +61400000004"])
+            # Calls from someone are off until turned on for them.
+            calls = app.screen.query_one("#signal-calls-1", Button)
+            self.assertEqual(str(calls.label), "Calls: off")
+            calls.press()
+            await pilot.pause()
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            await pilot.pause(0.6)
+            app.persistence.save_client_may_call.assert_called_once_with(tom.id, True)
+            self.assertTrue(app.signal_clients["+61400000004"].may_call)
+            self.assertEqual(str(app.screen.query_one("#signal-calls-1", Button).label), "Calls: on")
             app.screen.query_one("#signal-remove-0", Button).press()
             await pilot.pause()
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
@@ -380,6 +390,13 @@ class ClientStoreDatabaseTests(unittest.TestCase):
         again = self.clients.add("Sarah", SARAH)
         self.clients.set_signal_id(again.id, "uuid-sarah")  # free again after removal
         self.assertEqual(self.clients.clients()[0].signal_id, "uuid-sarah")
+
+    def test_calls_are_off_until_turned_on_for_someone(self):
+        sarah = self.clients.add("Sarah", SARAH)
+        self.assertFalse(sarah.may_call)
+        self.assertFalse(self.clients.clients()[0].may_call)
+        self.clients.set_may_call(sarah.id, True)
+        self.assertTrue(self.clients.clients()[0].may_call)
 
     def test_a_conversation_continues_until_a_long_quiet(self):
         sarah = self.clients.add("Sarah", SARAH)

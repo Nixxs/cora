@@ -11,6 +11,7 @@ from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .key_details_store import KeyDetailsStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
 from .signal_settings_store import SignalSettings, SignalSettingsStore
@@ -77,6 +78,12 @@ class KeyboardPersistence:
     def start_task(self, goal: str, who: UUID | EmailParty, brief: str, step: str,
                    deadline: datetime | None = None) -> UUID:
         return TaskStore(self._get_store().engine).start(goal, who, brief, step, deadline)
+
+    def task_party_id(self, task_id: UUID, address: str) -> UUID | None:
+        return TaskStore(self._get_store().engine).party_id(task_id, address)
+
+    def add_task_step(self, task_id: UUID, text: str) -> None:
+        TaskStore(self._get_store().engine).add_step(task_id, text)
 
     def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str,
                        deadline: datetime | None = None) -> None:
@@ -174,6 +181,9 @@ class KeyboardPersistence:
     def save_signal_person_id(self, signal_id: str) -> None:
         SignalSettingsStore(self._get_store().engine).set_allowed_signal_id(signal_id)
 
+    def save_client_may_call(self, person_id: UUID, may_call: bool) -> None:
+        ClientStore(self._get_store().engine).set_may_call(person_id, may_call)
+
     def remove_client(self, person_id: UUID) -> None:
         ClientStore(self._get_store().engine).remove(person_id)
 
@@ -199,8 +209,8 @@ class KeyboardPersistence:
         FeelingStore(store.engine).record(feeling, strength, reason, now=datetime.now(timezone.utc),
                                           conversation_id=conversation_id)
 
-    def save_client_message(self, conversation_id: UUID, role: str, text: str) -> None:
-        ClientStore(self._get_store().engine).save(conversation_id, role, text)
+    def save_client_message(self, conversation_id: UUID, role: str, text: str, channel: str = "signal") -> None:
+        ClientStore(self._get_store().engine).save(conversation_id, role, text, channel)
 
     def load_client_memory_context(self, person_id: UUID, name: str) -> str:
         """What Cora remembers from a client's own chats, and what the person meant for them."""
@@ -232,6 +242,12 @@ class KeyboardPersistence:
 
     def save_web_enabled(self, enabled: bool) -> None:
         WebhookSettingsStore(self._get_store().engine).set_web_enabled(enabled)
+
+    def save_phone_enabled(self, enabled: bool) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_phone_enabled(enabled)
+
+    def save_twilio_account(self, account_sid: str, phone_number: str) -> None:
+        WebhookSettingsStore(self._get_store().engine).set_twilio_account(account_sid, phone_number)
 
     def load_web_devices(self) -> list[WebDevice]:
         return WebDeviceStore(self._get_store().engine).devices()
@@ -271,6 +287,9 @@ class KeyboardPersistence:
 
     def claim_stalled_sign_ups(self) -> list[SignUp]:
         return SignUpStore(self._get_store().engine).claim_stalled(datetime.now(timezone.utc))
+
+    def load_key_details_context(self) -> str:
+        return KeyDetailsStore(self._get_store().engine).get_startup_context()
 
     def load_sign_ups_context(self) -> str:
         return SignUpStore(self._get_store().engine).context()

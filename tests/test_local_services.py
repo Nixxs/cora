@@ -187,10 +187,45 @@ class GuardedNavigationTests(unittest.IsolatedAsyncioTestCase):
         from services.connection import ServiceTool
         for name in ("browser_type", "browser_fill_form", "browser_select_option"):
             description = tool_schema("playwright", ServiceTool(name, "Type text.", False, {}))["description"]
-            self.assertIn("Never enter the person's personal details", description)
-            self.assertIn("payment", description)
+            self.assertIn("form the person asked you to complete", description)
+            self.assertIn("Never enter payment or card details or passwords", description)
         click = tool_schema("playwright", ServiceTool("browser_click", "Click.", False, {}))["description"]
-        self.assertIn("Never click to book, buy, pay", click)
+        self.assertIn("asks the person first", click)
+        self.assertIn("Never pay", click)
+
+    async def test_a_click_that_sends_a_form_asks_first(self):
+        from services.catalogue import sends_something
+        confirm = AsyncMock(return_value="approved")
+        handler = self.handler("browser_click", confirm)
+        handler.asks_when = sends_something
+        arguments = {"element": "Submit application button", "ref": "e12"}
+        result = await handler.result(arguments)
+        self.assertEqual(result["status"], "ok")
+        confirm.assert_awaited_once_with("playwright", "browser_click", arguments)
+
+    async def test_a_declined_send_never_reaches_the_browser(self):
+        from services.catalogue import sends_something
+        handler = self.handler("browser_click", AsyncMock(return_value="declined"))
+        handler.asks_when = sends_something
+        result = await handler.result({"element": "Book now", "ref": "e3"})
+        self.assertEqual(result["status"], "not_done")
+        self.call_tool.assert_not_awaited()
+
+    async def test_an_ordinary_click_runs_without_asking(self):
+        from services.catalogue import sends_something
+        confirm = AsyncMock()
+        handler = self.handler("browser_click", confirm)
+        handler.asks_when = sends_something
+        result = await handler.result({"element": "Departure date field", "ref": "e7"})
+        self.assertEqual(result["status"], "ok")
+        confirm.assert_not_awaited()
+
+    def test_sending_controls_are_recognised(self):
+        from services.catalogue import sends_something
+        for name in ("Submit", "Send message", "Place order", "Confirm booking", "Sign up", "Apply now"):
+            self.assertTrue(sends_something({"element": name}), name)
+        for name in ("Next month", "Email address field", "Show more results", ""):
+            self.assertFalse(sends_something({"element": name}), name)
 
     def test_opening_a_page_tells_cora_to_read_it_with_a_snapshot(self):
         from services.connection import ServiceTool

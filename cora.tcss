@@ -657,6 +657,10 @@ ModelSettingsScreen {
     margin: 1 0 0 0;
 }
 
+.signal-clients Button.calls-on {
+    color: #8fcf8f;
+}
+
 .service-buttons Input {
     width: 1fr;
 }

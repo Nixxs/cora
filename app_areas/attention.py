@@ -118,6 +118,8 @@ class AttentionMixin:
                 self.live.person_name, last_talked_at, datetime.now().astimezone(), hook, relationship,
             )
             send, sent = self.live.send_greeting(brief), "Opening greeting sent"
+        elif kind == "phone":
+            send, sent = self.live.send_phone_answer(), "Phone call answered"
         else:
             send, sent = self.live.send_welcome_back(), "Welcome back sent"
         try:

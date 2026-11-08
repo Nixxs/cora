@@ -167,7 +167,7 @@ class ServiceToolHandler:
 
     def __init__(
         self, service_id: str, tool: str, call_tool, get_connection, is_closing, write_debug,
-        cache: ResultCache | None = None, paged: bool = True, confirm=None,
+        cache: ResultCache | None = None, paged: bool = True, confirm=None, asks_when=None,
     ):
         self.service_id = service_id
         self.tool = tool
@@ -180,6 +180,8 @@ class ServiceToolHandler:
         self.paged = paged
         # For tools that change things: waits for the person's answer before the service is called.
         self.confirm = confirm
+        # For a tool that runs without asking: which of its calls still ask (None: every call does).
+        self.asks_when = asks_when
 
     def _log(self, message: str, title: str) -> None:
         try:
@@ -208,7 +210,7 @@ class ServiceToolHandler:
         # The first page always asks the service afresh; later pages reuse that reply while it's recent.
         cached = self.cache.get(key) if page > 1 else None
         if cached is None:
-            if self.confirm is not None:
+            if self.confirm is not None and (self.asks_when is None or self.asks_when(arguments)):
                 outcome = await self.confirm(self.service_id, self.tool, arguments)
                 if outcome != APPROVED:
                     return {

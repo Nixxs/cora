@@ -179,6 +179,8 @@ class PersonRecord(Base):
     signal_number: Mapped[str | None] = mapped_column(Text)
     # Their Signal ID once learned: still identifies them if they hide their number.
     signal_id: Mapped[str | None] = mapped_column(Text)
+    # Whether a client may reach her by phone (the person turns it on for each one).
+    may_call: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
 
 
 # The person Cora works with, never a client; and conversations with them, never a client's.
@@ -732,6 +734,11 @@ class WebhookSettingRecord(Base):
     port: Mapped[int] = mapped_column(Integer, server_default=sql_text("8000"))
     # The web interface, on the same listener and address.
     web_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    # Phone calls to her number, through Twilio, on the same listener and address.
+    phone_enabled: Mapped[bool] = mapped_column(Boolean, server_default=sql_text("false"))
+    # Calling out (P3): the Twilio account she places calls through, and her number to call from.
+    twilio_account_sid: Mapped[str | None] = mapped_column(Text)
+    phone_number: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
@@ -770,6 +777,26 @@ class SelfImageRecord(Base):
     image: Mapped[bytes | None] = mapped_column(LargeBinary)
     image_type: Mapped[str | None] = mapped_column(Text)
     chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class KeyDetailRecord(Base):
+    """Something the person told Cora to keep to hand, such as their email or their wife's phone."""
+
+    __tablename__ = "key_details"
+    __table_args__ = (
+        CheckConstraint("label = btrim(label) AND label <> '' AND char_length(label) <= 100",
+                        name="key_details_label_check"),
+        CheckConstraint("value = btrim(value) AND value <> '' AND char_length(value) <= 500",
+                        name="key_details_value_check"),
+        Index("key_details_label_key", sql_text("lower(label)"), unique=True),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    label: Mapped[str] = mapped_column(Text)
+    value: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
 class ImpressionRecord(Base):
@@ -850,10 +877,11 @@ class TaskPartyRecord(Base):
 
     __tablename__ = "task_parties"
     __table_args__ = (
-        CheckConstraint("channel IN ('signal', 'email')", name="task_parties_channel_check"),
+        CheckConstraint("channel IN ('signal', 'email', 'phone')", name="task_parties_channel_check"),
         CheckConstraint(
             "(channel = 'signal' AND person_id IS NOT NULL AND address IS NULL) "
-            "OR (channel = 'email' AND person_id IS NULL AND btrim(address) <> '' AND char_length(address) <= 320)",
+            "OR (channel IN ('email', 'phone') AND person_id IS NULL AND btrim(address) <> '' "
+            "AND char_length(address) <= 320)",
             name="task_parties_who_check",
         ),
         CheckConstraint("btrim(brief) <> '' AND char_length(brief) <= 2000", name="task_parties_brief_check"),

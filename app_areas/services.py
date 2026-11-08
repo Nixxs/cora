@@ -24,10 +24,15 @@ class ServicesMixin:
         self.tell_cora_approval_waiting(request.title, request.tool)
 
     @work(group="approval-notes")
-    async def tell_cora_approval_waiting(self, service: str, tool: str, reminder: bool = False) -> None:
-        """Let Cora know her request waits on the pop-up, so she can ask the person to click it."""
+    async def tell_cora_approval_waiting(self, service: str, tool: str, reminder: bool = False,
+                                         on_signal: bool = False) -> None:
+        """Let Cora know her request waits on the pop-up (or, on a call, in the Signal chat), so she
+        can tell the person."""
         try:
-            await self.live.send_approval_waiting(service, tool, reminder=reminder)
+            if on_signal:
+                await self.live.send_approval_waiting(service, tool, on_signal=True)
+            else:
+                await self.live.send_approval_waiting(service, tool, reminder=reminder)
         except Exception as error:
             # The pop-up still works without her mentioning it.
             self.activity.write(f"Approval note to Cora failed ({type(error).__name__}).", "Approval note failed")
@@ -91,14 +96,16 @@ class ServicesMixin:
             self.tools.unregister(name)
         for name in set(wanted) - current:
             service_id, tool, schema = wanted[name]
+            sometimes = SERVICES[service_id].asks_when
             handler = ServiceToolHandler(
                 service_id, tool.name, self.services.call_tool, self.tool_connection,
                 lambda: self.closing or self.reconnecting, self.activity.write,
                 cache=self.service_results,
                 paged=PAGE_ARGUMENT not in tool.input_schema.get("properties", {}),
                 # Anything the server doesn't mark read-only asks the person first, unless the
-                # catalogue lets it run without asking.
-                confirm=self.confirmations.ask if tool.asks_first else None,
+                # catalogue lets it run without asking; some of those still ask for some calls.
+                confirm=self.confirmations.ask if tool.asks_first or tool.name in sometimes else None,
+                asks_when=None if tool.asks_first else sometimes.get(tool.name),
             )
             self.tools.register(schema, validate_service_arguments, handler.handle)
         if current != set(wanted):

@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from openai import AsyncOpenAI
 
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
+from tools.end_call import CALL_ONLY
 from tools.pass_on import CLIENT_ONLY
 
 # Tool rounds one turn may take; each round is one backend request. Browsing spends one per
@@ -24,7 +25,7 @@ OUT_OF_ROUNDS = (
 TOOL_RESULT_SECONDS = 180
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
-STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY})
+STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY, *CALL_ONLY})
 # Signal, away from the desk: nothing that needs the screen either, and not where they are (that's
 # for the web page, as are maps). Tools that change things are offered: the person approves them in the chat.
 SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image", "where_is_person", "show_map"}
