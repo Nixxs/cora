@@ -30,9 +30,7 @@ an installer is paused. Local models follow after 1.0.
 1. **Feature freeze (now, about a month):** using Cora day to day (desk, voice, Signal, the
    web page and calls) with no new features. Only fixes, polish from real use, documentation
    and the housekeeping below. Ideas that come up go into this roadmap, not the code.
-   Polish in progress:
-   - *Full text on the dashboard:* clicking an item in the feelings, interests and tasks
-     boxes opens a pop-up with its full text, as the context box already does.
+   Polish in progress: none right now; new items from real use go here.
 2. **Services screen and in-app settings (MCP M4):** a list of supported services for
    non-technical users, each with an on/off switch that runs its sign-in, and whether Cora
    watches it (off, digest only, or may interrupt), reusing the dashboard's look; the

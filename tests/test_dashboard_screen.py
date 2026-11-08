@@ -33,7 +33,7 @@ from ui.meters import (
     HEAT_STYLES, HOVER_STYLE, LABEL_STYLE, MAX_WEEKS, MIN_WEEKS, TONE_STYLES, TRACK_STYLE, CalendarHeatmap,
     ContextMeters, Meters, ToneRibbon, meter_bar,
 )
-from ui.context_view import ContextScreen
+from ui.context_view import ContextScreen, DetailScreen
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 
@@ -161,7 +161,8 @@ class DashboardSnapshotTests(unittest.TestCase):
                 patch("storage.dashboard_snapshot.live_desires", return_value=(("To see a redwood", 0.5, "held"),)), \
                 patch("storage.dashboard_snapshot.recent_feelings", return_value=((("hurt", (0.3,), True),), None)), \
                 patch("storage.dashboard_snapshot.live_interests",
-                      return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))):
+                      return_value=((("Tides", 0.3, True),), ("Tides", "Moon"))), \
+                patch("storage.dashboard_snapshot.interest_details", return_value={"Tides": "Why the sea moves."}):
             store.return_value.current_values.return_value = values
             store.return_value.history.return_value = events
             store.return_value.recent_tones.return_value = ["warm", "curt"]
@@ -671,8 +672,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             screen = app.screen
             await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
-            tasks = screen.query_one("#task-list", Static)
-            self.assertEqual(str(tasks.render()), "no open tasks")
+            items = lambda: list(screen.query(".task-item").results(Static))
+            self.assertEqual([str(item.render()) for item in items()], ["no open tasks"])
             self.assertEqual(screen.query_one("#tasks-box").border_title, "tasks")
             now = datetime.now(timezone.utc)
             app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
@@ -685,7 +686,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                                  PartyView("Karene", "waiting", 0, now + timedelta(hours=6, minutes=5)),
                                  PartyView("Royce", "waiting", 1, now - timedelta(minutes=5)),
                                  PartyView("Al", "waiting", 2, now + timedelta(hours=1, minutes=5)),
-                                 PartyView("Sam", "done", 0, None),
+                                 PartyView("Sam", "done", 0, None, "Ask which weekday suits [her]."),
                              ), "Sam reported:\nTuesdays " + "x" * 200),
                     TaskView("Car service", "needs_person", now - timedelta(hours=3, minutes=5), None,
                              (PartyView("Royce", "waiting", 0, None),), None),
@@ -693,7 +694,8 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             )
             await screen.refresh_snapshot().wait()
             await pilot.pause()
-            lines = str(tasks.render()).splitlines()
+            self.assertEqual(len(items()), 2)
+            lines = "\n\n".join(str(item.render()) for item in items()).splitlines()
             # Brackets in a goal are shown as written, not read as markup.
             self.assertEqual(lines[:6], [
                 "● Lesson for [b]Sarah[/b]",
@@ -707,6 +709,14 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(lines[6].endswith("…"))
             self.assertEqual(lines[7:], ["", "● Car service", "  needs you · started 3h ago", "  Royce  asked"])
             self.assertEqual(screen.query_one("#tasks-box").border_subtitle, "2 open")
+            # A click opens the task in full: the whole latest step and each brief.
+            items()[0].on_click(MagicMock())
+            await pilot.pause()
+            self.assertIsInstance(app.screen, DetailScreen)
+            self.assertIn("Lesson for [b]Sarah[/b]", str(app.screen.query_one("#context-view-title", Label).render()))
+            full = app.screen.query_one("#context-view-text", TextArea).text
+            self.assertIn("x" * 200, full)
+            self.assertIn("Brief for Sam:\nAsk which weekday suits [her].", full)
 
     async def test_context_box_lists_each_models_startup_items_once_connected(self):
         async with keyboard_tests.running_app() as (app, pilot):

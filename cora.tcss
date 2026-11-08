@@ -546,6 +546,16 @@ Screen > .screen--selection {
     color: #d0d6e0;
 }
 
+.task-item {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+/* Dashboard text that opens in full when clicked. */
+.openable:hover {
+    background: #202838;
+}
+
 #background-runs {
     height: auto;
     color: #d0d6e0;

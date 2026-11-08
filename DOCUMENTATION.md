@@ -330,17 +330,18 @@ top right (● active, ○ standby) enters standby or resumes.
 | voice | Her playback above the line and your microphone below, as loudness bands from low to high pitch, with the latest Activity summary on its border |
 | chat | The running conversation; type here to send |
 | relationship | Trust, warmth and familiarity now (drift included), their history, and the tone of recent conversations |
-| feelings | Each feeling's strength over time, and her latest reaction with why |
+| feelings | Each feeling's strength over time, and her latest reaction with why; click it to read the whole reason |
 | memories | Memories by kind, new memories per day, and how many wait for embedding or each check |
-| interests | Live interests by strength: ↑ reinforced or new in the last 3 days, ↓ only fading, ✦ one of her own; and the newest finding |
+| interests | Live interests by strength: ↑ reinforced or new in the last 3 days, ↓ only fading, ✦ one of her own; and the newest finding. Click an interest for what it is, how it emerged and her latest finding on it, or the finding to read it whole |
 | identity | Active traits, most confident first; traits still forming (below 50%) are dimmed |
 | desires | Live desires, strongest first: pursuing, held, or forming (dimmed) |
 | conversations | OpenAI spend this month and a bar per month for the last year (hover a bar for its amount), or a placeholder whose hover and click say to add an Admin key; below it, your messages per day over the last year, a week per column |
-| tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups |
+| tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups. Click a task to read it in full, with its whole latest step and each person's brief |
 | context | How full each model's context is (measured by the API), then each item's estimated share; click an item to read its text |
 | background | When each background job last saved something, and when the timed ones are next due |
 
-The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
+Anything clickable brightens under the mouse; its pop-up scrolls and can be selected and
+copied, and Esc or a click outside closes it. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
 values and notes it in Activity); the context box reads the running app once a second. Its
 item sizes are estimates (about four bytes a token). Tuning constants (refresh rate, bar
 fall, history limits, graph timing, voice bands) are at the top of

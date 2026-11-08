@@ -8,6 +8,7 @@ from textual.events import Click, MouseMove
 from textual.message import Message
 from textual.reactive import reactive
 from textual.widget import Widget
+from textual.widgets import Static
 
 
 # Small squares leave gaps between cells and rows, so bars don't merge into one block.
@@ -70,6 +71,8 @@ class ContextMeters(Meters):
     """Meters whose rows can be clicked; the hovered row is highlighted."""
 
     hover_row = reactive(None)
+    # Said on hovering a row.
+    hint = "click to see what's in it"
 
     class Selected(Message):
         def __init__(self, meters: "ContextMeters", index: int) -> None:
@@ -91,7 +94,7 @@ class ContextMeters(Meters):
 
     def on_mouse_move(self, event: MouseMove) -> None:
         self.hover_row = event.y if 0 <= event.y < len(self.rows) else None
-        self.tooltip = "click to see what's in it" if self.hover_row is not None else None
+        self.tooltip = self.hint if self.hover_row is not None else None
 
     def on_leave(self) -> None:
         self.hover_row = None
@@ -99,6 +102,31 @@ class ContextMeters(Meters):
     def on_click(self, event: Click) -> None:
         if 0 <= event.y < len(self.rows):
             self.post_message(self.Selected(self, event.y))
+
+
+class ReadableMeters(ContextMeters):
+    """Meters whose rows open their full text when clicked (an interest)."""
+
+    hint = "click to read it in full"
+
+
+class Openable(Static):
+    """Dashboard text that opens a pop-up with its full version when clicked; brighter on hover."""
+
+    # (title, full text) for the pop-up, or None while there's nothing to open.
+    detail: tuple[str, str] | None = None
+
+    def show(self, content, detail: tuple[str, str] | None = None) -> None:
+        self.update(content)
+        self.detail = detail
+        self.set_class(detail is not None, "openable")
+        self.tooltip = "click to read it in full" if detail is not None else None
+
+    def on_click(self, event: Click) -> None:
+        if self.detail is not None:
+            # Imported here: the pop-up's module is a screen, and meters stay free of screens.
+            from ui.context_view import DetailScreen
+            self.app.push_screen(DetailScreen(*self.detail))
 
 
 class ToneRibbon(Widget):
