@@ -29,6 +29,11 @@ from session_config import (
 )
 
 
+# A client's chat: memory search limited to what they may know, noting her own feelings, the
+# browser (only to look things up; its helper gets none of the person's details) and passing
+# things on to the person. Web search comes with every chat.
+CLIENT_CHAT_TOOLS = frozenset({"search_memory", "feel", "use_browser", *CLIENT_ONLY})
+
 # The most concerns she can raise at once about one client in a day; later chats still get a heads-up.
 SIGNAL_CONCERNS_PER_DAY = 3
 
@@ -347,10 +352,9 @@ class SignalChatsMixin:
         return await self.backend_chat.reply(
             content=signal_content(batch, datetime.now(timezone.utc)), history=history,
             sections=await self.client_sections(client, batch), model=await self.contacts_model(),
-            # Web search, memory search limited to what they may know, noting her own feelings, and
-            # passing things on to the person; no services, nothing at the desk.
+            # CLIENT_CHAT_TOOLS only: no other services, nothing at the desk.
             route=BackendRoute(
-                excluded=frozenset(self.tools.names()) - {"search_memory", "feel", *CLIENT_ONLY},
+                excluded=frozenset(self.tools.names()) - CLIENT_CHAT_TOOLS,
                 memory_scope=(client.id, client.name),
             ),
             extra_instructions=client_chat_instructions(client.name, self.live.person_name, self.live.own_name),

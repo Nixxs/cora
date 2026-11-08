@@ -6,9 +6,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from backend_chat import SLOW_TOOLS, TOOL_RESULT_SECONDS
+from backend_chat import SLOW_TOOLS, TOOL_RESULT_SECONDS, BackendRoute
 from services.connection import CONNECTED, ServiceStatus, ServiceTool
-from session_config import MODEL_AREAS
+from session_config import MODEL_AREAS, client_chat_instructions
 from tools import use_browser
 from tools.use_browser import BrowserHelper, DROPPED, KEEP_RESULTS, MAX_STEPS, UseBrowserTool
 from ui.model_settings import AREA_LABELS
@@ -128,13 +128,42 @@ class HelperTests(unittest.IsolatedAsyncioTestCase):
         connection = MagicMock()
         connection.response.item.create = AsyncMock()
         connection.response.create = AsyncMock()
+        connection.memory_scope = None
         tool = UseBrowserTool(lambda: connection, lambda: False, MagicMock(), made)
         await tool.handle("call-1", {"job": "Look", "start_url": None})
-        made.run.assert_awaited_once_with("Look", None)
+        made.run.assert_awaited_once_with("Look", None, for_contact=False)
         sent = connection.response.item.create.await_args.kwargs["item"]
         self.assertEqual(sent["call_id"], "call-1")
         self.assertIn("Found it.", sent["output"])
         connection.response.create.assert_awaited_once()
+
+    async def test_in_a_contacts_chat_the_job_is_marked_as_theirs(self):
+        made = MagicMock()
+        made.run = AsyncMock(return_value={"status": "ok", "report_untrusted": "Open till 5."})
+        route = BackendRoute(memory_scope=("client-id", "Sarah"))
+        tool = UseBrowserTool(lambda: route, lambda: False, MagicMock(), made)
+        await tool.handle("call-1", {"job": "Opening hours", "start_url": None})
+        made.run.assert_awaited_once_with("Opening hours", None, for_contact=True)
+        self.assertIn("Open till 5.", route.outputs["call-1"])
+
+    async def test_a_contacts_job_gets_none_of_the_persons_details_and_only_looks(self):
+        snapshot = AsyncMock(return_value={"status": "ok"})
+        tools = {"snap": ({"type": "function", "name": "snap"}, snapshot)}
+        client = FakeClient([[answer("Open till 5.")]])
+        made, _ = helper(client, tools, details='Name: Sam\nOther details: {"email": "sam@example.com"}')
+        result = await made.run("Opening hours", None, for_contact=True)
+        self.assertEqual(result["status"], "ok")
+        instructions = client.requests[0]["instructions"]
+        self.assertNotIn("Sam", instructions)
+        self.assertNotIn("sam@example.com", instructions)
+        self.assertIn(use_browser.CONTACT_JOB.strip(), instructions)
+
+    def test_contacts_chats_offer_the_browser_but_not_her_other_tools(self):
+        from app_areas.signal_chats import CLIENT_CHAT_TOOLS
+        self.assertIn("use_browser", CLIENT_CHAT_TOOLS)
+        self.assertNotIn("note_detail", CLIENT_CHAT_TOOLS)
+        self.assertIn("use_browser", client_chat_instructions("Sarah", "Nick"))
+        self.assertNotIn("use_browser", client_chat_instructions("Sarah", "Nick", on_call=True))
 
     def test_arguments_are_checked(self):
         use_browser.validate_arguments({"job": "Look", "start_url": None})

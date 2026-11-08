@@ -794,7 +794,8 @@ ImageScreen {
     color: #8f98a8;
 }
 
-ContextScreen {
+/* Every dashboard pop-up (the context box's included): centred over a dimmed dashboard. */
+DetailScreen {
     align: center middle;
     background: #141820 70%;
 }

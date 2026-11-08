@@ -1137,7 +1137,7 @@ class FeelingEventRecord(Base):
             name="feeling_events_feeling_check",
         ),
         CheckConstraint("strength IN ('small', 'medium', 'strong')", name="feeling_events_strength_check"),
-        CheckConstraint("btrim(reason) <> '' AND char_length(reason) <= 200", name="feeling_events_reason_check"),
+        CheckConstraint("btrim(reason) <> '' AND char_length(reason) <= 1200", name="feeling_events_reason_check"),
         Index("feeling_events_felt_at_idx", "felt_at"),
         Index("feeling_events_conversation_id_idx", "conversation_id"),
         {"schema": "public"},

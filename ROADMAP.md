@@ -13,7 +13,8 @@ the history of how each part was built is in Git.
   (your and your family's emails, phones and addresses), interests and exploration,
   desires, a developing self, how she pictures herself, a relationship with you, and
   short-lived feelings. See [Her inner life](DOCUMENTATION.md#her-inner-life).
-- **People and tasks:** contacts in client mode, impressions and heads-ups, tasks with
+- **People and tasks:** contacts in client mode (with the browser for looking things up),
+  impressions and heads-ups, tasks with
   briefs, a coordinator, nudges, deadlines and the commitment check. See
   [People, tasks and reaching you](DOCUMENTATION.md#people-tasks-and-reaching-you).
 - **Services:** MCP (GitHub, the browser, filling in forms for you with sending approved),

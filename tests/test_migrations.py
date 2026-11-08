@@ -138,6 +138,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0056_add_spend_project.sql",
             "0057_add_browser_model.sql",
             "0058_add_model_areas.sql",
+            "0059_longer_feeling_reasons.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

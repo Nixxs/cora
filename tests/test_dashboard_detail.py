@@ -36,7 +36,11 @@ class DetailTests(unittest.IsolatedAsyncioTestCase):
     async def detail(self, app, pilot):
         await pilot.pause()
         self.assertIsInstance(app.screen, DetailScreen)
-        title = str(app.screen.query_one("#context-view-title", Label).render())
+        # Centred over the dimmed dashboard, like the context box's pop-up.
+        box = app.screen.query_one("#context-view").region
+        self.assertLessEqual(abs(box.x - (app.size.width - box.right)), 1)
+        self.assertLess(app.screen.styles.background.a, 1)
+        title =str(app.screen.query_one("#context-view-title", Label).render())
         return title, app.screen.query_one("#context-view-text", TextArea).text
 
     async def test_her_latest_feeling_opens_with_its_whole_reason(self):

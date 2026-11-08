@@ -686,6 +686,9 @@ Short-lived reactions, separate from the slower relationship
   thinking back on an appraised conversation that ended in the last 2 hours (hurt for
   unrepaired friction aimed at her or hostility, irritation for curtness, contentment for
   warmth; her own mistakes stir nothing).
+- **Reasons:** hers from `feel` are up to 200 characters; one from thinking back carries the
+  appraisal's whole reason. Each is kept whole (up to 1,200 characters) for the dashboard,
+  while the prompt shows each feeling's first 200.
 - **In the prompt:** "How you're feeling right now", one line per noticeable feeling (what,
   why, and how hard it is to hide: a small one is hers to show or not, a strong one is hard
   to hide), worked out fresh at each connect and written reply. A running voice session gets
@@ -725,7 +728,12 @@ whether they may phone her (see [Phone calls](#phone-calls)).
   they genuinely connect.
 - **Her tools there:** web search, `search_memory` (only what they told her and what you
   meant for them, limited in the database query itself), `feel`, `pass_on`,
-  `raise_concern` and `stop_replying`. Nothing that changes things.
+  `raise_concern` and `stop_replying`, and `use_browser` while the browser is connected
+  (`CLIENT_CHAT_TOOLS` in [app_areas/signal_chats.py](app_areas/signal_chats.py)). A
+  contact's browsing job only looks things up: its helper gets none of your details and is
+  told not to fill in or send forms (a click that would send still asks you). It shares the
+  one browser, so it can hold up your own job for a few minutes. Nothing that changes things.
+  Calls from contacts don't get the browser.
 - **Her memories of them:** their finished conversations go through the memory pass, told
   who they are, so memories read "Sarah lives in Perth". Duplicate and correction checks
   only compare one person's memories with their own. At the desk, `search_memory` covers
@@ -957,7 +965,7 @@ connection isn't retried; switch it off and on, or save a new token.
     ([tools/use_browser.py](tools/use_browser.py)), and a helper on the Browser model does the
     job and reports back. Each step of browsing is a request, and in her own chat each would
     re-send her whole context on the Delegation model; the helper sees only the job, your name
-    and key details (for forms), and its last 3 results (older pages are dropped). The helper
+    and key details (for forms; never for a job from a contact's chat), and its last 3 results (older pages are dropped). The helper
     calls the same tool handlers she did, so the address guard, paged results and the approval
     before sending all still apply, asked wherever she's talking with you. At most 30 actions
     and about 8 minutes a job, one job at a time; then it reports what it found or did and what
