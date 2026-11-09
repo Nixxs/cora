@@ -740,7 +740,7 @@ ModelSettingsScreen {
     border-left: vkey #2a3140;
 }
 
-#services-scroll, #general-scroll {
+#services-scroll, #general-scroll, #game-scroll {
     height: auto;
     max-height: 40;
     scrollbar-size-vertical: 1;

@@ -787,7 +787,8 @@ class AppSettingRecord(Base):
     __table_args__ = (
         CheckConstraint(
             "key IN ('voice', 'spend_project', 'start_mode', 'idle_minutes', 'standby_farewell', 'wake_word', "
-            "'conversation_gap', 'backup_copy_dir', 'twilio_region')",
+            "'conversation_gap', 'backup_copy_dir', 'twilio_region', 'game_push_to_talk', 'game_chat_channel', "
+            "'game_transcription', 'game_vocabulary')",
             name="app_settings_key_check",
         ),
         CheckConstraint("btrim(value) <> '' AND char_length(value) <= 200", name="app_settings_value_check"),

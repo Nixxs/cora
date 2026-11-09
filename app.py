@@ -80,6 +80,7 @@ from app_areas.task_calls import TaskCallsMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
+from app_areas.game import GameMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -112,7 +113,7 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, App,
 ):
 
     live_trace = None
@@ -245,6 +246,8 @@ class CoraApp(
         self.conversation_end_timer = None
         # Settings > General. Kept for this run only; not saved yet.
         self.screen_looking = True
+        # Settings > Game: push-to-talk into the game's chat.
+        self.init_game()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -579,6 +582,7 @@ class CoraApp(
         self.email_account.cancel_sign_in()
         self.stop_signal_receiver()
         self.services.stop_all()
+        self.stop_push_to_talk()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
@@ -695,6 +699,7 @@ class CoraApp(
         self.confirmations.decline_all()
         self.email_account.cancel_sign_in()
         self.stop_signal_receiver()
+        self.stop_push_to_talk()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()

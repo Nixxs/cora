@@ -4,7 +4,7 @@ How everything in Cora works, checked against the code. Setting her up is in the
 [README](README.md); what's next is in the [roadmap](ROADMAP.md).
 
 1. [Overview and architecture](#overview-and-architecture): Cora-prime and the background, ways to reach her, what she knows, what runs when, models and costs
-2. [Talking to Cora](#talking-to-cora): the desk, voice, standby and the wake word, the greeting, the dashboard
+2. [Talking to Cora](#talking-to-cora): the desk, voice, standby and the wake word, the greeting, the dashboard, playing games
 3. [Her inner life](#her-inner-life): memory, interests, desires, self, her picture, relationship, feelings
 4. [People, tasks and reaching you](#people-tasks-and-reaching-you): contacts, how she reaches you, tasks
 5. [Approvals and safety](#approvals-and-safety): approvals, untrusted content, guards, secrets
@@ -368,6 +368,34 @@ Ctrl+T queues a simulated observation (that you just got a Signal message). It g
 the event bus to the attention manager, which holds observations while she's speaking,
 working or in Standby and sends them one at a time once she's Active and quiet; they never
 wake her. The queue is in memory only, and a failed send is reported, not retried.
+
+### Playing games
+
+Experimental, for World of Warcraft (Settings > Game). Awareness of the game is planned (see
+the [roadmap](ROADMAP.md#game-awareness-experimental)); what works now is push-to-talk.
+
+- **Push-to-talk into the game's chat:** with it switched on, hold the middle mouse button and
+  talk. While it's held, her microphone is muted and a separate recording runs; letting go turns
+  it into text (see below) and types `/s what you said` into WoW's chat (or `/p`, `/g` or `/y`, as chosen). It's one `SendInput`
+  batch (Enter, the line, Enter), which Windows never mixes with your own keys, so a held W
+  can't slip into the message. It's typed only when `Wow.exe` is the window in front; otherwise
+  the chat shows it as not sent. Lines are kept to one line, without `|` (WoW's escape
+  character), and cut at a word to WoW's 255 characters. They're typed the way players type, so
+  you don't look like a bot: sentences start in lower case and drop their full stops, while
+  "I", acronyms (LFG, GG), WoW names and your own names keep their capitals, and `?`, `!` and
+  `...` stay.
+- **Speech to text:** OpenAI's `gpt-4o-transcribe` by default (about a second a line; the
+  recording goes to OpenAI), or the wake word's offline Whisper model on this PC, which is
+  private but often gets names wrong. OpenAI falls back to this PC when it can't be reached.
+  Both are given a prompt of WoW words (places, classes, slang) and your own **names and words**
+  (your character, friends, guild; up to 200 characters), so names are spelled right.
+- **Cora knows:** the chat shows a quiet line ("You in WoW (/s): …", not saved) and she gets a
+  silent note of what you said and that it was for the other players, not her. It works in
+  Standby too, but she isn't told then (there's no voice session to tell).
+- The mouse hook only watches: the click still reaches the game, so leave the middle button
+  unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
+  [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in
+  `app_settings` and apply straight away.
 
 ## Her inner life
 
@@ -1211,13 +1239,14 @@ before anything else.
 | Location | Responsibility |
 | --- | --- |
 | [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
-| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice, attention, chat, feelings, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, the web interface, phone calls (yours, contacts' and task calls), background jobs and sign-ups. Shared constants and helpers are in `shared.py`, which never imports `app.py`. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice, attention, chat, feelings, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, the web interface, phone calls (yours, contacts' and task calls), background jobs, sign-ups and games. Shared constants and helpers are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py), [live_events.py](live_events.py), [backend_work.py](backend_work.py) | The OpenAI Live connection and audio, its events, and pending backend work. |
 | [backend_chat.py](backend_chat.py) | Written conversations with her backend without Live (typing in Standby, Signal, the web page, email, contacts), tools included. |
 | [session_config.py](session_config.py) | Models, voice, her foundation, instructions for every kind of conversation, and the startup sections. |
 | [context_window.py](context_window.py) | What each model holds in context, for the dashboard's context box. |
 | [inactivity.py](inactivity.py), [greeting.py](greeting.py) | Idle timing and the standby heads-up; the opening greeting. |
 | [wake/](wake/), [devices/](devices/) | Local wake detection; microphone, speaker and voice bands. |
+| [game/](game/) | Playing games: the middle-mouse hook, push-to-talk recording and transcription, and typing into the game's chat. |
 | [ui/](ui/) | The chat, composer, Activity, pop-ups, the dashboard and Settings. |
 | [tools/](tools/) | Her own tools, one module each, registered in [tools/__init__.py](tools/__init__.py); [tools/route.py](tools/route.py) routes results back to Live, a written chat or a call. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search and the checks. |

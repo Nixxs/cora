@@ -120,6 +120,44 @@ machine; only short descriptions reach Cora-prime.
   confirmation. Camera and screen awareness, and the on-demand screen tool, each get an
   on/off control like the microphone, off by default, with a visible indicator while active.
 
+### Game awareness (experimental)
+
+On the `readme_update` branch, for World of Warcraft (WoW Forever) first: Cora aware of the game
+as you play, reacting to close calls, deaths, level-ups and chat, and talking about quests and
+lore. One small step at a time, each runnable:
+
+1. **Push-to-talk into the game's chat.** *Built* (see
+   [Playing games](DOCUMENTATION.md#playing-games)); to check in the game: that WoW takes the
+   typed text, and that a held W keeps you running. If WoW ignores the typed characters, paste
+   the line from the clipboard instead (Enter, Ctrl+V, Enter in one batch, restoring the
+   clipboard). The local `base.en` model proved poor at game names, so OpenAI's transcription
+   with a vocabulary prompt is the default; if the first word gets clipped, keep a short
+   buffer of audio from before the press.
+2. **Screen watcher, logging only.** A downscaled screenshot every ~2 s (skipping unchanged
+   frames, slower out of combat, paused when WoW isn't in front or she's in Standby) to
+   OpenAI's Decisions API (`gpt-6-luna`, $0.10 per 1M input tokens, output free) with a fixed
+   set of typed questions: scene (a choice), health (a score), close call, death, level-up, new
+   quest, chat worth reacting to, something surprising (predicates), worth mentioning (a score).
+   Answers, tokens and cost per frame go to Activity, to tune thresholds and see the real cost
+   (estimated $0.20–0.70 an hour).
+3. **Reactions.** A question crossing its threshold on a change (not every frame it stays true)
+   gets one vision call on the same frame for a short description, published as a game event
+   with a short lifetime (a close call is pointless a minute later) through the attention
+   manager, with cooldowns per kind and a chattiness setting.
+4. **`watch_game_for(condition, until)`:** her own yes/no questions added to the watcher's list
+   (such as "fighting a spider called Githyiss?"), at most about 5, expiring, listed in
+   Settings > Game; firing once, as a game event.
+5. **The game as she knows it:** zone, level, target and quest in a short note in her session,
+   refreshed every minute or on a scene change, so she can talk about the quest or lore unasked.
+6. **Log files:** WoW Forever writes `WoWCombatLog-*.txt` with `/combatlog` (in
+   `_forever_/Logs`); still to check how quickly it reaches the disk, and whether `/chatlog`
+   and `QuestCache.log` (quest ids) help. Forever's addons can't read the combat log or health
+   in combat, so no addon.
+
+Later, a **game profile** per game (its process, questions, screen regions, chat command and
+feeds) would let the same parts work for other games; typing into games with kernel
+anti-cheat stays off. Cora never sends input to a game on her own.
+
 ### Installable Cora (paused)
 
 An installer for non-technical users isn't planned for now. If it returns: keep PostgreSQL

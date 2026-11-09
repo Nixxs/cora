@@ -585,6 +585,21 @@ class CoraLive:
         await connection.session.thinking.append(event_id=event_id, delegation_id=None, content=note)
         self.context.note(note)
 
+    async def note_said_in_game(self, text: str, how: str) -> None:
+        """Quietly tell voice Cora what the person just said into the game's chat by push-to-talk
+        (her microphone was muted for it), so she knows without answering it as if it were to her."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            return
+        note = fit_note(
+            f"Silent context, not a request: the person just {how}, by push-to-talk; it was for the other "
+            "players, not you, so don't answer it or mention this note. Keep it in mind, and react only if "
+            f"it's natural later. What they said: {json.dumps(fit_note(text, 300), ensure_ascii=False)}",
+            NOTE_MAX_CHARS,
+        )
+        await connection.session.thinking.append(event_id=f"game_{uuid4().hex}", delegation_id=None, content=note)
+        self.context.note(note)
+
     async def note_where_they_are(self, where: str) -> bool:
         """Tell voice Cora, silently, where the person is talking to her from (the desk, or a device
         on the web page); False if Live isn't connected to be told."""

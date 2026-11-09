@@ -13,6 +13,7 @@ from mail.account import EmailStatus
 from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
+from game.chat_line import CHANNELS as GAME_CHANNELS
 from openai_spend import likely_cora_project
 from phone.twilio import REGIONS
 from services.catalogue import SERVICES
@@ -64,6 +65,40 @@ class GeneralControls:
     forget_admin_key: Callable[[], None] = lambda: None
     spend_project: str = "auto"
     save_spend_project: Callable[[str], None] = lambda project: None
+
+
+@dataclass
+class GameControls:
+    """Settings > Game: push-to-talk into the game's chat; both apply now."""
+
+    push_to_talk: bool = False
+    save_push_to_talk: Callable[[bool], None] = lambda on: None
+    channel: str = "say"
+    save_channel: Callable[[str], None] = lambda channel: None
+    # Speech to text: "openai" or "local"; and the person's own names and words for its spelling.
+    transcription: str = "openai"
+    save_transcription: Callable[[str], None] = lambda choice: None
+    vocabulary: str = ""
+    save_vocabulary: Callable[[str], None] = lambda words: None
+
+
+# The chat channels push-to-talk offers, as Settings shows them.
+GAME_CHANNEL_LABELS = {
+    "say": "Say (/s): players nearby",
+    "party": "Party (/p)",
+    "guild": "Guild (/g)",
+    "yell": "Yell (/y): the whole area",
+}
+PUSH_TO_TALK_HELP = (
+    "Hold the middle mouse button and talk; let go and what you said is typed into World of Warcraft's "
+    "chat, in one go so the keys you're holding don't get mixed in. It's only typed when WoW is the window "
+    "in front. Cora's microphone is muted while you hold it, and she's told quietly what you said. Speech "
+    "is turned into text as chosen below. Leave the middle mouse button unbound in WoW."
+)
+TRANSCRIPTION_LABELS = {
+    "openai": "OpenAI (best with names; the recording goes to OpenAI)",
+    "local": "On this PC (private, but often gets names wrong)",
+}
 
 
 @dataclass
@@ -478,9 +513,11 @@ class ModelSettingsScreen(ModalScreen):
         signal: SignalControls | None = None, email: EmailControls | None = None,
         webhooks: WebhookControls | None = None, web: WebControls | None = None,
         phone: PhoneControls | None = None, general: GeneralControls | None = None,
+        game: GameControls | None = None,
     ) -> None:
         super().__init__()
         self.general = general
+        self.game = game
         self.models = dict(models)
         self.save = save
         self.screen_looking = screen_looking
@@ -524,6 +561,10 @@ class ModelSettingsScreen(ModalScreen):
                             yield Label("Let her look at the screen", classes="settings-label")
                         if self.general is not None:
                             yield from self.compose_general()
+                if self.game is not None:
+                    with TabPane("Game", id="settings-game"):
+                        with VerticalScroll(id="game-scroll"):
+                            yield from self.compose_game()
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
                         with VerticalScroll(id="services-scroll"):
@@ -652,6 +693,30 @@ class ModelSettingsScreen(ModalScreen):
             yield row(entry(value=str(self.webhooks.port), id="webhooks-port", placeholder="8000"),
                       button("Save", "webhooks-save"), button("New secrets", "webhooks-rotate"))
             yield note(WEBHOOK_SECRET_HELP)
+
+    def compose_game(self) -> ComposeResult:
+        yield heading("World of Warcraft")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.game.push_to_talk, id="game-push-to-talk")
+            yield Label("Push-to-talk into the game's chat (middle mouse button)", classes="settings-label")
+        yield note(PUSH_TO_TALK_HELP)
+        yield field("Chat channel", "Where what you say goes.")
+        yield Select([(label, channel) for channel, label in GAME_CHANNEL_LABELS.items() if channel in GAME_CHANNELS],
+                     value=self.game.channel, allow_blank=False, id="game-chat-channel", compact=True)
+        yield field("Speech to text", "With OpenAI, it falls back to this PC when OpenAI can't be reached.")
+        yield Select([(label, choice) for choice, label in TRANSCRIPTION_LABELS.items()],
+                     value=self.game.transcription, allow_blank=False, id="game-transcription", compact=True)
+        yield field("Names and words", "Your character, friends, guild and places, so they're spelled right. "
+                    "Common WoW words are already known.")
+        yield row(entry(value=self.game.vocabulary, id="game-vocabulary", max_length=200,
+                        placeholder="such as Ja Avd, Snazzbot, Githyiss"),
+                  button("Save", "game-vocabulary-save"))
+
+    def save_game_vocabulary(self) -> None:
+        if self.game is not None:
+            words = self.query_one("#game-vocabulary", Input).value
+            self.game.vocabulary = words
+            self.game.save_vocabulary(words)
 
     def compose_general(self) -> ComposeResult:
         yield field("Her voice", "She reconnects with it when you close Settings.")
@@ -1017,6 +1082,11 @@ class ModelSettingsScreen(ModalScreen):
                 self.general.farewell = event.value
                 self.general.save_farewell(event.value)
             return
+        if event.switch.id == "game-push-to-talk":
+            if self.game is not None and event.value != self.game.push_to_talk:
+                self.game.push_to_talk = event.value
+                self.game.save_push_to_talk(event.value)
+            return
         if event.switch.id == "screen-looking":
             if event.value == self.screen_looking:
                 return
@@ -1056,6 +1126,16 @@ class ModelSettingsScreen(ModalScreen):
                 self.general.spend_project = event.value
                 self.general.save_spend_project(event.value)
             return
+        if event.select.id == "game-transcription":
+            if self.game is not None and event.value != self.game.transcription:
+                self.game.transcription = event.value
+                self.game.save_transcription(event.value)
+            return
+        if event.select.id == "game-chat-channel":
+            if self.game is not None and event.value != self.game.channel:
+                self.game.channel = event.value
+                self.game.save_channel(event.value)
+            return
         if event.select.id == "idle-minutes":
             if self.general is not None and event.value != self.general.idle_minutes:
                 self.general.idle_minutes = event.value
@@ -1091,7 +1171,9 @@ class ModelSettingsScreen(ModalScreen):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         event.stop()
-        if event.input.id == "signal-person":
+        if event.input.id == "game-vocabulary":
+            self.save_game_vocabulary()
+        elif event.input.id == "signal-person":
             self.save_person_number()
         elif event.input.id in ("email-client-id", "email-tenant"):
             self.save_email_app()
@@ -1199,7 +1281,9 @@ class ModelSettingsScreen(ModalScreen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         event.stop()
         button = event.button.id or ""
-        if button == "openai-key-save":
+        if button == "game-vocabulary-save":
+            self.save_game_vocabulary()
+        elif button == "openai-key-save":
             self.save_openai_key()
         elif button == "admin-key-save":
             self.save_admin_key()
