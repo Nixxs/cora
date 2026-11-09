@@ -145,6 +145,7 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0063_add_twilio_region.sql",
             "0064_add_game_settings.sql",
             "0065_add_game_transcription.sql",
+            "0066_add_game_watch.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

@@ -203,13 +203,17 @@ class KeyboardPersistence:
         """{"push_to_talk": bool, "channel", "transcription", "vocabulary": str} from Settings > Game."""
         store = AppSettingsStore(self._get_store().engine)
         return {"push_to_talk": store.game_push_to_talk(), "channel": store.game_chat_channel(),
-                "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary()}
+                "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary(),
+                "watch": store.game_watch()}
 
     def save_game_push_to_talk(self, on: bool) -> None:
         AppSettingsStore(self._get_store().engine).set_game_push_to_talk(on)
 
     def save_game_chat_channel(self, channel: str) -> None:
         AppSettingsStore(self._get_store().engine).set_game_chat_channel(channel)
+
+    def save_game_watch(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_watch(on)
 
     def save_game_transcription(self, choice: str) -> None:
         AppSettingsStore(self._get_store().engine).set_game_transcription(choice)

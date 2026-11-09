@@ -133,7 +133,11 @@ lore. One small step at a time, each runnable:
    clipboard). The local `base.en` model proved poor at game names, so OpenAI's transcription
    with a vocabulary prompt is the default; if the first word gets clipped, keep a short
    buffer of audio from before the press.
-2. **Screen watcher, logging only.** A downscaled screenshot every ~2 s (skipping unchanged
+2. **Screen watcher, logging only.** *Built* (see
+   [Playing games](DOCUMENTATION.md#playing-games)); to do in the game: play a session with it on,
+   then read `game-watch.log` against what happened to choose thresholds, see which questions
+   are reliable (health from small unit frames may not be), and trim question wording, which is
+   about half of each frame's 2,100 tokens. A downscaled screenshot every ~2 s (skipping unchanged
    frames, slower out of combat, paused when WoW isn't in front or she's in Standby) to
    OpenAI's Decisions API (`gpt-6-luna`, $0.10 per 1M input tokens, output free) with a fixed
    set of typed questions: scene (a choice), health (a score), close call, death, level-up, new

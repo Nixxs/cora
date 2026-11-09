@@ -80,6 +80,9 @@ class GameControls:
     save_transcription: Callable[[str], None] = lambda choice: None
     vocabulary: str = ""
     save_vocabulary: Callable[[str], None] = lambda words: None
+    # Watching the game through the Decisions API (recording its answers only, for now).
+    watch: bool = False
+    save_watch: Callable[[bool], None] = lambda on: None
 
 
 # The chat channels push-to-talk offers, as Settings shows them.
@@ -94,6 +97,12 @@ PUSH_TO_TALK_HELP = (
     "chat, in one go so the keys you're holding don't get mixed in. It's only typed when WoW is the window "
     "in front. Cora's microphone is muted while you hold it, and she's told quietly what you said. Speech "
     "is turned into text as chosen below. Leave the middle mouse button unbound in WoW."
+)
+WATCH_HELP = (
+    "While WoW is the window in front, a screenshot every 2 seconds goes to OpenAI's Decisions API, "
+    "which answers set questions about it (fighting? health? a close call? a level-up?). Unchanged "
+    "frames are skipped and none are saved. For now it only records: notable answers and the cost "
+    "appear in Activity, every answer in game-watch.log. At most about $0.40 an hour, less when little changes."
 )
 TRANSCRIPTION_LABELS = {
     "openai": "OpenAI (best with names; the recording goes to OpenAI)",
@@ -711,6 +720,11 @@ class ModelSettingsScreen(ModalScreen):
         yield row(entry(value=self.game.vocabulary, id="game-vocabulary", max_length=200,
                         placeholder="such as Ja Avd, Snazzbot, Githyiss"),
                   button("Save", "game-vocabulary-save"))
+        yield heading("Watching the game")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.game.watch, id="game-watch")
+            yield Label("Watch the game (recording only, for now)", classes="settings-label")
+        yield note(WATCH_HELP)
 
     def save_game_vocabulary(self) -> None:
         if self.game is not None:
@@ -1081,6 +1095,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.farewell:
                 self.general.farewell = event.value
                 self.general.save_farewell(event.value)
+            return
+        if event.switch.id == "game-watch":
+            if self.game is not None and event.value != self.game.watch:
+                self.game.watch = event.value
+                self.game.save_watch(event.value)
             return
         if event.switch.id == "game-push-to-talk":
             if self.game is not None and event.value != self.game.push_to_talk:

@@ -45,6 +45,9 @@ class GameMixin:
         if saved.get("push_to_talk") is True:
             self.game_push_to_talk = True
             self.start_push_to_talk()
+        if saved.get("watch") is True:
+            self.game_watch = True
+            self.start_game_watch()
 
     def start_push_to_talk(self) -> None:
         if self.closing or (self.game_watcher is not None and self.game_watcher.running):

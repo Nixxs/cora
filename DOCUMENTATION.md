@@ -371,8 +371,9 @@ wake her. The queue is in memory only, and a failed send is reported, not retrie
 
 ### Playing games
 
-Experimental, for World of Warcraft (Settings > Game). Awareness of the game is planned (see
-the [roadmap](ROADMAP.md#game-awareness-experimental)); what works now is push-to-talk.
+Experimental, for World of Warcraft (Settings > Game). Awareness of the game is being built (see
+the [roadmap](ROADMAP.md#game-awareness-experimental)); what works now is push-to-talk, and
+watching the game, which so far only records what it sees.
 
 - **Push-to-talk into the game's chat:** with it switched on, hold the middle mouse button and
   talk. While it's held, her microphone is muted and a separate recording runs; letting go turns
@@ -392,6 +393,17 @@ the [roadmap](ROADMAP.md#game-awareness-experimental)); what works now is push-t
 - **Cora knows:** the chat shows a quiet line ("You in WoW (/s): …", not saved) and she gets a
   silent note of what you said and that it was for the other players, not her. It works in
   Standby too, but she isn't told then (there's no voice session to tell).
+- **Watching the game** (off by default; recording only for now): while `Wow.exe` is the window
+  in front, a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
+  OpenAI's Decisions API (`gpt-6-luna`) with fixed typed questions in
+  [game/watcher.py](game/watcher.py): what's happening (combat, exploring, town, dead, menu),
+  how full your health is, and the chances of a close call, death, level-up, quest moment, chat
+  worth reacting to and something surprising, plus how much a friend watching would want to
+  comment. A frame that's barely changed from the last one sent is skipped (one goes anyway
+  every 30 seconds); none are saved. Every answer goes to `game-watch.log` (a new one each
+  launch, next to `app.py`), and Activity shows a line when the scene changes or something is
+  likely, and the frames, tokens and cost every minute. A frame is about 2,100 tokens and a
+  quarter of a second once warm: at most about $0.40 an hour. Nothing reaches Cora yet.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in

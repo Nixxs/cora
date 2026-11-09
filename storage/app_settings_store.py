@@ -144,6 +144,13 @@ class AppSettingsStore:
             raise ValueError(f"Unknown game chat channel: {channel}")
         self._set("game_chat_channel", channel)
 
+    def game_watch(self) -> bool:
+        """Whether she watches the game through the Decisions API; off unless switched on."""
+        return self._switch("game_watch") is True
+
+    def set_game_watch(self, on: bool) -> None:
+        self._set("game_watch", "on" if on else "off")
+
     def game_transcription(self) -> str:
         """How push-to-talk turns speech into text: 'openai' (unless another was chosen) or 'local'."""
         saved = self._get("game_transcription")

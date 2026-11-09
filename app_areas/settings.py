@@ -101,6 +101,7 @@ class SettingsMixin:
                     channel=self.game_channel, save_channel=self.save_game_chat_channel,
                     transcription=self.game_transcription, save_transcription=self.save_game_transcription,
                     vocabulary=self.game_vocabulary, save_vocabulary=self.save_game_vocabulary,
+                    watch=self.game_watch, save_watch=self.save_game_watch,
                 ),
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,

@@ -33,14 +33,16 @@ GAME_WORDS = (
     "Duskwood", "Stranglethorn", "Night Elf", "Kaldorei", "druid", "Moonkin", "Feral", "Guardian",
     "Restoration", "Balance", "hunter", "paladin", "warlock", "rogue", "shaman", "mage", "priest", "warrior",
     "Horde", "Alliance", "quest", "questline", "mob", "mobs", "aggro", "pull", "tank", "healer", "DPS", "LFG",
-    "dungeon", "raid", "loot", "ninja", "buff", "debuff", "rez", "AFK", "BRB", "GG", "lol", "ty", "np",
+    "dungeon", "raid", "buff", "debuff", "rez", "AFK", "BRB",
 )
+# Short chat slang ("GG", "lol", "ty", "np", "loot") is left out on purpose: the model leans towards
+# whatever the prompt contains, so it turned ordinary speech ("G'day") into slang nobody said.
 
 
 def vocabulary(own_words: str = "") -> str:
     """The prompt that steers spelling: the person's own words first, then the game's."""
     own = own_words.strip()[:MAX_VOCABULARY_CHARS]
-    return ("World of Warcraft chat, said by a player to other players. "
+    return ("Spoken by an Australian player in World of Warcraft. "
             + (f"Names: {own}. " if own else "") + "Words: " + ", ".join(GAME_WORDS) + ".")
 
 
