@@ -17,8 +17,10 @@ from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
-from ui.context_view import ContextScreen
-from ui.meters import LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, ContextMeters, Meters, ToneRibbon
+from ui.context_view import ContextScreen, DetailScreen
+from ui.meters import (
+    LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, ContextMeters, Meters, Openable, ReadableMeters, SpendChart, ToneRibbon,
+)
 
 
 # A bar jumps straight up to a louder sound, then falls this much per tick (20 a second).
@@ -26,6 +28,8 @@ FALL_PER_TICK = 0.08
 
 # How often the open dashboard re-reads the database.
 REFRESH_SECONDS = 30
+# OpenAI's costs move slowly (a few hours behind), so the spend chart asks far less often.
+SPEND_REFRESH_SECONDS = 30 * 60
 
 RELATIONSHIP_VALUES = ("trust", "warmth", "familiarity")
 
@@ -106,24 +110,44 @@ def party_state(party, now) -> tuple[str, str]:
     return f"nudge {party.nudges + 1}/{TASK_NUDGES_MAX} {next_check(party.due_at, now)}", ""
 
 
+def task_text(task, now, full: bool = False) -> Text:
+    """One open task: its goal, where it stands, each person's next check and its latest step.
+
+    In full (its pop-up), the latest step isn't cut short and each person's brief follows.
+    """
+    lines = Text("● ", style=TASK_STATUS_STYLES.get(task.status, LABEL_STYLE))
+    lines.append(task.goal)
+    state = "needs you" if task.status == "needs_person" else "waiting"
+    stale = f" · back to you {next_check(task.stale_at, now)}" if task.stale_at else ""
+    lines.append(f"\n  {state} · started {ago(task.created_at, now)}{stale}", style=LABEL_STYLE)
+    width = max((len(party.name) for party in task.parties), default=0)
+    for party in task.parties:
+        lines.append(f"\n  {party.name:<{width}}  ", style=LABEL_STYLE)
+        lines.append(*party_state(party, now))
+    if task.latest_step:
+        step = " ".join(task.latest_step.split())
+        if not full and len(step) > STEP_PREVIEW_CHARS:
+            step = step[:STEP_PREVIEW_CHARS - 1] + "…"
+        lines.append(f"\n  ↳ {step}", style=TRACK_STYLE if not full else "")
+    if full:
+        for party in task.parties:
+            if party.brief:
+                lines.append(f"\n\nBrief for {party.name}:\n{party.brief.strip()}")
+    return lines
+
+
+def task_detail(task, now) -> tuple[str, str]:
+    """A task's pop-up: its goal as the title, and the whole task as text."""
+    return f"Task · {task.goal}", task_text(task, now, full=True).plain
+
+
 def task_lines(tasks, now) -> Text:
-    """Each open task: its goal, where it stands, each person's next check and its latest step."""
+    """Every open task, a blank line between them."""
     lines = Text()
     for index, task in enumerate(tasks):
-        lines.append(("\n\n" if index else "") + "● ", style=TASK_STATUS_STYLES.get(task.status, LABEL_STYLE))
-        lines.append(task.goal)
-        state = "needs you" if task.status == "needs_person" else "waiting"
-        stale = f" · back to you {next_check(task.stale_at, now)}" if task.stale_at else ""
-        lines.append(f"\n  {state} · started {ago(task.created_at, now)}{stale}", style=LABEL_STYLE)
-        width = max((len(party.name) for party in task.parties), default=0)
-        for party in task.parties:
-            lines.append(f"\n  {party.name:<{width}}  ", style=LABEL_STYLE)
-            lines.append(*party_state(party, now))
-        if task.latest_step:
-            step = " ".join(task.latest_step.split())
-            if len(step) > STEP_PREVIEW_CHARS:
-                step = step[:STEP_PREVIEW_CHARS - 1] + "…"
-            lines.append(f"\n  ↳ {step}", style=TRACK_STYLE)
+        if index:
+            lines.append("\n\n")
+        lines.append_text(task_text(task, now))
     return lines or Text("no open tasks", style=TRACK_STYLE)
 
 
@@ -164,8 +188,11 @@ def sign_up_lines(sign_ups, now) -> Text:
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
-    def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context) -> None:
+    def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
+                 load_spend=None) -> None:
         super().__init__()
+        # Reads (Spend or None, message, hint) for the spend chart off the UI thread; None leaves it out.
+        self.load_spend = load_spend
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
         # or an empty tuple for silence.
         self.voice_bands = voice_bands
@@ -231,7 +258,7 @@ class DashboardScreen(Screen):
                     yield Static("latest", classes="dashboard-label")
                     # Scrolls, so a long reason can be read in full.
                     with VerticalScroll(id="feeling-latest-scroll"):
-                        yield Static(id="feeling-latest")
+                        yield Openable(id="feeling-latest")
                 with Vertical(id="memories-box", classes="dashboard-box"):
                     yield Meters(id="memory-kinds", placeholder="loading…")
                     yield Static("new per day", classes="dashboard-label")
@@ -241,11 +268,12 @@ class DashboardScreen(Screen):
                     yield Static("waiting", classes="dashboard-label")
                     yield Static(id="memory-pending")
                 with Vertical(id="interests-box", classes="dashboard-box"):
-                    yield Meters(id="interest-strengths", placeholder="loading…")
+                    # Click an interest for what it is, how it emerged and her latest finding on it.
+                    yield ReadableMeters(id="interest-strengths", placeholder="loading…")
                     yield Static("latest finding", classes="dashboard-label")
                     # Scrolls, so a long finding can be read in full.
                     with VerticalScroll(id="interest-finding-scroll"):
-                        yield Static(id="interest-finding")
+                        yield Openable(id="interest-finding")
                 with Vertical(id="identity-box", classes="dashboard-box"):
                     # Scrolls, so every trait can be read in full.
                     with VerticalScroll(id="identity-scroll"):
@@ -267,12 +295,15 @@ class DashboardScreen(Screen):
                     yield Static("recent tone", classes="dashboard-label")
                     yield ToneRibbon(id="relationship-tones")
                 with Vertical(id="conversations-box", classes="dashboard-box"):
+                    if self.load_spend is not None:
+                        yield SpendChart(id="spend-chart")
                     yield Static("your messages per day", classes="dashboard-label")
                     yield CalendarHeatmap(id="conversation-days")
                 with Vertical(id="tasks-box", classes="dashboard-box"):
                     # Scrolls, so every open task can be read.
                     with VerticalScroll(id="tasks-scroll"):
-                        yield Static(id="task-list")
+                        # One Openable per task, so a click opens that task in full.
+                        yield Vertical(id="task-list")
                         yield Static("sign-ups", id="sign-up-label", classes="dashboard-label")
                         yield Static(id="sign-up-list")
                 with Vertical(id="context-box", classes="dashboard-box"):
@@ -299,8 +330,19 @@ class DashboardScreen(Screen):
         self.query_one("#dashboard-input", ChatComposer).focus()
         self.refresh_snapshot()
         self.set_interval(REFRESH_SECONDS, self.refresh_snapshot)
+        if self.load_spend is not None:
+            self.refresh_spend()
+            self.set_interval(SPEND_REFRESH_SECONDS, self.refresh_spend)
         self.show_context()
         self.set_interval(1, self.show_context)
+
+    @work(group="dashboard-spend", exclusive=True)
+    async def refresh_spend(self) -> None:
+        spend, message, hint = await self.load_spend()
+        chart = self.query_one("#spend-chart", SpendChart)
+        # A failed refresh keeps the last chart it had rather than blanking it.
+        if spend is not None or chart.spend is None:
+            chart.show(spend, message, hint)
 
     @work(group="dashboard-snapshot")
     async def refresh_snapshot(self) -> None:
@@ -352,9 +394,10 @@ class DashboardScreen(Screen):
         )
         latest = self.snapshot.latest_finding
         # Text rather than a string, so brackets in the model's finding are not read as markup.
-        self.query_one("#interest-finding", Static).update(
+        self.query_one("#interest-finding", Openable).show(
             Text.assemble((latest[0], "#7fb8d8"), ": ", latest[1]) if latest
-            else Text("nothing found yet", style=TRACK_STYLE)
+            else Text("nothing found yet", style=TRACK_STYLE),
+            (f"Latest finding · {latest[0]}", latest[1]) if latest else None,
         )
         traits = Text()
         for index, trait in enumerate(self.snapshot.traits):
@@ -368,12 +411,19 @@ class DashboardScreen(Screen):
         self.query_one("#desire-list", Static).update(desire_lines(self.snapshot.desires))
         now = datetime.now(timezone.utc)
         # Text, so brackets in a reason are not read as markup.
-        self.query_one("#feeling-latest", Static).update(latest_feeling_line(self.snapshot.latest_feeling, now))
+        reaction = self.snapshot.latest_feeling
+        self.query_one("#feeling-latest", Openable).show(
+            latest_feeling_line(reaction, now),
+            None if reaction is None else (
+                f"Feeling {FEELING_WORDS[reaction.feeling]} ({reaction.strength}) · {ago(reaction.at, now)}",
+                reaction.reason,
+            ),
+        )
         heatmap = self.query_one("#conversation-days", CalendarHeatmap)
         heatmap.today_row = now.astimezone().weekday()
         heatmap.days = self.snapshot.message_days
         # Text, so brackets in a goal or a step are not read as markup.
-        self.query_one("#task-list", Static).update(task_lines(self.snapshot.tasks, now))
+        self.show_tasks(now)
         self.query_one("#tasks-box").border_subtitle = f"{len(self.snapshot.tasks)} open" if self.snapshot.tasks else ""
         self.query_one("#sign-up-label").display = bool(self.snapshot.sign_ups)
         self.query_one("#sign-up-list", Static).update(sign_up_lines(self.snapshot.sign_ups, now))
@@ -387,6 +437,22 @@ class DashboardScreen(Screen):
             if job in self.snapshot.next_due:
                 runs.append(" " * (10 - len(last)) + until(self.snapshot.next_due[job], now), style=LABEL_STYLE)
         self.query_one("#background-runs", Static).update(runs)
+
+    def show_tasks(self, now) -> None:
+        """One Openable per open task (or a line saying there are none), reused between refreshes."""
+        box = self.query_one("#task-list", Vertical)
+        tasks = self.snapshot.tasks
+        wanted = max(len(tasks), 1)
+        shown = list(box.query(Openable).results(Openable))
+        if len(shown) != wanted:
+            box.remove_children()
+            shown = [Openable(classes="task-item") for _ in range(wanted)]
+            box.mount_all(shown)
+        if not tasks:
+            shown[0].show(Text("no open tasks", style=TRACK_STYLE))
+            return
+        for item, task in zip(shown, tasks):
+            item.show(task_text(task, now), task_detail(task, now))
 
     def show_context(self) -> None:
         started = bool(self.context.startup)
@@ -414,6 +480,15 @@ class DashboardScreen(Screen):
             )
 
     def on_context_meters_selected(self, event: ContextMeters.Selected) -> None:
+        if event.meters.id == "interest-strengths":
+            # The rows follow the snapshot, so the clicked row is that interest.
+            if event.index < len(self.snapshot.interests):
+                title, strength, rising = self.snapshot.interests[event.index]
+                text = self.snapshot.interest_details.get(title, "")
+                self.app.push_screen(DetailScreen(
+                    f"Interest · {title} · {strength:.0%} {'rising' if rising else 'fading'}", text or title,
+                ))
+            return
         items = self.context.items(event.meters.id.removeprefix("context-"))
         # The rows are redrawn every second, so an item may have gone since the click.
         if event.index < len(items):

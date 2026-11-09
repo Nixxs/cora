@@ -5,7 +5,7 @@ import json
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from storage.conversation_store import ConversationStore
@@ -112,7 +112,7 @@ def main() -> None:
     parser.add_argument("conversation_id", type=UUID, help="A closed or interrupted conversation UUID")
     parser.add_argument("--model", default=BACKEND_MODEL, help="Responses model (defaults to Cora's backend model)")
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

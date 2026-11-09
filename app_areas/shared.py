@@ -3,10 +3,13 @@
 from datetime import timedelta
 import json
 
-from storage.client_store import CONVERSATION_GAP
+from storage.client_store import conversation_gap
 
-# A shorter standby continues the same conversation; a longer one ends it so memories form.
-CONVERSATION_END_STANDBY_SECONDS = CONVERSATION_GAP.total_seconds()
+
+def conversation_end_standby_seconds() -> float:
+    """A shorter standby continues the same conversation; a longer one ends it so memories form."""
+    return conversation_gap().total_seconds()
+
 
 # Nudges for a quiet party: at most TASK_NUDGES_MAX, only in these local hours, and only once their
 # chat has been quiet this long, so one never lands mid-conversation.

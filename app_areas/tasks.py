@@ -88,7 +88,7 @@ class TasksMixin:
                     text = await self.backend_chat.reply(
                         content=[{"type": "input_text", "text": COORDINATOR_NOTE + json.dumps(
                             {"news": news, "task": task}, ensure_ascii=False)}],
-                        history=[], sections=await self.person_sections(feelings=False), model=self.live.delegation_model,
+                        history=[], sections=await self.person_sections(feelings=False), model=await self.contacts_model(),
                         route=self.coordinator_route(lapsed),
                     )
                 except Exception as error:
@@ -251,7 +251,7 @@ class TasksMixin:
             history = await self.conversation_persistence.call_database(self.persistence.load_client_history, conversation_id)
             text = await self.backend_chat.reply(
                 content=[{"type": "input_text", "text": NUDGE_NOTE.format(task_id=party.task_id)}], history=history,
-                sections=await self.client_sections(client), model=self.live.delegation_model,
+                sections=await self.client_sections(client), model=await self.contacts_model(),
                 route=BackendRoute(excluded=frozenset(self.tools.names())),
                 extra_instructions=client_chat_instructions(client.name, self.live.person_name,
                                                             self.live.own_name),
@@ -288,7 +288,7 @@ class TasksMixin:
             text = (await self.backend_chat.reply(
                 content=[{"type": "input_text", "text": EMAIL_NUDGE_NOTE.format(task_id=thread.task_id)}],
                 history=[email_history_item(message, own) for message in messages if not is_bounce(message)],
-                sections=await self.email_party_sections(thread), model=self.live.delegation_model,
+                sections=await self.email_party_sections(thread), model=await self.contacts_model(),
                 route=BackendRoute(excluded=frozenset(self.tools.names())),
                 extra_instructions=email_party_instructions(who, thread.address, self.live.person_name,
                                                             self.live.own_name),

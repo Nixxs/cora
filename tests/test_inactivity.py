@@ -188,12 +188,16 @@ class InactivityControllerTests(unittest.TestCase):
 
 
 class InactivityTests(unittest.IsolatedAsyncioTestCase):
-    async def test_disabled_or_invalid_configuration_creates_no_timer(self):
+    async def test_disabled_or_invalid_configuration_turns_it_off(self):
+        # The check keeps running (Settings may turn it on), but does nothing while off.
         for value in ("0", "invalid"):
             with self.subTest(value=value), patch.dict("os.environ", {"CORA_IDLE_TIMEOUT_SECONDS": value}):
                 async with running_app() as (app, pilot):
                     self.assertEqual(app.inactivity.timeout_seconds, 0)
-                    self.assertIsNone(app.idle_standby_timer)
+                    with patch.object(app, "action_standby") as standby:
+                        app.inactivity.last_activity = -10_000
+                        app.check_inactivity()
+                    standby.assert_not_called()
                     if value == "invalid":
                         self.assertIn("automatic standby disabled", "\n".join(app.activity.entries))
 

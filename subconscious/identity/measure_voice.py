@@ -15,7 +15,7 @@ from datetime import datetime
 import json
 import sys
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 from sqlalchemy import Engine, func, select
 
@@ -133,7 +133,7 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.limit <= MAX_LIMIT:
         parser.error(f"--limit must be between 1 and {MAX_LIMIT}")
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

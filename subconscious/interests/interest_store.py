@@ -13,7 +13,7 @@ import sys
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from sqlalchemy import Engine, and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 from sqlalchemy.orm import Session
@@ -517,7 +517,7 @@ class InterestStore:
 
 
 def main() -> None:
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

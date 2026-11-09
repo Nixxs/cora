@@ -118,11 +118,21 @@ def capture_jpeg() -> bytes:
     return buffer.getvalue()
 
 
+# The model every look uses (the screen, look_again, pasted and sent photos): Settings > Models >
+# Looking at images. The app sets it when models load and when it's changed there.
+image_model = BACKEND_MODEL
+
+
+def set_image_model(model: str) -> None:
+    global image_model
+    image_model = model
+
+
 def look(question: str, image: bytes, *, mime: str = "image/jpeg", instructions: str = LOOK_INSTRUCTIONS) -> str:
     image_url = f"data:{mime};base64," + base64.b64encode(image).decode("ascii")
     with OpenAI(max_retries=0) as client:
         response = client.responses.create(
-            model=BACKEND_MODEL,
+            model=image_model,
             instructions=instructions,
             input=[{
                 "role": "user",

@@ -6,8 +6,9 @@
 
 Database backups are pg_dump snapshots, consistent while the database runs, restorable onto
 any fresh install. Signal keys are archived with signal-cli paused for a moment. The newest
-KEEP of each are kept. Set CORA_BACKUP_COPY_DIR in .env to also copy each backup to a second
-folder, such as another disk. Backups hold every private conversation: keep them private.
+KEEP of each are kept. Choose a second folder in Settings > General (or, until then, set
+CORA_BACKUP_COPY_DIR in .env) to also copy each backup there, such as another disk. Backups hold
+every private conversation: keep them private.
 """
 
 import argparse
@@ -109,19 +110,38 @@ def prune(folder: Path, pattern: str, keep: int = KEEP) -> list[Path]:
     return removed
 
 
-def copy_folder() -> Path | None:
-    load_dotenv(ROOT / ".env")
-    value = os.getenv("CORA_BACKUP_COPY_DIR", "").strip()
-    return Path(value) if value else None
+def saved_copy_folder() -> str | None:
+    """The folder chosen in Settings > General ("" for none), or None if unset or unreadable."""
+    try:
+        from storage.app_settings_store import AppSettingsStore
+        from storage.database import build_engine
+
+        engine = build_engine()
+        try:
+            return AppSettingsStore(engine).backup_copy_dir()
+        finally:
+            engine.dispose()
+    except Exception:
+        # Without the database (or the setting), .env still applies.
+        return None
 
 
-def copy_elsewhere(paths: list[Path]) -> Path | None:
+def copy_folder(saved: str | None = None) -> Path | None:
+    """The second folder: Settings' choice ("" for none), else CORA_BACKUP_COPY_DIR from .env."""
+    if saved is None:
+        load_dotenv(ROOT / ".env")
+        saved = os.getenv("CORA_BACKUP_COPY_DIR", "")
+    saved = saved.strip()
+    return Path(saved) if saved else None
+
+
+def copy_elsewhere(paths: list[Path], saved: str | None = None) -> Path | None:
     """Copy the new backups to the second folder, if one is set, and prune there too."""
-    folder = copy_folder()
+    folder = copy_folder(saved)
     if folder is None:
         return None
     if not folder.is_dir():
-        raise BackupError(f"CORA_BACKUP_COPY_DIR is not a folder that exists: {folder}")
+        raise BackupError(f"The second backup folder doesn't exist: {folder}")
     for path in paths:
         shutil.copy2(path, folder / path.name)
     prune(folder, DATABASE_PATTERN)
@@ -139,15 +159,19 @@ def daily_backup_due(now: datetime, folder: Path = BACKUPS) -> bool:
     return latest is None or now - datetime.fromtimestamp(latest.stat().st_mtime) >= DAILY
 
 
-def run_backup(include_signal: bool = True, now: datetime | None = None) -> tuple[list[Path], Path | None]:
-    """Back up, prune old ones, and copy to the second folder; returns (new backups, where copied)."""
+def run_backup(
+    include_signal: bool = True, now: datetime | None = None, copy_to: str | None = None,
+) -> tuple[list[Path], Path | None]:
+    """Back up, prune old ones, and copy to the second folder; returns (new backups, where copied).
+
+    copy_to is Settings' second folder ("" for none); None uses .env's."""
     now = now or datetime.now()
     made = [backup_database(now)]
     if include_signal and (signal := backup_signal(now)) is not None:
         made.append(signal)
     prune(BACKUPS, DATABASE_PATTERN)
     prune(BACKUPS, SIGNAL_PATTERN)
-    return made, copy_elsewhere(made)
+    return made, copy_elsewhere(made, copy_to)
 
 
 def restore_database(path: Path) -> None:
@@ -186,7 +210,7 @@ def main() -> None:
             restore_database(args.file)
             print("Restored. Start Cora as usual.")
             return
-        made, copied = run_backup(include_signal=not args.no_signal)
+        made, copied = run_backup(include_signal=not args.no_signal, copy_to=saved_copy_folder())
         for path in made:
             print(f"Saved {path.relative_to(ROOT)}  ({path.stat().st_size / 1_000_000:.1f} MB)")
         if copied:

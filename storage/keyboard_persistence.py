@@ -11,6 +11,7 @@ from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
 from .database import build_engine
 from .model_settings_store import ModelSettingsStore
 from .people_store import PeopleStore
+from .app_settings_store import AppSettingsStore
 from .key_details_store import KeyDetailsStore
 from .self_image_store import SelfImageStore
 from .service_settings_store import ServiceSettingsStore
@@ -156,6 +157,60 @@ class KeyboardPersistence:
 
     def load_delegation_model(self) -> str:
         return ModelSettingsStore(self._get_store().engine).model_for("delegation")
+
+    def load_voice(self) -> str:
+        return AppSettingsStore(self._get_store().engine).voice()
+
+    def save_voice(self, voice: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_voice(voice)
+
+    def load_start_mode(self) -> str:
+        return AppSettingsStore(self._get_store().engine).start_mode()
+
+    def save_start_mode(self, mode: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_start_mode(mode)
+
+    def load_standby_settings(self) -> dict:
+        """{"idle_minutes", "farewell", "wake_word"}: each None when never set in Settings."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"idle_minutes": store.idle_minutes(), "farewell": store.standby_farewell(),
+                "wake_word": store.wake_word()}
+
+    def save_idle_minutes(self, minutes: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_idle_minutes(minutes)
+
+    def save_standby_farewell(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_standby_farewell(on)
+
+    def save_wake_word(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_wake_word(on)
+
+    def load_conversation_gap(self) -> int | None:
+        """Minutes of quiet that end a conversation; None when never set in Settings."""
+        return AppSettingsStore(self._get_store().engine).conversation_gap()
+
+    def save_conversation_gap(self, minutes: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_conversation_gap(minutes)
+
+    def load_twilio_region(self) -> str | None:
+        """The Twilio region for calls she places; None when never set in Settings."""
+        return AppSettingsStore(self._get_store().engine).twilio_region()
+
+    def save_twilio_region(self, code: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_twilio_region(code)
+
+    def load_backup_copy_dir(self) -> str | None:
+        """The second backup folder, "" for none, or None when never set in Settings."""
+        return AppSettingsStore(self._get_store().engine).backup_copy_dir()
+
+    def save_backup_copy_dir(self, folder: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_backup_copy_dir(folder)
+
+    def load_spend_project(self) -> str | None:
+        return AppSettingsStore(self._get_store().engine).spend_project()
+
+    def save_spend_project(self, project: str | None) -> None:
+        AppSettingsStore(self._get_store().engine).set_spend_project(project)
 
     def load_models(self) -> dict:
         return ModelSettingsStore(self._get_store().engine).models()

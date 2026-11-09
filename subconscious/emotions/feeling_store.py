@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from storage.database import build_engine
 from storage.models import ConversationRecord, FeelingEventRecord
 from subconscious.emotions.feeling_rules import (
-    LOOKBACK, MAX_PER_CONVERSATION, REASON_MAX_CHARS, SAME_FEELING_GAP, FeelingNow, Reaction, feelings_now,
+    LOOKBACK, MAX_PER_CONVERSATION, SAME_FEELING_GAP, STORED_REASON_MAX_CHARS, FeelingNow, Reaction, feelings_now,
     feelings_state, levels_at, validate_reaction,
 )
 
@@ -33,7 +33,7 @@ class FeelingStore:
         reason = " ".join(reason.split())
         if not reason:
             raise ValueError("A feeling needs a reason")
-        reason = reason[:REASON_MAX_CHARS]
+        reason = reason[:STORED_REASON_MAX_CHARS]
         with Session(self.engine, expire_on_commit=False) as session, session.begin():
             if conversation_id is not None:
                 # Locking the conversation keeps two reports at once from both slipping under the limits.

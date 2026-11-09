@@ -21,7 +21,7 @@ import json
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 from sqlalchemy import Engine, func, select, text, update
 from sqlalchemy.orm import Session
@@ -245,7 +245,7 @@ def release_opportunity_now(opportunity: Opportunity) -> bool:
 
 
 def main() -> None:
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

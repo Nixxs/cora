@@ -1,6 +1,6 @@
 """Everything the dashboard shows, read together off the UI thread."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from sqlalchemy import Engine, func, select
@@ -99,6 +99,8 @@ class DashboardSnapshot:
     feelings: tuple[tuple[str, tuple[float, ...], bool], ...] = ()
     # Her newest reaction in that span, or None.
     latest_feeling: Reaction | None = None
+    # Each live interest's full text, by its title as shown in `interests`.
+    interest_details: dict[str, str] = field(default_factory=dict)
 
 
 def last_runs(engine: Engine) -> dict[str, datetime | None]:
@@ -151,27 +153,49 @@ def recent_feelings(engine: Engine, now: datetime) -> tuple[
             shown[-1] if shown else None)
 
 
-def live_interests(engine: Engine, now: datetime) -> tuple[
-    tuple[tuple[str, float, bool], ...], tuple[str, str] | None,
-]:
-    """The live interests, strongest first, and the newest finding on any of them."""
-    store = InterestStore(engine)
-    live = {}
-    titles = {}
+def _live(store: InterestStore, now: datetime) -> list[tuple]:
+    """(interest, title as shown, strength settled to now, rising) for each live interest."""
+    live = []
     for interest in store.list_interests():
         # Read-time settling only, like Cora's startup context; nothing is saved.
         strength, status = settle(interest.strength, interest.strength_at, interest.status, now)
         if status != "dormant":
             grown_at = interest.last_reinforced_at or interest.created_at
-            titles[interest.id] = interest.title
             # Her own interests, sparked by her exploring rather than by the person, are marked.
             shown = f"{OWN_MARK} {interest.title}" if interest.origin == "own" else interest.title
-            live[interest.id] = (shown, strength, now - grown_at <= RISING_WINDOW)
-    findings = store.latest_findings(list(live)) if live else {}
+            live.append((interest, shown, strength, now - grown_at <= RISING_WINDOW))
+    return live
+
+
+def live_interests(engine: Engine, now: datetime) -> tuple[
+    tuple[tuple[str, float, bool], ...], tuple[str, str] | None,
+]:
+    """The live interests, strongest first, and the newest finding on any of them."""
+    store = InterestStore(engine)
+    live = _live(store, now)
+    titles = {interest.id: interest.title for interest, *_ in live}
+    findings = store.latest_findings(list(titles)) if live else {}
     # Each finding is (text, found_at); keep the most recently found.
     newest = max(findings.items(), key=lambda item: item[1][1], default=None)
     latest = (titles[newest[0]], newest[1][0]) if newest else None
-    return tuple(sorted(live.values(), key=lambda item: item[1], reverse=True)), latest
+    rows = [(shown, strength, rising) for _, shown, strength, rising in live]
+    return tuple(sorted(rows, key=lambda item: item[1], reverse=True)), latest
+
+
+def interest_details(engine: Engine, now: datetime) -> dict[str, str]:
+    """Each live interest's full text for the dashboard's pop-up, by its title as shown: what it
+    is, how it emerged and her latest finding on it."""
+    store = InterestStore(engine)
+    live = _live(store, now)
+    findings = store.latest_findings([interest.id for interest, *_ in live]) if live else {}
+    details = {}
+    for interest, shown, _, _ in live:
+        parts = [interest.description.strip(), f"How it emerged: {interest.why_emerged.strip()}"]
+        if interest.id in findings:
+            finding, found_at = findings[interest.id]
+            parts.append(f"Latest finding ({found_at:%d %b %Y}): {finding.strip()}")
+        details[shown] = "\n\n".join(part for part in parts if part)
+    return details
 
 
 def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
@@ -192,6 +216,7 @@ def read_dashboard_snapshot(engine: Engine, now: datetime) -> DashboardSnapshot:
         memory_pending=memories.pending_counts(),
         interests=interests,
         latest_finding=latest_finding,
+        interest_details=interest_details(engine, now),
         last_runs=runs,
         next_due=next_due(engine, runs),
         message_days=tuple(ConversationStore(engine).daily_message_counts(now, CALENDAR_DAYS)),

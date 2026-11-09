@@ -10,7 +10,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 from sqlalchemy import Engine
 
@@ -170,7 +170,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         parser.error("--limit must be at least 1")
-    load_dotenv()
+    load_environment()
     count = 0
     try:
         engine = build_engine()

@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 import json
 import sys
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from session_config import BACKEND_MODEL
@@ -489,7 +489,7 @@ def run_exploration_cycle(*, should_stop: Callable[[], bool], browser: BrowserAc
         if should_stop():
             return None
         engine = build_engine()
-        model = ModelSettingsStore(engine).model_for("subconscious")
+        model = ModelSettingsStore(engine).model_for("exploring")
         with OpenAI(max_retries=0) as client:
             outcome = explore_next(ExplorationStore(engine), client, model=model, now=utc_now(), browser=browser)
     except Exception as error:
@@ -504,7 +504,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Let Cora explore one of her interests, wander, or take a step toward a desire, within the limits.")
     parser.add_argument("--model", default=BACKEND_MODEL)
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

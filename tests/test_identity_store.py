@@ -59,7 +59,7 @@ class IdentityStoreValidationTests(unittest.TestCase):
 class IdentityCliTests(unittest.TestCase):
     def run_cli(self, store, *args):
         output = io.StringIO()
-        with patch("sys.argv", ["identity_store", *args]), patch.object(identity_store, "load_dotenv"), \
+        with patch("sys.argv", ["identity_store", *args]), patch.object(identity_store, "load_environment"), \
                 patch.object(identity_store, "build_engine"), patch("sys.stderr", io.StringIO()), \
                 patch.object(identity_store, "IdentityStore", return_value=store), redirect_stdout(output):
             identity_store.main()

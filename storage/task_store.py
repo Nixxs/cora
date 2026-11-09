@@ -65,6 +65,8 @@ class PartyView:
     # When the hourly check next acts on them (a nudge, or after the last one, back to the person);
     # None once they've answered or while the task waits on the person.
     due_at: datetime | None
+    # What she's to find out or agree with them, and what she may share (shown in full on the dashboard).
+    brief: str = ""
 
 
 @dataclass(frozen=True)
@@ -502,7 +504,7 @@ class TaskStore:
                             default=None)
                 if since is not None:
                     due = email_nudge_due(since) if party.channel == "email" else since + NUDGE_AFTER
-            by_task.setdefault(party.task_id, []).append(PartyView(name, party.status, party.nudges, due))
+            by_task.setdefault(party.task_id, []).append(PartyView(name, party.status, party.nudges, due, party.brief))
         return [TaskView(
             task.goal, task.status, task.created_at,
             task.updated_at + STALE_AFTER if task.status == "waiting" else None,

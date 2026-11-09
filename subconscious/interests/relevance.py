@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 import json
 import sys
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from memory.store import validate_memory_embedding
@@ -118,7 +118,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Show the findings closest to some text, claiming none (billable, tiny).")
     parser.add_argument("text", help="What the conversation might be about")
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     engine = build_engine()
     try:
         store = ExplorationStore(engine)

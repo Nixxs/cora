@@ -674,7 +674,8 @@ class ModelSettingRecord(Base):
     __tablename__ = "model_settings"
     __table_args__ = (
         CheckConstraint(
-            "area IN ('delegation', 'memory', 'subconscious', 'utility')", name="model_settings_area_check",
+            "area IN ('delegation', 'memory', 'subconscious', 'utility', 'browser', 'contacts', 'exploring', 'images')",
+            name="model_settings_area_check",
         ),
         CheckConstraint("btrim(model) <> ''", name="model_settings_model_check"),
         {"schema": "public"},
@@ -777,6 +778,25 @@ class SelfImageRecord(Base):
     image: Mapped[bytes | None] = mapped_column(LargeBinary)
     image_type: Mapped[str | None] = mapped_column(Text)
     chosen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class AppSettingRecord(Base):
+    """One general setting from Settings > General, such as her voice."""
+
+    __tablename__ = "app_settings"
+    __table_args__ = (
+        CheckConstraint(
+            "key IN ('voice', 'spend_project', 'start_mode', 'idle_minutes', 'standby_farewell', 'wake_word', "
+            "'conversation_gap', 'backup_copy_dir', 'twilio_region')",
+            name="app_settings_key_check",
+        ),
+        CheckConstraint("btrim(value) <> '' AND char_length(value) <= 200", name="app_settings_value_check"),
+        {"schema": "public"},
+    )
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
 
 
 class KeyDetailRecord(Base):
@@ -1121,7 +1141,7 @@ class FeelingEventRecord(Base):
             name="feeling_events_feeling_check",
         ),
         CheckConstraint("strength IN ('small', 'medium', 'strong')", name="feeling_events_strength_check"),
-        CheckConstraint("btrim(reason) <> '' AND char_length(reason) <= 200", name="feeling_events_reason_check"),
+        CheckConstraint("btrim(reason) <> '' AND char_length(reason) <= 1200", name="feeling_events_reason_check"),
         Index("feeling_events_felt_at_idx", "felt_at"),
         Index("feeling_events_conversation_id_idx", "conversation_id"),
         {"schema": "public"},

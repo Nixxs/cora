@@ -15,7 +15,7 @@ import json
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from sqlalchemy import Engine, case, func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -233,7 +233,7 @@ def main() -> None:
     retire.add_argument("trait_id", type=UUID)
     retire.add_argument("--reason", required=True)
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

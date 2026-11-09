@@ -487,7 +487,7 @@ class MailMixin:
         return await self.backend_chat.reply(
             content=[{"type": "input_text", "text": EMAIL_NOTE + json.dumps(
                 [email_view(message) for message in new], ensure_ascii=False)}],
-            history=history, sections=await self.email_party_sections(thread, new, who), model=self.live.delegation_model,
+            history=history, sections=await self.email_party_sections(thread, new, who), model=await self.contacts_model(),
             # Web search and pass_on only: nothing of the person's, no services, nobody else emailed.
             route=BackendRoute(
                 excluded=frozenset(self.tools.names()) - {"pass_on"},
