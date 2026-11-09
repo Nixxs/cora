@@ -43,12 +43,10 @@ an installer is paused. Local models follow after 1.0.
    at a time, as the OpenAI key and her voice already have (Settings > General, with the
    general `app_settings` table ready for more; secrets in the credential store). Done: how
    she starts, automatic standby, her goodbye before it, the wake word (the Wake button is
-   remembered), when a conversation ends, and the second backup folder. Next: the Twilio
-   region.
-4. **Her picture in Settings:** setting [how she pictures herself](DOCUMENTATION.md#how-she-pictures-herself)
-   is command-line only. A "Her picture" section would let you pick an image and enter her
-   description for `self` and `work`, see what's saved, and set her Signal profile picture.
-5. **Release.**
+   remembered), when a conversation ends, the second backup folder, and the Twilio region.
+   What stays in `.env` on purpose: the OpenAI key as a fallback (one saved in Settings wins),
+   wake diagnostics, the email app's fallbacks, and the database ports in `.env.database`.
+4. **Release.**
 
 Waiting on devices at home: **Home Assistant** (starting with its demo devices) and
 **camera and screen awareness** (see [Awareness](#awareness) below).

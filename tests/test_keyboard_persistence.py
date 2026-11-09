@@ -159,6 +159,7 @@ async def running_app(persistence=None, has_key=True):
                     "idle_minutes": None, "farewell": None, "wake_word": None}
                 persistence.load_conversation_gap.return_value = None
                 persistence.load_backup_copy_dir.return_value = None
+                persistence.load_twilio_region.return_value = None
                 persistence.load_desire_context.return_value = ""
                 persistence.load_feelings.return_value = []
                 persistence.load_own_name.return_value = "Cora"

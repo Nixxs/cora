@@ -14,6 +14,7 @@ from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
 from openai_spend import likely_cora_project
+from phone.twilio import REGIONS
 from services.catalogue import SERVICES
 from services.connection import CONNECTED, CONNECTING, FAILED, ServiceStatus
 from session_config import MODEL_CHOICES, VOICE_CHOICES
@@ -174,6 +175,23 @@ class PhoneControls:
     account_sid: str = ""
     phone_number: str = ""
     save_account: Callable[[str, str], None] = lambda account_sid, number: None
+    # Twilio's region for calls she places ('au1', 'us1', 'ie1', or ENV_REGION for another address
+    # from .env, region_address); save_region(code) applies to the next call.
+    region: str = "au1"
+    region_address: str = ""
+    save_region: Callable[[str], None] = lambda code: None
+
+
+# The Twilio region choice when .env's CORA_TWILIO_API names an address of its own.
+ENV_REGION = "env"
+
+
+def region_options(region: str, address: str) -> list[tuple[str, str]]:
+    """Twilio's regions, with .env's own address when that's what's in use."""
+    options = [(label, code) for code, (label, _) in REGIONS.items()]
+    if region == ENV_REGION:
+        options.append((f"From .env: {address}", ENV_REGION))
+    return options
 
 
 PHONE_INTRO = (
@@ -617,6 +635,10 @@ class ModelSettingsScreen(ModalScreen):
             yield row(entry(value=self.phone.account_sid, id="phone-account-sid", placeholder="Account SID, AC…"),
                       entry(value=self.phone.phone_number, id="phone-number", placeholder="her number, +61…"),
                       button("Save", "phone-save-account"))
+            yield field("Twilio region", "Where her Twilio account lives: her auth token and calling out only "
+                        "work through its region. Applies to the next call.")
+            yield Select(region_options(self.phone.region, self.phone.region_address), value=self.phone.region,
+                         allow_blank=False, id="phone-region", compact=True)
 
     def compose_webhooks(self) -> ComposeResult:
         yield self.service_heading("webhooks", "Webhooks", "webhooks-status",
@@ -1038,6 +1060,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.idle_minutes:
                 self.general.idle_minutes = event.value
                 self.general.save_idle_minutes(event.value)
+            return
+        if event.select.id == "phone-region":
+            if self.phone is not None and event.value not in (self.phone.region, ENV_REGION):
+                self.phone.region = event.value
+                self.phone.save_region(event.value)
             return
         if event.select.id == "conversation-gap":
             if self.general is not None and event.value != self.general.conversation_gap:

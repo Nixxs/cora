@@ -1193,7 +1193,10 @@ before anything else.
   for and that she keeps a transcript, keeps to the brief, never commits you, leaves a short
   message on voicemail, and reports with `pass_on`. The transcript is kept as a step on the
   task. A call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
-  without her reporting, goes to the coordinator too, so you always hear how it went.
+  without her reporting, goes to the coordinator too, so you always hear how it went. Calls
+  go through the REST API of the Twilio region chosen under Phone calls (Sydney AU1 by
+  default; saved as `twilio_region` in `app_settings`, applied at launch, or `.env`'s
+  `CORA_TWILIO_API` until one is chosen).
 - **Hanging up:** on calls that aren't yours, she can hang up with `end_call`, and the call
   also hangs up by itself ([phone/goodbye.py](phone/goodbye.py)): once goodbyes have been
   said and the line has been quiet for 2 seconds after hers has played, it closes. More from

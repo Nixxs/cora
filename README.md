@@ -103,17 +103,16 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 
 Settings that live in `.env` (restart Cora to apply a change). Everything else is set in the
 app's **Settings**. Automatic standby, her goodbye before it, the wake word, when a
-conversation ends and the second backup folder moved to Settings; their old `.env` lines
-(`CORA_IDLE_TIMEOUT_SECONDS`, `CORA_STANDBY_FAREWELL`, `CORA_WAKE_ENABLED`,
-`CORA_CONVERSATION_GAP_MINUTES`, `CORA_BACKUP_COPY_DIR`) still apply until you change them
-there, then can be deleted.
+conversation ends, the second backup folder and the Twilio region moved to Settings; their
+old `.env` lines (`CORA_IDLE_TIMEOUT_SECONDS`, `CORA_STANDBY_FAREWELL`, `CORA_WAKE_ENABLED`,
+`CORA_CONVERSATION_GAP_MINUTES`, `CORA_BACKUP_COPY_DIR`, `CORA_TWILIO_API`) still apply until
+you change them there, then can be deleted.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | (none) | Your OpenAI API key, if you'd rather not enter it in the app; one saved in Settings > General wins |
 | `CORA_WAKE_DEBUG` | `1` | Wake diagnostics in Activity (what Whisper heard, a heartbeat); `0` hides them |
 | `CORA_EMAIL_CLIENT_ID`, `CORA_EMAIL_TENANT` | (none) | Fallbacks for the email app ID and directory, normally saved in Settings |
-| `CORA_TWILIO_API` | Sydney (AU1) | Twilio's REST endpoint for calling out, if your number is in another region |
 
 In `.env.database`: `CORA_DB_PORT` (default `5432`) and `CORA_SIGNAL_PORT` (default `8090`).
 
@@ -277,7 +276,8 @@ your own number (under Signal).
    Log shows the number it got).
 7. For calling out (she calls places for tasks, asking you first each time), enter the Account
    SID (Console › Account info, `AC…`) and her Twilio number (`+61…`) under Phone calls › Calling
-   out and press **Save**. If the number isn't in Sydney (AU1), set `CORA_TWILIO_API`.
+   out and press **Save**. If the account isn't in Sydney (AU1), choose its **Twilio region**
+   below.
 
 If Cloudflare's bot protection covers the address, check Twilio's requests aren't challenged
 (Security › Events). Forwarding a SIM's calls to the Twilio number is possible on some

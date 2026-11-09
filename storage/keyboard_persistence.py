@@ -192,6 +192,13 @@ class KeyboardPersistence:
     def save_conversation_gap(self, minutes: int) -> None:
         AppSettingsStore(self._get_store().engine).set_conversation_gap(minutes)
 
+    def load_twilio_region(self) -> str | None:
+        """The Twilio region for calls she places; None when never set in Settings."""
+        return AppSettingsStore(self._get_store().engine).twilio_region()
+
+    def save_twilio_region(self, code: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_twilio_region(code)
+
     def load_backup_copy_dir(self) -> str | None:
         """The second backup folder, "" for none, or None when never set in Settings."""
         return AppSettingsStore(self._get_store().engine).backup_copy_dir()

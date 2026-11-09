@@ -9,6 +9,7 @@ from textual import work
 from ui.composer import ChatComposer
 from inactivity import StandbyAlert
 from app_areas.shared import conversation_end_standby_seconds
+from phone import twilio
 from storage.client_store import set_conversation_gap
 
 
@@ -51,7 +52,7 @@ class LiveSessionMixin:
                 self.check_email_account()
                 self.restart_webhooks()
                 self.daily_backup()
-                await self.apply_standby_settings()
+                await self.apply_saved_settings()
                 if await self.starts_in_standby():
                     self.start_in_standby()
                     return
@@ -85,17 +86,20 @@ class LiveSessionMixin:
                 await self.stop_wake_listener()
                 self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
 
-    async def apply_standby_settings(self) -> None:
-        """Settings > General's standby settings and conversation gap, once at launch; one never set there
-        keeps .env's value."""
+    async def apply_saved_settings(self) -> None:
+        """Settings' standby settings, conversation gap and Twilio region, once at launch; one never set
+        there keeps .env's value."""
         try:
             saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
             gap = await self.conversation_persistence.call_database(self.persistence.load_conversation_gap)
+            twilio_region = await self.conversation_persistence.call_database(self.persistence.load_twilio_region)
         except Exception as error:
-            self.activity.write(f"Standby settings unavailable ({type(error).__name__}); using .env.", "Settings")
+            self.activity.write(f"Saved settings unavailable ({type(error).__name__}); using .env.", "Settings")
             return
         if gap is not None:
             set_conversation_gap(gap)
+        if twilio_region is not None:
+            twilio.set_region(twilio_region)
         if saved["idle_minutes"] is not None:
             self.inactivity.timeout_seconds = saved["idle_minutes"] * 60.0
         if saved["farewell"] is not None:

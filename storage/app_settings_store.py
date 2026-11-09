@@ -10,6 +10,8 @@ from session_config import VOICE, VOICE_CHOICES
 from .models import AppSettingRecord
 
 START_MODES = ("active", "standby")
+# As phone.twilio.REGIONS.
+TWILIO_REGIONS = ("au1", "us1", "ie1")
 # Minutes of quiet before automatic standby; 0 turns it off.
 MAX_IDLE_MINUTES = 720
 # Minutes of quiet that end a conversation (in standby, and contacts' chats).
@@ -112,6 +114,16 @@ class AppSettingsStore:
         if len(folder) > BACKUP_COPY_MAX_CHARS or not Path(folder).is_absolute():
             raise ValueError("A backup folder needs its full path")
         self._set("backup_copy_dir", folder)
+
+    def twilio_region(self) -> str | None:
+        """The Twilio region for calls she places ('au1', 'us1' or 'ie1'); None when never set here."""
+        saved = self._get("twilio_region")
+        return saved if saved in TWILIO_REGIONS else None
+
+    def set_twilio_region(self, code: str) -> None:
+        if code not in TWILIO_REGIONS:
+            raise ValueError(f"Unknown Twilio region: {code}")
+        self._set("twilio_region", code)
 
     def spend_project(self) -> str | None:
         """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""

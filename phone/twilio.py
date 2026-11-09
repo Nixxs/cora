@@ -31,9 +31,25 @@ INCOMING_PATH = "/phone/incoming"
 STREAM_PATH = "/phone/stream"
 # Where Twilio says how a call she placed ended (answered or not).
 STATUS_PATH = "/phone/status"
-# Twilio's API for the region her number is in: Australia (AU1) through its Sydney edge, where the
-# auth token in Settings belongs. CORA_TWILIO_API sets another (https://api.twilio.com for US1).
-API_BASE = getenv("CORA_TWILIO_API", "https://api.sydney.au1.twilio.com").rstrip("/")
+# Twilio's API for the region her account is in, where the auth token in Settings belongs: chosen
+# in Settings > Services > Phone calls, else CORA_TWILIO_API from .env, else Australia (AU1).
+REGIONS = {
+    "au1": ("Sydney (AU1)", "https://api.sydney.au1.twilio.com"),
+    "us1": ("United States (US1)", "https://api.twilio.com"),
+    "ie1": ("Ireland (IE1)", "https://api.dublin.ie1.twilio.com"),
+}
+API_BASE = getenv("CORA_TWILIO_API", REGIONS["au1"][1]).strip().rstrip("/")
+
+
+def region() -> str | None:
+    """The region in use ('au1', 'us1' or 'ie1'), or None for another address from .env."""
+    return next((code for code, (_, base) in REGIONS.items() if base == API_BASE), None)
+
+
+def set_region(code: str) -> None:
+    """From Settings: calls she places from now on go through this region's API."""
+    global API_BASE
+    API_BASE = REGIONS[code][1]
 # How long a call she places rings before it counts as not answered.
 RING_SECONDS = 30
 API_SECONDS = 15

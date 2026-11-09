@@ -266,6 +266,18 @@ class TaskCallsMixin:
             self.activity.write(f"Saving a call on its task failed ({type(error).__name__}).", "Phone call")
 
     @work(group="webhook-setup", exit_on_error=False)
+    async def save_twilio_region(self, code: str) -> None:
+        """The Twilio region for calls she places (Settings › Phone calls); applies to the next call."""
+        twilio.set_region(code)
+        self.activity.write(f"Calls she places now go through Twilio's {twilio.REGIONS[code][0]} region.",
+                            "Settings changed")
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_twilio_region, code)
+        except Exception as error:
+            self.activity.write(f"Twilio region save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save the Twilio region; it applies until Cora closes.", severity="error")
+
+    @work(group="webhook-setup", exit_on_error=False)
     async def save_twilio_account(self, account_sid: str, phone_number: str) -> None:
         """The Twilio account she calls out through and her number (Settings › Phone calls); empty clears."""
         if bool(account_sid.strip()) != bool(phone_number.strip()):
