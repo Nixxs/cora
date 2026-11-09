@@ -4,7 +4,7 @@ import argparse
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from storage.database import build_engine
@@ -43,7 +43,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate and save one memory embedding (billable unless cached).")
     parser.add_argument("memory_id", type=UUID, help="An existing memories.id UUID, not a conversation UUID")
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

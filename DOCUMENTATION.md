@@ -24,7 +24,7 @@ the same app, so there is always one Cora with one memory, however you reach her
 **Cora-prime** is the part of Cora you talk to: two models working together in one Live
 session.
 
-- **Live (`gpt-live-1`, voice `marin`)** listens, holds the conversation and speaks. It
+- **Live (`gpt-live-1`, voice `marin` unless you choose another)** listens, holds the conversation and speaks. It
   answers directly when it can.
 - **The backend** is a Responses model (the *Delegation* model in
   [Choosing models](#choosing-models)). Live hands it anything that needs more: current
@@ -97,7 +97,7 @@ yours, and none of your private context.
 | What | When |
 | --- | --- |
 | Startup check | At launch: conversations left open are marked interrupted |
-| Background memory pass | At launch; when a conversation ends (an hour in Standby, `CORA_CONVERSATION_GAP_MINUTES`); and when the hourly round closes contacts' quiet chats. Each finished conversation's memories are extracted and its summary saved; new memories are embedded and checked for duplicates, corrections of older ones, a date they stop mattering, and who they were meant for; finished conversations are appraised, the relationship is updated, and her view of each contact is refreshed |
+| Background memory pass | At launch; when a conversation ends (an hour in Standby by default; Settings > General > "When a conversation ends"); and when the hourly round closes contacts' quiet chats. Each finished conversation's memories are extracted and its summary saved; new memories are embedded and checked for duplicates, corrections of older ones, a date they stop mattering, and who they were meant for; finished conversations are appraised, the relationship is updated, and her view of each contact is refreshed |
 | Interest evolution, identity reflection, desire reflection | Checked every 10 minutes; each really runs at most once a day |
 | Exploring an interest | Checked every 10 minutes; only while you're away (Standby, or 10 minutes quiet) and with the Browser service connected; at most 3 a day, 6 hours apart |
 | Chances for her desires | With the desire check, at most hourly, when her week or mail has changed |
@@ -105,7 +105,7 @@ yours, and none of your private context.
 | Feelings | Every minute while Active, voice Cora is told of feelings that began, changed or passed |
 | Hourly round | Calendar refresh, contacts' quiet chats closed, waiting heads-ups retried, tasks checked, stalled sign-ups noticed |
 | Task mail | Every 10 minutes (the fallback for webhooks), with Microsoft's subscriptions renewed when due |
-| Inactivity | Standby after `CORA_IDLE_TIMEOUT_SECONDS` of quiet (default 5 minutes) |
+| Inactivity | Standby after the quiet set in Settings > General (default 5 minutes) |
 
 Each background process is single-flight: a slow run delays the next check rather than
 overlapping it.
@@ -130,15 +130,27 @@ others.
 
 ### Choosing models
 
-**Settings** (on the top border) has a model for each of four areas. A change saves straight
-away, in the `model_settings` table.
+**Settings** (on the top border) has a model for each of eight areas, two to a row; hovering
+one says what it covers. A change saves straight away, in the `model_settings` table. Spending
+less is mostly a matter of putting the busy, simpler areas (Browser, Small jobs, Looking at
+images) on a cheaper model.
+
+Settings is laid out like the dashboard: small headings group its parts (General has Cora,
+Standby, Conversations, Backups and OpenAI; Services has her tools, her accounts, and ways of reaching her from outside). Each
+setting has a short name with what it does in a dimmer line underneath. Inputs and their
+buttons sit on one line. Statuses share one style: ● working, ◌ busy, ○ off or not set up,
+× wrong. Clicking a service's row opens its details, indented under it.
 
 | Area | Covers | Takes effect |
 | --- | --- | --- |
-| Delegation | Cora-prime's backend, her written chats (desk, Signal, web, contacts), task threads and calls | Straight away: Live reconnects if it's Active; otherwise at the next connect |
+| Delegation | Cora-prime's backend while you talk, and her written chats with you (desk, Signal, web) | Straight away: Live reconnects if it's Active; otherwise at the next connect |
+| Contacts and tasks | Her chats, emails and calls with your contacts (client mode and task threads), and the task coordinator | The next message or call |
 | Memory | Memory extraction and conversation summaries | The next memory pass |
-| Relationship, interests and identity | Conversation appraisals, her view of contacts, interest evolution and exploration, identity and desire reflection | Each process's next run |
-| Duplicate check and small jobs | The memory checks (duplicates, corrections, fading, who it was meant for) and spotting chances for her desires | The next run |
+| Reflection | Conversation appraisals, her view of contacts, interest evolution, identity and desire reflection | Each process's next run |
+| Exploring | Exploring her interests on her own, by reading or browsing | The next exploration |
+| Browser | Her browser helper (`use_browser`) and her sign-ups | The next browsing job or sign-up |
+| Looking at images | `look_at_screen`, `look_again`, and photos pasted at the desk or sent on Signal or the web page (a photo seen on the turn it's sent is in her own chat, on Delegation) | Straight away |
+| Small jobs | The memory checks (duplicates, corrections, fading, who it was meant for), the commitment check, sorting mail and spotting chances for her desires | The next run |
 
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list `MODEL_CHOICES` in
 [session_config.py](session_config.py); a saved model no longer in that list falls back to
@@ -176,6 +188,36 @@ Speaking and typing go into the same conversation.
   She takes one screenshot of the main monitor and asks a one-off model request about it;
   only the short answer enters her session, and the screenshot is never saved. Activity
   shows "Screen captured" each time. Settings > General turns it off until the next launch.
+
+**Her voice** is chosen in Settings > General from the Live model's voices (from OpenAI's
+Live conversations guide, each labelled by language, accent and style; `marin` is the
+default). A voice is fixed when a session starts, so closing Settings reconnects her with
+the new one; it's used everywhere she speaks (desk, web page, phone calls, contacts' calls).
+It's saved in the `app_settings` table; one no longer offered falls back to `marin`
+(`VOICE_CHOICES` in [session_config.py](session_config.py)).
+
+**The OpenAI API key.** Without one nothing can reach OpenAI, so at the first start (no key
+saved in the app and none in `.env`) a welcome pop-up asks for it before she connects. The
+key is checked with OpenAI (listing models) before it's saved, so a mistyped one says so
+instead of failing later; "Later" leaves her waiting until one is saved in Settings >
+General, which also shows which key is in use (saved in the app or from `.env`, by its last
+four characters only) and replaces it. A saved key goes to the system credential store and
+wins over `.env`'s; it reaches every OpenAI call from then on, and a disconnected Cora
+connects with it straight away ([openai_key.py](openai_key.py)). The command-line tools
+load it the same way.
+
+**OpenAI spend (optional).** OpenAI's Costs API answers only an organisation Admin key, never
+a project's API key, so it has its own field in Settings > General. Make it Restricted with
+one permission, Usage API: Read; it then can't change anything in the organisation. It's
+checked with a costs request before it's saved to the credential store, and Remove forgets
+it. "Whose spend" chooses a project: Automatic (the default) uses the one project named for
+Cora once it has spend in the last 90 days, else all projects; projects are listed from the
+costs themselves, so one appears once it has spent something (costs lag a few hours). Only
+the choice is kept, in `app_settings`; no costs are stored
+([openai_spend.py](openai_spend.py)). The dashboard's conversations box shows it: this month
+so far and a bar per calendar month (UTC) for the last 12, read in one costs listing grouped
+by project, kept in memory for 15 minutes and refreshed every 30 while the dashboard is open.
+Without an Admin key it isn't asked for at all; a short placeholder says to add one.
 - **Pictures from the web:** ask to see something ("show me the cafe"), or she may show
   one herself. She picks a page from web search, and the app fetches that page's preview
   image (`og:image`, public https sites only) and draws it small in the chat with a caption
@@ -221,15 +263,23 @@ Standby closes the Live session (ending its billing) but keeps the app, chat, dr
 mute settings. Click **Active** to enter it and **Standby** or Ctrl+R to resume; she
 resumes with recent chat as context.
 
+- **Starting in it:** Settings > General > "When the app opens" can start her in Standby
+  instead of Active (saved as `start_mode` in `app_settings`; Active if unset or unreadable).
+  The standby settings (`idle_minutes`, `standby_farewell`, `wake_word`) and when a
+  conversation ends (`conversation_gap`) are applied at launch too; one never set in the app
+  keeps its old `.env` value.
+  Launch does everything else as usual (checks, summaries, services, Signal, mail) but doesn't
+  connect Live; she waits as after any standby, and waking her connects with her context.
 - **Asking for it:** say something like "go to standby", or she may choose it herself once
   a conversation has clearly wound down (after you say goodnight). She signs off briefly,
   then goes once speech and pending work finish; if that takes over 30 seconds she stays
   Active and Activity says so.
-- **Automatic standby:** after `CORA_IDLE_TIMEOUT_SECONDS` of inactivity (default 300; `0`
-  turns it off). Typing, cursor movement, sending, speech and the audio controls reset the
+- **Automatic standby:** after the minutes of quiet chosen in Settings > General > Standby
+  (default 5, or Off); a change applies straight away. Typing, cursor movement, sending, speech and the audio controls reset the
   clock; setup, pending work and audible playback hold it off, and work finishing gives a
   fresh full period. An untouched draft doesn't hold it off and is kept.
-- **Heads-up:** with `CORA_STANDBY_FAREWELL=1`, she briefly says she's leaving you to it
+- **Heads-up:** with "Say a short goodbye before automatic standby" on (Settings > General),
+  she briefly says she's leaving you to it
   before automatic standby, then leaves a few seconds to answer. Speaking, typing or the
   controls cancel it. Manual standby has no farewell.
 - **Typing in Standby:** a typed message is answered in writing ("Cora · written") straight
@@ -238,9 +288,9 @@ resumes with recent chat as context.
   isn't saved as her reply. It's the same Cora: each message reloads her startup context,
   carries the recent chat (up to 40 messages / 6,000 bytes) and has the same tools except
   closing the app and standby. Writing keeps the conversation open; it ends only after
-  `CORA_CONVERSATION_GAP_MINUTES` (default 60) without any.
+  an hour without any (Settings > General > "When a conversation ends").
 - **Wake word:** click **Wake off** to turn on local "Hey Cora" detection in Standby; it
-  shows **Wake on** in green while listening. Detection runs on your PC with a local Whisper
+  shows **Wake on** in green while listening, and stays as you left it at the next launch. Detection runs on your PC with a local Whisper
   model (no room audio goes to OpenAI), accepts Cora/Kora/Korra, and keeps your opening
   words through reconnection. Microphone mute stops it, and turning Wake on never unmutes
   the microphone. Setup: [Local wake-word setup](README.md#local-wake-word-setup).
@@ -294,17 +344,18 @@ top right (● active, ○ standby) enters standby or resumes.
 | voice | Her playback above the line and your microphone below, as loudness bands from low to high pitch, with the latest Activity summary on its border |
 | chat | The running conversation; type here to send |
 | relationship | Trust, warmth and familiarity now (drift included), their history, and the tone of recent conversations |
-| feelings | Each feeling's strength over time, and her latest reaction with why |
+| feelings | Each feeling's strength over time, and her latest reaction with why; click it to read the whole reason |
 | memories | Memories by kind, new memories per day, and how many wait for embedding or each check |
-| interests | Live interests by strength: ↑ reinforced or new in the last 3 days, ↓ only fading, ✦ one of her own; and the newest finding |
+| interests | Live interests by strength: ↑ reinforced or new in the last 3 days, ↓ only fading, ✦ one of her own; and the newest finding. Click an interest for what it is, how it emerged and her latest finding on it, or the finding to read it whole |
 | identity | Active traits, most confident first; traits still forming (below 50%) are dimmed |
 | desires | Live desires, strongest first: pursuing, held, or forming (dimmed) |
-| conversations | Your messages per day over the last year, a week per column |
-| tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups |
+| conversations | OpenAI spend this month and a bar per month for the last year (hover a bar for its amount), or a placeholder whose hover and click say to add an Admin key; below it, your messages per day over the last year, a week per column |
+| tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups. Click a task to read it in full, with its whole latest step and each person's brief |
 | context | How full each model's context is (measured by the API), then each item's estimated share; click an item to read its text |
 | background | When each background job last saved something, and when the timed ones are next due |
 
-The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
+Anything clickable brightens under the mouse; its pop-up scrolls and can be selected and
+copied, and Esc or a click outside closes it. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
 values and notes it in Activity); the context box reads the running app once a second. Its
 item sizes are estimates (about four bytes a token). Tuning constants (refresh rate, bar
 fall, history limits, graph timing, voice bands) are at the top of
@@ -347,8 +398,9 @@ makes no claim about consciousness.
 1. **During a conversation**, she saves your typed messages, grouped voice transcripts and
    her written answers in one conversation. Reasoning, tool events and Activity aren't
    saved as messages.
-2. **A conversation ends** when you quit, or after `CORA_CONVERSATION_GAP_MINUTES` (default
-   60) in Standby or without writing. A shorter standby continues the same conversation, so
+2. **A conversation ends** when you quit, or after an hour (Settings > General > "When a
+   conversation ends") in Standby or without writing. A change applies straight away to
+   contacts' chats and to the next standby; one already counting keeps its time. A shorter standby continues the same conversation, so
    waking keeps its context.
 3. **The memory pass** (see [What runs when](#what-runs-when)) extracts facts,
    preferences, decisions and tasks from each finished conversation's original messages,
@@ -649,6 +701,9 @@ Short-lived reactions, separate from the slower relationship
   thinking back on an appraised conversation that ended in the last 2 hours (hurt for
   unrepaired friction aimed at her or hostility, irritation for curtness, contentment for
   warmth; her own mistakes stir nothing).
+- **Reasons:** hers from `feel` are up to 200 characters; one from thinking back carries the
+  appraisal's whole reason. Each is kept whole (up to 1,200 characters) for the dashboard,
+  while the prompt shows each feeling's first 200.
 - **In the prompt:** "How you're feeling right now", one line per noticeable feeling (what,
   why, and how hard it is to hide: a small one is hers to show or not, a strong one is hard
   to hide), worked out fresh at each connect and written reply. A running voice session gets
@@ -670,12 +725,12 @@ she treats them the way a professional treats a client.
 
 ### Contacts (client mode)
 
-Add people under Settings > Services > **Signal** > "People she may talk with": a name and
+Add people under Settings > Services > **Signal** > **Clients**: a name and
 their Signal number (not yours or hers). Each has a **Calls** switch, off by default, for
 whether they may phone her (see [Phone calls](#phone-calls)).
 
 - **Their own conversations.** Each contact's chats and calls are saved apart from yours,
-  with who they were with. A chat quiet for `CORA_CONVERSATION_GAP_MINUTES` is closed by the
+  with who they were with. A chat quiet for that same gap (an hour by default) is closed by the
   hourly round so its memories form; their next message starts a new one. They never appear
   in your chat or voice Cora's history; Activity notes only "Answered Sarah on Signal".
 - **Still herself, discreet about you.** She has her own identity, picture and feelings
@@ -688,7 +743,12 @@ whether they may phone her (see [Phone calls](#phone-calls)).
   they genuinely connect.
 - **Her tools there:** web search, `search_memory` (only what they told her and what you
   meant for them, limited in the database query itself), `feel`, `pass_on`,
-  `raise_concern` and `stop_replying`. Nothing that changes things.
+  `raise_concern` and `stop_replying`, and `use_browser` while the browser is connected
+  (`CLIENT_CHAT_TOOLS` in [app_areas/signal_chats.py](app_areas/signal_chats.py)). A
+  contact's browsing job only looks things up: its helper gets none of your details and is
+  told not to fill in or send forms (a click that would send still asks you). It shares the
+  one browser, so it can hold up your own job for a few minutes. Nothing that changes things.
+  Calls from contacts don't get the browser.
 - **Her memories of them:** their finished conversations go through the memory pass, told
   who they are, so memories read "Sarah lives in Perth". Duplicate and correction checks
   only compare one person's memories with their own. At the desk, `search_memory` covers
@@ -849,7 +909,7 @@ contact asks.
 ### Secrets and what's kept
 
 - **Tokens and keys** (GitHub, Twilio, the Google Maps key, her sign-up password, webhook
-  secrets, the email app ID) are kept in the system credential store (Windows Credential
+  secrets, the email app ID, and the OpenAI API and Admin keys when saved in the app) are kept in the system credential store (Windows Credential
   Manager), never in a file, `.env` or the database. Her email sign-in is too big for it, so
   it's in a file encrypted for your Windows user (`%LOCALAPPDATA%\cora\email-sign-in.bin`).
   Paired web devices are kept only as SHA-256 hashes of their tokens.
@@ -914,7 +974,19 @@ connection isn't retried; switch it off and on, or save a new token.
     a mistake contained, and every address passes the address guard.
   - She reaches for the browser when only a site's own live pages can tell (fares for exact
     dates, availability, stock, what a booking page offers), running the site's own search;
-    web search covers general and current information. Its error output goes to
+    web search covers general and current information.
+  - **A helper browses for her.** She doesn't get the browser's tools herself: while the
+    browser is connected she has one tool, `use_browser(job, start_url)`
+    ([tools/use_browser.py](tools/use_browser.py)), and a helper on the Browser model does the
+    job and reports back. Each step of browsing is a request, and in her own chat each would
+    re-send her whole context on the Delegation model; the helper sees only the job, your name
+    and key details (for forms; never for a job from a contact's chat), and its last 3 results (older pages are dropped). The helper
+    calls the same tool handlers she did, so the address guard, paged results and the approval
+    before sending all still apply, asked wherever she's talking with you. At most 30 actions
+    and about 8 minutes a job, one job at a time; then it reports what it found or did and what
+    it couldn't. Activity shows each action's tool name, never the job, pages or your details;
+    her written chats wait up to 9 minutes for the report. The tools switched on in Settings
+    are the helper's. Its error output goes to
     `%LOCALAPPDATA%\cora\services\playwright.log` (`~/.local/state/cora/services/` on Linux).
 
 ### Signal
@@ -1121,7 +1193,10 @@ before anything else.
   for and that she keeps a transcript, keeps to the brief, never commits you, leaves a short
   message on voicemail, and reports with `pass_on`. The transcript is kept as a step on the
   task. A call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
-  without her reporting, goes to the coordinator too, so you always hear how it went.
+  without her reporting, goes to the coordinator too, so you always hear how it went. Calls
+  go through the REST API of the Twilio region chosen under Phone calls (Sydney AU1 by
+  default; saved as `twilio_region` in `app_settings`, applied at launch, or `.env`'s
+  `CORA_TWILIO_API` until one is chosen).
 - **Hanging up:** on calls that aren't yours, she can hang up with `end_call`, and the call
   also hangs up by itself ([phone/goodbye.py](phone/goodbye.py)): once goodbyes have been
   said and the line has been quiet for 2 seconds after hers has played, it closes. More from

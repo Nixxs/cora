@@ -112,7 +112,7 @@ def background_models_stubbed():
 
 
 @asynccontextmanager
-async def running_app(persistence=None):
+async def running_app(persistence=None, has_key=True):
     # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
@@ -121,6 +121,9 @@ async def running_app(persistence=None):
             patch("app_areas.background.run_exploration_cycle", return_value=None), \
             background_models_stubbed(), \
             patch("services.credentials.keyring"), \
+            patch("openai_key.keyring") as openai_keyring, \
+            patch("openai_spend.keyring") as admin_keyring, \
+            patch("app.has_key", return_value=has_key), \
             patch("sign_ups.password.keyring") as sign_up_keyring, \
             patch("app.EmailAccount"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
@@ -134,6 +137,8 @@ async def running_app(persistence=None):
             app.email_account.person_address.return_value = ""
             app.email_account.signature.return_value = ""
             sign_up_keyring.get_password.return_value = None
+            openai_keyring.get_password.return_value = None
+            admin_keyring.get_password.return_value = None
             if persistence is None:
                 persistence = MagicMock()
                 persistence.conversation_id = uuid4()
@@ -147,6 +152,14 @@ async def running_app(persistence=None):
                 persistence.load_tasks_context.return_value = ""
                 persistence.load_sign_ups_context.return_value = ""
                 persistence.load_key_details_context.return_value = ""
+                persistence.load_voice.return_value = "marin"
+                persistence.load_spend_project.return_value = None
+                persistence.load_start_mode.return_value = "active"
+                persistence.load_standby_settings.return_value = {
+                    "idle_minutes": None, "farewell": None, "wake_word": None}
+                persistence.load_conversation_gap.return_value = None
+                persistence.load_backup_copy_dir.return_value = None
+                persistence.load_twilio_region.return_value = None
                 persistence.load_desire_context.return_value = ""
                 persistence.load_feelings.return_value = []
                 persistence.load_own_name.return_value = "Cora"

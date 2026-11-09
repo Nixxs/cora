@@ -546,6 +546,16 @@ Screen > .screen--selection {
     color: #d0d6e0;
 }
 
+.task-item {
+    height: auto;
+    margin: 0 0 1 0;
+}
+
+/* Dashboard text that opens in full when clicked. */
+.openable:hover {
+    background: #202838;
+}
+
 #background-runs {
     height: auto;
     color: #d0d6e0;
@@ -581,10 +591,10 @@ ModelSettingsScreen {
 }
 
 #model-settings {
-    width: 64;
+    width: 78;
     height: auto;
     max-height: 95%;
-    padding: 0 2 1 2;
+    padding: 0 2;
     background: #141820;
     border: round #7799cc;
 }
@@ -596,21 +606,111 @@ ModelSettingsScreen {
     text-style: bold;
 }
 
-.model-settings-label {
-    margin: 1 0 0 0;
-    color: #8f98a8;
-}
-
-#model-settings Select {
-    width: 1fr;
-}
-
 #model-settings TabPane {
     padding: 0;
 }
 
-#model-settings Input {
+/* Small headings over groups of settings, in the dashboard's accent. */
+.settings-heading {
+    margin: 1 0 0 0;
+    color: #7799cc;
+    text-style: bold;
+}
+
+/* A setting's name, with its detail in a dimmer line underneath. */
+.settings-field {
     width: 1fr;
+    margin: 1 0 0 0;
+}
+
+.settings-label {
+    color: #c8d0dc;
+}
+
+.settings-note {
+    width: 1fr;
+    margin: 1 0 0 0;
+}
+
+.settings-status, .service-reason {
+    width: 1fr;
+    margin: 0;
+}
+
+/* Compact inputs, selects and buttons: one line each, the buttons beside their input. */
+#model-settings Input, #model-settings Select {
+    width: 1fr;
+}
+
+#model-settings Input {
+    background: #202838;
+}
+
+#model-settings Input:focus {
+    background: #263248;
+}
+
+#model-settings SelectCurrent {
+    background: #202838;
+}
+
+#model-settings Button {
+    width: auto;
+    min-width: 8;
+    height: 1;
+    padding: 0 2;
+    background: #263248;
+    color: #e0e6ef;
+    text-style: none;
+}
+
+#model-settings Button:hover, #model-settings Button:focus {
+    background: #34446a;
+}
+
+#model-settings Button:disabled {
+    background: #1c2230;
+    color: #5a6273;
+}
+
+.settings-row {
+    height: auto;
+    margin: 0;
+}
+
+.settings-row > * {
+    margin: 0 0 0 1;
+}
+
+.settings-row > *:first-child {
+    margin: 0;
+}
+
+/* A row of buttons only, such as signing in: apart from the field above. */
+.settings-actions {
+    margin: 1 0 0 0;
+}
+
+/* A switch on one line with its label beside it. */
+#model-settings Switch {
+    border: none;
+    height: 1;
+    padding: 0 1;
+    background: transparent;
+}
+
+#model-settings Switch:focus {
+    border: none;
+    background-tint: #e0e6ef 8%;
+}
+
+.switch-row {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+.switch-row > Label {
+    margin: 0 0 0 1;
 }
 
 .service-heading {
@@ -623,46 +723,50 @@ ModelSettingsScreen {
 }
 
 .service-title {
-    width: auto;
-    margin: 1 2 0 0;
+    width: 18;
     color: #e0e6ef;
     text-style: bold;
 }
 
 .service-status {
     width: 1fr;
-    margin: 1 0 0 0;
 }
 
+/* A service's details, indented under its row. */
 .service-details {
     height: auto;
     display: none;
+    padding: 0 0 1 2;
+    border-left: vkey #2a3140;
 }
 
-.service-reason {
+#services-scroll, #general-scroll {
+    height: auto;
+    max-height: 40;
+    scrollbar-size-vertical: 1;
+}
+
+/* The models two to a row, so all of them and Close fit a small window. */
+#models-grid {
+    grid-size: 2;
+    grid-columns: 1fr 1fr;
+    grid-rows: auto;
+    grid-gutter: 1 2;
+    height: auto;
     margin: 1 0 0 0;
 }
 
-.service-help {
-    width: 1fr;
-}
-
-#services-scroll {
+.model-cell {
     height: auto;
-    max-height: 40;
 }
 
 .signal-clients {
     height: auto;
-    margin: 1 0 0 0;
+    margin: 0 0 1 0;
 }
 
 .signal-clients Button.calls-on {
     color: #8fcf8f;
-}
-
-.service-buttons Input {
-    width: 1fr;
 }
 
 .signal-qr {
@@ -671,16 +775,10 @@ ModelSettingsScreen {
     margin: 1 0 0 0;
 }
 
-.service-buttons {
-    height: auto;
-}
-
 #email-signature {
-    height: 8;
-}
-
-.service-buttons Button {
-    width: 1fr;
+    height: 6;
+    border: none;
+    background: #202838;
 }
 
 .service-tools-heading {
@@ -695,7 +793,15 @@ ModelSettingsScreen {
 
 .tool-row {
     height: auto;
+    margin: 0;
+}
+
+.signal-clients .tool-row, .service-tools .tool-row {
     margin: 0 0 1 0;
+}
+
+.signal-clients .tool-row {
+    margin: 0;
 }
 
 .tool-label {
@@ -703,9 +809,14 @@ ModelSettingsScreen {
     margin: 0 0 0 1;
 }
 
-#model-settings-close {
-    margin: 1 0 0 0;
+#model-settings-footer {
+    height: auto;
+    margin: 1 0 1 0;
+}
+
+#model-settings-hint {
     width: 1fr;
+    color: #5a6273;
 }
 
 ConfirmScreen {
@@ -771,7 +882,8 @@ ImageScreen {
     color: #8f98a8;
 }
 
-ContextScreen {
+/* Every dashboard pop-up (the context box's included): centred over a dimmed dashboard. */
+DetailScreen {
     align: center middle;
     background: #141820 70%;
 }
@@ -816,4 +928,48 @@ ContextScreen {
 #image-view-image {
     width: auto;
     height: auto;
+}
+#api-key-view {
+    width: 72;
+    height: auto;
+    max-height: 90%;
+    padding: 0 2 1 2;
+    background: #141820;
+    border: round #7799cc;
+}
+
+#api-key-title {
+    width: 1fr;
+    margin: 1 0 1 0;
+    color: #e0e6ef;
+    text-style: bold;
+}
+
+#api-key-help {
+    color: #8f98a8;
+}
+
+#api-key-input {
+    width: 1fr;
+    margin: 1 0 0 0;
+}
+
+#api-key-problem {
+    height: auto;
+    margin: 1 0 0 0;
+    color: #e07a7a;
+}
+
+#api-key-buttons {
+    height: auto;
+    margin: 1 0 0 0;
+}
+
+#api-key-buttons Button {
+    width: 1fr;
+}
+
+#spend-chart {
+    height: auto;
+    margin: 1 0 0 0;
 }

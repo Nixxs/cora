@@ -274,7 +274,7 @@ class SearchMemoryTests(unittest.TestCase):
                                      ([query, "--limit", "2"], 2, [])):
             events = []
             with self.subTest(limit=limit), patch("sys.argv", ["search_memory.py", *args]), \
-                    patch("memory.search_memory.load_dotenv", side_effect=lambda: events.append("dotenv")), \
+                    patch("memory.search_memory.load_environment", side_effect=lambda: events.append("dotenv")), \
                     patch("memory.search_memory.MemoryStore", return_value=self.store) as factory, \
                     patch("memory.search_memory.search_memory", return_value=matches) as search, \
                     patch("sys.stdout", new_callable=StringIO) as output:
@@ -300,7 +300,7 @@ class SearchMemoryTests(unittest.TestCase):
     def test_cli_help_and_argument_errors_precede_environment_engine_and_api(self):
         cases = ((["--help"], 0), ([], 2), (["query", "--limit", "no"], 2),
                  (["unquoted", "extra"], 2), (["query", "--unknown"], 2))
-        with patch("memory.search_memory.load_dotenv") as dotenv, \
+        with patch("memory.search_memory.load_environment") as dotenv, \
             patch("memory.search_memory.search_memory") as search:
             for args, code in cases:
                 with self.subTest(args=args), patch("sys.argv", ["search_memory.py", *args]), \
@@ -328,7 +328,7 @@ class SearchMemoryTests(unittest.TestCase):
                        if stage == "sql" else RuntimeError(private))
             with self.subTest(stage=stage), \
                     patch("sys.argv", ["search_memory.py", private, "--limit", "0" if stage == "invalid" else "8"]), \
-                    patch("memory.search_memory.load_dotenv"), \
+                    patch("memory.search_memory.load_environment"), \
                     patch("memory.search_memory.MemoryStore", return_value=self.store) as factory, \
                     patch("memory.store.Session") as session, \
                     patch("sys.stdout", new_callable=StringIO) as output, \

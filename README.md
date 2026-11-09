@@ -27,7 +27,9 @@ Copy-Item .env.database.example .env.database
 ```
 
 Only copy the example on a fresh setup; keep an existing database configuration.
-Create a local `.env` file containing `OPENAI_API_KEY=your-key`.
+Cora asks for your OpenAI API key the first time she starts, checks it with OpenAI and keeps
+it in the Windows credential store; you can replace it later in Settings > General.
+(`OPENAI_API_KEY=your-key` in a local `.env` file also works; a key saved in the app wins.)
 In `.env.database`, choose a private database password **before storing personal
 conversations**. Both settings files are ignored by Git; never commit credentials.
 
@@ -89,8 +91,9 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 - **Automatic:** at launch, if the newest database backup is more than a day old,
   Cora backs up the database in the background and notes it in Activity (Signal
   keys only with the manual command, so Signal is never paused while you use her).
-- **A second copy:** set `CORA_BACKUP_COPY_DIR` in `.env` to a folder on another
-  disk, and every backup is copied there too, pruned the same way. A cloud folder
+- **A second copy:** in Settings > General > Backups, choose a folder on another disk
+  (it must already exist), and every backup is copied there too, pruned the same way.
+  The command-line backup uses it as well. A cloud folder
   works, but uploads your conversations to that service.
 - **Restoring** replaces the whole database with the backup. Quit Cora first; it
   asks you to type `restore`, and saves the current database as a backup before
@@ -99,19 +102,17 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 ## Configuration
 
 Settings that live in `.env` (restart Cora to apply a change). Everything else is set in the
-app's **Settings**.
+app's **Settings**. Automatic standby, her goodbye before it, the wake word, when a
+conversation ends, the second backup folder and the Twilio region moved to Settings; their
+old `.env` lines (`CORA_IDLE_TIMEOUT_SECONDS`, `CORA_STANDBY_FAREWELL`, `CORA_WAKE_ENABLED`,
+`CORA_CONVERSATION_GAP_MINUTES`, `CORA_BACKUP_COPY_DIR`, `CORA_TWILIO_API`) still apply until
+you change them there, then can be deleted.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | (required) | Your OpenAI API key |
-| `CORA_IDLE_TIMEOUT_SECONDS` | `300` | Quiet seconds before automatic standby; `0` turns it off. Invalid values turn it off and warn in Activity |
-| `CORA_STANDBY_FAREWELL` | `0` | `1`: she says she's leaving you to it before automatic standby |
-| `CORA_CONVERSATION_GAP_MINUTES` | `60` | How long a quiet ends a conversation (in Standby, and contacts' chats); below 1 falls back to 60 |
-| `CORA_WAKE_ENABLED` | `0` | `1`: local "Hey Cora" listening is on at each launch |
+| `OPENAI_API_KEY` | (none) | Your OpenAI API key, if you'd rather not enter it in the app; one saved in Settings > General wins |
 | `CORA_WAKE_DEBUG` | `1` | Wake diagnostics in Activity (what Whisper heard, a heartbeat); `0` hides them |
-| `CORA_BACKUP_COPY_DIR` | (none) | A second folder every backup is copied to |
 | `CORA_EMAIL_CLIENT_ID`, `CORA_EMAIL_TENANT` | (none) | Fallbacks for the email app ID and directory, normally saved in Settings |
-| `CORA_TWILIO_API` | Sydney (AU1) | Twilio's REST endpoint for calling out, if your number is in another region |
 
 In `.env.database`: `CORA_DB_PORT` (default `5432`) and `CORA_SIGNAL_PORT` (default `8090`).
 
@@ -124,8 +125,8 @@ no room audio goes to OpenAI while she listens in Standby.
    [Systran/faster-whisper-base.en](https://huggingface.co/Systran/faster-whisper-base.en/tree/main)
    into `models/wake/faster-whisper-base.en/` (ignored by Git). Nothing downloads by itself;
    missing files stop the listener with an Activity error.
-2. Click **Wake off** in the bottom row to turn it on for this run, or set
-   `CORA_WAKE_ENABLED=1` to have it on at each launch.
+2. Click **Wake off** in the bottom row to turn it on. It stays as you left it at the next
+   launch.
 3. Enter Standby and say "Hey Cora" (or Kora, Korra). With `CORA_WAKE_DEBUG=1`, Activity
    shows what Whisper heard and a heartbeat every five seconds, to check the microphone is
    being heard.
@@ -144,8 +145,8 @@ never to a file or the database. Run `python migrate.py` after updating, as alwa
 1. On GitHub, create a fine-grained personal access token (Settings › Developer settings ›
    Fine-grained tokens), read-only, for the repositories Cora may see: Contents, Issues, Pull
    requests and Metadata are enough to start.
-2. In Settings › Services › **GitHub**, paste it and press **Save token**. **Forget token**
-   removes it.
+2. In Settings › Services › **GitHub**, paste it under Access token and press **Save**.
+   **Forget** removes it.
 3. Switch the service on. Click its row to see its tools, and switch on the ones you want her
    to have (all start off). Tools that change things ask you each time.
 
@@ -274,8 +275,9 @@ your own number (under Signal).
    was turned away, your number isn't coming through as the one under Signal (Twilio's Calls
    Log shows the number it got).
 7. For calling out (she calls places for tasks, asking you first each time), enter the Account
-   SID (Console › Account info, `AC…`) and her Twilio number (`+61…`) under Phone calls and
-   press **Save calling out**. If the number isn't in Sydney (AU1), set `CORA_TWILIO_API`.
+   SID (Console › Account info, `AC…`) and her Twilio number (`+61…`) under Phone calls › Calling
+   out and press **Save**. If the account isn't in Sydney (AU1), choose its **Twilio region**
+   below.
 
 If Cloudflare's bot protection covers the address, check Twilio's requests aren't challenged
 (Security › Events). Forwarding a SIM's calls to the Twilio number is possible on some

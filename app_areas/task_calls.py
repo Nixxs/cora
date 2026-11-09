@@ -174,9 +174,10 @@ class TaskCallsMixin:
             rules = phone_party_instructions(call.who, call.number, self.live.person_name, self.live.own_name)
             live = call.live
             live.tool_schemas = lambda: self.tools.schemas(excluding=route.excluded)
+            model = await self.contacts_model()
             live.config_override = lambda schemas: (contact_call_config(
-                schemas, sections, [], self.live.delegation_model, rules,
-                live_instructions=TASK_CALL_LIVE_INSTRUCTIONS), sections)
+                schemas, sections, [], model, rules,
+                live_instructions=TASK_CALL_LIVE_INSTRUCTIONS, voice=self.live.voice), sections)
             # The call's audio only: never the desk's mic or speaker.
             live.voice_relay = call.relay
             live.web_microphone = call.listener.mic if call.listener is not None else None
@@ -263,6 +264,18 @@ class TaskCallsMixin:
             await self.conversation_persistence.call_database(self.persistence.add_task_step, task_id, text)
         except Exception as error:
             self.activity.write(f"Saving a call on its task failed ({type(error).__name__}).", "Phone call")
+
+    @work(group="webhook-setup", exit_on_error=False)
+    async def save_twilio_region(self, code: str) -> None:
+        """The Twilio region for calls she places (Settings › Phone calls); applies to the next call."""
+        twilio.set_region(code)
+        self.activity.write(f"Calls she places now go through Twilio's {twilio.REGIONS[code][0]} region.",
+                            "Settings changed")
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_twilio_region, code)
+        except Exception as error:
+            self.activity.write(f"Twilio region save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save the Twilio region; it applies until Cora closes.", severity="error")
 
     @work(group="webhook-setup", exit_on_error=False)
     async def save_twilio_account(self, account_sid: str, phone_number: str) -> None:

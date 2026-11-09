@@ -27,7 +27,7 @@ from messaging.setup import LINKED as SIGNAL_LINKED
 from phone import twilio
 from phone.routes import CallLink, PhoneAccess
 from app_areas.task_calls import TaskCall
-from ui.model_settings import PhoneControls
+from ui.model_settings import ENV_REGION, PhoneControls
 
 
 # Her note on a call, so she knows the person can only hear her (see voice_talk).
@@ -217,5 +217,7 @@ class PhoneCallsMixin:
             incoming_url=self.phone_incoming_url, enabled=self.webhook_settings.phone_enabled,
             has_token=bool(self.twilio_token), account_sid=self.webhook_settings.twilio_account_sid or "",
             phone_number=self.webhook_settings.phone_number or "", save_account=self.save_twilio_account,
+            region=twilio.region() or ENV_REGION, region_address=twilio.API_BASE,
+            save_region=self.save_twilio_region,
         )
         return self.phone_controls

@@ -8,7 +8,9 @@ from textual import work
 
 from ui.composer import ChatComposer
 from inactivity import StandbyAlert
-from app_areas.shared import CONVERSATION_END_STANDBY_SECONDS
+from app_areas.shared import conversation_end_standby_seconds
+from phone import twilio
+from storage.client_store import set_conversation_gap
 
 
 # Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
@@ -50,6 +52,10 @@ class LiveSessionMixin:
                 self.check_email_account()
                 self.restart_webhooks()
                 self.daily_backup()
+                await self.apply_saved_settings()
+                if await self.starts_in_standby():
+                    self.start_in_standby()
+                    return
             else:
                 # Shutdown waits on startup_worker, so reuse it for later context reloads.
                 self.startup_worker = self.load_session_context()
@@ -79,6 +85,52 @@ class LiveSessionMixin:
                     self.wake.connection_timer.stop()
                 await self.stop_wake_listener()
                 self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
+
+    async def apply_saved_settings(self) -> None:
+        """Settings' standby settings, conversation gap and Twilio region, once at launch; one never set
+        there keeps .env's value."""
+        try:
+            saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
+            gap = await self.conversation_persistence.call_database(self.persistence.load_conversation_gap)
+            twilio_region = await self.conversation_persistence.call_database(self.persistence.load_twilio_region)
+        except Exception as error:
+            self.activity.write(f"Saved settings unavailable ({type(error).__name__}); using .env.", "Settings")
+            return
+        if gap is not None:
+            set_conversation_gap(gap)
+        if twilio_region is not None:
+            twilio.set_region(twilio_region)
+        if saved["idle_minutes"] is not None:
+            self.inactivity.timeout_seconds = saved["idle_minutes"] * 60.0
+        if saved["farewell"] is not None:
+            self.inactivity.farewell_enabled = saved["farewell"]
+        if saved["wake_word"] is not None and saved["wake_word"] != self.wake.enabled:
+            self.wake.enabled = saved["wake_word"]
+            self.update_wake_control()
+
+    @work(group="model-settings-save")
+    async def save_wake_word(self, on: bool) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_wake_word, on)
+        except Exception as error:
+            self.activity.write(f"Wake setting save failed ({type(error).__name__}).", "Settings error")
+
+    async def starts_in_standby(self) -> bool:
+        """Settings > General: whether she starts in standby at launch (active if it can't be read)."""
+        try:
+            return await self.conversation_persistence.call_database(self.persistence.load_start_mode) == "standby"
+        except Exception as error:
+            self.activity.write(f"Start setting unavailable ({type(error).__name__}); starting active.", "Settings")
+            return False
+
+    def start_in_standby(self) -> None:
+        """Launch without connecting to Live: she waits, as after standby, for the wake word, a
+        message or the status button. Waking connects with the usual context reload."""
+        self.standby = True
+        self.handle_mic_status(False)
+        self.set_connection_state("standby")
+        self.activity.write("Started in standby (Settings > General); not connected to Live.", "Standby")
+        self.start_wake_listener()
 
     def action_reconnect(self) -> None:
         self.record_idle_activity(user_activity=True)
@@ -193,7 +245,7 @@ class LiveSessionMixin:
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
                 self.send_unsaid_messages()
                 self.conversation_end_timer = self.set_timer(
-                    CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
+                    conversation_end_standby_seconds(), self.end_standby_conversation,
                 )
                 return
             self.standby = False

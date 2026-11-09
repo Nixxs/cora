@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from subconscious.emotions.feeling_rules import (
-    HALF_LIFE, LOOKBACK, MAX_PER_CONVERSATION, REASON_MAX_CHARS, SAME_FEELING_GAP, Reaction,
+    HALF_LIFE, LOOKBACK, MAX_PER_CONVERSATION, REASON_MAX_CHARS, SAME_FEELING_GAP, STORED_REASON_MAX_CHARS, Reaction,
 )
 from subconscious.emotions.feeling_store import FeelingLimit, FeelingStore
 import test_conversation_summaries as summary_tests
@@ -85,9 +85,9 @@ class FeelingStoreDatabaseTests(unittest.TestCase):
         for args in (("guilt", "small", "why"), ("hurt", "huge", "why"), ("hurt", "small", "   ")):
             with self.subTest(args=args), self.assertRaises(ValueError):
                 self.feelings.record(*args, now=NOW)
-        self.assertEqual(len(self.feelings.record("hurt", "small", "x" * 500, now=NOW).reason), REASON_MAX_CHARS)
+        self.assertEqual(len(self.feelings.record("hurt", "small", "x" * 2000, now=NOW).reason), STORED_REASON_MAX_CHARS)
         for feeling, strength, reason in (("guilt", "small", "why"), ("hurt", "huge", "why"), ("hurt", "small", " "),
-                                          ("hurt", "small", "x" * 201)):
+                                          ("hurt", "small", "x" * (STORED_REASON_MAX_CHARS + 1))):
             with self.subTest(feeling=feeling, strength=strength), self.assertRaises(IntegrityError), \
                     self.engine.begin() as connection:
                 connection.execute(text(

@@ -5,7 +5,7 @@ import json
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from session_config import BACKEND_MODEL
@@ -152,7 +152,7 @@ def main() -> None:
     parser.add_argument("conversation_id", type=UUID, help="A closed or interrupted conversation UUID")
     parser.add_argument("--model", default=BACKEND_MODEL)
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

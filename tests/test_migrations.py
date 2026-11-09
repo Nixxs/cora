@@ -134,6 +134,15 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0052_add_contact_calls.sql",
             "0053_add_calling_out.sql",
             "0054_create_key_details.sql",
+            "0055_create_app_settings.sql",
+            "0056_add_spend_project.sql",
+            "0057_add_browser_model.sql",
+            "0058_add_model_areas.sql",
+            "0059_longer_feeling_reasons.sql",
+            "0060_add_start_mode.sql",
+            "0061_add_standby_settings.sql",
+            "0062_add_conversation_and_backup_settings.sql",
+            "0063_add_twilio_region.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

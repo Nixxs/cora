@@ -89,8 +89,19 @@ class BackupTests(unittest.TestCase):
             self.assertEqual(backup.copy_elsewhere(made), second)
         self.assertTrue((second / made[0].name).exists())
         with patch.object(backup, "copy_folder", return_value=second / "missing"), \
-                self.assertRaisesRegex(backup.BackupError, "not a folder"):
+                self.assertRaisesRegex(backup.BackupError, "doesn't exist"):
             backup.copy_elsewhere(made)
+
+    def test_the_folder_from_settings_wins_over_env(self):
+        with patch.dict(os.environ, {"CORA_BACKUP_COPY_DIR": "E:/FromEnv"}), patch.object(backup, "load_dotenv"):
+            self.assertEqual(backup.copy_folder(None), Path("E:/FromEnv"))
+            self.assertEqual(backup.copy_folder("F:/FromSettings"), Path("F:/FromSettings"))
+            # None chosen in Settings means no copy, even with .env's line still there.
+            self.assertIsNone(backup.copy_folder(""))
+
+    def test_the_command_line_falls_back_to_env_without_the_database(self):
+        with patch("storage.database.build_engine", side_effect=RuntimeError("private")):
+            self.assertIsNone(backup.saved_copy_folder())
 
     def test_restore_feeds_the_backup_to_pg_restore(self):
         dump = self.touch("cora-database-2026-10-26_210501.dump")
@@ -104,9 +115,12 @@ class BackupTests(unittest.TestCase):
 
 
 class DailyBackupAppTests(unittest.TestCase):
-    def app(self):
+    def app(self, copy_to=None):
         from app import CoraApp
-        return CoraApp.__new__(CoraApp)  # back_up_if_due needs no running app
+        app = CoraApp.__new__(CoraApp)  # back_up_if_due needs no running app
+        app.conversation_persistence = MagicMock()  # holds app.persistence
+        app.persistence.load_backup_copy_dir.return_value = copy_to
+        return app
 
     def test_nothing_happens_when_no_backup_is_due(self):
         with patch("app_areas.background.daily_backup_due", return_value=False), patch("app_areas.background.run_backup") as run:
@@ -116,10 +130,24 @@ class DailyBackupAppTests(unittest.TestCase):
     def test_a_due_backup_is_the_database_only_and_says_where_it_went(self):
         with patch("app_areas.background.daily_backup_due", return_value=True),                 patch("app_areas.background.run_backup", return_value=([Path("cora-database-x.dump")], Path("E:/Backups"))) as run:
             message, summary = self.app().back_up_if_due()
-        run.assert_called_once_with(include_signal=False)
+        run.assert_called_once_with(include_signal=False, copy_to=None)
         self.assertEqual(summary, "Backup saved")
         self.assertIn("cora-database-x.dump", message)
         self.assertIn("copied to", message)
+
+    def test_the_folder_from_settings_is_used_and_an_unreadable_one_is_noted(self):
+        due = patch("app_areas.background.daily_backup_due", return_value=True)
+        result = ([Path("cora-database-x.dump")], None)
+        with due, patch("app_areas.background.run_backup", return_value=result) as run:
+            self.app(copy_to="F:/Second").back_up_if_due()
+        run.assert_called_once_with(include_signal=False, copy_to="F:/Second")
+        app = self.app()
+        app.persistence.load_backup_copy_dir.side_effect = RuntimeError("private SQL")
+        with due, patch("app_areas.background.run_backup", return_value=result) as run:
+            message, _ = app.back_up_if_due()
+        run.assert_called_once_with(include_signal=False, copy_to=None)
+        self.assertIn("RuntimeError", message)
+        self.assertNotIn("private", message)
 
     def test_failures_say_why_without_anything_private(self):
         with patch("app_areas.background.daily_backup_due", return_value=True),                 patch("app_areas.background.run_backup", side_effect=backup.BackupError("Docker is not installed or not on PATH")):

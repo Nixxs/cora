@@ -318,7 +318,7 @@ class AppSignUpTests(unittest.IsolatedAsyncioTestCase):
             app.email_person = "nick@example.com"
             record = SimpleNamespace(id=uuid4(), site="birdforum.net", url=SITE_URL, what="Forum", why="Owls")
             app.persistence.record_sign_up.return_value = record
-            app.persistence.load_models.return_value = {"delegation": "big-model"}
+            app.persistence.load_models.return_value = {"browser": "big-model"}
             with patch("app_areas.sign_ups.passwords.sign_up_password", return_value=PASSWORD), \
                     patch("app_areas.sign_ups.passwords.sign_up_name", return_value="Cora Vale"), \
                     patch.object(app, "run_sign_up", return_value=MagicMock(is_finished=False)) as run:
@@ -408,7 +408,7 @@ class AppSignUpTests(unittest.IsolatedAsyncioTestCase):
 
     def test_her_instructions_say_what_she_can_do_and_when_the_browser_beats_web_search(self):
         for words in ("send email from your own inbox", "request_sign_up", "fares or prices for exact dates",
-                      "Run the site's own search rather than quoting advertised prices"):
+                      "use_browser", "give it the whole job with every detail it needs"):
             self.assertIn(words, BACKEND_INSTRUCTIONS)
 
     async def test_explorations_leave_the_browser_to_a_sign_up(self):

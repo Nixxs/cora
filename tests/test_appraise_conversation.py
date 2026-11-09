@@ -103,7 +103,7 @@ class AppraisalCommandTests(unittest.TestCase):
         people = MagicMock()
         people.current_person.return_value = person
         with patch("sys.argv", ["appraise_conversation.py", *args]), \
-                patch.object(module, "load_dotenv"), patch.object(module, "build_engine"), \
+                patch.object(module, "load_environment"), patch.object(module, "build_engine"), \
                 patch.object(module, "OpenAI"), patch.object(module, "ConversationStore"), \
                 patch.object(module, "PeopleStore", return_value=people), \
                 patch.object(module, "AppraisalStore", return_value=self.appraisals), \

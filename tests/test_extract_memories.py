@@ -255,7 +255,7 @@ class ExtractMemoriesTests(unittest.TestCase):
         engine = MagicMock()
         saved = SimpleNamespace(kind="fact", text="The user lives in Perth.")
         args = ["extract_memories.py", str(self.conversation_id), "--model", "chosen-model"]
-        with patch("memory.extract_memories.load_dotenv"), \
+        with patch("memory.extract_memories.load_environment"), \
             patch("memory.extract_memories.build_engine", return_value=engine), \
             patch("memory.extract_memories.ConversationStore", return_value=self.store), \
             patch("memory.extract_memories.extract_memories", return_value=[saved]) as generate, \

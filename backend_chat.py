@@ -13,9 +13,10 @@ from openai import AsyncOpenAI
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
 from tools.end_call import CALL_ONLY
 from tools.pass_on import CLIENT_ONLY
+from tools.use_browser import TOOL_SECONDS as USE_BROWSER_SECONDS
 
-# Tool rounds one turn may take; each round is one backend request. Browsing spends one per
-# click or page, so this leaves room for a real lookup. Past it, she answers without tools.
+# Tool rounds one turn may take; each round is one backend request (browsing is one round: its
+# helper takes its own steps). Past it, she answers without tools.
 MAX_ROUNDS = 20
 OUT_OF_ROUNDS = (
     "You have used all the tool calls you can make for this message. Answer now from what you "
@@ -23,6 +24,8 @@ OUT_OF_ROUNDS = (
 )
 # How long one tool result may take; long enough for an approval pop-up to be answered.
 TOOL_RESULT_SECONDS = 180
+# Tools that take longer than that by design: a browsing job.
+SLOW_TOOLS = {"use_browser": USE_BROWSER_SECONDS}
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY, *CALL_ONLY})
@@ -178,4 +181,5 @@ class BackendChat:
                 "arguments": call.arguments, "status": "completed"}
         if not self.tools.handle_function_call(item, route=route):
             return TOOL_REFUSED
-        return await route.wait_for(call.call_id, route.tool_seconds or self.tool_seconds)
+        seconds = max(route.tool_seconds or self.tool_seconds, SLOW_TOOLS.get(call.name, 0))
+        return await route.wait_for(call.call_id, seconds)

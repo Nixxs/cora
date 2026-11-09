@@ -35,6 +35,18 @@ def read_conversation_gap() -> timedelta:
 
 
 CONVERSATION_GAP = read_conversation_gap()
+
+
+def conversation_gap() -> timedelta:
+    """The gap in use now: .env's, or Settings' once applied."""
+    return CONVERSATION_GAP
+
+
+def set_conversation_gap(minutes: int) -> None:
+    """From Settings > General: applies to every check from now on."""
+    global CONVERSATION_GAP
+    CONVERSATION_GAP = timedelta(minutes=minutes)
+
 # History each reply carries, as with the primary person's chat.
 HISTORY_MESSAGES = 40
 HISTORY_BYTES = 6000
@@ -120,7 +132,7 @@ class ClientStore:
                 .group_by(ConversationRecord.id, ConversationRecord.started_at)
                 .order_by(ConversationRecord.started_at.desc()).limit(1)
             ).first()
-            if current is not None and current[1] is not None and now - current[1] < CONVERSATION_GAP:
+            if current is not None and current[1] is not None and now - current[1] < conversation_gap():
                 return current[0]
             session.execute(update(ConversationRecord).where(
                 ConversationRecord.person_id == person_id, ConversationRecord.status == "active",
@@ -143,7 +155,7 @@ class ClientStore:
                 .join(PersonRecord, PersonRecord.id == ConversationRecord.person_id)
                 .where(
                     PersonRecord.kind == "client", ConversationRecord.status == "active",
-                    func.coalesce(last, ConversationRecord.started_at) < now - CONVERSATION_GAP,
+                    func.coalesce(last, ConversationRecord.started_at) < now - conversation_gap(),
                 )
             ).all()
             if quiet:

@@ -10,6 +10,7 @@ from ui.confirm_view import ConfirmScreen
 from services.tools import PAGE_ARGUMENT, ServiceToolHandler, tool_name, tool_schema
 from services.tools import validate_arguments as validate_service_arguments
 from services.credentials import forget_token, get_token, save_token
+from tools.use_browser import SCHEMA as USE_BROWSER_SCHEMA, validate_arguments as validate_use_browser_arguments
 
 
 # At launch, how long Live waits for services to connect so their tools are in the first session.
@@ -76,9 +77,26 @@ class ServicesMixin:
         except Exception as error:
             self.activity.write(f"Services startup failed ({type(error).__name__}).", "Services error")
 
+    def service_tool_handler(self, service_id: str, tool) -> ServiceToolHandler:
+        sometimes = SERVICES[service_id].asks_when
+        return ServiceToolHandler(
+            service_id, tool.name, self.services.call_tool, self.tool_connection,
+            lambda: self.closing or self.reconnecting, self.activity.write,
+            cache=self.service_results,
+            paged=PAGE_ARGUMENT not in tool.input_schema.get("properties", {}),
+            # Anything the server doesn't mark read-only asks the person first, unless the
+            # catalogue lets it run without asking; some of those still ask for some calls.
+            confirm=self.confirmations.ask if tool.asks_first or tool.name in sometimes else None,
+            asks_when=None if tool.asks_first else sometimes.get(tool.name),
+        )
+
     def sync_service_tools(self) -> None:
-        """Register each connected service's switched-on tools as Cora's; the next connect sends them."""
-        wanted = {}
+        """Register each connected service's switched-on tools as Cora's; the next connect sends them.
+
+        A service behind a helper (the browser) gives her one tool instead, use_browser, and its own
+        tools go to the helper.
+        """
+        wanted, helper_tools = {}, {}
         for service_id in SERVICES:
             status = self.services.status(service_id)
             if status.state != CONNECTED:
@@ -86,8 +104,13 @@ class ServicesMixin:
             chosen = self.service_tool_choices.get(service_id, set())
             for tool in status.tools:
                 schema = tool_schema(service_id, tool) if tool.name in chosen else None
-                if schema is not None:
+                if schema is None:
+                    continue
+                if SERVICES[service_id].behind_helper:
+                    helper_tools[schema["name"]] = (schema, self.service_tool_handler(service_id, tool).result)
+                else:
                     wanted[schema["name"]] = (service_id, tool, schema)
+        self.browser_tools = helper_tools
         current = {
             name for name in self.tools.names()
             if any(name.startswith(tool_name(service_id, "")) for service_id in SERVICES)
@@ -96,20 +119,27 @@ class ServicesMixin:
             self.tools.unregister(name)
         for name in set(wanted) - current:
             service_id, tool, schema = wanted[name]
-            sometimes = SERVICES[service_id].asks_when
-            handler = ServiceToolHandler(
-                service_id, tool.name, self.services.call_tool, self.tool_connection,
-                lambda: self.closing or self.reconnecting, self.activity.write,
-                cache=self.service_results,
-                paged=PAGE_ARGUMENT not in tool.input_schema.get("properties", {}),
-                # Anything the server doesn't mark read-only asks the person first, unless the
-                # catalogue lets it run without asking; some of those still ask for some calls.
-                confirm=self.confirmations.ask if tool.asks_first or tool.name in sometimes else None,
-                asks_when=None if tool.asks_first else sometimes.get(tool.name),
-            )
-            self.tools.register(schema, validate_service_arguments, handler.handle)
-        if current != set(wanted):
+            self.tools.register(schema, validate_service_arguments,
+                                self.service_tool_handler(service_id, tool).handle)
+        had_browser = USE_BROWSER_SCHEMA["name"] in self.tools.names()
+        if helper_tools and not had_browser:
+            self.tools.register(USE_BROWSER_SCHEMA, validate_use_browser_arguments, self.use_browser.handle)
+        elif not helper_tools and had_browser:
+            self.tools.unregister(USE_BROWSER_SCHEMA["name"])
+        if current != set(wanted) or had_browser != bool(helper_tools):
             self.service_tools_changed = True
+
+    async def browser_model(self) -> str:
+        """The model for her browser helper, from Settings > Models."""
+        models = await self.conversation_persistence.call_database(self.persistence.load_models)
+        return models["browser"]
+
+    def details_for_forms(self) -> str:
+        """The person's name and key details, for a form her browser helper fills in for them."""
+        name = f"Name: {self.live.person_name}" if self.live.person_name else ""
+        # Kept as JSON of label to value (KeyDetailsStore.get_startup_context).
+        details = f"Other details: {self.live.key_details_context.strip()}" if self.live.key_details_context.strip() else ""
+        return "\n".join(part for part in (name, details) if part)
 
     @work(group="services-startup")
     async def start_enabled_services(self) -> None:

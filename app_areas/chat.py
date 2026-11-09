@@ -14,7 +14,7 @@ from live import typed_content
 from backend_chat import STANDBY_EXCLUDED, BackendRoute
 from session_config import instruction_sections
 from subconscious.emotions.feeling_rules import feelings_context
-from app_areas.shared import CONVERSATION_END_STANDBY_SECONDS
+from app_areas.shared import conversation_end_standby_seconds
 
 
 class ChatMixin:
@@ -67,7 +67,7 @@ class ChatMixin:
         if self.conversation_end_timer is not None:
             self.stop_conversation_end_timer()
             self.conversation_end_timer = self.set_timer(
-                CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
+                conversation_end_standby_seconds(), self.end_standby_conversation,
             )
 
     async def answer_person_in_writing(

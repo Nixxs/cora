@@ -5,7 +5,7 @@ from time import monotonic
 from uuid import UUID, uuid4
 from textual.worker import WorkerError
 from memory.background import run_background_memory_pass
-from session_config import BACKEND_MODEL
+from session_config import BACKEND_MODEL, MODEL_CHOICES, VOICE
 
 # How long the launch greeting waits for the last conversation to be summarized.
 SUMMARY_WAIT_SECONDS = 30
@@ -18,7 +18,8 @@ class ConversationPersistence:
                  set_tasks_context=lambda context: None, set_sign_ups_context=lambda context: None,
                  set_key_details_context=lambda context: None,
                  set_desire_context=lambda context: None, set_feelings=lambda feelings: None,
-                 set_own_name=lambda name: None, set_person_name, set_delegation_model, write_activity, notify):
+                 set_own_name=lambda name: None, set_person_name, set_delegation_model,
+                 set_voice=lambda voice: None, set_image_model=lambda model: None, write_activity, notify):
         self.storage = storage
         self.schedule_save = schedule_save
         self.is_closing = is_closing
@@ -36,6 +37,8 @@ class ConversationPersistence:
         self.set_person_name = set_person_name
         self.set_own_name = set_own_name
         self.set_delegation_model = set_delegation_model
+        self.set_voice = set_voice
+        self.set_image_model = set_image_model
         self.write_activity = write_activity
         self.notify = notify
         self.lock = asyncio.Lock()
@@ -321,6 +324,30 @@ class ConversationPersistence:
             if not self.is_closing():
                 self.set_delegation_model(model)
                 self.write_activity(f"Delegation model: {model}.", "Delegation model loaded")
+
+        # The model that looks at images; if it fails, looks keep the one they have.
+        try:
+            models = await self.call_database(self.storage.load_models)
+        except Exception as error:
+            self.write_activity(f"Image model load failed ({type(error).__name__}).", "Image model unavailable")
+        else:
+            if isinstance(models, dict) and models.get("images") in MODEL_CHOICES and not self.is_closing():
+                self.set_image_model(models["images"])
+
+        # Her voice from Settings > General; if it fails she connects with the default.
+        if self.is_closing():
+            return
+        self.set_voice(VOICE)
+        try:
+            voice = await self.call_database(self.storage.load_voice)
+        except Exception as error:
+            self.write_activity(
+                f"Voice setting load failed ({type(error).__name__}); connecting with the default.",
+                "Voice unavailable",
+            )
+        else:
+            if not self.is_closing():
+                self.set_voice(voice)
 
     def summarize_previous_conversations(self, should_stop, dispatch_activity) -> None:
         try:

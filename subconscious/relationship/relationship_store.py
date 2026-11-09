@@ -12,7 +12,7 @@ import json
 import sys
 from uuid import UUID
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from sqlalchemy import Engine, select
 from sqlalchemy.orm import Session
 
@@ -239,7 +239,7 @@ def main() -> None:
     reset.add_argument("--to", type=UUID, help="restore an earlier event's values instead of the baseline")
     reset.add_argument("--dry-run", action="store_true", help="show the change without saving it")
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     now = datetime.now().astimezone()
     try:
         engine = build_engine()

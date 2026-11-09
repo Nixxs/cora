@@ -55,6 +55,8 @@ class Service:
     tool_notes: dict[str, str] = field(default_factory=dict, hash=False)
     # Tools that run without asking except for calls these say yes to, which ask the person first.
     asks_when: dict[str, Callable[[dict], bool]] = field(default_factory=dict, hash=False)
+    # Tools used by a helper on a model of their own (use_browser) rather than offered to her directly.
+    behind_helper: bool = False
 
     @property
     def needs_token(self) -> bool:
@@ -95,5 +97,7 @@ SERVICES: dict[str, Service] = {service.id: service for service in (
             **dict.fromkeys(("browser_type", "browser_fill_form", "browser_select_option"), TYPING_RULE),
         },
         asks_when={"browser_click": sends_something},
+        # She asks use_browser for a job; its helper uses these on the Browser model.
+        behind_helper=True,
     ),
 )}

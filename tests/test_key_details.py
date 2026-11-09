@@ -79,9 +79,8 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         from app_areas.contact_calls import CALL_TOOLS
         from app_areas.task_calls import TASK_CALL_TOOLS
         from app_areas.tasks import COORDINATOR_SEND_TOOLS, COORDINATOR_TOOLS
-        from tools.pass_on import CLIENT_ONLY
-        for allowed in (CALL_TOOLS, TASK_CALL_TOOLS, COORDINATOR_TOOLS | COORDINATOR_SEND_TOOLS,
-                        frozenset({"search_memory", "feel", *CLIENT_ONLY})):
+        from app_areas.signal_chats import CLIENT_CHAT_TOOLS
+        for allowed in (CALL_TOOLS, TASK_CALL_TOOLS, COORDINATOR_TOOLS | COORDINATOR_SEND_TOOLS, CLIENT_CHAT_TOOLS):
             self.assertNotIn("note_detail", allowed)
 
 

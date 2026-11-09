@@ -169,8 +169,8 @@ class WebPhotoAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_look_again_is_hers_in_her_own_chats_only_and_photos_end_with_the_conversation(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.assertIn("look_again", app.tools.names())
-            client_allowed = {"search_memory", "feel", "pass_on", "raise_concern", "stop_replying"}
-            self.assertNotIn("look_again", client_allowed)
+            from app_areas.signal_chats import CLIENT_CHAT_TOOLS
+            self.assertNotIn("look_again", CLIENT_CHAT_TOOLS)
             app.kept_images.keep(b"photo")
             app.standby = True
             app.conversation_persistence.end_conversation = AsyncMock(return_value=True)

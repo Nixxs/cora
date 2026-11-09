@@ -7,12 +7,14 @@ the history of how each part was built is in Git.
 
 - **Talking to her:** voice and typing in one conversation, standby and the local wake
   word, the opening greeting, images (pasting, the screen, pictures from the web), the
-  dashboard and a model per area. See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
+  dashboard (with OpenAI spend, given an Admin key) and a model per area (eight, including
+  contacts and tasks, exploring, images, and browsing run by a helper with a small context). See [Talking to Cora](DOCUMENTATION.md#talking-to-cora).
 - **Her inner life:** memory (with corrections and fading), key details she keeps to hand
   (your and your family's emails, phones and addresses), interests and exploration,
   desires, a developing self, how she pictures herself, a relationship with you, and
   short-lived feelings. See [Her inner life](DOCUMENTATION.md#her-inner-life).
-- **People and tasks:** contacts in client mode, impressions and heads-ups, tasks with
+- **People and tasks:** contacts in client mode (with the browser for looking things up),
+  impressions and heads-ups, tasks with
   briefs, a coordinator, nudges, deadlines and the commitment check. See
   [People, tasks and reaching you](DOCUMENTATION.md#people-tasks-and-reaching-you).
 - **Services:** MCP (GitHub, the browser, filling in forms for you with sending approved),
@@ -29,22 +31,22 @@ an installer is paused. Local models follow after 1.0.
 1. **Feature freeze (now, about a month):** using Cora day to day (desk, voice, Signal, the
    web page and calls) with no new features. Only fixes, polish from real use, documentation
    and the housekeeping below. Ideas that come up go into this roadmap, not the code.
-2. **Services screen and in-app settings (MCP M4):** a list of supported services for
-   non-technical users, each with an on/off switch that runs its sign-in, and whether Cora
-   watches it (off, digest only, or may interrupt), reusing the dashboard's look; the
-   settings still in `.env` move into the app. Each service is a catalogue entry (mostly
-   data): its server, how it signs in, which tools are read-only or ask first, watch
-   defaults and short guidance for her. Hosted servers are reached remotely with the
-   service's own sign-in; Gmail needs planning, since Google restricts mail access for
-   public apps. A hand-edited `mcp.json` may come for custom servers, and a router tool if
-   there are many.
-3. **Her picture in Settings:** setting [how she pictures herself](DOCUMENTATION.md#how-she-pictures-herself)
-   is command-line only. A "Her picture" section would let you pick an image and enter her
-   description for `self` and `work`, see what's saved, and set her Signal profile picture.
-4. **Dashboard editing:** for example removing a wrong memory, with a detail view for
-   picking out the item to change; seeing and editing her key details (command-line only for
-   now), and a one-off pass suggesting ones she already learned in past chats.
-5. **Release.**
+   Polish in progress: none right now; new items from real use go here.
+2. **A finer look for Settings:** it works but looks coarse, so it gets the dashboard's polish.
+   Long labels are cut off at the edge (her voice, the API key, the spend lines), so they
+   should wrap or become a short label with the detail underneath in a dimmer line. Buttons
+   are full-width blocks, so they should be compact and sit beside their input (Save,
+   Remove). Switches need their label beside them, statuses need one style (what's in use,
+   what's wrong), and spacing should be even, with sections grouped under small headings.
+   Applies to all three tabs. The Services tab's workings stay as they are.
+3. **The rest of `.env` into Settings:** the settings still in `.env` move into the app, one
+   at a time, as the OpenAI key and her voice already have (Settings > General, with the
+   general `app_settings` table ready for more; secrets in the credential store). Done: how
+   she starts, automatic standby, her goodbye before it, the wake word (the Wake button is
+   remembered), when a conversation ends, the second backup folder, and the Twilio region.
+   What stays in `.env` on purpose: the OpenAI key as a fallback (one saved in Settings wins),
+   wake diagnostics, the email app's fallbacks, and the database ports in `.env.database`.
+4. **Release.**
 
 Waiting on devices at home: **Home Assistant** (starting with its demo devices) and
 **camera and screen awareness** (see [Awareness](#awareness) below).

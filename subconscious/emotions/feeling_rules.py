@@ -30,7 +30,11 @@ NOTICEABLE = 0.05
 # to hide, a fresh strong one is hard to hide, and both ease as they fade.
 CLEAR = 0.18
 STRONG = 0.28
+# A reason as she gives it with feel, and as her context shows it.
 REASON_MAX_CHARS = 200
+# A reason as kept: longer, so one from looking back on a conversation (the appraisal's whole
+# reason, up to 1,000 characters, after its "thinking back…" opening) is saved whole for the dashboard.
+STORED_REASON_MAX_CHARS = 1200
 # Far enough back that anything older has faded to nothing (a full feeling, after twelve half-lives).
 LOOKBACK = HALF_LIFE * 12
 # How often she may report a feeling: a few genuine reactions a conversation, not a running commentary,

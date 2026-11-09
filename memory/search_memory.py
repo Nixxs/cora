@@ -4,7 +4,7 @@ import argparse
 from datetime import timezone
 import sys
 
-from dotenv import load_dotenv
+from openai_key import load_environment
 from openai import OpenAI
 
 from .embed_memory import generate_embedding
@@ -35,7 +35,7 @@ def main() -> None:
     parser.add_argument("query", help="A search question, enclosed in quotes")
     parser.add_argument("--limit", type=int, default=8, help="Maximum results, 1 to 20 (default: 8)")
     args = parser.parse_args()
-    load_dotenv()
+    load_environment()
     try:
         engine = build_engine()
         try:

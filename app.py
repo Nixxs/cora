@@ -11,12 +11,15 @@ from textual.worker import WorkerError
 
 from dotenv import load_dotenv
 
+from openai_key import apply_api_key, has_key
+
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
 from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
+from ui.api_key_view import ApiKeyScreen
 from ui.model_settings import EmailControls
 from messaging.container import signal_port, start_container, stop_container
 from messaging.receiver import IncomingMessage, SignalReceiver
@@ -54,6 +57,8 @@ from storage.conversation_persistence import ConversationPersistence
 from ui.chat_submission import ChatSubmission
 from tools import create_tool_registry
 from tools.route import routed
+from tools.look_at_screen import set_image_model
+from tools.use_browser import BrowserHelper, UseBrowserTool
 from wake.controller import WakeController
 from app_areas.voice import VoiceMixin
 from app_areas.live_session import LiveSessionMixin
@@ -79,6 +84,8 @@ from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
 load_dotenv()
+# A key saved in the app wins over .env's; without either, Cora asks for one at start.
+apply_api_key()
 
 # Cheap when not due: the 24-hour gate is one database read. Also lets memories extracted
 # at startup clear the store's 5-minute commit margin before the first check.
@@ -190,6 +197,8 @@ class CoraApp(
             set_person_name=lambda name: setattr(self.live, "person_name", name),
             set_own_name=lambda name: setattr(self.live, "own_name", name),
             set_delegation_model=lambda model: setattr(self.live, "delegation_model", model),
+            set_voice=lambda voice: setattr(self.live, "voice", voice),
+            set_image_model=set_image_model,
             write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
         )
@@ -304,6 +313,19 @@ class CoraApp(
         self.service_tool_choices: dict[str, set[str]] = {}
         # Set when Cora's service tools changed since Live last connected.
         self.service_tools_changed = False
+        # The browser's own tools, {name: (schema, run)}, for her browser helper while the browser is
+        # connected; she has use_browser instead of them (see sync_service_tools).
+        self.browser_tools: dict = {}
+        self.browser_helper = BrowserHelper(
+            lambda: self.browser_tools, self.browser_model, self.details_for_forms, self.activity.write,
+        )
+        self.use_browser = UseBrowserTool(
+            self.tool_connection, lambda: self.closing or self.reconnecting, self.activity.write, self.browser_helper,
+        )
+        # Set when her voice changed in Settings; closing Settings reconnects with it.
+        self.voice_changed = False
+        # Live's connect; None until the first, which waits for an OpenAI key if there isn't one.
+        self.connection_worker = None
         # Cora's own Signal account: off and unused unless set up in Settings > Services.
         self.signal_settings = SignalSettings()
         self.signal = SignalSetup(
@@ -512,7 +534,12 @@ class CoraApp(
                     f"Diagnostic trace: {self.live_trace.path.name} (IDs/state only; no chat text or audio).",
                     "Diagnostic trace enabled",
                 )
-        self.connection_worker = self.connect_to_cora()
+        if has_key():
+            self.connection_worker = self.connect_to_cora()
+        else:
+            # Without a key nothing can reach OpenAI: ask before connecting.
+            self.activity.write("No OpenAI API key yet; asking for one before connecting.", "OpenAI key needed")
+            self.push_screen(ApiKeyScreen(self.check_and_save_openai_key), callback=self.api_key_given)
         self.update_wake_control()
         self.observation_timer = self.set_interval(0.5, self.check_observations)
         self.interest_timer = self.set_interval(INTEREST_CHECK_SECONDS, self.check_interests)
@@ -524,8 +551,8 @@ class CoraApp(
         self.feeling_timer = self.set_interval(FEELING_CHECK_SECONDS, self.check_feelings)
         self.background_round_timer = self.set_interval(BACKGROUND_ROUND_SECONDS, self.background_round)
         self.task_mail_timer = self.set_interval(TASK_MAIL_CHECK_SECONDS, self.mail_round)
-        if self.inactivity.timeout_seconds > 0:
-            self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
+        # Always running: Settings can turn automatic standby on at any time (the check skips while it's off).
+        self.idle_standby_timer = self.set_interval(1.0, self.check_inactivity)
 
     def record_idle_activity(self, *, user_activity: bool = False) -> None:
         self.inactivity.record_activity()
@@ -598,7 +625,7 @@ class CoraApp(
                 self.push_screen(DashboardScreen(
                     self.voice_bands, self.conversation, self.audio_status,
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
-                    self.live.context,
+                    self.live.context, load_spend=self.load_spend,
                 ))
         elif event.button.id == "chat-status":
             if self.standby:
@@ -623,6 +650,8 @@ class CoraApp(
             else:
                 self.start_wake_listener()
             self.update_wake_control()
+            # Remembered for the next launch.
+            self.save_wake_word(self.wake.enabled)
             self.query_one("#chat-input", ChatComposer).focus()
         elif (event.button.id in ("mic-status", "speaker-status") and not self.closing
               and (not self.reconnecting or event.button.id == "mic-status")):
