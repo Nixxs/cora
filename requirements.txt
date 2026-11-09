@@ -1,8 +1,7 @@
-textual
+textual[syntax]>=8.2,<9
 textual-dev
-textual[syntax]
 textual-image[textual]>=0.14,<1
-dotenv
+python-dotenv>=1.0,<2
 openai[realtime]>=3.28.0
 sounddevice>=0.5.4
 numpy>=1.26,<3

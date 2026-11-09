@@ -17,14 +17,21 @@ Cora runs directly on Windows; only its PostgreSQL/pgvector database runs in Doc
 You need Python 3.12 or later with a virtual environment, Docker Desktop using Linux containers,
 an OpenAI API key, and a microphone/speaker for voice interaction.
 
-Run these commands from the repository root with your Python environment activated.
-
 ### 1. Install and configure
 
 ```powershell
+git clone https://github.com/Nixxs/cora.git
+cd cora
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 Copy-Item .env.database.example .env.database
 ```
+
+Run the commands below from the repository root with the environment activated
+(`.venv\Scripts\Activate.ps1` in each new terminal). If PowerShell refuses to run the
+activation script, allow local scripts once with
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
 Only copy the example on a fresh setup; keep an existing database configuration.
 Cora asks for your OpenAI API key the first time she starts, checks it with OpenAI and keeps
