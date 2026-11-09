@@ -1,6 +1,7 @@
 """The Settings screen and model choices: part of CoraApp (see app.py)."""
 
 import asyncio
+from pathlib import Path
 from time import monotonic
 
 from textual import work
@@ -9,6 +10,7 @@ import openai_key
 import openai_spend
 from ui.model_settings import (
     EmailControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+    gap_words,
 )
 from services.catalogue import SERVICES
 from ui.meters import NO_SPEND_HINT
@@ -16,10 +18,22 @@ from services.credentials import get_token
 from sign_ups import password as passwords
 from session_config import MODEL_CHOICES
 from tools.look_at_screen import set_image_model
+import backup
+from storage.app_settings_store import BACKUP_COPY_MAX_CHARS
+from storage.client_store import conversation_gap, set_conversation_gap
 
 
 # How long the dashboard reuses the spend it read; OpenAI's costs are hours behind anyway.
 SPEND_CACHE_SECONDS = 15 * 60
+
+
+def backup_copy_status(folder: Path | None) -> str:
+    """What the second backup folder is doing, in the Settings statuses' words."""
+    if folder is None:
+        return "No second copy: backups stay in Cora's backups folder."
+    if not folder.is_dir():
+        return f"Not found: {folder}"
+    return f"In use: {folder}"
 
 
 class SettingsMixin:
@@ -50,6 +64,9 @@ class SettingsMixin:
             self.email_signature = await asyncio.to_thread(self.email_account.signature)
             voice = await self.conversation_persistence.call_database(self.persistence.load_voice)
             start_mode = await self.conversation_persistence.call_database(self.persistence.load_start_mode)
+            backup_copy = await self.conversation_persistence.call_database(self.persistence.load_backup_copy_dir)
+            backup_folder = await asyncio.to_thread(backup.copy_folder, backup_copy)
+            backup_status = await asyncio.to_thread(backup_copy_status, backup_folder)
             spend_project = await self.conversation_persistence.call_database(self.persistence.load_spend_project)
             admin_key = await asyncio.to_thread(openai_spend.saved_admin_key)
             has_sign_up_password = bool(await asyncio.to_thread(passwords.sign_up_password))
@@ -86,6 +103,10 @@ class SettingsMixin:
                     idle_minutes=round(self.inactivity.timeout_seconds / 60),
                     save_idle_minutes=self.save_idle_minutes,
                     farewell=self.inactivity.farewell_enabled, save_farewell=self.save_standby_farewell,
+                    conversation_gap=max(1, round(conversation_gap().total_seconds() / 60)),
+                    save_conversation_gap=self.save_conversation_gap,
+                    backup_copy=str(backup_folder or ""), backup_status=backup_status,
+                    save_backup_copy=self.save_backup_copy_dir,
                     admin_status=(f"Admin key saved ({openai_spend.masked(admin_key)}) · checking…" if admin_key
                                   else "No Admin key: the dashboard doesn't show spend."),
                     save_admin_key=self.save_admin_key, forget_admin_key=self.forget_admin_key,
@@ -293,6 +314,44 @@ class SettingsMixin:
         except Exception as error:
             self.activity.write(f"Standby setting save failed ({type(error).__name__}).", "Settings error")
             self.notify("Could not save the goodbye setting; it applies until Cora closes.", severity="error")
+
+    @work(group="model-settings-save")
+    async def save_conversation_gap(self, minutes: int) -> None:
+        # Applies now to contacts' chats and the next standby; one already counting keeps its time.
+        set_conversation_gap(minutes)
+        self.activity.write(f"A conversation now ends after {gap_words(minutes)} of quiet.", "Settings changed")
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_conversation_gap, minutes)
+        except Exception as error:
+            self.activity.write(f"Conversation setting save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save when a conversation ends; it applies until Cora closes.", severity="error")
+
+    @work(group="model-settings-save")
+    async def save_backup_copy_dir(self, folder: str) -> None:
+        """Save the second backup folder ("" for none) once it's a full path to a folder that exists."""
+        folder = folder.strip()
+        problem = None
+        if folder and not Path(folder).is_absolute():
+            problem = "Needs the full path, such as E:\\Cora backups."
+        elif folder and len(folder) > BACKUP_COPY_MAX_CHARS:
+            problem = "That path is too long."
+        elif folder and not await asyncio.to_thread(Path(folder).is_dir):
+            problem = f"Not found: {folder}"
+        if problem is None:
+            try:
+                await self.conversation_persistence.call_database(self.persistence.save_backup_copy_dir, folder)
+            except Exception as error:
+                self.activity.write(f"Backup folder save failed ({type(error).__name__}).", "Settings error")
+                problem = "Could not save the folder. Check Activity."
+        if isinstance(self.screen, ModelSettingsScreen):
+            self.screen.show_backup_status(
+                problem or await asyncio.to_thread(backup_copy_status, Path(folder) if folder else None),
+                None if problem else folder)
+        if problem is not None:
+            self.notify(problem, severity="error")
+            return
+        self.activity.write(f"Backups are now also copied to {folder}." if folder
+                            else "Backups are no longer copied to a second folder.", "Settings changed")
 
     @work(group="model-settings-save")
     async def save_start_mode(self, mode: str) -> None:

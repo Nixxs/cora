@@ -50,6 +50,13 @@ class GeneralControls:
     save_idle_minutes: Callable[[int], None] = lambda minutes: None
     farewell: bool = False
     save_farewell: Callable[[bool], None] = lambda on: None
+    # Minutes of quiet that end a conversation (standby and contacts' chats); applies now.
+    conversation_gap: int = 60
+    save_conversation_gap: Callable[[int], None] = lambda minutes: None
+    # The second backup folder in use ("" for none) and its status; the app checks and saves a new one.
+    backup_copy: str = ""
+    backup_status: str = ""
+    save_backup_copy: Callable[[str], None] = lambda folder: None
     # OpenAI spend on the dashboard: an optional Admin key, and whose spend (a project, "all" or "auto").
     admin_status: str = ""
     save_admin_key: Callable[[str], None] = lambda key: None
@@ -413,6 +420,23 @@ def idle_options(current: int) -> list[tuple[str, int]]:
             for value in minutes]
 
 
+GAP_CHOICES = (15, 30, 60, 90, 120, 180, 240)
+
+
+def gap_words(minutes: int) -> str:
+    """15 minutes, an hour, 1.5 hours, 2 hours."""
+    if minutes < 60 or minutes % 30:
+        return f"{minutes} minute{'' if minutes == 1 else 's'}"
+    if minutes == 60:
+        return "an hour"
+    return f"{minutes / 60:g} hours"
+
+
+def gap_options(current: int) -> list[tuple[str, int]]:
+    """When a conversation ends: the choices, with the current one even if it came from .env."""
+    return [(f"After {gap_words(value)}", value) for value in sorted(set(GAP_CHOICES) | {current})]
+
+
 def general_status(message: str) -> Text:
     """The OpenAI and Admin key lines in the same style as the services' statuses."""
     if message.startswith("Checking") or message.endswith("checking…"):
@@ -625,6 +649,18 @@ class ModelSettingsScreen(ModalScreen):
             yield Label("Say a short goodbye before automatic standby", classes="settings-label")
         yield note("Her wake word is turned on and off with the Wake button at the bottom right, "
                    "and stays as you left it next time.")
+        yield heading("Conversations")
+        yield field("When a conversation ends", "After this long with nothing said, in standby or in a contact's "
+                    "chat, the conversation closes and she forms its memories.")
+        yield Select(gap_options(self.general.conversation_gap), value=self.general.conversation_gap,
+                     allow_blank=False, id="conversation-gap", compact=True)
+        yield heading("Backups")
+        yield field("A second copy", "Each daily backup is also copied to this folder, such as on another "
+                    "disk. The folder must already exist.")
+        yield Static(general_status(self.general.backup_status), id="backup-copy-status", classes="settings-status")
+        yield row(entry(id="backup-copy-dir", value=self.general.backup_copy,
+                        placeholder="a full folder path, such as E:\\Cora backups"),
+                  button("Save", "backup-copy-save"), button("Remove", "backup-copy-forget"))
         yield heading("OpenAI")
         yield field("API key", "Checked with OpenAI, then kept in the system credential store.")
         yield Static(general_status(self.general.key_status), id="openai-key-status", classes="settings-status")
@@ -672,6 +708,16 @@ class ModelSettingsScreen(ModalScreen):
         field_.value = ""
         self.show_spend("Checking the Admin key with OpenAI…")
         self.general.save_admin_key(key)
+
+    def show_backup_status(self, status: str, folder: str | None = None) -> None:
+        """The app's word on the second backup folder; folder is what was saved, or None if it wasn't."""
+        if self.general is None:
+            return
+        self.general.backup_status = status
+        self.query_one("#backup-copy-status", Static).update(general_status(status))
+        if folder is not None:
+            self.general.backup_copy = folder
+            self.query_one("#backup-copy-dir", Input).value = folder
 
     def show_key_status(self, status: str) -> None:
         """The app's word once a key is checked and saved (or not)."""
@@ -993,6 +1039,11 @@ class ModelSettingsScreen(ModalScreen):
                 self.general.idle_minutes = event.value
                 self.general.save_idle_minutes(event.value)
             return
+        if event.select.id == "conversation-gap":
+            if self.general is not None and event.value != self.general.conversation_gap:
+                self.general.conversation_gap = event.value
+                self.general.save_conversation_gap(event.value)
+            return
         if event.select.id == "start-mode":
             if self.general is not None and event.value != self.general.start_mode:
                 self.general.start_mode = event.value
@@ -1127,6 +1178,11 @@ class ModelSettingsScreen(ModalScreen):
             self.save_admin_key()
         elif button == "admin-key-forget":
             self.general.forget_admin_key()
+        elif button == "backup-copy-save":
+            self.general.save_backup_copy(self.query_one("#backup-copy-dir", Input).value)
+        elif button == "backup-copy-forget":
+            self.query_one("#backup-copy-dir", Input).value = ""
+            self.general.save_backup_copy("")
         elif button == "signal-save-number":
             self.save_person_number()
         elif button == "signal-link":

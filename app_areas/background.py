@@ -50,14 +50,22 @@ class BackgroundMixin:
         try:
             if not daily_backup_due(datetime.now()):
                 return None
-            made, copied = run_backup(include_signal=False)
+            copy_to, note = self.backup_copy_choice()
+            made, copied = run_backup(include_signal=False, copy_to=copy_to)
         except BackupError as error:
             # Docker's own reason, which never contains her data.
             return f"Daily backup failed: {error}", "Backup failed"
         except Exception as error:
             return f"Daily backup failed ({type(error).__name__}).", "Backup failed"
         where = f"; copied to {copied}" if copied else ""
-        return f"Backup saved: {made[0].name}{where}", "Backup saved"
+        return f"Backup saved: {made[0].name}{where}{note}", "Backup saved"
+
+    def backup_copy_choice(self) -> tuple[str | None, str]:
+        """Settings' second backup folder ("" for none, None so .env's applies), and a note if unreadable."""
+        try:
+            return self.persistence.load_backup_copy_dir(), ""
+        except Exception as error:
+            return None, f" (the backup folder setting was unavailable, {type(error).__name__}, so .env's was used)"
 
     def process_finished_conversations(self) -> None:
         # Single flight: a pass already running leaves this one for the next standby or launch.

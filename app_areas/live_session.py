@@ -8,7 +8,8 @@ from textual import work
 
 from ui.composer import ChatComposer
 from inactivity import StandbyAlert
-from app_areas.shared import CONVERSATION_END_STANDBY_SECONDS
+from app_areas.shared import conversation_end_standby_seconds
+from storage.client_store import set_conversation_gap
 
 
 # Cora's own standby request waits for her sign-off; give up rather than surprise the person later.
@@ -85,12 +86,16 @@ class LiveSessionMixin:
                 self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
 
     async def apply_standby_settings(self) -> None:
-        """Settings > General's standby settings, once at launch; one never set there keeps .env's value."""
+        """Settings > General's standby settings and conversation gap, once at launch; one never set there
+        keeps .env's value."""
         try:
             saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
+            gap = await self.conversation_persistence.call_database(self.persistence.load_conversation_gap)
         except Exception as error:
             self.activity.write(f"Standby settings unavailable ({type(error).__name__}); using .env.", "Settings")
             return
+        if gap is not None:
+            set_conversation_gap(gap)
         if saved["idle_minutes"] is not None:
             self.inactivity.timeout_seconds = saved["idle_minutes"] * 60.0
         if saved["farewell"] is not None:
@@ -236,7 +241,7 @@ class LiveSessionMixin:
                 self.activity.write("Live closed; local app and chat remain open", "Standby")
                 self.send_unsaid_messages()
                 self.conversation_end_timer = self.set_timer(
-                    CONVERSATION_END_STANDBY_SECONDS, self.end_standby_conversation,
+                    conversation_end_standby_seconds(), self.end_standby_conversation,
                 )
                 return
             self.standby = False

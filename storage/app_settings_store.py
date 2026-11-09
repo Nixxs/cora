@@ -1,5 +1,7 @@
 """General settings from Settings > General, such as her voice; one without a saved value uses its default."""
 
+from pathlib import Path
+
 from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
@@ -10,6 +12,11 @@ from .models import AppSettingRecord
 START_MODES = ("active", "standby")
 # Minutes of quiet before automatic standby; 0 turns it off.
 MAX_IDLE_MINUTES = 720
+# Minutes of quiet that end a conversation (in standby, and contacts' chats).
+MAX_GAP_MINUTES = 1440
+# Saved for "no second backup copy", which overrides .env; a folder is always an absolute path.
+NO_BACKUP_COPY = "none"
+BACKUP_COPY_MAX_CHARS = 200
 
 
 class AppSettingsStore:
@@ -78,6 +85,33 @@ class AppSettingsStore:
 
     def set_wake_word(self, on: bool) -> None:
         self._set("wake_word", "on" if on else "off")
+
+    def conversation_gap(self) -> int | None:
+        """Minutes of quiet that end a conversation; None when never set here."""
+        saved = self._get("conversation_gap")
+        return int(saved) if saved is not None and saved.isdigit() and 1 <= int(saved) <= MAX_GAP_MINUTES else None
+
+    def set_conversation_gap(self, minutes: int) -> None:
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= MAX_GAP_MINUTES:
+            raise ValueError(f"Minutes must be 1 to {MAX_GAP_MINUTES}")
+        self._set("conversation_gap", str(minutes))
+
+    def backup_copy_dir(self) -> str | None:
+        """The second backup folder, "" for none chosen here, or None when never set here (.env applies)."""
+        saved = self._get("backup_copy_dir")
+        if saved is None:
+            return None
+        return "" if saved == NO_BACKUP_COPY else saved
+
+    def set_backup_copy_dir(self, folder: str) -> None:
+        """Save the second backup folder (an absolute path), or "" for none."""
+        folder = folder.strip()
+        if not folder:
+            self._set("backup_copy_dir", NO_BACKUP_COPY)
+            return
+        if len(folder) > BACKUP_COPY_MAX_CHARS or not Path(folder).is_absolute():
+            raise ValueError("A backup folder needs its full path")
+        self._set("backup_copy_dir", folder)
 
     def spend_project(self) -> str | None:
         """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""

@@ -97,7 +97,7 @@ yours, and none of your private context.
 | What | When |
 | --- | --- |
 | Startup check | At launch: conversations left open are marked interrupted |
-| Background memory pass | At launch; when a conversation ends (an hour in Standby, `CORA_CONVERSATION_GAP_MINUTES`); and when the hourly round closes contacts' quiet chats. Each finished conversation's memories are extracted and its summary saved; new memories are embedded and checked for duplicates, corrections of older ones, a date they stop mattering, and who they were meant for; finished conversations are appraised, the relationship is updated, and her view of each contact is refreshed |
+| Background memory pass | At launch; when a conversation ends (an hour in Standby by default; Settings > General > "When a conversation ends"); and when the hourly round closes contacts' quiet chats. Each finished conversation's memories are extracted and its summary saved; new memories are embedded and checked for duplicates, corrections of older ones, a date they stop mattering, and who they were meant for; finished conversations are appraised, the relationship is updated, and her view of each contact is refreshed |
 | Interest evolution, identity reflection, desire reflection | Checked every 10 minutes; each really runs at most once a day |
 | Exploring an interest | Checked every 10 minutes; only while you're away (Standby, or 10 minutes quiet) and with the Browser service connected; at most 3 a day, 6 hours apart |
 | Chances for her desires | With the desire check, at most hourly, when her week or mail has changed |
@@ -135,8 +135,8 @@ one says what it covers. A change saves straight away, in the `model_settings` t
 less is mostly a matter of putting the busy, simpler areas (Browser, Small jobs, Looking at
 images) on a cheaper model.
 
-Settings is laid out like the dashboard: small headings group its parts (General has Cora and
-OpenAI; Services has her tools, her accounts, and ways of reaching her from outside). Each
+Settings is laid out like the dashboard: small headings group its parts (General has Cora,
+Standby, Conversations, Backups and OpenAI; Services has her tools, her accounts, and ways of reaching her from outside). Each
 setting has a short name with what it does in a dimmer line underneath. Inputs and their
 buttons sit on one line. Statuses share one style: ● working, ◌ busy, ○ off or not set up,
 × wrong. Clicking a service's row opens its details, indented under it.
@@ -265,8 +265,9 @@ resumes with recent chat as context.
 
 - **Starting in it:** Settings > General > "When the app opens" can start her in Standby
   instead of Active (saved as `start_mode` in `app_settings`; Active if unset or unreadable).
-  The standby settings (`idle_minutes`, `standby_farewell`, `wake_word`) are applied at launch
-  too; one never set in the app keeps its old `.env` value.
+  The standby settings (`idle_minutes`, `standby_farewell`, `wake_word`) and when a
+  conversation ends (`conversation_gap`) are applied at launch too; one never set in the app
+  keeps its old `.env` value.
   Launch does everything else as usual (checks, summaries, services, Signal, mail) but doesn't
   connect Live; she waits as after any standby, and waking her connects with her context.
 - **Asking for it:** say something like "go to standby", or she may choose it herself once
@@ -287,7 +288,7 @@ resumes with recent chat as context.
   isn't saved as her reply. It's the same Cora: each message reloads her startup context,
   carries the recent chat (up to 40 messages / 6,000 bytes) and has the same tools except
   closing the app and standby. Writing keeps the conversation open; it ends only after
-  `CORA_CONVERSATION_GAP_MINUTES` (default 60) without any.
+  an hour without any (Settings > General > "When a conversation ends").
 - **Wake word:** click **Wake off** to turn on local "Hey Cora" detection in Standby; it
   shows **Wake on** in green while listening, and stays as you left it at the next launch. Detection runs on your PC with a local Whisper
   model (no room audio goes to OpenAI), accepts Cora/Kora/Korra, and keeps your opening
@@ -397,8 +398,9 @@ makes no claim about consciousness.
 1. **During a conversation**, she saves your typed messages, grouped voice transcripts and
    her written answers in one conversation. Reasoning, tool events and Activity aren't
    saved as messages.
-2. **A conversation ends** when you quit, or after `CORA_CONVERSATION_GAP_MINUTES` (default
-   60) in Standby or without writing. A shorter standby continues the same conversation, so
+2. **A conversation ends** when you quit, or after an hour (Settings > General > "When a
+   conversation ends") in Standby or without writing. A change applies straight away to
+   contacts' chats and to the next standby; one already counting keeps its time. A shorter standby continues the same conversation, so
    waking keeps its context.
 3. **The memory pass** (see [What runs when](#what-runs-when)) extracts facts,
    preferences, decisions and tasks from each finished conversation's original messages,
@@ -728,7 +730,7 @@ their Signal number (not yours or hers). Each has a **Calls** switch, off by def
 whether they may phone her (see [Phone calls](#phone-calls)).
 
 - **Their own conversations.** Each contact's chats and calls are saved apart from yours,
-  with who they were with. A chat quiet for `CORA_CONVERSATION_GAP_MINUTES` is closed by the
+  with who they were with. A chat quiet for that same gap (an hour by default) is closed by the
   hourly round so its memories form; their next message starts a new one. They never appear
   in your chat or voice Cora's history; Activity notes only "Answered Sarah on Signal".
 - **Still herself, discreet about you.** She has her own identity, picture and feelings

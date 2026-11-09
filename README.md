@@ -91,8 +91,9 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 - **Automatic:** at launch, if the newest database backup is more than a day old,
   Cora backs up the database in the background and notes it in Activity (Signal
   keys only with the manual command, so Signal is never paused while you use her).
-- **A second copy:** set `CORA_BACKUP_COPY_DIR` in `.env` to a folder on another
-  disk, and every backup is copied there too, pruned the same way. A cloud folder
+- **A second copy:** in Settings > General > Backups, choose a folder on another disk
+  (it must already exist), and every backup is copied there too, pruned the same way.
+  The command-line backup uses it as well. A cloud folder
   works, but uploads your conversations to that service.
 - **Restoring** replaces the whole database with the backup. Quit Cora first; it
   asks you to type `restore`, and saves the current database as a backup before
@@ -101,16 +102,16 @@ python backup.py restore backups\cora-database-2026-10-26_211101.dump
 ## Configuration
 
 Settings that live in `.env` (restart Cora to apply a change). Everything else is set in the
-app's **Settings**. Automatic standby, her goodbye before it and the wake word moved to
-Settings; their old `.env` lines (`CORA_IDLE_TIMEOUT_SECONDS`, `CORA_STANDBY_FAREWELL`,
-`CORA_WAKE_ENABLED`) still apply until you change them there, then can be deleted.
+app's **Settings**. Automatic standby, her goodbye before it, the wake word, when a
+conversation ends and the second backup folder moved to Settings; their old `.env` lines
+(`CORA_IDLE_TIMEOUT_SECONDS`, `CORA_STANDBY_FAREWELL`, `CORA_WAKE_ENABLED`,
+`CORA_CONVERSATION_GAP_MINUTES`, `CORA_BACKUP_COPY_DIR`) still apply until you change them
+there, then can be deleted.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | (none) | Your OpenAI API key, if you'd rather not enter it in the app; one saved in Settings > General wins |
-| `CORA_CONVERSATION_GAP_MINUTES` | `60` | How long a quiet ends a conversation (in Standby, and contacts' chats); below 1 falls back to 60 |
 | `CORA_WAKE_DEBUG` | `1` | Wake diagnostics in Activity (what Whisper heard, a heartbeat); `0` hides them |
-| `CORA_BACKUP_COPY_DIR` | (none) | A second folder every backup is copied to |
 | `CORA_EMAIL_CLIENT_ID`, `CORA_EMAIL_TENANT` | (none) | Fallbacks for the email app ID and directory, normally saved in Settings |
 | `CORA_TWILIO_API` | Sydney (AU1) | Twilio's REST endpoint for calling out, if your number is in another region |
 

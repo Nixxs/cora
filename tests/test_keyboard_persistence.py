@@ -157,6 +157,8 @@ async def running_app(persistence=None, has_key=True):
                 persistence.load_start_mode.return_value = "active"
                 persistence.load_standby_settings.return_value = {
                     "idle_minutes": None, "farewell": None, "wake_word": None}
+                persistence.load_conversation_gap.return_value = None
+                persistence.load_backup_copy_dir.return_value = None
                 persistence.load_desire_context.return_value = ""
                 persistence.load_feelings.return_value = []
                 persistence.load_own_name.return_value = "Cora"

@@ -185,6 +185,20 @@ class KeyboardPersistence:
     def save_wake_word(self, on: bool) -> None:
         AppSettingsStore(self._get_store().engine).set_wake_word(on)
 
+    def load_conversation_gap(self) -> int | None:
+        """Minutes of quiet that end a conversation; None when never set in Settings."""
+        return AppSettingsStore(self._get_store().engine).conversation_gap()
+
+    def save_conversation_gap(self, minutes: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_conversation_gap(minutes)
+
+    def load_backup_copy_dir(self) -> str | None:
+        """The second backup folder, "" for none, or None when never set in Settings."""
+        return AppSettingsStore(self._get_store().engine).backup_copy_dir()
+
+    def save_backup_copy_dir(self, folder: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_backup_copy_dir(folder)
+
     def load_spend_project(self) -> str | None:
         return AppSettingsStore(self._get_store().engine).spend_project()
 
