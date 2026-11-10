@@ -150,7 +150,10 @@ lore. One small step at a time, each runnable:
    back, with its own cooldown, and descriptions skip repeats; "worth mentioning" never passed
    1.64 of 3 and isn't used; close calls and deaths never came up, so they're untested in play.
    To check in the game: whether her reactions feel timely and natural, how often is right, and
-   whether close calls fire.
+   whether close calls fire. Then added: **the place you're in**, a new-area trigger (the zone
+   banner) for lore, and a look around when it's calm and quiet for something to point out
+   (somewhere to explore or fish, a suggestion, lore). To check: whether the banner question is
+   reliable and the look-arounds are worth hearing or too often nothing.
 4. **`watch_game_for(condition, until)`:** her own yes/no questions added to the watcher's list
    (such as "fighting a spider called Githyiss?"), at most about 5, expiring, listed in
    Settings > Game; firing once, as a game event.

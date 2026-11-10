@@ -405,8 +405,8 @@ watching the game, with her reacting to what happens.
   likely, and the frames, tokens and cost every minute. A frame is about 2,100 tokens and a
   third of a second once warm: about $0.26 an hour in a real session, at most about $0.40.
 - **Her reactions** ([game/moments.py](game/moments.py), [app_areas/game_watch.py](app_areas/game_watch.py)):
-  a kind of moment (death, close call, level-up, something surprising, chat worth reacting to, a
-  quest moment) fires when its answer crosses its threshold, then not again until it drops back
+  a kind of moment (death, close call, level-up, something surprising, a new area, chat worth
+  reacting to, a quest moment) fires when its answer crosses its threshold, then not again until it drops back
   below a lower one (a level-up banner stays up for seconds), and never within its own cooldown.
   Reactions are spaced by **Her reactions** in Settings > Game (off: just record; quiet: 3
   minutes; normal: a minute; chatty: 20 seconds), except deaths, close calls and level-ups, which
@@ -415,10 +415,18 @@ watching the game, with her reacting to what happens.
   with no reasoning, 1-2 seconds; Settings' images model took 5-8), which is told the last few
   things described and answers nothing for a repeat, such as a chat line still on screen. The
   description is published as a `GameMomentEvent`; attention keeps only the newest one waiting,
-  doesn't count it as you being active, and drops it 20 seconds after its frame. Live is told to
-  react out loud in one short line, like a friend on the couch: surprise, a laugh, "nice", or a
-  quick tip or bit of lore. In Standby nothing is described or said, and every moment and
-  description shows in Activity.
+  doesn't count it as you being active, and drops it once stale (20 seconds after its frame; 45 for
+  a new area, a minute for a look around). Live is told to react out loud in one short line, like
+  a friend on the couch: surprise, a laugh, "nice", or a quick tip or bit of lore. In Standby
+  nothing is described or said, and every moment and description shows in Activity.
+- **The place you're in:** entering a new area (WoW's zone banner) gets a description that names
+  the place and gives one bit of lore or something useful there. And when it's calm (exploring or
+  in town) and she's said nothing for a while (3 minutes on chatty, 5 on normal, 10 on quiet), she
+  looks around: at most one thing a friend might point out, such as a cave or ruins worth
+  exploring, water to fish in, a suggestion (food before a tougher area, repairs, a full bag), or
+  lore about what's in view; often nothing. For these two, Live is told to mention it in passing,
+  in her own words, rather than react. Food buffs aren't checked: they can't be told apart
+  reliably from the small buff icons.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in

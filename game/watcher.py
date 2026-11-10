@@ -51,6 +51,9 @@ QUESTIONS = [
      "instructions": "Is the player dead or a ghost (a release spirit prompt, or the grey ghost world)?"},
     {"type": "predicate", "name": "level_up",
      "instructions": "Is a level-up announcement on screen, such as a 'You have reached level' banner?"},
+    {"type": "predicate", "name": "new_area",
+     "instructions": "Is a zone or subzone name shown in large text near the top middle of the screen (the "
+                     "banner WoW shows on entering a new area)?"},
     {"type": "predicate", "name": "quest_moment",
      "instructions": "Is a quest being accepted or handed in, or did an objective just progress (a quest "
                      "window open, or quest progress text in the middle of the screen)?"},

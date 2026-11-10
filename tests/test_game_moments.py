@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.widgets import Select
 
-from game.moments import NOTHING, TRIGGERS, MomentDescriber, MomentSpotter
+from game.moments import LOOK_AROUND, NOTHING, TRIGGERS, MomentDescriber, MomentSpotter
 from game.watcher import Frame
 from storage.app_settings_store import AppSettingsStore
 from subconscious.attention import AttentionManager, GameMoment
@@ -53,6 +53,33 @@ class SpotterTests(unittest.TestCase):
     def test_refused_or_missing_answers_are_ignored(self):
         self.assertIsNone(MomentSpotter("chatty").feed({"dead": None, "scene": "combat"}, 0))
 
+    def test_a_new_area_is_spaced_like_other_moments(self):
+        spotter = MomentSpotter("normal")
+        self.assertEqual(spotter.feed({"new_area": 0.9}, 0), "new_area")
+        self.assertIsNone(spotter.feed({"new_area": 0.9}, 5))  # the banner is still up
+        self.assertFalse(TRIGGERS["new_area"].urgent)
+        self.assertGreater(TRIGGERS["new_area"].lasts, TRIGGERS["close_call"].lasts)
+
+    def test_she_looks_around_when_its_been_calm_and_quiet_a_while(self):
+        spotter = MomentSpotter("normal")
+        calm = {"scene": "exploring", "surprising": 0.1}
+        self.assertIsNone(spotter.feed(calm, 0))
+        self.assertIsNone(spotter.feed(calm, 299))
+        self.assertEqual(spotter.feed(calm, 300), LOOK_AROUND)
+        self.assertIsNone(spotter.feed(calm, 400))  # the quiet starts again from her look
+        self.assertEqual(spotter.feed(calm, 600), LOOK_AROUND)
+
+    def test_no_looking_around_mid_fight_soon_after_a_reaction_or_when_off(self):
+        spotter = MomentSpotter("chatty")
+        spotter.feed({"scene": "exploring"}, 0)
+        self.assertIsNone(spotter.feed({"scene": "combat"}, 500))
+        spotter.feed({"scene": "exploring", "surprising": 0.9}, 501)
+        self.assertIsNone(spotter.feed({"scene": "town", "surprising": 0.1}, 600))
+        self.assertEqual(spotter.feed({"scene": "town"}, 681), LOOK_AROUND)
+        off = MomentSpotter("off")
+        off.feed({"scene": "town"}, 0)
+        self.assertIsNone(off.feed({"scene": "town"}, 5000))
+
 
 class DescriberTests(unittest.TestCase):
     def test_it_is_told_what_was_mentioned_and_nothing_means_none(self):
@@ -65,6 +92,16 @@ class DescriberTests(unittest.TestCase):
         self.assertIn("Two Webwood Spiders", question)
         self.assertEqual(looker.call_args.args[1], b"jpeg")
         self.assertIn("untrusted", looker.call_args.kwargs["instructions"])
+
+    def test_place_moments_ask_for_lore_and_suggestions(self):
+        looker = MagicMock(return_value="Shadowthread Cave: the Gnarlpine were driven out by these spiders.")
+        describer = MomentDescriber(looker=looker)
+        describer.describe("new_area", b"jpeg")
+        self.assertIn("lore", looker.call_args.args[0])
+        describer.describe(LOOK_AROUND, b"jpeg")
+        question = looker.call_args.args[0]
+        self.assertIn("fishing", question)
+        self.assertIn("Shadowthread Cave", question)  # already mentioned
 
 
 class AttentionTests(unittest.IsolatedAsyncioTestCase):
@@ -85,10 +122,10 @@ class AttentionTests(unittest.IsolatedAsyncioTestCase):
     async def test_the_newest_moment_replaces_one_waiting_and_isnt_user_activity(self):
         manager = self.manager()
         manager.submit_game_moment(GameMoment("old", 120))
-        manager.submit_game_moment(GameMoment("new", 120))
-        self.assertEqual(list(manager.pending), [GameMoment("new", 120)])
+        manager.submit_game_moment(GameMoment("new", 120, "new_area"))
+        self.assertEqual(list(manager.pending), [GameMoment("new", 120, "new_area")])
         await manager.deliver_next()
-        self.sent.assert_awaited_once_with("new")
+        self.sent.assert_awaited_once_with("new", "new_area")
         self.record.assert_not_called()
 
     async def test_a_stale_moment_is_dropped(self):

@@ -526,7 +526,7 @@ class CoraApp(
             send_relevant=lambda mention: self.live.send_relevant_finding(
                 mention.interest_title, mention.finding, mention.found_at,
             ),
-            send_game_moment=lambda description: self.live.send_game_moment(description),
+            send_game_moment=lambda description, kind: self.live.send_game_moment(description, kind),
         )
         self.event_bus = EventBus(on_error=self.handle_event_bus_error)
         self.event_bus.subscribe(
@@ -534,7 +534,7 @@ class CoraApp(
         )
         self.event_bus.subscribe(FindingEvent, lambda event: self.attention.submit_finding())
         self.event_bus.subscribe(GameMomentEvent, lambda event: self.attention.submit_game_moment(
-            GameMoment(event.description, event.expires_at)))
+            GameMoment(event.description, event.expires_at, event.kind)))
         self.event_bus.subscribe(MailArrivedEvent, lambda event: self.on_mail_arrived())
         self.event_bus.subscribe(CalendarChangedEvent, lambda event: self.on_calendar_changed())
         if self.live_trace is not None:

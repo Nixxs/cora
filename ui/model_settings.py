@@ -735,8 +735,9 @@ class ModelSettingsScreen(ModalScreen):
             yield Switch(value=self.game.watch, id="game-watch")
             yield Label("Watch the game", classes="settings-label")
         yield note(WATCH_HELP)
-        yield field("Her reactions", "How often she says something about what happens: close calls, "
-                    "deaths, level-ups, chat, quests.")
+        yield field("Her reactions", "How often she says something: about what happens (close calls, deaths, "
+                    "level-ups, chat, quests), new areas, and, when it's calm, what she notices around you "
+                    "(somewhere to explore or fish, a bit of lore).")
         yield Select([(label, level) for level, label in CHATTINESS_LABELS.items()],
                      value=self.game.chattiness, allow_blank=False, id="game-chattiness", compact=True)
 

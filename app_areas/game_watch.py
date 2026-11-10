@@ -14,7 +14,7 @@ from time import monotonic
 from textual import work
 
 from game.chat_line import game_in_front
-from game.moments import CHATTINESS, DEFAULT_CHATTINESS, MOMENT_SECONDS, MomentDescriber, MomentSpotter
+from game.moments import CHATTINESS, DEFAULT_CHATTINESS, MomentDescriber, MomentSpotter, trigger_for
 from game.watcher import QUESTIONS, Frame, GameWatcher
 from subconscious.event_bus import GameMomentEvent
 
@@ -109,7 +109,7 @@ class GameWatchMixin:
         if not self.can_deliver_observation():
             self.activity.write(f"Game moment ({kind}) not offered: Cora isn't active.", "Game moment")
             return
-        self.describe_game_moment(kind, frame.jpeg, monotonic() + MOMENT_SECONDS)
+        self.describe_game_moment(kind, frame.jpeg, monotonic() + trigger_for(kind).lasts)
 
     @work(group="game-moment", exclusive=True)
     async def describe_game_moment(self, kind: str, jpeg: bytes, expires_at: float) -> None:

@@ -22,9 +22,11 @@ class RelevanceRequest:
 
 @dataclass(frozen=True)
 class GameMoment:
-    """Something in the person's game worth a quick reaction, only until expires_at (monotonic)."""
+    """Something in the person's game worth a quick reaction, only until expires_at (monotonic). kind
+    is game/moments.py's, such as "close_call" or "look_around"."""
     description: str
     expires_at: float
+    kind: str = ""
 
 
 @dataclass(eq=False)
@@ -184,7 +186,7 @@ class AttentionManager:
             self.write_activity("Game moment dropped: too late to react to.", "Game moment")
             return False
         try:
-            await asyncio.wait_for(self.send_game_moment(moment.description), timeout=5)
+            await asyncio.wait_for(self.send_game_moment(moment.description, moment.kind), timeout=5)
         except Exception as error:
             self.write_activity(f"Game moment send failed ({type(error).__name__}); not retried.", "Game moment")
         else:

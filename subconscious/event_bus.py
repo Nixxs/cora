@@ -20,8 +20,8 @@ class ObservationEvent:
 
 @dataclass(frozen=True)
 class GameMomentEvent:
-    """Something in the person's game worth a quick reaction (game/moments.py), seen on their screen
-    and so untrusted. Worth saying only until expires_at (monotonic seconds)."""
+    """Something in the person's game worth a quick reaction or remark (game/moments.py), seen on their
+    screen and so untrusted. Worth saying only until expires_at (monotonic seconds)."""
 
     kind: str
     description: str
