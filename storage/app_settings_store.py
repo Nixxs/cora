@@ -7,6 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from game.chat_line import CHANNELS as GAME_CHAT_CHANNELS, DEFAULT_CHANNEL
+from game.moments import CHATTINESS, DEFAULT_CHATTINESS
 from game.speech import DEFAULT_TRANSCRIPTION, MAX_VOCABULARY_CHARS, TRANSCRIPTION_CHOICES
 from session_config import VOICE, VOICE_CHOICES
 from .models import AppSettingRecord
@@ -150,6 +151,16 @@ class AppSettingsStore:
 
     def set_game_watch(self, on: bool) -> None:
         self._set("game_watch", "on" if on else "off")
+
+    def game_chattiness(self) -> str:
+        """How often she reacts to the game: 'off', 'quiet', 'normal' (unless another was chosen) or 'chatty'."""
+        saved = self._get("game_chattiness")
+        return saved if saved in CHATTINESS else DEFAULT_CHATTINESS
+
+    def set_game_chattiness(self, level: str) -> None:
+        if level not in CHATTINESS:
+            raise ValueError(f"Unknown chattiness: {level}")
+        self._set("game_chattiness", level)
 
     def game_transcription(self) -> str:
         """How push-to-talk turns speech into text: 'openai' (unless another was chosen) or 'local'."""

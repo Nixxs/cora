@@ -9,6 +9,7 @@ import asyncio
 from textual import work
 
 from game.chat_line import CHANNELS, DEFAULT_CHANNEL, casual, chat_line, chat_text, game_in_front, type_into_game
+from game.moments import CHATTINESS, DEFAULT_CHATTINESS
 from game.mouse_button import MiddleButtonWatcher
 from game.speech import (
     DEFAULT_TRANSCRIPTION, GAME_WORDS, MAX_VOCABULARY_CHARS, TRANSCRIPTION_CHOICES, CloudTranscriber, Recorder, Transcriber,
@@ -45,6 +46,8 @@ class GameMixin:
         if saved.get("push_to_talk") is True:
             self.game_push_to_talk = True
             self.start_push_to_talk()
+        chattiness = saved.get("chattiness")
+        self.set_game_chattiness(chattiness if chattiness in CHATTINESS else DEFAULT_CHATTINESS)
         if saved.get("watch") is True:
             self.game_watch = True
             self.start_game_watch()

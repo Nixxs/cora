@@ -41,9 +41,11 @@ from services.connection import ServiceManager
 from services.tools import ResultCache
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
-from subconscious.attention import AttentionManager
+from subconscious.attention import AttentionManager, GameMoment
 from backend_work import BackendWorkTracker
-from subconscious.event_bus import CalendarChangedEvent, EventBus, FindingEvent, MailArrivedEvent, ObservationEvent
+from subconscious.event_bus import (
+    CalendarChangedEvent, EventBus, FindingEvent, GameMomentEvent, MailArrivedEvent, ObservationEvent,
+)
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.relevance import claim_relevant_now
 from subconscious.desires.opportunities import release_opportunity_now
@@ -524,12 +526,15 @@ class CoraApp(
             send_relevant=lambda mention: self.live.send_relevant_finding(
                 mention.interest_title, mention.finding, mention.found_at,
             ),
+            send_game_moment=lambda description: self.live.send_game_moment(description),
         )
         self.event_bus = EventBus(on_error=self.handle_event_bus_error)
         self.event_bus.subscribe(
             ObservationEvent, lambda event: self.attention.submit(event.content),
         )
         self.event_bus.subscribe(FindingEvent, lambda event: self.attention.submit_finding())
+        self.event_bus.subscribe(GameMomentEvent, lambda event: self.attention.submit_game_moment(
+            GameMoment(event.description, event.expires_at)))
         self.event_bus.subscribe(MailArrivedEvent, lambda event: self.on_mail_arrived())
         self.event_bus.subscribe(CalendarChangedEvent, lambda event: self.on_calendar_changed())
         if self.live_trace is not None:

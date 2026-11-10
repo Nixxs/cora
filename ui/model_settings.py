@@ -83,6 +83,9 @@ class GameControls:
     # Watching the game through the Decisions API (recording its answers only, for now).
     watch: bool = False
     save_watch: Callable[[bool], None] = lambda on: None
+    # How often she reacts to what she sees: "off" (only records), "quiet", "normal" or "chatty".
+    chattiness: str = "normal"
+    save_chattiness: Callable[[str], None] = lambda level: None
 
 
 # The chat channels push-to-talk offers, as Settings shows them.
@@ -101,9 +104,16 @@ PUSH_TO_TALK_HELP = (
 WATCH_HELP = (
     "While WoW is the window in front, a screenshot every 2 seconds goes to OpenAI's Decisions API, "
     "which answers set questions about it (fighting? health? a close call? a level-up?). Unchanged "
-    "frames are skipped and none are saved. For now it only records: notable answers and the cost "
-    "appear in Activity, every answer in game-watch.log. At most about $0.40 an hour, less when little changes."
+    "frames are skipped and none are saved. When something's worth it, one look with her images model "
+    "describes it and she reacts, if she's active. Notable answers and the cost appear in Activity, "
+    "every answer in game-watch.log. At most about $0.40 an hour, less when little changes."
 )
+CHATTINESS_LABELS = {
+    "off": "Off: just watch and record",
+    "quiet": "Quiet: at most every 3 minutes",
+    "normal": "Normal: at most once a minute",
+    "chatty": "Chatty: as often as every 20 seconds",
+}
 TRANSCRIPTION_LABELS = {
     "openai": "OpenAI (best with names; the recording goes to OpenAI)",
     "local": "On this PC (private, but often gets names wrong)",
@@ -723,8 +733,12 @@ class ModelSettingsScreen(ModalScreen):
         yield heading("Watching the game")
         with Horizontal(classes="switch-row"):
             yield Switch(value=self.game.watch, id="game-watch")
-            yield Label("Watch the game (recording only, for now)", classes="settings-label")
+            yield Label("Watch the game", classes="settings-label")
         yield note(WATCH_HELP)
+        yield field("Her reactions", "How often she says something about what happens: close calls, "
+                    "deaths, level-ups, chat, quests.")
+        yield Select([(label, level) for level, label in CHATTINESS_LABELS.items()],
+                     value=self.game.chattiness, allow_blank=False, id="game-chattiness", compact=True)
 
     def save_game_vocabulary(self) -> None:
         if self.game is not None:
@@ -1144,6 +1158,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.spend_project:
                 self.general.spend_project = event.value
                 self.general.save_spend_project(event.value)
+            return
+        if event.select.id == "game-chattiness":
+            if self.game is not None and event.value != self.game.chattiness:
+                self.game.chattiness = event.value
+                self.game.save_chattiness(event.value)
             return
         if event.select.id == "game-transcription":
             if self.game is not None and event.value != self.game.transcription:

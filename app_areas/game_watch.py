@@ -1,17 +1,22 @@
 """Watching the game through the Decisions API (Settings > Game): part of CoraApp (see app.py).
 
-Step 2 of game awareness only records: every answered frame goes to game-watch.log (one per
-launch, next to app.py), notable ones get a line in Activity, and what it costs is summed up
-there every minute. Nothing reaches Cora yet."""
+Every answered frame goes to game-watch.log (one per launch, next to app.py), notable ones get a
+line in Activity, and what it costs is summed up there every minute. A moment worth reacting to
+(game/moments.py) is described from its frame and, while she's active, offered to Live through
+attention, which drops it if it's gone stale."""
 
+import asyncio
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+from time import monotonic
 
 from textual import work
 
 from game.chat_line import game_in_front
+from game.moments import CHATTINESS, DEFAULT_CHATTINESS, MOMENT_SECONDS, MomentDescriber, MomentSpotter
 from game.watcher import QUESTIONS, Frame, GameWatcher
+from subconscious.event_bus import GameMomentEvent
 
 LOG_PATH = Path(__file__).resolve().parents[1] / "game-watch.log"
 SUMMARY_SECONDS = 60
@@ -57,6 +62,13 @@ class GameWatchMixin:
         self.game_watch_timer = None
         self.game_watch_scene: str | None = None
         self.game_watch_logged = False
+        self.game_chattiness = DEFAULT_CHATTINESS
+        self.game_spotter = MomentSpotter(DEFAULT_CHATTINESS)
+        self.game_describer = MomentDescriber()
+
+    def set_game_chattiness(self, level: str) -> None:
+        self.game_chattiness = level
+        self.game_spotter.chattiness = level
 
     def start_game_watch(self) -> None:
         if self.closing or self.game_watch_worker is not None:
@@ -66,7 +78,7 @@ class GameWatchMixin:
         self.game_watch_worker = self.run_worker(self.game_screen_watcher.run(), group="game-watch", exclusive=True)
         self.game_watch_timer = self.set_interval(SUMMARY_SECONDS, self.report_game_watch)
         self.activity.write("Watching the game: a frame every 2 seconds while WoW is in front, answers to "
-                            f"{LOG_PATH.name} (logging only).", "Game watch on")
+                            f"{LOG_PATH.name}; reactions {self.game_chattiness}.", "Game watch on")
 
     def stop_game_watch(self) -> None:
         worker, self.game_watch_worker = self.game_watch_worker, None
@@ -91,6 +103,27 @@ class GameWatchMixin:
         scene = frame.answers.get("scene")
         if isinstance(scene, str):
             self.game_watch_scene = scene
+        kind = self.game_spotter.feed(frame.answers, monotonic())
+        if kind is None:
+            return
+        if not self.can_deliver_observation():
+            self.activity.write(f"Game moment ({kind}) not offered: Cora isn't active.", "Game moment")
+            return
+        self.describe_game_moment(kind, frame.jpeg, monotonic() + MOMENT_SECONDS)
+
+    @work(group="game-moment", exclusive=True)
+    async def describe_game_moment(self, kind: str, jpeg: bytes, expires_at: float) -> None:
+        try:
+            description = await asyncio.to_thread(self.game_describer.describe, kind, jpeg)
+        except Exception as error:
+            self.activity.write(f"Game moment ({kind}) not described ({type(error).__name__}).", "Game moment")
+            return
+        if description is None:
+            self.activity.write(f"Game moment ({kind}): nothing new on a closer look.", "Game moment")
+            return
+        self.activity.write(f"Game moment ({kind}): {description}", "Game moment")
+        if not self.closing:
+            self.event_bus.publish(GameMomentEvent(kind=kind, description=description, expires_at=expires_at))
 
     def game_frame_failed(self, error: Exception) -> None:
         failed = self.game_screen_watcher.totals.failed if self.game_screen_watcher is not None else 1
@@ -108,6 +141,18 @@ class GameWatchMixin:
             self.game_watch_logged = True
         except OSError:
             pass
+
+    @work(group="model-settings-save")
+    async def save_game_chattiness(self, level: str) -> None:
+        if level not in CHATTINESS:
+            return
+        self.set_game_chattiness(level)
+        self.activity.write(f"Game reactions: {level}.", "Settings changed")
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_game_chattiness, level)
+        except Exception as error:
+            self.activity.write(f"Game setting save failed ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save how often she reacts; it applies until Cora closes.", severity="error")
 
     @work(group="model-settings-save")
     async def save_game_watch(self, on: bool) -> None:

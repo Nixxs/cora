@@ -144,10 +144,13 @@ lore. One small step at a time, each runnable:
    quest, chat worth reacting to, something surprising (predicates), worth mentioning (a score).
    Answers, tokens and cost per frame go to Activity, to tune thresholds and see the real cost
    (estimated $0.20–0.70 an hour).
-3. **Reactions.** A question crossing its threshold on a change (not every frame it stays true)
-   gets one vision call on the same frame for a short description, published as a game event
-   with a short lifetime (a close call is pointless a minute later) through the attention
-   manager, with cooldowns per kind and a chattiness setting.
+3. **Reactions.** *Built* (see [Playing games](DOCUMENTATION.md#playing-games)). The first
+   session's log (13 minutes, 267 frames) set it up: a level-up stayed high for two minutes and
+   chat for as long as it was on screen, so each kind fires once and re-arms only after dropping
+   back, with its own cooldown, and descriptions skip repeats; "worth mentioning" never passed
+   1.64 of 3 and isn't used; close calls and deaths never came up, so they're untested in play.
+   To check in the game: whether her reactions feel timely and natural, how often is right, and
+   whether close calls fire.
 4. **`watch_game_for(condition, until)`:** her own yes/no questions added to the watcher's list
    (such as "fighting a spider called Githyiss?"), at most about 5, expiring, listed in
    Settings > Game; firing once, as a game event.

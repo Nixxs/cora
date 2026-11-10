@@ -1,6 +1,6 @@
 """Watching the game: a screenshot every couple of seconds, asked a fixed set of typed questions
-through OpenAI's Decisions API. Step 2 only records the answers (and what they cost); nothing
-reaches Cora yet.
+through OpenAI's Decisions API. The answers are recorded, and game/moments.py picks out the
+moments worth Cora reacting to.
 
 Frames are taken only while the game is the window in front, are never saved, and one that
 hasn't changed since the last one sent is skipped (with one sent anyway every so often)."""
@@ -79,6 +79,8 @@ class Frame:
     answers: dict[str, float | str | None]
     input_tokens: int
     seconds: float
+    # The frame itself, in memory only, for describing a moment worth reacting to.
+    jpeg: bytes = field(default=b"", repr=False)
 
     @property
     def dollars(self) -> float:
@@ -107,14 +109,14 @@ class WatchTotals:
                 f"{self.input_tokens:,} tokens, ${self.dollars:.4f} so far (about ${self.dollars / hours:.2f} an hour)")
 
 
-def frame_image(screenshot) -> tuple[str, np.ndarray]:
-    """The frame as a JPEG data URL for the API, and a tiny greyscale copy for spotting changes."""
+def frame_image(screenshot) -> tuple[bytes, np.ndarray]:
+    """The frame as a JPEG, and a tiny greyscale copy for spotting changes."""
     image = screenshot.convert("RGB")
     image.thumbnail((FRAME_WIDTH, FRAME_WIDTH))
     buffer = io.BytesIO()
     image.save(buffer, "JPEG", quality=JPEG_QUALITY)
     tiny = np.asarray(image.convert("L").resize((64, 36)), dtype=np.float32)
-    return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii"), tiny
+    return buffer.getvalue(), tiny
 
 
 def changed(previous: np.ndarray | None, tiny: np.ndarray) -> bool:
@@ -130,8 +132,9 @@ def read_answers(response) -> dict[str, float | str | None]:
     return answers
 
 
-def ask(client, image_url: str) -> Frame:
+def ask(client, jpeg: bytes) -> Frame:
     """One Decisions request for one frame; raises on failure."""
+    image_url = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
     started = monotonic()
     response = client.decisions.create(
         model=MODEL, questions=QUESTIONS, timeout=TIMEOUT_SECONDS,
@@ -140,7 +143,7 @@ def ask(client, image_url: str) -> Frame:
             {"type": "input_image", "image_url": image_url},
         ]}],
     )
-    return Frame(read_answers(response), response.usage.input_tokens, monotonic() - started)
+    return Frame(read_answers(response), response.usage.input_tokens, monotonic() - started, jpeg)
 
 
 def grab_screen():
@@ -175,7 +178,7 @@ class GameWatcher:
         """One turn: a frame if the game's in front and it changed (or it's been a while)."""
         if not await asyncio.to_thread(self.in_front):
             return
-        image_url, tiny = await asyncio.to_thread(lambda: frame_image(self.grab()))
+        jpeg, tiny = await asyncio.to_thread(lambda: frame_image(self.grab()))
         if not changed(self.previous, tiny) and monotonic() - self.last_sent < MAX_UNCHANGED_SECONDS:
             self.totals.skipped += 1
             return
@@ -186,7 +189,7 @@ class GameWatcher:
 
             self.client = OpenAI(max_retries=0)
         try:
-            frame = await asyncio.to_thread(ask, self.client, image_url)
+            frame = await asyncio.to_thread(ask, self.client, jpeg)
         except Exception as error:
             self.totals.failed += 1
             self.on_error(error)

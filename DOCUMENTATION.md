@@ -373,7 +373,7 @@ wake her. The queue is in memory only, and a failed send is reported, not retrie
 
 Experimental, for World of Warcraft (Settings > Game). Awareness of the game is being built (see
 the [roadmap](ROADMAP.md#game-awareness-experimental)); what works now is push-to-talk, and
-watching the game, which so far only records what it sees.
+watching the game, with her reacting to what happens.
 
 - **Push-to-talk into the game's chat:** with it switched on, hold the middle mouse button and
   talk. While it's held, her microphone is muted and a separate recording runs; letting go turns
@@ -393,7 +393,7 @@ watching the game, which so far only records what it sees.
 - **Cora knows:** the chat shows a quiet line ("You in WoW (/s): …", not saved) and she gets a
   silent note of what you said and that it was for the other players, not her. It works in
   Standby too, but she isn't told then (there's no voice session to tell).
-- **Watching the game** (off by default; recording only for now): while `Wow.exe` is the window
+- **Watching the game** (off by default): while `Wow.exe` is the window
   in front, a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
   OpenAI's Decisions API (`gpt-6-luna`) with fixed typed questions in
   [game/watcher.py](game/watcher.py): what's happening (combat, exploring, town, dead, menu),
@@ -403,7 +403,22 @@ watching the game, which so far only records what it sees.
   every 30 seconds); none are saved. Every answer goes to `game-watch.log` (a new one each
   launch, next to `app.py`), and Activity shows a line when the scene changes or something is
   likely, and the frames, tokens and cost every minute. A frame is about 2,100 tokens and a
-  quarter of a second once warm: at most about $0.40 an hour. Nothing reaches Cora yet.
+  third of a second once warm: about $0.26 an hour in a real session, at most about $0.40.
+- **Her reactions** ([game/moments.py](game/moments.py), [app_areas/game_watch.py](app_areas/game_watch.py)):
+  a kind of moment (death, close call, level-up, something surprising, chat worth reacting to, a
+  quest moment) fires when its answer crosses its threshold, then not again until it drops back
+  below a lower one (a level-up banner stays up for seconds), and never within its own cooldown.
+  Reactions are spaced by **Her reactions** in Settings > Game (off: just record; quiet: 3
+  minutes; normal: a minute; chatty: 20 seconds), except deaths, close calls and level-ups, which
+  only keep their cooldowns. When several fire at once, the most important wins. While she's
+  active, the moment is described from the same frame by one fast vision call (`gpt-5.6-terra`
+  with no reasoning, 1-2 seconds; Settings' images model took 5-8), which is told the last few
+  things described and answers nothing for a repeat, such as a chat line still on screen. The
+  description is published as a `GameMomentEvent`; attention keeps only the newest one waiting,
+  doesn't count it as you being active, and drops it 20 seconds after its frame. Live is told to
+  react out loud in one short line, like a friend on the couch: surprise, a laugh, "nice", or a
+  quick tip or bit of lore. In Standby nothing is described or said, and every moment and
+  description shows in Activity.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in
