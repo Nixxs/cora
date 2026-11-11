@@ -152,13 +152,19 @@ lore. One small step at a time, each runnable:
    To check in the game: whether her reactions feel timely and natural, how often is right, and
    whether close calls fire. Then added: **the place you're in**, a new-area trigger (the zone
    banner) for lore, and a look around when it's calm and quiet for something to point out
-   (somewhere to explore or fish, a suggestion, lore). To check: whether the banner question is
-   reliable and the look-arounds are worth hearing or too often nothing.
+   (something striking or funny, lore). Tried in play: she gave directions too often, so every
+   game note now tells her the game is new to her, discovered alongside you, and that she's
+   company having fun, not a guide (no tips or directions; lookups only when asked, shared as
+   news to her too); to check in play. Still to see whether close calls and deaths fire when they happen.
 4. **`watch_game_for(condition, until)`:** her own yes/no questions added to the watcher's list
    (such as "fighting a spider called Githyiss?"), at most about 5, expiring, listed in
    Settings > Game; firing once, as a game event.
-5. **The game as she knows it:** zone, level, target and quest in a short note in her session,
-   refreshed every minute or on a scene change, so she can talk about the quest or lore unasked.
+5. **The game as she knows it.** *Built* (see [Playing games](DOCUMENTATION.md#playing-games)):
+   name, level, zone, target and tracked quests in a short silent note in her session, read about
+   once a minute (sooner after a new area, level-up or quest moment rather than every scene change,
+   since combat and exploring flip constantly while questing) and sent only when it changes. To
+   check in the game: whether the minimap label and quest tracker read reliably at 1024 px wide,
+   whether notes come too often while questing, and whether she uses them naturally ("this is cozy").
 6. **Log files:** WoW Forever writes `WoWCombatLog-*.txt` with `/combatlog` (in
    `_forever_/Logs`); still to check how quickly it reaches the disk, and whether `/chatlog`
    and `QuestCache.log` (quest ids) help. Forever's addons can't read the combat log or health

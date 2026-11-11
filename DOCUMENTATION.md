@@ -135,6 +135,10 @@ one says what it covers. A change saves straight away, in the `model_settings` t
 less is mostly a matter of putting the busy, simpler areas (Browser, Small jobs, Looking at
 images) on a cheaper model.
 
+Settings opens on Models, the only tab built before it shows; General, Game and Services are
+filled in straight after the first draw (or at once if you click one first), because building
+all four up front kept the screen from appearing for over a second.
+
 Settings is laid out like the dashboard: small headings group its parts (General has Cora,
 Standby, Conversations, Backups and OpenAI; Services has her tools, her accounts, and ways of reaching her from outside). Each
 setting has a short name with what it does in a dimmer line underneath. Inputs and their
@@ -251,6 +255,12 @@ Standby or Disconnected) and the audio controls on the right:
   wake listening included (generated silence keeps Live's timeline going). Speaker mute
   stops playback and discards queued speech; unmuting doesn't replay it. Live stays
   connected, and billed, either way; captions and written answers still show.
+- **Keeping her voice in step:** Live's audio is one continuous stream, silence included, on
+  Live's own clock, which in a real session ran about 2% ahead of the PC's. Played as it came,
+  the speaker fell further behind (about a second a minute) and her voice trailed her words. So
+  [devices/speaker.py](devices/speaker.py) skips silence that arrives while more than 0.3 seconds
+  of audio is waiting to play, catching up between her sentences without touching her speech.
+  Activity says how much was skipped when the session ends.
 - **Playback bars:** eight bars beside the speaker follow her output volume, flat when
   silent and "Muted" when the speaker is muted.
 - **Reconnect:** Ctrl+R closes and restarts Live without clearing the chat, keeping drafts,
@@ -400,7 +410,9 @@ watching the game, with her reacting to what happens.
   how full your health is, and the chances of a close call, death, level-up, quest moment, chat
   worth reacting to and something surprising, plus how much a friend watching would want to
   comment. A frame that's barely changed from the last one sent is skipped (one goes anyway
-  every 30 seconds); none are saved. Every answer goes to `game-watch.log` (a new one each
+  every 30 seconds); none are saved. The screenshot is copied through Windows directly rather
+  than Pillow's `ImageGrab`, which holds all of Python still for about 50 ms a grab and made her
+  voice stutter. Every answer goes to `game-watch.log` (a new one each
   launch, next to `app.py`), and Activity shows a line when the scene changes or something is
   likely, and the frames, tokens and cost every minute. A frame is about 2,100 tokens and a
   third of a second once warm: about $0.26 an hour in a real session, at most about $0.40.
@@ -417,16 +429,29 @@ watching the game, with her reacting to what happens.
   description is published as a `GameMomentEvent`; attention keeps only the newest one waiting,
   doesn't count it as you being active, and drops it once stale (20 seconds after its frame; 45 for
   a new area, a minute for a look around). Live is told to react out loud in one short line, like
-  a friend on the couch: surprise, a laugh, "nice", or a quick tip or bit of lore. In Standby
+  a friend on the couch: surprise, a laugh, teasing, "nice". Every game note tells her the game
+  is new to her (she's discovering it with you: curious, guessing, asking, not explaining it or
+  holding opinions as if she'd been there) and that she's company having fun, not a guide: no
+  directions or tips, and she looks something up only when asked, sharing it as news to her
+  too. The descriptions give only what's on screen, with no lore added. In Standby
   nothing is described or said, and every moment and description shows in Activity.
 - **The place you're in:** entering a new area (WoW's zone banner) gets a description that names
-  the place and gives one bit of lore or something useful there. And when it's calm (exploring or
+  the place and says what's striking about how it looks. And when it's calm (exploring or
   in town) and she's said nothing for a while (3 minutes on chatty, 5 on normal, 10 on quiet), she
-  looks around: at most one thing a friend might point out, such as a cave or ruins worth
-  exploring, water to fish in, a suggestion (food before a tougher area, repairs, a full bag), or
-  lore about what's in view; often nothing. For these two, Live is told to mention it in passing,
+  looks around: at most one thing a friend might point out for the fun of it, such as a cave,
+  ruins, a view or a strange creature, with no lore and no advice; often nothing. For these two, Live is told to mention it in passing,
   in her own words, rather than react. Food buffs aren't checked: they can't be told apart
   reliably from the small buff icons.
+- **The game as she knows it** ([game/state.py](game/state.py)): while she's active, about once a
+  minute (15 seconds after a new-area banner, a level-up or a quest moment; never on a menu or
+  loading screen) one more fast vision call reads a watched frame for a short note: your name and
+  level, the zone and subzone from the minimap, your target, and the tracked quests with their
+  progress. It's told the last note and answers nothing if only the target changed. A changed note
+  goes to Live as silent context that replaces the earlier one (and shows in Activity), and a new
+  Live session (after Standby or a reconnect) is given the latest at the next read. So she knows
+  where you are when you say "this is cozy". It's sent as an appended instruction
+  (`session.instructions.append`) that tells her to say nothing: as a thinking note it made her
+  speak every time, with where you were and what to do next, twice over when two notes were close.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in

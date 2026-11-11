@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.compose import compose
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.events import Click
 from textual.screen import ModalScreen
@@ -553,6 +554,9 @@ class ModelSettingsScreen(ModalScreen):
         self.shown_clients: list[tuple[str, str, bool]] | None = None
         self.shown_tools: dict[str, tuple] = {}
         self.tool_switches: dict[str, list[str]] = {}
+        # The tabs built so far (fill_tab), and the spend projects known, for when General is built.
+        self.filled: set[str] = set()
+        self.spend_projects: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
         with Vertical(id="model-settings"):
@@ -572,41 +576,70 @@ class ModelSettingsScreen(ModalScreen):
                                 )
                                 choice.tooltip = covers
                                 yield choice
+                # The other tabs open empty and are filled once the screen is showing (fill_tabs):
+                # building all of them first kept Settings from appearing for about a second.
                 with TabPane("General", id="settings-general"):
-                    with VerticalScroll(id="general-scroll"):
-                        yield heading("Cora")
-                        with Horizontal(classes="switch-row"):
-                            yield Switch(value=self.screen_looking, id="screen-looking")
-                            yield Label("Let her look at the screen", classes="settings-label")
-                        if self.general is not None:
-                            yield from self.compose_general()
+                    yield VerticalScroll(id="general-scroll")
                 if self.game is not None:
                     with TabPane("Game", id="settings-game"):
-                        with VerticalScroll(id="game-scroll"):
-                            yield from self.compose_game()
+                        yield VerticalScroll(id="game-scroll")
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
-                        with VerticalScroll(id="services-scroll"):
-                            yield heading("Her tools")
-                            for service in SERVICES.values():
-                                yield from self.compose_service(service)
-                            if self.signal is not None or self.email is not None:
-                                yield heading("Her accounts")
-                            if self.signal is not None:
-                                yield from self.compose_signal()
-                            if self.email is not None:
-                                yield from self.compose_email()
-                            if any(part is not None for part in (self.web, self.phone, self.webhooks)):
-                                yield heading("Reaching her from outside")
-                            if self.web is not None:
-                                yield from self.compose_web()
-                            if self.phone is not None:
-                                yield from self.compose_phone()
-                            if self.webhooks is not None:
-                                yield from self.compose_webhooks()
+                        yield VerticalScroll(id="services-scroll")
             with Horizontal(id="model-settings-footer"):
                 yield Static("changes save straight away · esc closes", id="model-settings-hint")
                 yield button("Close", "model-settings-close")
+
+    def compose_general_tab(self) -> ComposeResult:
+        yield heading("Cora")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.screen_looking, id="screen-looking")
+            yield Label("Let her look at the screen", classes="settings-label")
+        if self.general is not None:
+            yield from self.compose_general()
+
+    def compose_services_tab(self) -> ComposeResult:
+        yield heading("Her tools")
+        for service in SERVICES.values():
+            yield from self.compose_service(service)
+        if self.signal is not None or self.email is not None:
+            yield heading("Her accounts")
+        if self.signal is not None:
+            yield from self.compose_signal()
+        if self.email is not None:
+            yield from self.compose_email()
+        if any(part is not None for part in (self.web, self.phone, self.webhooks)):
+            yield heading("Reaching her from outside")
+        if self.web is not None:
+            yield from self.compose_web()
+        if self.phone is not None:
+            yield from self.compose_phone()
+        if self.webhooks is not None:
+            yield from self.compose_webhooks()
+
+    async def fill_tab(self, pane_id: str) -> None:
+        """Build one tab's contents, once; the Models tab is built with the screen."""
+        scroll_id, parts = {
+            "settings-general": ("general-scroll", self.compose_general_tab),
+            "settings-game": ("game-scroll", self.compose_game),
+            "settings-services": ("services-scroll", self.compose_services_tab),
+        }.get(pane_id, (None, None))
+        # Not once Settings has been closed, which can happen before the tabs' turn comes.
+        if scroll_id is None or pane_id in self.filled or not self.is_attached or not self.query(f"#{scroll_id}"):
+            return
+        self.filled.add(pane_id)
+        await self.query_one(f"#{scroll_id}", VerticalScroll).mount_all(compose(self, parts()))
+        if pane_id == "settings-services":
+            await self.show_services()
+            self.set_interval(0.5, self.show_services)
+
+    async def fill_tabs(self) -> None:
+        for pane_id in ("settings-general", "settings-game", "settings-services"):
+            await self.fill_tab(pane_id)
+
+    async def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
+        # A tab opened before its turn is filled straight away.
+        await self.fill_tab(event.pane.id or "")
 
     @staticmethod
     def service_heading(key: str, title: str, status_id: str, switch: Switch | None) -> Horizontal:
@@ -788,7 +821,7 @@ class ModelSettingsScreen(ModalScreen):
         yield row(entry(password=True, id="admin-key", placeholder="paste an Admin key (sk-admin-…)"),
                   button("Save", "admin-key-save"), button("Remove", "admin-key-forget"))
         yield field("Whose spend", "Which project's costs the dashboard shows.")
-        yield Select(self.spend_options([]), value=self.general.spend_project, allow_blank=False,
+        yield Select(self.spend_options(self.spend_projects), value=self.general.spend_project, allow_blank=False,
                      id="spend-project", compact=True)
 
     def spend_options(self, projects: list[tuple[str, str]]) -> list[tuple[str, str]]:
@@ -808,6 +841,10 @@ class ModelSettingsScreen(ModalScreen):
         if self.general is None:
             return
         self.general.admin_status = status
+        if projects is not None:
+            self.spend_projects = projects
+        if not self.query("#admin-key-status"):
+            return  # General isn't built yet: it's built from these.
         self.query_one("#admin-key-status", Static).update(general_status(status))
         if projects is not None:
             select = self.query_one("#spend-project", Select)
@@ -830,16 +867,20 @@ class ModelSettingsScreen(ModalScreen):
         if self.general is None:
             return
         self.general.backup_status = status
-        self.query_one("#backup-copy-status", Static).update(general_status(status))
         if folder is not None:
             self.general.backup_copy = folder
+        if not self.query("#backup-copy-status"):
+            return  # General isn't built yet: it's built from these.
+        self.query_one("#backup-copy-status", Static).update(general_status(status))
+        if folder is not None:
             self.query_one("#backup-copy-dir", Input).value = folder
 
     def show_key_status(self, status: str) -> None:
         """The app's word once a key is checked and saved (or not)."""
         if self.general is not None:
             self.general.key_status = status
-            self.query_one("#openai-key-status", Static).update(general_status(status))
+            if self.query("#openai-key-status"):
+                self.query_one("#openai-key-status", Static).update(general_status(status))
 
     def save_openai_key(self) -> None:
         field_ = self.query_one("#openai-key", Input)
@@ -901,9 +942,8 @@ class ModelSettingsScreen(ModalScreen):
 
     async def on_mount(self) -> None:
         self.fit_scrolls()
-        if self.services is not None:
-            await self.show_services()
-            self.set_interval(0.5, self.show_services)
+        # After the first draw, so the screen shows before the rest is built.
+        self.call_after_refresh(self.fill_tabs)
 
     async def show_signal_clients(self) -> None:
         clients = [(client.name, client.number, client.may_call) for client in self.signal.clients()]

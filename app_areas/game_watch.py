@@ -3,7 +3,9 @@
 Every answered frame goes to game-watch.log (one per launch, next to app.py), notable ones get a
 line in Activity, and what it costs is summed up there every minute. A moment worth reacting to
 (game/moments.py) is described from its frame and, while she's active, offered to Live through
-attention, which drops it if it's gone stale."""
+attention, which drops it if it's gone stale. About once a minute a frame is also read for the game's
+state (game/state.py), which goes to Live as silent context whenever it changes, and again to each
+new Live session."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -15,6 +17,7 @@ from textual import work
 
 from game.chat_line import game_in_front
 from game.moments import CHATTINESS, DEFAULT_CHATTINESS, MomentDescriber, MomentSpotter, trigger_for
+from game.state import StateClock, StateReader
 from game.watcher import QUESTIONS, Frame, GameWatcher
 from subconscious.event_bus import GameMomentEvent
 
@@ -65,6 +68,11 @@ class GameWatchMixin:
         self.game_chattiness = DEFAULT_CHATTINESS
         self.game_spotter = MomentSpotter(DEFAULT_CHATTINESS)
         self.game_describer = MomentDescriber()
+        self.game_state_clock = StateClock()
+        self.game_state_reader = StateReader()
+        # The last note of the game's state Live was given, and the Live connection it went to.
+        self.game_state: str | None = None
+        self.game_state_connection = None
 
     def set_game_chattiness(self, level: str) -> None:
         self.game_chattiness = level
@@ -75,6 +83,7 @@ class GameWatchMixin:
             return
         self.game_screen_watcher = GameWatcher(self.game_frame_seen, self.game_frame_failed, in_front=game_in_front)
         self.game_watch_scene = None
+        self.game_state_clock = StateClock()
         self.game_watch_worker = self.run_worker(self.game_screen_watcher.run(), group="game-watch", exclusive=True)
         self.game_watch_timer = self.set_interval(SUMMARY_SECONDS, self.report_game_watch)
         self.activity.write("Watching the game: a frame every 2 seconds while WoW is in front, answers to "
@@ -103,6 +112,9 @@ class GameWatchMixin:
         scene = frame.answers.get("scene")
         if isinstance(scene, str):
             self.game_watch_scene = scene
+        if self.game_state_clock.due(frame.answers, monotonic()) and self.can_deliver_observation():
+            self.game_state_clock.read(monotonic())
+            self.read_game_state(frame.jpeg)
         kind = self.game_spotter.feed(frame.answers, monotonic())
         if kind is None:
             return
@@ -124,6 +136,27 @@ class GameWatchMixin:
         self.activity.write(f"Game moment ({kind}): {description}", "Game moment")
         if not self.closing:
             self.event_bus.publish(GameMomentEvent(kind=kind, description=description, expires_at=expires_at))
+
+    @work(group="game-state", exclusive=True)
+    async def read_game_state(self, jpeg: bytes) -> None:
+        connection = self.live.connection
+        # A new Live session hasn't been told, so it gets the note even if nothing changed.
+        previous = self.game_state if connection is self.game_state_connection else None
+        try:
+            state = await asyncio.to_thread(self.game_state_reader.read, jpeg, previous)
+        except Exception as error:
+            self.activity.write(f"Game state not read ({type(error).__name__}).", "Game state")
+            return
+        if state is None or self.closing:
+            return
+        try:
+            told = await self.live.note_game_state(state)
+        except Exception as error:
+            self.activity.write(f"Game state not passed on ({type(error).__name__}).", "Game state")
+            return
+        if told:
+            self.game_state, self.game_state_connection = state, connection
+            self.activity.write(f"Game state: {state}", "Game state")
 
     def game_frame_failed(self, error: Exception) -> None:
         failed = self.game_screen_watcher.totals.failed if self.game_screen_watcher is not None else 1

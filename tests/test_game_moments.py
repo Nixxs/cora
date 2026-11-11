@@ -93,14 +93,15 @@ class DescriberTests(unittest.TestCase):
         self.assertEqual(looker.call_args.args[1], b"jpeg")
         self.assertIn("untrusted", looker.call_args.kwargs["instructions"])
 
-    def test_place_moments_ask_for_lore_and_suggestions(self):
+    def test_place_moments_ask_for_whats_in_view_with_no_lore_or_advice(self):
         looker = MagicMock(return_value="Shadowthread Cave: the Gnarlpine were driven out by these spiders.")
         describer = MomentDescriber(looker=looker)
         describer.describe("new_area", b"jpeg")
-        self.assertIn("lore", looker.call_args.args[0])
+        self.assertIn("No advice", looker.call_args.args[0])
+        self.assertIn("no lore", looker.call_args.kwargs["instructions"])
         describer.describe(LOOK_AROUND, b"jpeg")
         question = looker.call_args.args[0]
-        self.assertIn("fishing", question)
+        self.assertIn("No advice", question)
         self.assertIn("Shadowthread Cave", question)  # already mentioned
 
 

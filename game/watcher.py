@@ -150,9 +150,77 @@ def ask(client, jpeg: bytes) -> Frame:
 
 
 def grab_screen():
-    from PIL import ImageGrab
+    """The main screen as an image. On Windows it's copied through ctypes, which lets the rest of
+    Cora run meanwhile: Pillow's own grab holds Python still for the whole copy, long enough to
+    make her voice stutter."""
+    import sys
 
-    return ImageGrab.grab()
+    from PIL import Image
+
+    if sys.platform != "win32":
+        from PIL import ImageGrab
+
+        return ImageGrab.grab()
+
+    import ctypes
+    from ctypes import wintypes
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", wintypes.DWORD), ("biWidth", wintypes.LONG), ("biHeight", wintypes.LONG),
+                    ("biPlanes", wintypes.WORD), ("biBitCount", wintypes.WORD), ("biCompression", wintypes.DWORD),
+                    ("biSizeImage", wintypes.DWORD), ("biXPelsPerMeter", wintypes.LONG),
+                    ("biYPelsPerMeter", wintypes.LONG), ("biClrUsed", wintypes.DWORD),
+                    ("biClrImportant", wintypes.DWORD)]
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+    handle = ctypes.c_void_p
+    user32.SetThreadDpiAwarenessContext.restype = handle
+    user32.SetThreadDpiAwarenessContext.argtypes = [handle]
+    user32.GetDC.restype = handle
+    user32.GetDC.argtypes = [handle]
+    user32.ReleaseDC.argtypes = [handle, handle]
+    gdi32.CreateCompatibleDC.restype = handle
+    gdi32.CreateCompatibleDC.argtypes = [handle]
+    gdi32.CreateCompatibleBitmap.restype = handle
+    gdi32.CreateCompatibleBitmap.argtypes = [handle, ctypes.c_int, ctypes.c_int]
+    gdi32.SelectObject.restype = handle
+    gdi32.SelectObject.argtypes = [handle, handle]
+    gdi32.BitBlt.argtypes = [handle, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+                             handle, ctypes.c_int, ctypes.c_int, wintypes.DWORD]
+    gdi32.GetDIBits.argtypes = [handle, handle, wintypes.UINT, wintypes.UINT, handle,
+                                ctypes.POINTER(BITMAPINFOHEADER), wintypes.UINT]
+    gdi32.DeleteObject.argtypes = [handle]
+    gdi32.DeleteDC.argtypes = [handle]
+
+    # Real pixels rather than scaled ones, for this thread only (-4: per-monitor aware, v2).
+    awareness = user32.SetThreadDpiAwarenessContext(handle(-4))
+    screen = user32.GetDC(None)
+    memory = bitmap = None
+    try:
+        width, height = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+        memory = gdi32.CreateCompatibleDC(screen)
+        bitmap = gdi32.CreateCompatibleBitmap(screen, width, height)
+        if not screen or not memory or not bitmap:
+            raise OSError("The screen couldn't be read.")
+        previous = gdi32.SelectObject(memory, bitmap)
+        copied = gdi32.BitBlt(memory, 0, 0, width, height, screen, 0, 0, 0x00CC0020)  # SRCCOPY
+        gdi32.SelectObject(memory, previous)
+        # A negative height asks for rows from the top down.
+        header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), width, -height, 1, 32, 0)
+        pixels = ctypes.create_string_buffer(width * height * 4)
+        if not copied or gdi32.GetDIBits(memory, bitmap, 0, height, pixels, ctypes.byref(header), 0) != height:
+            raise OSError("The screen couldn't be read.")
+    finally:
+        if bitmap:
+            gdi32.DeleteObject(bitmap)
+        if memory:
+            gdi32.DeleteDC(memory)
+        if screen:
+            user32.ReleaseDC(None, screen)
+        if awareness:
+            user32.SetThreadDpiAwarenessContext(awareness)
+    return Image.frombuffer("RGB", (width, height), pixels, "raw", "BGRX", 0, 1)
 
 
 class GameWatcher:
