@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import gc
 import json
 from collections import deque
 from contextlib import aclosing
@@ -58,24 +59,41 @@ audio_timing_logged = False
 async def log_audio_timing(speaker) -> None:
     global audio_timing_logged
     tick = 0.05
-    while True:
-        worst_lag = 0.0
-        ends = monotonic() + AUDIO_TIMING_SECONDS
-        while (before := monotonic()) < ends:
-            await asyncio.sleep(tick)
-            # How much later than asked the loop came back: time it spent busy with something else.
-            worst_lag = max(worst_lag, monotonic() - before - tick)
-        timing = speaker.timing()
-        if not isinstance(timing, dict) or not timing.get("arrivals"):
-            continue
-        record = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                  "max_loop_lag_ms": round(worst_lag * 1000, 1), **timing}
-        try:
-            with AUDIO_TIMING_LOG.open("a" if audio_timing_logged else "w", encoding="utf-8") as log:
-                log.write(json.dumps(record) + "\n")
-            audio_timing_logged = True
-        except OSError:
-            pass
+    # Garbage collections hold up every thread while they run, the speaker's included.
+    collections = {"started": 0.0, "max_gc_ms": 0.0, "full_gcs": 0}
+
+    def time_collection(phase: str, info: dict) -> None:
+        if phase == "start":
+            collections["started"] = monotonic()
+            return
+        collections["max_gc_ms"] = max(collections["max_gc_ms"], (monotonic() - collections["started"]) * 1000)
+        if info.get("generation") == 2:
+            collections["full_gcs"] += 1
+
+    gc.callbacks.append(time_collection)
+    try:
+        while True:
+            worst_lag = 0.0
+            ends = monotonic() + AUDIO_TIMING_SECONDS
+            while (before := monotonic()) < ends:
+                await asyncio.sleep(tick)
+                # How much later than asked the loop came back: time it spent busy with something else.
+                worst_lag = max(worst_lag, monotonic() - before - tick)
+            timing = speaker.timing()
+            gc_record = {"max_gc_ms": round(collections["max_gc_ms"], 1), "full_gcs": collections["full_gcs"]}
+            collections.update(max_gc_ms=0.0, full_gcs=0)
+            if not isinstance(timing, dict) or not timing.get("arrivals"):
+                continue
+            record = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                      "max_loop_lag_ms": round(worst_lag * 1000, 1), **gc_record, **timing}
+            try:
+                with AUDIO_TIMING_LOG.open("a" if audio_timing_logged else "w", encoding="utf-8") as log:
+                    log.write(json.dumps(record) + "\n")
+                audio_timing_logged = True
+            except OSError:
+                pass
+    finally:
+        gc.callbacks.remove(time_collection)
 
 
 def fit_note(text: str, max_chars: int) -> str:

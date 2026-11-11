@@ -82,6 +82,7 @@ class RegionTests(unittest.IsolatedAsyncioTestCase):
             choice.value = "us1"
             await pilot.pause()
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            await pilot.pause()
             self.assertEqual(twilio.API_BASE, "https://api.twilio.com")
             app.persistence.save_twilio_region.assert_called_once_with("us1")
             self.assertIn("United States (US1) region", "\n".join(app.activity.entries))

@@ -261,6 +261,12 @@ Standby or Disconnected) and the audio controls on the right:
   [devices/speaker.py](devices/speaker.py) skips silence that arrives while more than 0.3 seconds
   of audio is waiting to play, catching up between her sentences without touching her speech.
   Activity says how much was skipped when the session ends.
+- **No stutter from garbage collection:** a full Python garbage collection walks every object
+  Cora holds and keeps the whole process waiting, the speaker's audio thread included. Once
+  she's running that took about a quarter of a second, long enough for the sound device to run
+  dry. So [app.py](app.py) freezes what's imported at launch, and again what exists 20 seconds
+  after start (`settle_memory`, `gc.freeze()`), out of the collector's reach; later collections
+  only walk what's new. Only a real launch does this, never the tests.
 - **Playback bars:** eight bars beside the speaker follow her output volume, flat when
   silent and "Muted" when the speaker is muted.
 - **Reconnect:** Ctrl+R closes and restarts Live without clearing the chat, keeping drafts,
@@ -1354,7 +1360,12 @@ SQL file. `python migrate.py` checks the history and applies pending ones in tra
 with no automatic downgrades.
 
 **Diagnostics:** each launch rewrites `live-trace.log` beside `app.py`: command and event IDs,
-their order and standby blockers, never chat text, tool arguments or audio.
+their order and standby blockers, never chat text, tool arguments or audio. It also rewrites
+`audio-timing.log`: one line every 5 s while a voice session runs, with how late Live's audio
+arrived (`max_arrival_gap_ms`), how often her speech ran dry mid-word (`dry_mid_speech`,
+`dry_ms`), how late Cora's event loop woke (`max_loop_lag_ms`), the longest garbage collection
+and how many were full (`max_gc_ms`, `full_gcs`) and how late the sound device asked for audio
+(`max_callback_gap_ms`, `device_underflows`), to tell where a stutter comes from.
 
 ### Adding a tool
 

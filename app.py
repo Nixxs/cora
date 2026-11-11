@@ -1,4 +1,5 @@
 import asyncio
+import gc
 from os import getenv
 from pathlib import Path
 from time import monotonic
@@ -110,6 +111,16 @@ BACKGROUND_ROUND_SECONDS = 60 * 60
 # answers at most EMAIL_REPLIES_PER_DAY times a day in one thread, so two mailboxes answering
 # each other automatically soon stop.
 TASK_MAIL_CHECK_SECONDS = 10 * 60
+# A full garbage collection walks every object Cora holds and keeps the whole process (her voice's
+# audio thread too) waiting until it's done: about a quarter of a second once she's running, an
+# audible stutter. What exists once startup has settled lives for good, so it's frozen out of the
+# collector's reach then and later collections only walk what's new.
+MEMORY_SETTLE_SECONDS = 20.0
+
+
+def settle_memory() -> None:
+    gc.collect()
+    gc.freeze()
 
 
 # Each area's methods live in app_areas/; no two define the same name, so their order doesn't matter.
@@ -120,6 +131,8 @@ class CoraApp(
 ):
 
     live_trace = None
+    # Set only when launched for real, so tests never freeze their process's memory.
+    freeze_memory = False
     CSS_PATH = "cora.tcss"
     BINDINGS = [
         ("ctrl+x", "disconnect_and_quit", "Quit"),
@@ -179,6 +192,8 @@ class CoraApp(
                 )
 
     def on_mount(self) -> None:
+        if self.freeze_memory:
+            self.set_timer(MEMORY_SETTLE_SECONDS, settle_memory)
         self.query_one("#chat-input", ChatComposer).focus()
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
@@ -779,4 +794,6 @@ class CoraApp(
 if __name__ == "__main__":
     app = CoraApp()
     app.live_trace = LiveTrace(Path(__file__).with_name("live-trace.log"))
+    app.freeze_memory = True
+    settle_memory()  # what's imported, until startup settles
     app.run()
