@@ -85,6 +85,7 @@ from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
 from app_areas.game import GameMixin
 from app_areas.game_watch import GameWatchMixin
+from app_areas.claude_code import ClaudeCodeMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -127,7 +128,7 @@ def settle_memory() -> None:
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, App,
 ):
 
     live_trace = None
@@ -267,6 +268,8 @@ class CoraApp(
         # Settings > Game: push-to-talk into the game's chat.
         self.init_game()
         self.init_game_watch()
+        # Settings > Claude Code: hearing your Claude Code sessions.
+        self.init_claude_code()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -653,6 +656,7 @@ class CoraApp(
                     self.voice_bands, self.conversation, self.audio_status,
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context, load_spend=self.load_spend,
+                    claude_sessions=lambda: self.claude_sessions.recent() if self.claude_code_listen else None,
                 ))
         elif event.button.id == "chat-status":
             if self.standby:
@@ -718,6 +722,8 @@ class CoraApp(
         except Exception:
             if self.webhook_server is not None:
                 self.webhook_server.stop()
+        if self.claude_code_server is not None:
+            self.claude_code_server.stop()
         # Nothing still waiting for approval may run while shutting down.
         self.confirmations.decline_all()
         self.email_account.cancel_sign_in()

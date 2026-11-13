@@ -250,8 +250,24 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             for box_id, title in BOX_TITLES.items():
                 box = app.screen.query_one(f"#{box_id}")
                 self.assertEqual(box.border_title, title)
+                if box_id == "claude-code-box":
+                    # Hidden until Cora listens for Claude Code.
+                    self.assertEqual(box.size.width, 0)
+                    continue
                 self.assertGreater(box.size.width, 0)
                 self.assertGreater(box.size.height, 0)
+
+    async def test_claude_code_sits_between_voice_and_chat_while_cora_listens(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.claude_code_listen = True
+            await pilot.click("#view-button")
+            await pilot.pause()
+            voice, box, chat = (app.screen.query_one(f"#{box_id}")
+                                for box_id in ("voice-column", "claude-code-box", "chat-box"))
+            self.assertGreater(box.size.width, 0)
+            self.assertLess(voice.region.x, box.region.x)
+            self.assertLess(box.region.x, chat.region.x)
+            self.assertEqual(str(app.screen.query_one("#dashboard-claude-list").render()), "no sessions yet")
 
     async def test_middle_row_pans_sideways_when_its_boxes_do_not_fit(self):
         async with keyboard_tests.running_app() as (app, pilot):

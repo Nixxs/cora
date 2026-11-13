@@ -9,8 +9,11 @@ from sqlalchemy.orm import Session
 from game.chat_line import CHANNELS as GAME_CHAT_CHANNELS, DEFAULT_CHANNEL
 from game.moments import CHATTINESS, DEFAULT_CHATTINESS
 from game.speech import DEFAULT_TRANSCRIPTION, MAX_VOCABULARY_CHARS, TRANSCRIPTION_CHOICES
+from claude_code.routes import DEFAULT_PORT as CLAUDE_CODE_PORT
+from claude_code.sessions import DEFAULT_TELL as DEFAULT_CLAUDE_CODE_TELL, TELL_CHOICES as CLAUDE_CODE_TELL
 from session_config import VOICE, VOICE_CHOICES
 from .models import AppSettingRecord
+from .webhook_settings_store import PORTS
 
 START_MODES = ("active", "standby")
 # As phone.twilio.REGIONS.
@@ -186,6 +189,33 @@ class AppSettingsStore:
                 session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "game_vocabulary"))
             return
         self._set("game_vocabulary", words)
+
+    def claude_code_listen(self) -> bool:
+        """Whether Cora listens for Claude Code's hooks; off unless switched on."""
+        return self._switch("claude_code_listen") is True
+
+    def set_claude_code_listen(self, on: bool) -> None:
+        self._set("claude_code_listen", "on" if on else "off")
+
+    def claude_code_tell(self) -> str:
+        """Which sessions left waiting she tells you about: 'all' (unless another was chosen), 'needs' or 'off'."""
+        saved = self._get("claude_code_tell")
+        return saved if saved in CLAUDE_CODE_TELL else DEFAULT_CLAUDE_CODE_TELL
+
+    def set_claude_code_tell(self, choice: str) -> None:
+        if choice not in CLAUDE_CODE_TELL:
+            raise ValueError(f"Unknown choice: {choice}")
+        self._set("claude_code_tell", choice)
+
+    def claude_code_port(self) -> int:
+        """The local port Claude Code's hooks post to (8001 unless another was chosen)."""
+        saved = self._get("claude_code_port")
+        return int(saved) if saved is not None and saved.isdigit() and int(saved) in PORTS else CLAUDE_CODE_PORT
+
+    def set_claude_code_port(self, port: int) -> None:
+        if isinstance(port, bool) or not isinstance(port, int) or port not in PORTS:
+            raise ValueError(f"The local port must be between {PORTS.start} and {PORTS.stop - 1}.")
+        self._set("claude_code_port", str(port))
 
     def spend_project(self) -> str | None:
         """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""

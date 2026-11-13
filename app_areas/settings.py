@@ -9,7 +9,7 @@ from textual import work
 import openai_key
 import openai_spend
 from ui.model_settings import (
-    EmailControls, GameControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
     gap_words,
 )
 from services.catalogue import SERVICES
@@ -104,6 +104,14 @@ class SettingsMixin:
                     watch=self.game_watch, save_watch=self.save_game_watch,
                     chattiness=self.game_chattiness, save_chattiness=self.save_game_chattiness,
                 ),
+                claude_code=ClaudeCodeControls(
+                    status=lambda: (self.claude_code_status, self.claude_code_hooks),
+                    sessions=self.claude_sessions.recent, set_listen=self.set_claude_code_listen,
+                    save_port=self.save_claude_code_port, add_hooks=self.add_claude_code_hooks,
+                    remove_hooks=self.remove_claude_code_hooks,
+                    listen=self.claude_code_listen, port=self.claude_code_port,
+                    tell=self.claude_code_tell, save_tell=self.save_claude_code_tell,
+                ),
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,
                     voice=voice, save_voice=self.save_voice_setting,
@@ -122,6 +130,7 @@ class SettingsMixin:
                     save_spend_project=self.save_spend_project,
                 ),
             ), callback=self.settings_closed)
+            self.refresh_claude_code_hooks()
             if admin_key:
                 self.load_spend_projects(admin_key)
 

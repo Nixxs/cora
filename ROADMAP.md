@@ -79,7 +79,19 @@ Nothing is broken; these keep things healthy as she grows.
 ## Experiments (the `experiments` branch)
 
 Built on their own branch, outside the feature freeze, in small steps that can each be tried
-before the next.
+before the next. Each piece gets a sub-branch off `experiments`.
+
+To do on this branch:
+
+- [x] Claude Code 1a: hearing sessions (hooks, a listener of its own, Settings > Claude Code)
+- [x] Claude Code 1b: the dashboard panel, and telling you when one finishes or needs you
+- [ ] Claude Code 2: asking about them
+- [ ] Claude Code 3: running sessions (Agent SDK)
+- [ ] Claude Code 4: approving from anywhere
+- [ ] Rocky 1: the container and Settings
+- [ ] Rocky 2: test her first, with a stand-in Rocky
+- [ ] Rocky 3: Rocky as her consultant and friend
+- [ ] Rocky 4: a direct line (if the test shows it's needed)
 
 ### Claude Code
 
@@ -90,12 +102,19 @@ address, and the **Claude Agent SDK** (Python), which runs Claude Code from insi
 Both run on your Claude subscription, never a per-token API key: no `ANTHROPIC_API_KEY` in
 Cora's environment (it would take over) and never bare mode (it ignores the subscription).
 
-1. **Watching sessions:** HTTP hooks in the user Claude Code settings send session start and
-   end, finished, waiting for input and permission requests to a new address on Cora's
-   listener (with a token). Sessions in VS Code and the terminal are covered too. A Claude
-   Code panel at the desk shows each session by project and what it's doing, and Cora lets
-   you know (Signal or wherever you are) when one finishes or is waiting on you. No new
-   libraries.
+1. **Watching sessions**, in two halves:
+   - *1a, hearing them.* *Built* (see [Claude Code](DOCUMENTATION.md#claude-code)): background
+     command hooks in your Claude Code user settings post session start and end, prompts,
+     finished, failed and "needs you" to a listener of its own on 127.0.0.1:8001, with a token.
+     It's never the public listener, which Caddy forwards to the internet. HTTP hooks were
+     passed over: they don't run on SessionStart, and they'd fail visibly whenever Cora is
+     closed. Settings > Claude Code adds and removes the hooks and lists the sessions, and
+     Activity gets a line for each change. Checked with real VS Code and headless sessions.
+   - *1b, telling you.* *Built*: a claude code box on the dashboard (between voice and chat,
+     while listening), and Cora letting you know (voice, or Signal when you're away) about a
+     session left needing you, finished or failed for 3 minutes, chosen in Settings. A
+     `PostToolUse` hook tells her you've answered, so she doesn't chase what you already
+     approved. Permission requests (the `PermissionRequest` hook) wait for step 4.
 2. **Asking about them:** a tool for listing recent sessions by project and saying what's
    going on in one ("what's Claude doing in cora?").
 3. **Running sessions:** an Agent SDK service, following the MCP services' pattern (a
@@ -108,10 +127,14 @@ Cora's environment (it would take over) and never bare mode (it ignores the subs
    Cora's existing approval prompts, so you can approve or refuse from Signal, the web
    page or the desk.
 
-### A private local model
+### Rocky, her consultant
 
-An uncensored open-weights model Cora can ask when you want an answer her main model won't
-give. It's off most of the time and only runs when needed. **Ollama** runs in Docker, like
+**Rocky** is an uncensored open-weights model running locally, and Cora treats him as her
+consultant and her friend. He's a bit slow and very friendly, and he knows all about the
+seedier side of life. A small local model won't be as sharp as her, and his persona owns
+that: she goes to him for the frank answer, not the clever one, and she's fond of him. She
+asks him when you want an answer her main model won't give. He's off most of the time and
+only runs when needed. **Ollama** runs in Docker, like
 the browser and Signal: a `local-model` profile in [compose.yaml](compose.yaml) with the GPU
 passed through and a volume for the downloaded models, so `docker compose up` leaves it
 alone. It has an OpenAI-style endpoint, so Cora's existing client works with a different
@@ -129,15 +152,16 @@ GPU, and larger ones more slowly with part of the model in system memory.
    things: whether she passes the question on in full or refuses or waters it down, and
    whether she relays the answer or softens it. The result decides how much of step 4 is
    needed.
-3. **A consultant, not a tool:** he has his own name and persona (his system prompt), and she
-   talks with him: a `consult` tool keeps a thread going, so she can follow up, push back
+3. **A consultant and friend, not a tool:** Rocky's persona is his system prompt, and her
+   notes describe him as her consultant and friend, so she talks with him the way she would
+   with a friend: a `consult` tool keeps a thread going, so she can follow up, push back
    or ask him to explain, and a new topic starts a new thread. He's offered only while
    switched on (like `show_map`). She goes to him when you ask, or when she'd otherwise
    refuse. The thread is shown word for word at the desk and on the web page as it happens,
    and her tool description says you see his answers yourself, so she gives her own view
    rather than retelling (or softening) his.
-4. **A direct line, if the test shows it's needed:** typing "@consultant …" (or his name) at
-   the desk or on the web page sends your words straight to him, and his answer is shown to
+4. **A direct line, if the test shows it's needed:** typing "@rocky …" at the desk or on
+   the web page sends your words straight to him, and his answer is shown to
    you, so neither the question nor the answer reaches OpenAI. Talking to him by voice
    without OpenAI would need local speech (faster-whisper, already used for the wake word,
    plus a local voice), which belongs with [Local models, after 1.0](#local-models-after-10).

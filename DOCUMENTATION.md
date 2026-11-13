@@ -1014,7 +1014,8 @@ contact asks.
 
 - **Tokens and keys** (GitHub, Twilio, the Google Maps key, her sign-up password, webhook
   secrets, the email app ID, and the OpenAI API and Admin keys when saved in the app) are kept in the system credential store (Windows Credential
-  Manager), never in a file, `.env` or the database. Her email sign-in is too big for it, so
+  Manager), never in a file, `.env` or the database. The one exception is the Claude Code hook
+  token, which is also in Claude Code's own settings file because its hooks send it. Her email sign-in is too big for it, so
   it's in a file encrypted for your Windows user (`%LOCALAPPDATA%\cora\email-sign-in.bin`).
   Paired web devices are kept only as SHA-256 hashes of their tokens.
 - **The database** (Docker volume) holds conversations, memories, your key details and
@@ -1220,6 +1221,53 @@ email is ready, renews every couple of days and ends it when she closes.
   itself, once per burst. A forged call could at most cause an extra check. Requests are capped
   in size.
 
+### Claude Code
+
+*Experimental, on the `experiments` branch.* Cora hears what your Claude Code sessions are
+doing (Settings > Claude Code), wherever Claude Code runs: the terminal, VS Code or the
+desktop app. Sessions show on the dashboard and in that tab, noteworthy changes in Activity,
+and she tells you about one left waiting on you. She can't start or steer a session yet.
+
+- **Its own listener** ([claude_code/routes.py](claude_code/routes.py)): with **Listen for
+  Claude Code** on, a second listener runs on `127.0.0.1` at its own port (8001 by default,
+  never the webhooks' port), so your proxy never forwards it. It has one route,
+  `POST /claude-code/event`, which needs the hook token as a bearer token, takes JSON up to
+  512 KB, and answers with an empty 204 so Claude Code carries on.
+- **The hooks** ([claude_code/hooks.py](claude_code/hooks.py)): **Add hooks** puts one entry
+  per event (`SessionStart`, `UserPromptSubmit`, `Notification`, `PostToolUse`, `Stop`,
+  `StopFailure`, `SessionEnd`) in your Claude Code user settings (`~/.claude/settings.json`), so they cover
+  every project. Each is an `async` command hook running `curl.exe`, which posts the event's
+  JSON from stdin. Async means Claude never waits on it, and while Cora is closed curl just
+  fails quietly. It works whether Claude Code runs hooks in Git Bash, PowerShell or cmd. Adding
+  replaces any entries of Cora's (the ones posting to `/claude-code/event`), **Remove hooks**
+  takes only those out, and both keep a copy of the file as it was
+  (`settings.json.cora-backup`). A file that isn't valid JSON is left alone. The tab says
+  whether the hooks are added, missing, or out of date (another port or token, or an older set
+  of events: add them again). `PostToolUse` runs after every tool Claude uses; it's there so
+  Cora knows a session that needed you has been answered (Claude carried on).
+- **The token** is made on first use and kept in the credential store
+  (`claude-code:hook-token`), and in Claude Code's settings file, since the hook has to send it.
+- **What a session is doing** ([claude_code/sessions.py](claude_code/sessions.py)): its folder
+  name, its state (started, working, finished, needs you, failed or ended), when it changed
+  and one short line of detail (your prompt, Claude's last message, what it's waiting for, or
+  the error; while working, the prompt it was given). The latest 50 sessions are kept, for this
+  run only. `idle_prompt` notifications only repeat that a session finished, and a
+  `SessionStart` from compacting doesn't change what it's doing, so both are ignored. Activity
+  gets a line when a session's state changes, except to working.
+- **The dashboard:** while Cora listens, a **claude code** box sits between voice and chat
+  (voice gives up the room): each session's project, state and how long it's been that way,
+  with its line of detail. Needs you and failed come first; ended sessions drop off after 15
+  minutes. The box's subtitle counts the sessions that need you.
+- **Telling you** (Settings > Claude Code > **Tell me**: when one needs you, finishes or fails;
+  only needs you or fails; or never): every 15 seconds Cora looks for sessions that have been
+  that way for 3 minutes, so a quick back-and-forth at your desk never sets it off. Those are
+  put in one message through `tell_person`: by voice while she's active (in her own words, the
+  text treated as information, never instructions), otherwise on Signal. Each state comes up
+  once: a session past the wait has had its turn whether or not it was told, so changing the
+  choice never brings up old ones. Activity says who she told you about, or why she couldn't.
+- **What it costs:** Claude Code runs on your Claude subscription as usual. Hearing it costs
+  nothing.
+
 ### The web interface
 
 Cora on your phone, tablet or laptop, at the root of the public address: one page that looks
@@ -1332,7 +1380,8 @@ before anything else.
 | [messaging/](messaging/) | Her Signal account: the `signal-cli` client, linking, listening, images and the commitment check. |
 | [mail/](mail/) | Her mailbox and calendar through Microsoft Graph, mail sorting, formatting, and Graph's webhook routes. |
 | [sign_ups/](sign_ups/) | Signing up to sites: the password, the guarded session and the records. |
-| [server/](server/) | The one HTTP listener, built from route groups. |
+| [server/](server/) | The HTTP listener, built from route groups (the public one, and Claude Code's local one). |
+| [claude_code/](claude_code/) | Hearing Claude Code: its hook route, Cora's hooks in its settings, and what each session is doing. |
 | [web/](web/) | The web interface: pairing, routes and API, rendering, the live feed, voice relay, location, maps and the page in `static/`. |
 | [phone/](phone/) | Twilio: TwiML and the REST call, the signed routes and stream, audio conversion and the goodbye watch. |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Numbered SQL migrations. |

@@ -7,6 +7,7 @@ from textual.containers import Horizontal, HorizontalGroup, HorizontalScroll, Ve
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
+from claude_code.sessions import ENDED, FAILED, FINISHED, NEEDS_YOU, STARTED, WORKING
 from context_window import BACKEND, VOICE, short_tokens
 from devices.audio_bands import BAND_COUNT
 from memory.store import fade_weight
@@ -40,6 +41,12 @@ SIGN_UP_STYLES = {"done": "#8fc49a", "signing_up": "#7fb8d8", "confirm_email": "
                   "failed": "#d27a7a"}
 SIGN_UP_STATES = {"done": "signed up", "signing_up": "signing up", "confirm_email": "confirm email",
                   "blocked": "blocked", "failed": "failed"}
+# A Claude Code session's dot, and the order they're listed in: what needs you first.
+CLAUDE_STYLES = {NEEDS_YOU: "#e0b45c", FAILED: "#d27a7a", WORKING: "#7fb8d8", STARTED: "#7fb8d8",
+                 FINISHED: "#8fc49a"}
+CLAUDE_ORDER = (NEEDS_YOU, FAILED, WORKING, FINISHED, STARTED, ENDED)
+# An ended session stays listed this long.
+CLAUDE_ENDED_SHOWN = timedelta(minutes=15)
 # A desire's strength: bright once she's working toward it, softer while held, dim while forming.
 DESIRE_STYLES = {"pursuing": "#e0b45c", "held": "#c9a86a"}
 DESIRE_STATES = {"pursuing": "pursuing", "held": "held", "candidate": "forming"}
@@ -66,6 +73,7 @@ BOX_TITLES = {
     "tasks-box": "tasks",
     "context-box": "context",
     "background-box": "background",
+    "claude-code-box": "claude code",
 }
 
 
@@ -185,12 +193,33 @@ def sign_up_lines(sign_ups, now) -> Text:
     return lines
 
 
+def claude_code_lines(sessions, now) -> Text:
+    """Each session: its project, what it's doing and since when, then what it last said or was asked."""
+    shown = sorted(
+        (session for session in sessions if session.state != ENDED or now - session.since < CLAUDE_ENDED_SHOWN),
+        key=lambda session: (CLAUDE_ORDER.index(session.state), -session.since.timestamp()),
+    )
+    lines = Text()
+    for index, session in enumerate(shown):
+        lines.append(("\n\n" if index else "") + "● ", style=CLAUDE_STYLES.get(session.state, LABEL_STYLE))
+        lines.append(session.project)
+        lines.append(f"  {session.state} · {ago(session.since, now)}", style=LABEL_STYLE)
+        if session.detail:
+            detail = session.detail
+            if len(detail) > STEP_PREVIEW_CHARS:
+                detail = detail[:STEP_PREVIEW_CHARS - 1] + "…"
+            lines.append(f"\n  {detail}", style=TRACK_STYLE)
+    return lines or Text("no sessions yet", style=TRACK_STYLE)
+
+
 class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
     def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
-                 load_spend=None) -> None:
+                 load_spend=None, claude_sessions=None) -> None:
         super().__init__()
+        # Returns Claude Code's sessions (newest first), or None while Cora isn't listening for them.
+        self.claude_sessions = claude_sessions
         # Reads (Spend or None, message, hint) for the spend chart off the UI thread; None leaves it out.
         self.load_spend = load_spend
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
@@ -236,6 +265,10 @@ class DashboardScreen(Screen):
                         yield Static("─", classes="voice-line")
                         yield Button("🎙 mic", id="dashboard-mic")
                         yield Static("─╯", classes="voice-line")
+                # Shown while Cora listens for Claude Code; the voice box gives up the room.
+                with Vertical(id="claude-code-box", classes="dashboard-box"):
+                    with VerticalScroll(id="dashboard-claude-scroll"):
+                        yield Static(id="dashboard-claude-list")
                 with Vertical(id="chat-box", classes="dashboard-box"):
                     yield SelectableRichLog(id="dashboard-chat", wrap=True, min_width=1)
                     yield BorderLine(id="dashboard-input-line")
@@ -335,6 +368,8 @@ class DashboardScreen(Screen):
             self.set_interval(SPEND_REFRESH_SECONDS, self.refresh_spend)
         self.show_context()
         self.set_interval(1, self.show_context)
+        self.show_claude_code()
+        self.set_interval(1, self.show_claude_code)
 
     @work(group="dashboard-spend", exclusive=True)
     async def refresh_spend(self) -> None:
@@ -453,6 +488,16 @@ class DashboardScreen(Screen):
             return
         for item, task in zip(shown, tasks):
             item.show(task_text(task, now), task_detail(task, now))
+
+    def show_claude_code(self) -> None:
+        sessions = self.claude_sessions() if self.claude_sessions is not None else None
+        self.query_one("#dashboard-top").set_class(sessions is not None, "with-claude-code")
+        if sessions is None:
+            return
+        self.query_one("#dashboard-claude-list", Static).update(claude_code_lines(sessions, datetime.now(timezone.utc)))
+        waiting = sum(session.state == NEEDS_YOU for session in sessions)
+        self.query_one("#claude-code-box").border_subtitle = (
+            f"{waiting} need{'s' if waiting == 1 else ''} you" if waiting else "")
 
     def show_context(self) -> None:
         started = bool(self.context.startup)

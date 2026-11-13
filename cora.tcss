@@ -305,6 +305,24 @@ Screen > .screen--selection {
     height: 1fr;
 }
 
+/* Claude Code's sessions, between voice and chat while Cora listens for them; voice gives up the room. */
+#claude-code-box {
+    display: none;
+}
+
+#dashboard-top.with-claude-code #claude-code-box {
+    display: block;
+}
+
+#dashboard-top.with-claude-code #voice-column {
+    width: 1fr;
+}
+
+#dashboard-claude-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
 #voice-box {
     border-top: none;
     border-bottom: none;
@@ -740,7 +758,7 @@ ModelSettingsScreen {
     border-left: vkey #2a3140;
 }
 
-#services-scroll, #general-scroll, #game-scroll {
+#services-scroll, #general-scroll, #game-scroll, #claude-code-scroll {
     height: auto;
     max-height: 40;
     scrollbar-size-vertical: 1;

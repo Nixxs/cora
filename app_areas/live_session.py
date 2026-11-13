@@ -95,6 +95,11 @@ class LiveSessionMixin:
         except Exception as error:
             self.activity.write(f"Game settings unavailable ({type(error).__name__}).", "Settings")
         try:
+            self.apply_claude_code_settings(
+                await self.conversation_persistence.call_database(self.persistence.load_claude_code_settings))
+        except Exception as error:
+            self.activity.write(f"Claude Code settings unavailable ({type(error).__name__}).", "Settings")
+        try:
             saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
             gap = await self.conversation_persistence.call_database(self.persistence.load_conversation_gap)
             twilio_region = await self.conversation_persistence.call_database(self.persistence.load_twilio_region)

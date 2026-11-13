@@ -224,6 +224,20 @@ class KeyboardPersistence:
     def save_game_vocabulary(self, words: str) -> None:
         AppSettingsStore(self._get_store().engine).set_game_vocabulary(words)
 
+    def load_claude_code_settings(self) -> dict:
+        """{"listen": bool, "port": int, "tell": str} from Settings > Claude Code."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"listen": store.claude_code_listen(), "port": store.claude_code_port(), "tell": store.claude_code_tell()}
+
+    def save_claude_code_tell(self, choice: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_tell(choice)
+
+    def save_claude_code_listen(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_listen(on)
+
+    def save_claude_code_port(self, port: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_port(port)
+
     def load_backup_copy_dir(self) -> str | None:
         """The second backup folder, "" for none, or None when never set in Settings."""
         return AppSettingsStore(self._get_store().engine).backup_copy_dir()
