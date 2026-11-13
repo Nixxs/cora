@@ -748,7 +748,8 @@ class ModelSettingsScreen(ModalScreen):
             if asyncio.iscoroutine(shown):
                 await shown
         except NoMatches:
-            if self.is_attached and self.app.screen is self:
+            # Closing Settings, or Cora itself, takes the widgets out from under it; anything else is a bug.
+            if self.app.is_running and self.is_attached and self.app.screen is self:
                 raise
 
     async def fill_tabs(self) -> None:

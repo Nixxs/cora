@@ -98,7 +98,7 @@ class ShowMapAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(app.show_map(MapView("place", "Kings Park")))
 
             app.maps_key = KEY
-            self.assertEqual(app.unavailable_tools() - {"call_someone"}, frozenset())
+            self.assertEqual(app.unavailable_tools() - {"call_someone", "claude_code"}, frozenset())
             self.assertIn("show_map", [schema["name"] for schema in app.tools.schemas(excluding=CLIENT_ONLY)])
             app.conversation.record_message = MagicMock()
             route = MapView("directions", "Fremantle", "Leederville", "driving")
