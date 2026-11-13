@@ -9,7 +9,7 @@ from textual import work
 import openai_key
 import openai_spend
 from ui.model_settings import (
-    EmailControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+    EmailControls, GameControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
     gap_words,
 )
 from services.catalogue import SERVICES
@@ -96,6 +96,14 @@ class SettingsMixin:
                 webhooks=self.make_webhook_controls(),
                 web=self.make_web_controls(),
                 phone=self.make_phone_controls(),
+                game=GameControls(
+                    push_to_talk=self.game_push_to_talk, save_push_to_talk=self.save_game_push_to_talk,
+                    channel=self.game_channel, save_channel=self.save_game_chat_channel,
+                    transcription=self.game_transcription, save_transcription=self.save_game_transcription,
+                    vocabulary=self.game_vocabulary, save_vocabulary=self.save_game_vocabulary,
+                    watch=self.game_watch, save_watch=self.save_game_watch,
+                    chattiness=self.game_chattiness, save_chattiness=self.save_game_chattiness,
+                ),
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,
                     voice=voice, save_voice=self.save_voice_setting,

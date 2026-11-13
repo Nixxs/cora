@@ -87,8 +87,13 @@ class LiveSessionMixin:
                 self.activity.write("Wake connection ended; buffered audio discarded.", "Wake cancelled")
 
     async def apply_saved_settings(self) -> None:
-        """Settings' standby settings, conversation gap and Twilio region, once at launch; one never set
-        there keeps .env's value."""
+        """Settings' standby settings, conversation gap, Twilio region and game settings, once at launch;
+        one never set there keeps .env's value."""
+        try:
+            self.apply_game_settings(
+                await self.conversation_persistence.call_database(self.persistence.load_game_settings))
+        except Exception as error:
+            self.activity.write(f"Game settings unavailable ({type(error).__name__}).", "Settings")
         try:
             saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
             gap = await self.conversation_persistence.call_database(self.persistence.load_conversation_gap)

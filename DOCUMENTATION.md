@@ -4,7 +4,7 @@ How everything in Cora works, checked against the code. Setting her up is in the
 [README](README.md); what's next is in the [roadmap](ROADMAP.md).
 
 1. [Overview and architecture](#overview-and-architecture): Cora-prime and the background, ways to reach her, what she knows, what runs when, models and costs
-2. [Talking to Cora](#talking-to-cora): the desk, voice, standby and the wake word, the greeting, the dashboard
+2. [Talking to Cora](#talking-to-cora): the desk, voice, standby and the wake word, the greeting, the dashboard, playing games
 3. [Her inner life](#her-inner-life): memory, interests, desires, self, her picture, relationship, feelings
 4. [People, tasks and reaching you](#people-tasks-and-reaching-you): contacts, how she reaches you, tasks
 5. [Approvals and safety](#approvals-and-safety): approvals, untrusted content, guards, secrets
@@ -135,6 +135,10 @@ one says what it covers. A change saves straight away, in the `model_settings` t
 less is mostly a matter of putting the busy, simpler areas (Browser, Small jobs, Looking at
 images) on a cheaper model.
 
+Settings opens on Models, the only tab built before it shows; General, Game and Services are
+filled in straight after the first draw (or at once if you click one first), because building
+all four up front kept the screen from appearing for over a second.
+
 Settings is laid out like the dashboard: small headings group its parts (General has Cora,
 Standby, Conversations, Backups and OpenAI; Services has her tools, her accounts, and ways of reaching her from outside). Each
 setting has a short name with what it does in a dimmer line underneath. Inputs and their
@@ -251,6 +255,18 @@ Standby or Disconnected) and the audio controls on the right:
   wake listening included (generated silence keeps Live's timeline going). Speaker mute
   stops playback and discards queued speech; unmuting doesn't replay it. Live stays
   connected, and billed, either way; captions and written answers still show.
+- **Keeping her voice in step:** Live's audio is one continuous stream, silence included, on
+  Live's own clock, which in a real session ran about 2% ahead of the PC's. Played as it came,
+  the speaker fell further behind (about a second a minute) and her voice trailed her words. So
+  [devices/speaker.py](devices/speaker.py) skips silence that arrives while more than 0.3 seconds
+  of audio is waiting to play, catching up between her sentences without touching her speech.
+  Activity says how much was skipped when the session ends.
+- **No stutter from garbage collection:** a full Python garbage collection walks every object
+  Cora holds and keeps the whole process waiting, the speaker's audio thread included. Once
+  she's running that took about a quarter of a second, long enough for the sound device to run
+  dry. So [app.py](app.py) freezes what's imported at launch, and again what exists 20 seconds
+  after start (`settle_memory`, `gc.freeze()`), out of the collector's reach; later collections
+  only walk what's new. Only a real launch does this, never the tests.
 - **Playback bars:** eight bars beside the speaker follow her output volume, flat when
   silent and "Muted" when the speaker is muted.
 - **Reconnect:** Ctrl+R closes and restarts Live without clearing the chat, keeping drafts,
@@ -368,6 +384,90 @@ Ctrl+T queues a simulated observation (that you just got a Signal message). It g
 the event bus to the attention manager, which holds observations while she's speaking,
 working or in Standby and sends them one at a time once she's Active and quiet; they never
 wake her. The queue is in memory only, and a failed send is reported, not retried.
+
+### Playing games
+
+Experimental, for World of Warcraft (Settings > Game). Awareness of the game is being built (see
+the [roadmap](ROADMAP.md#game-awareness-experimental)); what works now is push-to-talk, and
+watching the game, with her reacting to what happens.
+
+- **Push-to-talk into the game's chat:** with it switched on, hold the middle mouse button and
+  talk. While it's held, her microphone is muted and a separate recording runs; letting go turns
+  it into text (see below) and types `/s what you said` into WoW's chat (or `/p`, `/g` or `/y`, as chosen). It's one `SendInput`
+  batch (Enter, the line, Enter), which Windows never mixes with your own keys, so a held W
+  can't slip into the message. It's typed only when `Wow.exe` is the window in front; otherwise
+  the chat shows it as not sent. Lines are kept to one line, without `|` (WoW's escape
+  character), and cut at a word to WoW's 255 characters. They're typed the way players type, so
+  you don't look like a bot: sentences start in lower case and drop their full stops, while
+  "I", acronyms (LFG, GG), WoW names and your own names keep their capitals, and `?`, `!` and
+  `...` stay.
+- **Speech to text:** OpenAI's `gpt-4o-transcribe` by default (about a second a line; the
+  recording goes to OpenAI), or the wake word's offline Whisper model on this PC, which is
+  private but often gets names wrong. OpenAI falls back to this PC when it can't be reached.
+  Both are given a prompt of WoW words (places, classes, slang) and your own **names and words**
+  (your character, friends, guild; up to 200 characters), so names are spelled right.
+- **Cora knows:** the chat shows a quiet line ("You in WoW (/s): …", not saved) and she gets a
+  silent note of what you said and that it was for the other players, not her. It works in
+  Standby too, but she isn't told then (there's no voice session to tell).
+- **Watching the game** (off by default): while `Wow.exe` is the window
+  in front, a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
+  OpenAI's Decisions API (`gpt-6-luna`) with fixed typed questions in
+  [game/watcher.py](game/watcher.py): what's happening (combat, exploring, town, dead, menu),
+  how full your health is, and the chances of a close call, death, level-up, quest moment, chat
+  worth reacting to and something surprising, plus how much a friend watching would want to
+  comment. A frame that's barely changed from the last one sent is skipped (one goes anyway
+  every 30 seconds); none are saved. The screenshot is copied through Windows directly rather
+  than Pillow's `ImageGrab`, which holds all of Python still for about 50 ms a grab and made her
+  voice stutter. Every answer goes to `game-watch.log` (a new one each
+  launch, next to `app.py`), and Activity shows a line when the scene changes or something is
+  likely, and the frames, tokens and cost every minute. A frame is about 2,100 tokens and a
+  third of a second once warm: about $0.26 an hour in a real session, at most about $0.40.
+- **Her reactions** ([game/moments.py](game/moments.py), [app_areas/game_watch.py](app_areas/game_watch.py)):
+  a kind of moment (death, close call, level-up, something surprising, a new area, chat worth
+  reacting to, a quest moment) fires when its answer crosses its threshold, then not again until it drops back
+  below a lower one (a level-up banner stays up for seconds), and never within its own cooldown.
+  Reactions are spaced by **Her reactions** in Settings > Game (off: just record; quiet: 3
+  minutes; normal: a minute; chatty: 20 seconds), except deaths, close calls and level-ups, which
+  only keep their cooldowns. When several fire at once, the most important wins. While she's
+  active, the moment is described from the same frame by one fast vision call (`gpt-5.6-terra`
+  with no reasoning, 1-2 seconds; Settings' images model took 5-8), which is told the last few
+  things described and answers nothing for a repeat, and leaves the chat box out. Chat isn't
+  described but copied: a separate call copies other players' lines word for word (described,
+  it made up lines nobody wrote), numbered public channels such as General and Trade are dropped
+  (strangers talking to everyone; the watcher's chat check ignores them too), and only lines not
+  seen on an earlier look are passed on, up to three, so a line still on screen is never news
+  again. The first look only learns what's there from before. She's told you can read it too, so
+  she answers what was said, a laugh or a quip, rather than relaying it. The
+  description is published as a `GameMomentEvent`; attention keeps only the newest one waiting,
+  doesn't count it as you being active, and drops it once stale (20 seconds after its frame; 45 for
+  a new area, a minute for a look around). Live is told to react out loud in one short line, like
+  a friend on the couch: surprise, a laugh, teasing, "nice". Every game note tells her the game
+  is new to her (she's discovering it with you: curious, guessing, asking, not explaining it or
+  holding opinions as if she'd been there) and that she's company having fun, not a guide: no
+  directions or tips, and she looks something up only when asked, sharing it as news to her
+  too. The descriptions give only what's on screen, with no lore added. In Standby
+  nothing is described or said, and every moment and description shows in Activity.
+- **The place you're in:** entering a new area (WoW's zone banner) gets a description that names
+  the place and says what's striking about how it looks. And when it's calm (exploring or
+  in town) and she's said nothing for a while (3 minutes on chatty, 5 on normal, 10 on quiet), she
+  looks around: at most one thing a friend might point out for the fun of it, such as a cave,
+  ruins, a view or a strange creature, with no lore and no advice; often nothing. For these two, Live is told to mention it in passing,
+  in her own words, rather than react. Food buffs aren't checked: they can't be told apart
+  reliably from the small buff icons.
+- **The game as she knows it** ([game/state.py](game/state.py)): while she's active, about once a
+  minute (15 seconds after a new-area banner, a level-up or a quest moment; never on a menu or
+  loading screen) one more fast vision call reads a watched frame for a short note: your name and
+  level, the zone and subzone from the minimap, your target, and the tracked quests with their
+  progress. It's told the last note and answers nothing if only the target changed. A changed note
+  goes to Live as silent context that replaces the earlier one (and shows in Activity), and a new
+  Live session (after Standby or a reconnect) is given the latest at the next read. So she knows
+  where you are when you say "this is cozy". It's sent as an appended instruction
+  (`session.instructions.append`) that tells her to say nothing: as a thinking note it made her
+  speak every time, with where you were and what to do next, twice over when two notes were close.
+- The mouse hook only watches: the click still reaches the game, so leave the middle button
+  unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
+  [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in
+  `app_settings` and apply straight away.
 
 ## Her inner life
 
@@ -665,7 +765,11 @@ How she feels about you is built from how your conversations went, not set by ha
 3. **In the prompt:** a few plain sentences, words rather than numbers ("You feel warm
    toward them and enjoy talking with them"). They colour her tone, warmth and how much she
    volunteers, never her honesty, how well she helps or which tools she uses; cooler means
-   more reserved, never rude, guilt-tripping or needy.
+   more reserved, never rude, guilt-tripping or needy. Familiarity also sets how she talks,
+   as long as warmth is at least 0.45 (cooler, teasing would read as a jab): from 0.4 some
+   light teasing and banter; from 0.7 she's at ease like old friends, bantering, teasing
+   affectionately and a bit cheeky, kept kind and dropped when you're down, stressed or need
+   something done.
 4. **Elsewhere:** warmth scales how readily she raises findings (4 hours apart at baseline,
    2 when fully warm, 8 when cool; 3 a day when very fond, 1 when hurt) and the gap between
    chances for her desires; the greeting gets up to two lines from it, and familiarity of
@@ -1211,13 +1315,14 @@ before anything else.
 | Location | Responsibility |
 | --- | --- |
 | [app.py](app.py) | The app itself: layout, startup wiring (`on_mount`), buttons and shutdown. It inherits its other methods from the areas below. |
-| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice, attention, chat, feelings, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, the web interface, phone calls (yours, contacts' and task calls), background jobs and sign-ups. Shared constants and helpers are in `shared.py`, which never imports `app.py`. |
+| [app_areas/](app_areas/) | `CoraApp`'s methods by area, one mixin each: Live session and standby, voice, attention, chat, feelings, settings, services and approvals, Signal setup and chats, reaching you, tasks, email account, mail, webhooks and calendar, the web interface, phone calls (yours, contacts' and task calls), background jobs, sign-ups and games. Shared constants and helpers are in `shared.py`, which never imports `app.py`. |
 | [live.py](live.py), [live_events.py](live_events.py), [backend_work.py](backend_work.py) | The OpenAI Live connection and audio, its events, and pending backend work. |
 | [backend_chat.py](backend_chat.py) | Written conversations with her backend without Live (typing in Standby, Signal, the web page, email, contacts), tools included. |
 | [session_config.py](session_config.py) | Models, voice, her foundation, instructions for every kind of conversation, and the startup sections. |
 | [context_window.py](context_window.py) | What each model holds in context, for the dashboard's context box. |
 | [inactivity.py](inactivity.py), [greeting.py](greeting.py) | Idle timing and the standby heads-up; the opening greeting. |
 | [wake/](wake/), [devices/](devices/) | Local wake detection; microphone, speaker and voice bands. |
+| [game/](game/) | Playing games: the middle-mouse hook, push-to-talk recording and transcription, and typing into the game's chat. |
 | [ui/](ui/) | The chat, composer, Activity, pop-ups, the dashboard and Settings. |
 | [tools/](tools/) | Her own tools, one module each, registered in [tools/__init__.py](tools/__init__.py); [tools/route.py](tools/route.py) routes results back to Live, a written chat or a call. |
 | [memory/](memory/) | Memory storage, extraction, summaries, embeddings, search and the checks. |
@@ -1265,7 +1370,12 @@ SQL file. `python migrate.py` checks the history and applies pending ones in tra
 with no automatic downgrades.
 
 **Diagnostics:** each launch rewrites `live-trace.log` beside `app.py`: command and event IDs,
-their order and standby blockers, never chat text, tool arguments or audio.
+their order and standby blockers, never chat text, tool arguments or audio. It also rewrites
+`audio-timing.log`: one line every 5 s while a voice session runs, with how late Live's audio
+arrived (`max_arrival_gap_ms`), how often her speech ran dry mid-word (`dry_mid_speech`,
+`dry_ms`), how late Cora's event loop woke (`max_loop_lag_ms`), the longest garbage collection
+and how many were full (`max_gc_ms`, `full_gcs`) and how late the sound device asked for audio
+(`max_callback_gap_ms`, `device_underflows`), to tell where a stutter comes from.
 
 ### Adding a tool
 

@@ -153,6 +153,26 @@ class SpeakerQueueTests(unittest.TestCase):
             speaker.close()
 
 
+    def test_silence_is_skipped_while_audio_is_waiting_so_her_voice_keeps_up(self):
+        speaker = Speaker()
+        second_of_silence = base64.b64encode(bytes(48000)).decode("ascii")
+        speech = base64.b64encode(b"\x00\x20" * 2400).decode("ascii")
+        with patch("devices.speaker.sd.RawOutputStream"):
+            speaker.play(second_of_silence)  # starts the stream; nothing was waiting
+            self.assertEqual(speaker.waiting_seconds(), 1.0)
+            speaker.play(second_of_silence)  # a second behind already: skipped
+            self.assertEqual((speaker.waiting_seconds(), speaker.skipped_seconds), (1.0, 1.0))
+            speaker.play(speech)  # her speech is never skipped
+            self.assertEqual(speaker.waiting_seconds(), 1.1)
+            # Once played out, silence is queued again.
+            speaker.callback(bytearray(48000 + 4800), 24000 + 2400, None, None)
+            self.assertEqual(speaker.waiting_seconds(), 0.0)
+            speaker.play(second_of_silence)
+            self.assertEqual((speaker.waiting_seconds(), speaker.skipped_seconds), (1.0, 1.0))
+            speaker.close()
+            self.assertEqual(speaker.waiting_seconds(), 0.0)
+
+
 class MicrophoneMuteTests(unittest.IsolatedAsyncioTestCase):
     async def test_mute_closes_capture_sends_only_silence_and_unmute_opens_fresh_source(self):
         live = CoraLive()
