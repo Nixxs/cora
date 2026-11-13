@@ -431,7 +431,13 @@ watching the game, with her reacting to what happens.
   only keep their cooldowns. When several fire at once, the most important wins. While she's
   active, the moment is described from the same frame by one fast vision call (`gpt-5.6-terra`
   with no reasoning, 1-2 seconds; Settings' images model took 5-8), which is told the last few
-  things described and answers nothing for a repeat, such as a chat line still on screen. The
+  things described and answers nothing for a repeat, and leaves the chat box out. Chat isn't
+  described but copied: a separate call copies other players' lines word for word (described,
+  it made up lines nobody wrote), numbered public channels such as General and Trade are dropped
+  (strangers talking to everyone; the watcher's chat check ignores them too), and only lines not
+  seen on an earlier look are passed on, up to three, so a line still on screen is never news
+  again. The first look only learns what's there from before. She's told you can read it too, so
+  she answers what was said, a laugh or a quip, rather than relaying it. The
   description is published as a `GameMomentEvent`; attention keeps only the newest one waiting,
   doesn't count it as you being active, and drops it once stale (20 seconds after its frame; 45 for
   a new area, a minute for a look around). Live is told to react out loud in one short line, like
@@ -759,7 +765,11 @@ How she feels about you is built from how your conversations went, not set by ha
 3. **In the prompt:** a few plain sentences, words rather than numbers ("You feel warm
    toward them and enjoy talking with them"). They colour her tone, warmth and how much she
    volunteers, never her honesty, how well she helps or which tools she uses; cooler means
-   more reserved, never rude, guilt-tripping or needy.
+   more reserved, never rude, guilt-tripping or needy. Familiarity also sets how she talks,
+   as long as warmth is at least 0.45 (cooler, teasing would read as a jab): from 0.4 some
+   light teasing and banter; from 0.7 she's at ease like old friends, bantering, teasing
+   affectionately and a bit cheeky, kept kind and dropped when you're down, stressed or need
+   something done.
 4. **Elsewhere:** warmth scales how readily she raises findings (4 hours apart at baseline,
    2 when fully warm, 8 when cool; 3 a day when very fond, 1 when hurt) and the gap between
    chances for her desires; the greeting gets up to two lines from it, and familiarity of

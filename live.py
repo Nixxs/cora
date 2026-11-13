@@ -529,6 +529,12 @@ class CoraLive:
                 "two), as your own thought and for the fun of it: something that caught your eye, a guess "
                 f"about it, a question, a joke. {GAME_COMPANY}"
             )
+        elif kind == "chat_worth_reacting":
+            how = (
+                "you're watching them play World of Warcraft, like a friend on the couch, and another player "
+                "just wrote this in their chat. They can read it too, so never relay or announce it: answer "
+                f"what was said in one short line, a laugh or a quip. {GAME_COMPANY}"
+            )
         else:
             how = (
                 "you're watching them play World of Warcraft, like a friend on the couch, and something just "

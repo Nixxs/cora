@@ -155,7 +155,12 @@ lore. One small step at a time, each runnable:
    (something striking or funny, lore). Tried in play: she gave directions too often, so every
    game note now tells her the game is new to her, discovered alongside you, and that she's
    company having fun, not a guide (no tips or directions; lookups only when asked, shared as
-   news to her too); to check in play. Still to see whether close calls and deaths fire when they happen.
+   news to her too); to check in play. Chat was the worst: the busy General channel kept the chat
+   check high, the description quoted lines nobody wrote, and she relayed them ("someone said...").
+   Now chat lines are copied word for word, numbered public channels are ignored, only lines new
+   since an earlier look are passed on, and she answers them rather than relaying; to check in
+   play. Still to see whether close calls and deaths fire when they happen. `/chatlog` (item 6)
+   would read chat exactly, with no vision call at all.
 4. **`watch_game_for(condition, until)`:** her own yes/no questions added to the watcher's list
    (such as "fighting a spider called Githyiss?"), at most about 5, expiring, listed in
    Settings > Game; firing once, as a game event.

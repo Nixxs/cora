@@ -68,10 +68,12 @@ class LiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(longest.endswith('x"'), len(longest))
         live.connection.session.commentary.append = AsyncMock()
         live.on_trace = None
-        for kind in ("new_area", "dead"):
+        for kind in ("new_area", "dead", "chat_worth_reacting"):
             await live.send_game_moment("y" * 500, kind)
             moment = live.connection.session.commentary.append.await_args.kwargs["content"]
             self.assertTrue(moment.endswith('y"'), (kind, len(moment)))
+        # Chat is answered, not relayed: they can read it too.
+        self.assertIn("never relay or announce it", moment)
         self.assertIn("replaces any earlier game note", content)
         self.assertIn("Nick, level 6 druid, in Teldrassil.", content)
         live.ready = False

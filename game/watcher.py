@@ -58,8 +58,10 @@ QUESTIONS = [
      "instructions": "Is a quest being accepted or handed in, or did an objective just progress (a quest "
                      "window open, or quest progress text in the middle of the screen)?"},
     {"type": "predicate", "name": "chat_worth_reacting",
-     "instructions": "Does the chat box show a message from another player that's funny, asks the player "
-                     "something, or invites a reply? System messages such as loot and skill-ups don't count."},
+     "instructions": "Does the chat box show a message from another player in say, yell, a whisper, party or "
+                     "guild that's funny, asks the player something, or invites a reply? Numbered public "
+                     "channels such as [1. General] or [2. Trade] don't count, nor do system messages such "
+                     "as loot and skill-ups."},
     {"type": "predicate", "name": "surprising",
      "instructions": "Is something unusual or exciting happening: an elite, rare or boss enemy, several "
                      "enemies at once, rare loot, or an unusual event?"},

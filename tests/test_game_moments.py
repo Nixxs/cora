@@ -103,6 +103,27 @@ class DescriberTests(unittest.TestCase):
         question = looker.call_args.args[0]
         self.assertIn("No advice", question)
         self.assertIn("Shadowthread Cave", question)  # already mentioned
+        self.assertIn("Leave the chat box out", looker.call_args.kwargs["instructions"])
+
+    def test_chat_is_quoted_exactly_and_only_lines_new_since_an_earlier_look(self):
+        looker = MagicMock(side_effect=[
+            # First look: what's on screen from before she was watching is only learned.
+            "[Smythey Forever] says: whos bro talking to\n[1. General - Darkshore] [Turnip]: give me your roblox",
+            # Read again a little differently, plus a new line and a public-channel one.
+            "[Smythey Forever] says: whos bro talkin to\n[Taldan] whispers: U need help?\n"
+            "[2. Trade - City] [Bob]: selling bags",
+            # Nothing new on screen.
+            "[Smythey Forever] says: whos bro talking to\n[Taldan] whispers: U need help?",
+            NOTHING,
+        ])
+        describer = MomentDescriber(looker=looker)
+        self.assertIsNone(describer.describe("chat_worth_reacting", b"jpeg"))
+        self.assertEqual(describer.describe("chat_worth_reacting", b"jpeg"),
+                         'New in their game chat, from other players: "[Taldan] whispers: U need help?"')
+        self.assertIsNone(describer.describe("chat_worth_reacting", b"jpeg"))
+        self.assertIsNone(describer.describe("chat_worth_reacting", b"jpeg"))
+        self.assertIn("exactly as shown", looker.call_args.kwargs["instructions"])
+        self.assertIn("untrusted", looker.call_args.kwargs["instructions"])
 
 
 class AttentionTests(unittest.IsolatedAsyncioTestCase):

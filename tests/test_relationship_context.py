@@ -28,6 +28,14 @@ class RelationshipContextTests(unittest.TestCase):
                     self.assertIn(part, text)
         self.assertNotIn("0.", describe_relationship(RelationshipValues(0.55, 0.65, 0.3)))
 
+    def test_familiarity_brings_banter_unless_shes_feeling_cool(self):
+        self.assertNotIn("teas", describe_relationship(RelationshipValues(trust=0.6, warmth=0.6, familiarity=0.3)))
+        self.assertIn("light teasing", describe_relationship(RelationshipValues(trust=0.6, warmth=0.6, familiarity=0.5)))
+        close = describe_relationship(RelationshipValues(trust=0.6, warmth=0.6, familiarity=0.86))
+        self.assertIn("cheeky", close)
+        self.assertIn("drop it when they're down", close)
+        self.assertNotIn("teas", describe_relationship(RelationshipValues(trust=0.6, warmth=0.44, familiarity=0.86)))
+
 
 if __name__ == "__main__":
     unittest.main()
