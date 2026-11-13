@@ -32,13 +32,27 @@ TRUST_TIERS = (
 )
 
 
+# How familiarity sounds: friends who know each other well tease and banter. Only while she isn't
+# feeling cool toward them (warmth from 0.45), when teasing would read as a jab.
+EASE_TIERS = (
+    (0.4, ""),
+    (0.7, "You're comfortable enough with them for some light teasing and banter."),
+    (None, "You're at ease with them, the way old friends are: you banter, tease them affectionately "
+           "and are a bit cheeky, with a quip or a dry aside rather than polite small talk. Keep it kind, "
+           "and drop it when they're down, stressed or need something done."),
+)
+EASE_FROM_WARMTH = 0.45
+
+
 def tier(value: float, tiers) -> str:
     return next(text for limit, text in tiers if limit is None or value < limit)
 
 
 def describe_relationship(values: RelationshipValues) -> str:
-    return " ".join((
+    ease = tier(values.familiarity, EASE_TIERS) if values.warmth >= EASE_FROM_WARMTH else ""
+    return " ".join(part for part in (
         tier(values.familiarity, FAMILIARITY_TIERS),
         tier(values.warmth, WARMTH_TIERS),
         tier(values.trust, TRUST_TIERS),
-    ))
+        ease,
+    ) if part)

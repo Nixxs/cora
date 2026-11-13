@@ -19,6 +19,18 @@ class ObservationEvent:
 
 
 @dataclass(frozen=True)
+class GameMomentEvent:
+    """Something in the person's game worth a quick reaction or remark (game/moments.py), seen on their
+    screen and so untrusted. Worth saying only until expires_at (monotonic seconds)."""
+
+    kind: str
+    description: str
+    expires_at: float
+    event_id: UUID = field(default_factory=uuid4)
+    occurred_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass(frozen=True)
 class FindingEvent:
     """One of Cora's findings may be worth raising; attention picks and claims it at delivery."""
 

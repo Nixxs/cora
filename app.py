@@ -1,4 +1,5 @@
 import asyncio
+import gc
 from os import getenv
 from pathlib import Path
 from time import monotonic
@@ -41,9 +42,11 @@ from services.connection import ServiceManager
 from services.tools import ResultCache
 from storage.keyboard_persistence import KeyboardPersistence
 from storage.live_trace import LiveTrace
-from subconscious.attention import AttentionManager
+from subconscious.attention import AttentionManager, GameMoment
 from backend_work import BackendWorkTracker
-from subconscious.event_bus import CalendarChangedEvent, EventBus, FindingEvent, MailArrivedEvent, ObservationEvent
+from subconscious.event_bus import (
+    CalendarChangedEvent, EventBus, FindingEvent, GameMomentEvent, MailArrivedEvent, ObservationEvent,
+)
 from subconscious.interests.exploration_store import claim_mention_now, release_mention_now
 from subconscious.interests.relevance import claim_relevant_now
 from subconscious.desires.opportunities import release_opportunity_now
@@ -80,6 +83,8 @@ from app_areas.task_calls import TaskCallsMixin
 from app_areas.background import BackgroundMixin
 from app_areas.sign_ups import SignUpsMixin
 from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
+from app_areas.game import GameMixin
+from app_areas.game_watch import GameWatchMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -106,16 +111,28 @@ BACKGROUND_ROUND_SECONDS = 60 * 60
 # answers at most EMAIL_REPLIES_PER_DAY times a day in one thread, so two mailboxes answering
 # each other automatically soon stop.
 TASK_MAIL_CHECK_SECONDS = 10 * 60
+# A full garbage collection walks every object Cora holds and keeps the whole process (her voice's
+# audio thread too) waiting until it's done: about a quarter of a second once she's running, an
+# audible stutter. What exists once startup has settled lives for good, so it's frozen out of the
+# collector's reach then and later collections only walk what's new.
+MEMORY_SETTLE_SECONDS = 20.0
+
+
+def settle_memory() -> None:
+    gc.collect()
+    gc.freeze()
 
 
 # Each area's methods live in app_areas/; no two define the same name, so their order doesn't matter.
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, App,
 ):
 
     live_trace = None
+    # Set only when launched for real, so tests never freeze their process's memory.
+    freeze_memory = False
     CSS_PATH = "cora.tcss"
     BINDINGS = [
         ("ctrl+x", "disconnect_and_quit", "Quit"),
@@ -175,6 +192,8 @@ class CoraApp(
                 )
 
     def on_mount(self) -> None:
+        if self.freeze_memory:
+            self.set_timer(MEMORY_SETTLE_SECONDS, settle_memory)
         self.query_one("#chat-input", ChatComposer).focus()
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
@@ -245,6 +264,9 @@ class CoraApp(
         self.conversation_end_timer = None
         # Settings > General. Kept for this run only; not saved yet.
         self.screen_looking = True
+        # Settings > Game: push-to-talk into the game's chat.
+        self.init_game()
+        self.init_game_watch()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -519,12 +541,15 @@ class CoraApp(
             send_relevant=lambda mention: self.live.send_relevant_finding(
                 mention.interest_title, mention.finding, mention.found_at,
             ),
+            send_game_moment=lambda description, kind: self.live.send_game_moment(description, kind),
         )
         self.event_bus = EventBus(on_error=self.handle_event_bus_error)
         self.event_bus.subscribe(
             ObservationEvent, lambda event: self.attention.submit(event.content),
         )
         self.event_bus.subscribe(FindingEvent, lambda event: self.attention.submit_finding())
+        self.event_bus.subscribe(GameMomentEvent, lambda event: self.attention.submit_game_moment(
+            GameMoment(event.description, event.expires_at, event.kind)))
         self.event_bus.subscribe(MailArrivedEvent, lambda event: self.on_mail_arrived())
         self.event_bus.subscribe(CalendarChangedEvent, lambda event: self.on_calendar_changed())
         if self.live_trace is not None:
@@ -579,6 +604,8 @@ class CoraApp(
         self.email_account.cancel_sign_in()
         self.stop_signal_receiver()
         self.services.stop_all()
+        self.stop_push_to_talk()
+        self.stop_game_watch()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
@@ -695,6 +722,8 @@ class CoraApp(
         self.confirmations.decline_all()
         self.email_account.cancel_sign_in()
         self.stop_signal_receiver()
+        self.stop_push_to_talk()
+        self.stop_game_watch()
         self.event_bus.close()
         self.attention.stop()
         self.observation_timer.stop()
@@ -765,4 +794,6 @@ class CoraApp(
 if __name__ == "__main__":
     app = CoraApp()
     app.live_trace = LiveTrace(Path(__file__).with_name("live-trace.log"))
+    app.freeze_memory = True
+    settle_memory()  # what's imported, until startup settles
     app.run()

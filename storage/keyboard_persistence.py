@@ -199,6 +199,31 @@ class KeyboardPersistence:
     def save_twilio_region(self, code: str) -> None:
         AppSettingsStore(self._get_store().engine).set_twilio_region(code)
 
+    def load_game_settings(self) -> dict:
+        """{"push_to_talk": bool, "channel", "transcription", "vocabulary": str} from Settings > Game."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"push_to_talk": store.game_push_to_talk(), "channel": store.game_chat_channel(),
+                "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary(),
+                "watch": store.game_watch(), "chattiness": store.game_chattiness()}
+
+    def save_game_push_to_talk(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_push_to_talk(on)
+
+    def save_game_chat_channel(self, channel: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_chat_channel(channel)
+
+    def save_game_chattiness(self, level: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_chattiness(level)
+
+    def save_game_watch(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_watch(on)
+
+    def save_game_transcription(self, choice: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_transcription(choice)
+
+    def save_game_vocabulary(self, words: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_game_vocabulary(words)
+
     def load_backup_copy_dir(self) -> str | None:
         """The second backup folder, "" for none, or None when never set in Settings."""
         return AppSettingsStore(self._get_store().engine).backup_copy_dir()

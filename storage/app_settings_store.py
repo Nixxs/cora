@@ -6,6 +6,9 @@ from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from game.chat_line import CHANNELS as GAME_CHAT_CHANNELS, DEFAULT_CHANNEL
+from game.moments import CHATTINESS, DEFAULT_CHATTINESS
+from game.speech import DEFAULT_TRANSCRIPTION, MAX_VOCABULARY_CHARS, TRANSCRIPTION_CHOICES
 from session_config import VOICE, VOICE_CHOICES
 from .models import AppSettingRecord
 
@@ -124,6 +127,65 @@ class AppSettingsStore:
         if code not in TWILIO_REGIONS:
             raise ValueError(f"Unknown Twilio region: {code}")
         self._set("twilio_region", code)
+
+    def game_push_to_talk(self) -> bool:
+        """Whether holding the middle mouse button speaks into the game's chat; off unless switched on."""
+        return self._switch("game_push_to_talk") is True
+
+    def set_game_push_to_talk(self, on: bool) -> None:
+        self._set("game_push_to_talk", "on" if on else "off")
+
+    def game_chat_channel(self) -> str:
+        """The game chat channel push-to-talk uses ('say' unless another was chosen)."""
+        saved = self._get("game_chat_channel")
+        return saved if saved in GAME_CHAT_CHANNELS else DEFAULT_CHANNEL
+
+    def set_game_chat_channel(self, channel: str) -> None:
+        if channel not in GAME_CHAT_CHANNELS:
+            raise ValueError(f"Unknown game chat channel: {channel}")
+        self._set("game_chat_channel", channel)
+
+    def game_watch(self) -> bool:
+        """Whether she watches the game through the Decisions API; off unless switched on."""
+        return self._switch("game_watch") is True
+
+    def set_game_watch(self, on: bool) -> None:
+        self._set("game_watch", "on" if on else "off")
+
+    def game_chattiness(self) -> str:
+        """How often she reacts to the game: 'off', 'quiet', 'normal' (unless another was chosen) or 'chatty'."""
+        saved = self._get("game_chattiness")
+        return saved if saved in CHATTINESS else DEFAULT_CHATTINESS
+
+    def set_game_chattiness(self, level: str) -> None:
+        if level not in CHATTINESS:
+            raise ValueError(f"Unknown chattiness: {level}")
+        self._set("game_chattiness", level)
+
+    def game_transcription(self) -> str:
+        """How push-to-talk turns speech into text: 'openai' (unless another was chosen) or 'local'."""
+        saved = self._get("game_transcription")
+        return saved if saved in TRANSCRIPTION_CHOICES else DEFAULT_TRANSCRIPTION
+
+    def set_game_transcription(self, choice: str) -> None:
+        if choice not in TRANSCRIPTION_CHOICES:
+            raise ValueError(f"Unknown transcription: {choice}")
+        self._set("game_transcription", choice)
+
+    def game_vocabulary(self) -> str:
+        """The person's own names and words for push-to-talk's spelling ("" for none)."""
+        return self._get("game_vocabulary") or ""
+
+    def set_game_vocabulary(self, words: str) -> None:
+        """Save them ("" removes them)."""
+        words = " ".join(words.split())
+        if len(words) > MAX_VOCABULARY_CHARS:
+            raise ValueError(f"At most {MAX_VOCABULARY_CHARS} characters")
+        if not words:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "game_vocabulary"))
+            return
+        self._set("game_vocabulary", words)
 
     def spend_project(self) -> str | None:
         """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""
