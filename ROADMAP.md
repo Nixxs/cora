@@ -76,6 +76,72 @@ Nothing is broken; these keep things healthy as she grows.
   timing; the playback bars' alignment with real audio; image display in the VS Code
   terminal and Kitty; image pasting on a real Linux desktop.
 
+## Experiments (the `experiments` branch)
+
+Built on their own branch, outside the feature freeze, in small steps that can each be tried
+before the next.
+
+### Claude Code
+
+Cora as a way in to coding and AI projects run in Claude Code. There's no official MCP
+server for controlling Claude Code (`claude mcp serve` only offers its file and shell tools),
+so this uses two official pieces: **hooks**, which send each session's events to a web
+address, and the **Claude Agent SDK** (Python), which runs Claude Code from inside Cora.
+Both run on your Claude subscription, never a per-token API key: no `ANTHROPIC_API_KEY` in
+Cora's environment (it would take over) and never bare mode (it ignores the subscription).
+
+1. **Watching sessions:** HTTP hooks in the user Claude Code settings send session start and
+   end, finished, waiting for input and permission requests to a new address on Cora's
+   listener (with a token). Sessions in VS Code and the terminal are covered too. A Claude
+   Code panel at the desk shows each session by project and what it's doing, and Cora lets
+   you know (Signal or wherever you are) when one finishes or is waiting on you. No new
+   libraries.
+2. **Asking about them:** a tool for listing recent sessions by project and saying what's
+   going on in one ("what's Claude doing in cora?").
+3. **Running sessions:** an Agent SDK service, following the MCP services' pattern (a
+   switch in Settings, one long-lived task, status in the activity log). It starts or
+   resumes a session in a project folder, streams progress to the panel and can interrupt.
+   Resuming a session that's also open in VS Code forks it, so the two don't write into
+   one transcript.
+4. **Approving from anywhere:** Claude Code's permission requests come through the Agent
+   SDK's permission callback (and the permission-request hook for VS Code sessions) to
+   Cora's existing approval prompts, so you can approve or refuse from Signal, the web
+   page or the desk.
+
+### A private local model
+
+An uncensored open-weights model Cora can ask when you want an answer her main model won't
+give. It's off most of the time and only runs when needed. **Ollama** runs in Docker, like
+the browser and Signal: a `local-model` profile in [compose.yaml](compose.yaml) with the GPU
+passed through and a volume for the downloaded models, so `docker compose up` leaves it
+alone. It has an OpenAI-style endpoint, so Cora's existing client works with a different
+address. The desk's RTX 5070 (12 GB) runs models up to about 14B parameters entirely on the
+GPU, and larger ones more slowly with part of the model in system memory.
+
+1. **The container and Settings:** the compose service, plus a Local model section in
+   Settings with which model to use (for example an "abliterated" or uncensored community
+   version of an open model), how long it stays up after use, a download button and a test
+   button. Cora starts the container when she needs it and stops it after the idle time, the
+   way she starts and stops Signal's.
+2. **Test her first, before building the rest:** a stand-in consultant that returns fixed,
+   frank answers, run against a set of real questions (frank medical, legal, drug-safety and
+   adult questions, dark humour, and a few that are clearly over the line). It checks two
+   things: whether she passes the question on in full or refuses or waters it down, and
+   whether she relays the answer or softens it. The result decides how much of step 4 is
+   needed.
+3. **A consultant, not a tool:** he has his own name and persona (his system prompt), and she
+   talks with him: a `consult` tool keeps a thread going, so she can follow up, push back
+   or ask him to explain, and a new topic starts a new thread. He's offered only while
+   switched on (like `show_map`). She goes to him when you ask, or when she'd otherwise
+   refuse. The thread is shown word for word at the desk and on the web page as it happens,
+   and her tool description says you see his answers yourself, so she gives her own view
+   rather than retelling (or softening) his.
+4. **A direct line, if the test shows it's needed:** typing "@consultant …" (or his name) at
+   the desk or on the web page sends your words straight to him, and his answer is shown to
+   you, so neither the question nor the answer reaches OpenAI. Talking to him by voice
+   without OpenAI would need local speech (faster-whisper, already used for the wake word,
+   plus a local voice), which belongs with [Local models, after 1.0](#local-models-after-10).
+
 ## Ideas for after the freeze
 
 - **Images:** seeing the photo itself on the turn it's sent works on the web page only;
