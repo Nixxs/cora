@@ -197,6 +197,13 @@ class AppSettingsStore:
     def set_claude_code_listen(self, on: bool) -> None:
         self._set("claude_code_listen", "on" if on else "off")
 
+    def claude_code_transcripts(self) -> bool:
+        """Whether her claude_code tool may read session transcripts; off unless switched on."""
+        return self._switch("claude_code_transcripts") is True
+
+    def set_claude_code_transcripts(self, on: bool) -> None:
+        self._set("claude_code_transcripts", "on" if on else "off")
+
     def claude_code_tell(self) -> str:
         """Which sessions left waiting she tells you about: 'all' (unless another was chosen), 'needs' or 'off'."""
         saved = self._get("claude_code_tell")

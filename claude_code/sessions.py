@@ -89,6 +89,8 @@ class ClaudeSession:
     prompt: str = ""
     # Whether Cora has had her say about this state (told you, or let it pass).
     told: bool = False
+    # Its transcript file, as Claude Code reported it (checked again before it's ever read).
+    transcript_path: str = ""
 
     @property
     def project(self) -> str:
@@ -109,6 +111,27 @@ class ClaudeSession:
 def minutes(span: timedelta) -> str:
     count = max(1, int(span.total_seconds() // 60))
     return f"{count} minute{'' if count == 1 else 's'}"
+
+
+def how_long(span: timedelta) -> str:
+    """'under a minute', '4 minutes', '2 hours', '3 days'."""
+    seconds = span.total_seconds()
+    for unit, size in (("day", 86400), ("hour", 3600), ("minute", 60)):
+        if seconds >= size:
+            count = int(seconds // size)
+            return f"{count} {unit}{'' if count == 1 else 's'}"
+    return "under a minute"
+
+
+def summary(session: ClaudeSession, now: datetime) -> dict:
+    """One session as Cora's claude_code tool gives it to her."""
+    found = {"project": session.project, "folder": session.cwd, "state": session.state,
+             "for": how_long(now - session.since), "last_heard": f"{how_long(now - session.updated_at)} ago"}
+    if session.detail:
+        found["detail"] = session.detail
+    if session.prompt and session.prompt != session.detail:
+        found["last_prompt"] = session.prompt
+    return found
 
 
 def tell_text(sessions: list[ClaudeSession], now: datetime) -> str:
@@ -147,6 +170,9 @@ class SessionTracker:
         known = self.sessions.get(session_id)
         if not isinstance(cwd, str) or not cwd or len(cwd) > CWD_MAX_CHARS:
             cwd = known.cwd if known is not None else "?"
+        transcript_path = event.get("transcript_path")
+        if not isinstance(transcript_path, str) or not transcript_path or len(transcript_path) > CWD_MAX_CHARS:
+            transcript_path = known.transcript_path if known is not None else ""
         now = self.clock()
         prompt = known.prompt if known is not None else ""
         if event.get("hook_event_name") == "UserPromptSubmit":
@@ -154,9 +180,10 @@ class SessionTracker:
         if detail is None:
             detail = prompt
         if known is not None and known.state == state:
-            session = ClaudeSession(session_id, cwd, state, detail, now, known.since, prompt, known.told)
+            session = ClaudeSession(session_id, cwd, state, detail, now, known.since, prompt, known.told,
+                                    transcript_path)
         else:
-            session = ClaudeSession(session_id, cwd, state, detail, now, now, prompt)
+            session = ClaudeSession(session_id, cwd, state, detail, now, now, prompt, transcript_path=transcript_path)
         self.sessions[session_id] = session
         if len(self.sessions) > SESSIONS_MAX:
             oldest = min(self.sessions.values(), key=lambda kept: kept.updated_at)

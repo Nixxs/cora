@@ -225,9 +225,13 @@ class KeyboardPersistence:
         AppSettingsStore(self._get_store().engine).set_game_vocabulary(words)
 
     def load_claude_code_settings(self) -> dict:
-        """{"listen": bool, "port": int, "tell": str} from Settings > Claude Code."""
+        """{"listen": bool, "port": int, "tell": str, "transcripts": bool} from Settings > Claude Code."""
         store = AppSettingsStore(self._get_store().engine)
-        return {"listen": store.claude_code_listen(), "port": store.claude_code_port(), "tell": store.claude_code_tell()}
+        return {"listen": store.claude_code_listen(), "port": store.claude_code_port(),
+                "tell": store.claude_code_tell(), "transcripts": store.claude_code_transcripts()}
+
+    def save_claude_code_transcripts(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_transcripts(on)
 
     def save_claude_code_tell(self, choice: str) -> None:
         AppSettingsStore(self._get_store().engine).set_claude_code_tell(choice)

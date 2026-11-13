@@ -315,6 +315,7 @@ class CoraApp(
             show_map=lambda view: self.show_map(view),
             can_call=lambda number: self.can_call_out(number),
             place_call=lambda *args, **options: self.place_task_call(*args, **options),
+            look_at_claude_code=lambda project, recent: self.look_at_claude_code(project, recent),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.

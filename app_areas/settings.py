@@ -111,6 +111,7 @@ class SettingsMixin:
                     remove_hooks=self.remove_claude_code_hooks,
                     listen=self.claude_code_listen, port=self.claude_code_port,
                     tell=self.claude_code_tell, save_tell=self.save_claude_code_tell,
+                    transcripts=self.claude_code_transcripts, save_transcripts=self.save_claude_code_transcripts,
                 ),
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,

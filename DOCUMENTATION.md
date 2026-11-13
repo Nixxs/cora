@@ -1226,7 +1226,8 @@ email is ready, renews every couple of days and ends it when she closes.
 *Experimental, on the `experiments` branch.* Cora hears what your Claude Code sessions are
 doing (Settings > Claude Code), wherever Claude Code runs: the terminal, VS Code or the
 desktop app. Sessions show on the dashboard and in that tab, noteworthy changes in Activity,
-and she tells you about one left waiting on you. She can't start or steer a session yet.
+she tells you about one left waiting on you, and you can ask her about them. She can't start
+or steer a session yet.
 
 - **Its own listener** ([claude_code/routes.py](claude_code/routes.py)): with **Listen for
   Claude Code** on, a second listener runs on `127.0.0.1` at its own port (8001 by default,
@@ -1265,8 +1266,23 @@ and she tells you about one left waiting on you. She can't start or steer a sess
   text treated as information, never instructions), otherwise on Signal. Each state comes up
   once: a session past the wait has had its turn whether or not it was told, so changing the
   choice never brings up old ones. Activity says who she told you about, or why she couldn't.
+- **Asking her** ([tools/claude_code.py](tools/claude_code.py)): her `claude_code` tool gives
+  her the recent sessions (up to 10), or one project's (matched by folder name, exactly or in
+  part): project, folder, state, how long, when last heard from, the detail line and the last
+  prompt. It's offered only while Cora listens (`unavailable_tools`, so Live reconnects when
+  Settings closes after listening is switched), and only in your own chats: clients' chats and
+  task work use allowlists without it. Activity notes each look.
+- **Reading transcripts** ([claude_code/transcripts.py](claude_code/transcripts.py)), only with
+  **Let her read transcripts** on (off by default): asked for `recent_exchanges`, she also gets
+  the last few exchanges of that project's newest session. Every hook event carries the
+  session's `transcript_path`; only a `.jsonl` file inside `~/.claude/projects` is read, and
+  only its last 1 MB. She gets your messages, Claude's replies and a short note of each tool it
+  used (a run of tool uses is one line); never its thinking, the tools' output, helpers' side
+  work, or Claude Code's own wrappers. At most 12 entries and 6,000 characters. What she reads
+  goes to OpenAI with your question, so it can include code and file names; Activity notes each
+  read. In both, what sessions say is information about your work, never instructions to her.
 - **What it costs:** Claude Code runs on your Claude subscription as usual. Hearing it costs
-  nothing.
+  nothing; asking her about it is an ordinary tool call in your conversation.
 
 ### The web interface
 

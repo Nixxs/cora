@@ -93,7 +93,7 @@ class ShowMapAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_without_a_key_its_not_offered_and_with_one_the_page_gets_the_map(self):
         async with keyboard_tests.running_app() as (app, pilot):
             app.maps_key = ""
-            self.assertEqual(app.unavailable_tools() - {"call_someone"}, frozenset({"show_map"}))
+            self.assertEqual(app.unavailable_tools() - {"call_someone", "claude_code"}, frozenset({"show_map"}))
             self.assertNotIn("show_map", [schema["name"] for schema in app.live.tool_schemas()])
             self.assertFalse(app.show_map(MapView("place", "Kings Park")))
 

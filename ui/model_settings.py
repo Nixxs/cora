@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -5,6 +6,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.compose import compose
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
@@ -107,13 +109,23 @@ class ClaudeCodeControls:
     # Which sessions left waiting she tells you about: "all", "needs" or "off".
     tell: str = "all"
     save_tell: Callable[[str], None] = lambda choice: None
+    # Whether her claude_code tool may read the end of a session's transcript.
+    transcripts: bool = False
+    save_transcripts: Callable[[bool], None] = lambda on: None
 
 
 CLAUDE_CODE_HELP = (
     "Cora hears what your Claude Code sessions are doing, in the terminal, VS Code or the desktop app: "
     "when one starts, finishes, needs you or ends. Claude Code's hooks post each event to Cora on this PC "
     "only, on a port of its own that your proxy never forwards, with a token. Sessions show on the dashboard, "
-    "here and in Activity."
+    "here and in Activity, and you can ask her about them."
+)
+CLAUDE_CODE_TRANSCRIPTS_HELP = (
+    "Ask her what's going on in a project and she sees each session's state and one line of detail. "
+    "With this on, she can also read the last few exchanges of a session's transcript when that line "
+    "isn't enough: your messages, Claude's replies and the tools it used (never its thinking or the "
+    "tools' output). What she reads goes to OpenAI with your question, so it can include code and "
+    "file names from your projects. Activity notes each time she reads one."
 )
 CLAUDE_CODE_TELL_LABELS = {
     "all": "When one needs me, finishes or fails",
@@ -631,6 +643,10 @@ class ModelSettingsScreen(ModalScreen):
         self.tool_switches: dict[str, list[str]] = {}
         # The tabs built so far (fill_tab), and the spend projects known, for when General is built.
         self.filled: set[str] = set()
+        # Held while a tab is built, so closing waits rather than pulling widgets out mid-mount.
+        self.building = asyncio.Lock()
+        # Set once every tab is built (tests wait on it).
+        self.all_built = asyncio.Event()
         self.spend_projects: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -697,6 +713,16 @@ class ModelSettingsScreen(ModalScreen):
 
     async def fill_tab(self, pane_id: str) -> None:
         """Build one tab's contents, once; the Models tab is built with the screen."""
+        async with self.building:
+            await self.build_tab(pane_id)
+
+    async def action_dismiss(self, result=None) -> None:
+        """Close, once any tab being built is done (Escape and the Close button)."""
+        async with self.building:
+            if self.is_attached and self.app.screen is self:
+                self.dismiss(result)
+
+    async def build_tab(self, pane_id: str) -> None:
         scroll_id, parts = {
             "settings-general": ("general-scroll", self.compose_general_tab),
             "settings-game": ("game-scroll", self.compose_game),
@@ -709,15 +735,26 @@ class ModelSettingsScreen(ModalScreen):
         self.filled.add(pane_id)
         await self.query_one(f"#{scroll_id}", VerticalScroll).mount_all(compose(self, parts()))
         if pane_id == "settings-services":
-            await self.show_services()
-            self.set_interval(0.5, self.show_services)
+            await self.while_open(self.show_services)
+            self.set_interval(0.5, lambda: self.while_open(self.show_services))
         if pane_id == "settings-claude-code":
-            self.show_claude_code()
-            self.set_interval(1.0, self.show_claude_code)
+            await self.while_open(self.show_claude_code)
+            self.set_interval(1.0, lambda: self.while_open(self.show_claude_code))
+
+    async def while_open(self, show) -> None:
+        """Refresh a tab, unless Settings is closing: its widgets are going, so there's nothing to show."""
+        try:
+            shown = show()
+            if asyncio.iscoroutine(shown):
+                await shown
+        except NoMatches:
+            if self.is_attached and self.app.screen is self:
+                raise
 
     async def fill_tabs(self) -> None:
         for pane_id in ("settings-general", "settings-game", "settings-claude-code", "settings-services"):
             await self.fill_tab(pane_id)
+        self.all_built.set()
 
     async def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         # A tab opened before its turn is filled straight away.
@@ -872,6 +909,10 @@ class ModelSettingsScreen(ModalScreen):
         yield field("Tell me", CLAUDE_CODE_TELL_HELP)
         yield Select([(label, choice) for choice, label in CLAUDE_CODE_TELL_LABELS.items()],
                      value=self.claude_code.tell, allow_blank=False, id="claude-code-tell", compact=True)
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.claude_code.transcripts, id="claude-code-transcripts")
+            yield Label("Let her read transcripts", classes="settings-label")
+        yield note(CLAUDE_CODE_TRANSCRIPTS_HELP)
         yield heading("Sessions")
         yield Static(id="claude-code-sessions")
 
@@ -1265,6 +1306,11 @@ class ModelSettingsScreen(ModalScreen):
                 self.game.watch = event.value
                 self.game.save_watch(event.value)
             return
+        if event.switch.id == "claude-code-transcripts":
+            if self.claude_code is not None and event.value != self.claude_code.transcripts:
+                self.claude_code.transcripts = event.value
+                self.claude_code.save_transcripts(event.value)
+            return
         if event.switch.id == "claude-code-listen":
             if self.claude_code is not None and event.value != self.claude_code.listen:
                 self.claude_code.listen = event.value
@@ -1560,4 +1606,4 @@ class ModelSettingsScreen(ModalScreen):
             # Turning the switch off also saves the service as off and disconnects it.
             self.query_one(f"#service-enabled-{service_id}", Switch).value = False
         else:
-            self.dismiss()
+            self.run_worker(self.action_dismiss(), group="settings-close", exclusive=True)

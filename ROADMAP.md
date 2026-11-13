@@ -85,7 +85,7 @@ To do on this branch:
 
 - [x] Claude Code 1a: hearing sessions (hooks, a listener of its own, Settings > Claude Code)
 - [x] Claude Code 1b: the dashboard panel, and telling you when one finishes or needs you
-- [ ] Claude Code 2: asking about them
+- [x] Claude Code 2: asking about them
 - [ ] Claude Code 3: running sessions (Agent SDK)
 - [ ] Claude Code 4: approving from anywhere
 - [ ] Rocky 1: the container and Settings
@@ -115,8 +115,10 @@ Cora's environment (it would take over) and never bare mode (it ignores the subs
      session left needing you, finished or failed for 3 minutes, chosen in Settings. A
      `PostToolUse` hook tells her you've answered, so she doesn't chase what you already
      approved. Permission requests (the `PermissionRequest` hook) wait for step 4.
-2. **Asking about them:** a tool for listing recent sessions by project and saying what's
-   going on in one ("what's Claude doing in cora?").
+2. **Asking about them:** *Built*: her `claude_code` tool lists recent sessions, or one
+   project's ("what's Claude doing in cora?"), and, with **Let her read transcripts** on in
+   Settings (off by default, since what she reads goes to OpenAI), the last few exchanges of
+   that project's newest session.
 3. **Running sessions:** an Agent SDK service, following the MCP services' pattern (a
    switch in Settings, one long-lived task, status in the activity log). It starts or
    resumes a session in a project folder, streams progress to the panel and can interrupt.

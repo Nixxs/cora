@@ -150,7 +150,7 @@ class WebChatAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual([h["content"][0]["text"] for h in kwargs["history"]], ["Earlier, by voice"])
             self.assertEqual(kwargs["extra_instructions"], WEB_CHAT_INSTRUCTIONS)
             # Maps only with a Google Maps key (none here).
-            self.assertEqual(kwargs["route"].excluded, WEB_EXCLUDED | {"show_map", "call_someone"})
+            self.assertEqual(kwargs["route"].excluded, WEB_EXCLUDED | {"show_map", "call_someone", "claude_code"})
             # Streams to the page as she writes.
             self.assertEqual(kwargs["on_text"], streamed.append)
             # Labelled and saved with the device it came from; her reply has none.

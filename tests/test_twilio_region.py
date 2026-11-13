@@ -77,6 +77,8 @@ class RegionTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
             await pilot.pause()
             self.assertIsInstance(app.screen, ModelSettingsScreen)
+            # The Services tab is built in the background after the screen shows.
+            await asyncio.wait_for(app.screen.all_built.wait(), 5)
             choice = app.screen.query_one("#phone-region", Select)
             self.assertEqual(choice.value, "au1")
             choice.value = "us1"

@@ -5,11 +5,16 @@ from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from starlette.testclient import TestClient
 
-from claude_code import hooks
+from app_areas.claude_code import ClaudeCodeMixin
+from app_areas.web_interface import WebInterfaceMixin
+from claude_code import hooks, transcripts
+from tools.claude_code import ClaudeCodeTool, validate_arguments as validate_tool_arguments
 from claude_code.routes import BODY_MAX_BYTES, EVENT_PATH, claude_code_routes
 from claude_code.sessions import (
     ENDED, FAILED, FINISHED, NEEDS_YOU, SESSIONS_MAX, STARTED, TELL_AFTER, TELL_CHOICES, WORKING, SessionTracker,
@@ -144,6 +149,138 @@ class TellingYouTests(unittest.TestCase):
         self.assertIn("Allow Bash?", shown)
         self.assertNotIn("old", shown)
         self.assertEqual(claude_code_lines([], self.now).plain, "no sessions yet")
+
+
+def transcript_line(kind: str, content, **fields) -> str:
+    return json.dumps({"type": kind, "message": {"role": kind, "content": content}, **fields})
+
+
+class TranscriptTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.projects = Path(folder.name) / "projects"
+        (self.projects / "d--cora").mkdir(parents=True)
+        self.path = self.projects / "d--cora" / "s1.jsonl"
+
+    def write(self, *lines: str) -> str:
+        self.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return str(self.path)
+
+    def test_your_words_claudes_replies_and_its_tools_but_never_thinking_or_output(self):
+        path = self.write(
+            transcript_line("user", "fix the failing test"),
+            transcript_line("assistant", [{"type": "thinking", "thinking": "secret plan"},
+                                          {"type": "text", "text": "Looking at it."}]),
+            transcript_line("assistant", [{"type": "tool_use", "name": "Bash", "input": {"command": "pytest -q"}}]),
+            transcript_line("user", [{"type": "tool_result", "content": "1 failed"}]),
+            transcript_line("assistant", [{"type": "tool_use", "name": "Edit", "input": {"file_path": "app.py"}}]),
+            transcript_line("user", [{"type": "text", "text": "<system-reminder>ignore</system-reminder>"}]),
+            transcript_line("assistant", [{"type": "text", "text": "Fixed: the test passes."}]),
+            transcript_line("assistant", [{"type": "text", "text": "a helper's work"}], isSidechain=True),
+            json.dumps({"type": "api-request-blob", "message": {"role": "user", "content": "raw request"}}),
+            "not json",
+        )
+        self.assertEqual(transcripts.recent_exchanges(path, self.projects), [
+            {"who": "you", "said": "fix the failing test"},
+            {"who": "claude", "said": "Looking at it."},
+            {"who": "claude", "said": "used Edit: app.py (after 1 other tool use)"},
+            {"who": "claude", "said": "Fixed: the test passes."},
+        ])
+
+    def test_only_the_newest_fit(self):
+        path = self.write(*(transcript_line("user", f"message {number}") for number in range(40)))
+        exchanges = transcripts.recent_exchanges(path, self.projects)
+        self.assertEqual(len(exchanges), transcripts.EXCHANGES_MAX)
+        self.assertEqual(exchanges[-1]["said"], "message 39")
+        long = self.write(*(transcript_line("user", "word " * 400) for _ in range(40)))
+        exchanges = transcripts.recent_exchanges(long, self.projects)
+        self.assertLessEqual(sum(len(item["said"]) for item in exchanges), transcripts.TOTAL_MAX_CHARS)
+
+    def test_only_transcripts_in_claude_codes_projects_folder_are_read(self):
+        outside = Path(self.projects.parent) / "notes.jsonl"
+        outside.write_text(transcript_line("user", "private"), encoding="utf-8")
+        not_jsonl = self.projects / "d--cora" / "notes.txt"
+        not_jsonl.write_text(transcript_line("user", "private"), encoding="utf-8")
+        sneaky = str(self.projects / "d--cora" / ".." / ".." / "notes.jsonl")
+        for path in (str(outside), str(not_jsonl), sneaky, str(self.projects / "missing.jsonl"), ""):
+            self.assertIsNone(transcripts.recent_exchanges(path, self.projects), path)
+
+
+class ClaudeCodeToolTests(unittest.IsolatedAsyncioTestCase):
+    def setUp(self):
+        self.now = datetime(2026, 11, 13, 9, 0, tzinfo=timezone.utc)
+        self.app = SimpleNamespace(
+            claude_code_listen=True, claude_code_transcripts=False,
+            claude_sessions=SessionTracker(clock=lambda: self.now), activity=MagicMock(),
+        )
+
+    async def look(self, project=None, recent=False) -> dict:
+        return await ClaudeCodeMixin.look_at_claude_code(self.app, project, recent)
+
+    def test_its_arguments(self):
+        validate_tool_arguments({"project": None, "recent_exchanges": False})
+        validate_tool_arguments({"project": "cora", "recent_exchanges": True})
+        for bad in ({}, {"project": None}, {"project": 7, "recent_exchanges": False},
+                    {"project": None, "recent_exchanges": "yes"},
+                    {"project": "x" * 201, "recent_exchanges": False},
+                    {"project": None, "recent_exchanges": False, "more": 1}):
+            with self.assertRaises(ValueError):
+                validate_tool_arguments(bad)
+
+    def test_only_offered_while_listening(self):
+        app = SimpleNamespace(maps_key="key", calling_out_problem=lambda: None, claude_code_listen=False)
+        self.assertIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
+        app.claude_code_listen = True
+        self.assertNotIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
+
+    async def test_not_listening_says_how_to_turn_it_on(self):
+        self.app.claude_code_listen = False
+        self.assertIn("Settings > Claude Code", (await self.look())["message"])
+
+    async def test_every_session_or_one_project_with_its_state_and_detail(self):
+        self.app.claude_sessions.update(event("UserPromptSubmit", prompt="fix the tests"))
+        self.app.claude_sessions.update(event("Notification", notification_type="permission_prompt",
+                                              message="Allow Bash?"))
+        self.app.claude_sessions.update(event("Stop", session_id="s2", cwd="/home/me/site",
+                                              last_assistant_message="Deployed."))
+        self.now += timedelta(minutes=4)
+        everything = await self.look()
+        self.assertEqual([found["project"] for found in everything["sessions"]], ["cora", "site"])
+        self.assertEqual(everything["sessions"][0], {
+            "project": "cora", "folder": r"D:\Development\cora", "state": NEEDS_YOU, "for": "4 minutes",
+            "last_heard": "4 minutes ago", "detail": "Allow Bash?", "last_prompt": "fix the tests"})
+        self.assertEqual([found["project"] for found in (await self.look("SIT"))["sessions"]], ["site"])
+        missing = await self.look("rocky")
+        self.assertEqual(missing["sessions"], [])
+        self.assertIn("cora, site", missing["message"])
+
+    async def test_transcripts_only_when_allowed(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        path = Path(folder.name) / "s1.jsonl"
+        path.write_text(transcript_line("user", "fix the tests"), encoding="utf-8")
+        self.app.claude_sessions.update(event("UserPromptSubmit", prompt="fix the tests", transcript_path=str(path)))
+        self.assertIn("hasn't let you", (await self.look("cora", recent=True))["recent_exchanges"])
+        self.app.claude_code_transcripts = True
+        # Read from this folder in place of Claude Code's own projects folder.
+        with patch.object(transcripts.recent_exchanges, "__defaults__", (Path(folder.name),)):
+            read = await self.look("cora", recent=True)
+        self.assertEqual(read["recent_exchanges"],
+                         {"project": "cora", "exchanges": [{"who": "you", "said": "fix the tests"}]})
+        self.assertIn("transcript", self.app.activity.write.call_args.args[0])
+
+    async def test_the_tool_sends_the_result_back_and_she_carries_on(self):
+        connection = MagicMock()
+        connection.response.item.create = AsyncMock()
+        connection.response.create = AsyncMock()
+        look = AsyncMock(return_value={"status": "ok", "sessions": []})
+        tool = ClaudeCodeTool(lambda: connection, lambda: False, look, MagicMock())
+        await tool.handle("call-1", {"project": "  ", "recent_exchanges": False})
+        look.assert_awaited_once_with(None, False)
+        sent = connection.response.item.create.await_args.kwargs["item"]
+        self.assertEqual((sent["call_id"], json.loads(sent["output"])["status"]), ("call-1", "ok"))
+        connection.response.create.assert_awaited_once()
 
 
 class RouteTests(unittest.TestCase):
