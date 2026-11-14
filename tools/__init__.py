@@ -15,6 +15,9 @@ from .check_calendar import (
 )
 from .claude_code import ClaudeCodeTool, SCHEMA as CLAUDE_CODE_SCHEMA, validate_arguments as validate_claude_code_arguments
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
+from .run_claude_code import (
+    RunClaudeCodeTool, SCHEMA as RUN_CLAUDE_CODE_SCHEMA, validate_arguments as validate_run_claude_code_arguments,
+)
 from .close_task import CloseTaskTool, SCHEMA as CLOSE_TASK_SCHEMA, validate_arguments as validate_close_task_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
@@ -57,6 +60,10 @@ async def _no_claude_code(project, recent_exchanges):
     return {"status": "error", "message": "Claude Code's sessions aren't available here."}
 
 
+async def _no_claude_code_runs(action, project, create, location, brief):
+    return {"status": "error", "message": "Running Claude Code isn't available here."}
+
+
 async def _no_sign_ups(url):
     return None, "Signing up isn't available here."
 
@@ -72,7 +79,7 @@ def create_tool_registry(
     signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
     kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
-    look_at_claude_code=_no_claude_code,
+    look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -151,6 +158,9 @@ def create_tool_registry(
     # The person's Claude Code sessions (offered while Cora listens for them); their own chats only.
     claude_code = ClaudeCodeTool(get_connection, is_closing, look_at_claude_code, write_debug)
     registry.register(CLAUDE_CODE_SCHEMA, validate_claude_code_arguments, claude_code.handle)
+    # Starting, continuing or stopping one (offered while Settings lets her run them); approved each time.
+    run_tool = RunClaudeCodeTool(get_connection, is_closing, run_claude_code, write_debug)
+    registry.register(RUN_CLAUDE_CODE_SCHEMA, validate_run_claude_code_arguments, run_tool.handle)
     # The person's own chats only: clients' chats and task work offer allowlists without it.
     note_detail = NoteDetailTool(get_connection, is_closing, write_debug)
     registry.register(NOTE_DETAIL_SCHEMA, validate_note_detail_arguments, note_detail.handle)

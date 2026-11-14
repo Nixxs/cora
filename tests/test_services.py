@@ -673,9 +673,13 @@ class ServicesPageTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_an_unanswered_pop_up_times_out_and_goes_away(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            app.confirmations.timeout = 0.5
+            app.confirmations.timeout = 2
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {}))
-            await pilot.pause()
+            # Showing is asynchronous too.
+            for _ in range(10):
+                if isinstance(app.screen, ConfirmScreen):
+                    break
+                await pilot.pause(0.1)
             self.assertIsInstance(app.screen, ConfirmScreen)
             self.assertEqual(await asyncio.wait_for(asked, 5), TIMED_OUT)
             # Dismissing is asynchronous; under load it can take a few frames.
@@ -800,9 +804,35 @@ class ApprovalNoteTests(unittest.IsolatedAsyncioTestCase):
             asked = asyncio.ensure_future(app.confirmations.ask("github", "create_issue", {"title": "x"}))
             await pilot.pause()
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
-            app.live.send_approval_waiting.assert_awaited_once_with("GitHub", "create_issue", reminder=False)
+            app.live.send_approval_waiting.assert_awaited_once_with("GitHub", "create_issue", reminder=False,
+                                                                    on_behalf=None)
             await pilot.press("escape")
             await asyncio.wait_for(asked, 1)
+
+    async def test_one_she_didnt_make_is_named_as_such_and_she_hears_how_it_ended(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.live.send_approval_waiting = AsyncMock()
+            app.live.send_approval_outcome = AsyncMock()
+            app.live.connection = MagicMock()
+            app.live.ready = True
+            behalf = "Claude Code (working on ComboDots for them)"
+            asked = asyncio.ensure_future(app.confirmations.ask(
+                "claude_code", "PowerShell", {"command": "ls"}, title="Claude Code · ComboDots", on_behalf=behalf))
+            for _ in range(30):
+                if isinstance(app.screen, ConfirmScreen):
+                    break
+                await pilot.pause(0.1)
+            await pilot.click("#confirm-approve")
+            await asyncio.wait_for(asked, 1)
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.live.send_approval_waiting.assert_awaited_once_with(
+                "Claude Code · ComboDots", "PowerShell", reminder=False, on_behalf=behalf)
+            app.live.send_approval_outcome.assert_awaited_once_with("PowerShell", "approved", behalf)
+            # Not hers to chase.
+            app.remind_cora_approval_waiting(SimpleNamespace(on_behalf=behalf, title="Claude Code · ComboDots",
+                                                             tool="PowerShell"))
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            self.assertEqual(app.live.send_approval_waiting.await_count, 1)
 
     async def test_the_notes_name_the_tool_ask_for_a_click_and_never_carry_arguments(self):
         from live import CoraLive
@@ -818,3 +848,20 @@ class ApprovalNoteTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Approve or Deny", note)
         self.assertIn("nothing said aloud approves it", first)
         self.assertIn("remind them once", reminder)
+
+    async def test_notes_for_someone_elses_request_say_it_isnt_hers_and_how_it_ended(self):
+        from live import CoraLive
+        live = CoraLive()
+        live.connection = MagicMock()
+        live.ready = True
+        live.append_commentary = AsyncMock()
+        behalf = "Claude Code (working on ComboDots for them)"
+        await live.send_approval_waiting("Claude Code · ComboDots", "PowerShell", on_behalf=behalf)
+        await live.send_approval_outcome("PowerShell", "approved", behalf)
+        await live.send_approval_outcome("PowerShell", "timed out", behalf)
+        waiting, approved, lapsed = (call.args[2] for call in live.append_commentary.await_args_list)
+        self.assertIn(f"{behalf} wants to use PowerShell", waiting)
+        self.assertIn("isn't your own request", waiting)
+        self.assertIn("The person approved it", approved)
+        self.assertIn("no longer waiting", approved)
+        self.assertIn("Nobody answered in time", lapsed)

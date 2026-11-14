@@ -86,8 +86,9 @@ To do on this branch:
 - [x] Claude Code 1a: hearing sessions (hooks, a listener of its own, Settings > Claude Code)
 - [x] Claude Code 1b: the dashboard panel, and telling you when one finishes or needs you
 - [x] Claude Code 2: asking about them
-- [ ] Claude Code 3: running sessions (Agent SDK)
-- [ ] Claude Code 4: approving from anywhere
+- [x] Claude Code 3: running sessions (Agent SDK)
+- [x] Claude Code 4a: her sessions' approvals reach you where you are
+- [x] Claude Code 4b: your own sessions' approvals through Cora (permission-request hook)
 - [ ] Rocky 1: the container and Settings
 - [ ] Rocky 2: test her first, with a stand-in Rocky
 - [ ] Rocky 3: Rocky as her consultant and friend
@@ -119,15 +120,22 @@ Cora's environment (it would take over) and never bare mode (it ignores the subs
    project's ("what's Claude doing in cora?"), and, with **Let her read transcripts** on in
    Settings (off by default, since what she reads goes to OpenAI), the last few exchanges of
    that project's newest session.
-3. **Running sessions:** an Agent SDK service, following the MCP services' pattern (a
-   switch in Settings, one long-lived task, status in the activity log). It starts or
-   resumes a session in a project folder, streams progress to the panel and can interrupt.
-   Resuming a session that's also open in VS Code forks it, so the two don't write into
-   one transcript.
-4. **Approving from anywhere:** Claude Code's permission requests come through the Agent
-   SDK's permission callback (and the permission-request hook for VS Code sessions) to
-   Cora's existing approval prompts, so you can approve or refuse from Signal, the web
-   page or the desk.
+3. **Running sessions:** *Built*: her `run_claude_code` tool starts (a new project or an
+   existing one), continues or stops a session through the Agent SDK, on your subscription,
+   in the projects folders chosen in Settings. Each start is approved; Claude edits its
+   project's files freely and asks (through her approval prompt) for anything else. She
+   tells you when it's done. Continuing one of your own sessions forks it, so the two don't
+   write into one transcript. Still to come: remembering her sessions across restarts. You can
+   follow any session (click it at the desk or on the web page) as it works.
+4. **Approving from anywhere**, in two halves:
+   - *4a, her sessions.* *Built*: what a session she runs needs approving is asked where you
+     are: the desk's pop-up while she's active, your Signal chat (reply YES) while she's in
+     standby, the desk without Signal linked. Unanswered, Claude is told you may be away and
+     carries on without it.
+   - *4b, your sessions.* *Built*: a `PermissionRequest` hook for VS Code and terminal
+     sessions asks Cora first. While she's in standby she asks you on Signal and gives Claude
+     Code your answer; otherwise, or with no answer in 10 minutes, or with Cora closed, Claude
+     Code asks you itself as usual.
 
 ### Rocky, her consultant
 

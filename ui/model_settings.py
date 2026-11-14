@@ -112,6 +112,14 @@ class ClaudeCodeControls:
     # Whether her claude_code tool may read the end of a session's transcript.
     transcripts: bool = False
     save_transcripts: Callable[[bool], None] = lambda on: None
+    # Whether she may run sessions herself, and the folders their projects live in.
+    run: bool = False
+    save_run: Callable[[bool], None] = lambda on: None
+    folders: list = field(default_factory=list)
+    # save_folders(folders as typed, separated by ';'): the app checks each and says if not.
+    save_folders: Callable[[str], None] = lambda text: None
+    # run_status() -> a line on whether she can run them now (signed in, no API key) and what's running.
+    run_status: Callable[[], str] = lambda: ""
 
 
 CLAUDE_CODE_HELP = (
@@ -127,6 +135,21 @@ CLAUDE_CODE_TRANSCRIPTS_HELP = (
     "tools' output). What she reads goes to OpenAI with your question, so it can include code and "
     "file names from your projects. Activity notes each time she reads one."
 )
+CLAUDE_CODE_RUN_HELP = (
+    "Ask her to have Claude build or change something (\"get Claude to make me a WoW addon that...\") and "
+    "she starts a Claude Code session for you, after you approve its brief. It runs in the background on "
+    "your Claude subscription, never an API key, one at a time; she tells you when it's done. It runs in "
+    "Claude Code's auto mode: routine work in its folder goes ahead, risky steps are blocked, and what "
+    "still needs you comes for approval: on the desk while she's active, on Signal while she's in standby. "
+    "Big jobs use a good part of your subscription's usage window. For a "
+    "sign-in that lasts, run claude setup-token and put the token in Cora's environment as "
+    "CLAUDE_CODE_OAUTH_TOKEN."
+)
+CLAUDE_CODE_FOLDERS_HELP = (
+    "Full paths, separated by ;. New projects go in the first unless she's asked for another (such as "
+    "World of Warcraft's _retail_\\Interface\\AddOns for addons); she can carry on any project folder "
+    "inside them."
+)
 CLAUDE_CODE_TELL_LABELS = {
     "all": "When one needs me, finishes or fails",
     "needs": "Only when one needs me or fails",
@@ -141,7 +164,9 @@ CLAUDE_CODE_HOOKS_HELP = (
     "every project. Only Cora's entries are changed, and a copy of the file as it was is kept beside it "
     "(settings.json.cora-backup). They run in the background, so Claude never waits on them, and do "
     "nothing while Cora is closed. One runs after each tool Claude uses, so she knows once you've "
-    "answered it. The file holds the hook token."
+    "answered it. One isn't in the background: when Claude is about to ask your permission, it checks "
+    "with Cora first. While she's in standby she asks you on Signal and answers for you; otherwise, or "
+    "with Cora closed, Claude Code asks you as usual. The file holds the hook token."
 )
 
 
@@ -914,6 +939,16 @@ class ModelSettingsScreen(ModalScreen):
             yield Switch(value=self.claude_code.transcripts, id="claude-code-transcripts")
             yield Label("Let her read transcripts", classes="settings-label")
         yield note(CLAUDE_CODE_TRANSCRIPTS_HELP)
+        yield heading("Running sessions")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.claude_code.run, id="claude-code-run")
+            yield Label("Let her run Claude Code", classes="settings-label")
+        yield Static(id="claude-code-run-status", classes="service-reason")
+        yield note(CLAUDE_CODE_RUN_HELP)
+        yield field("Projects folders", CLAUDE_CODE_FOLDERS_HELP)
+        yield row(entry(value="; ".join(self.claude_code.folders), id="claude-code-folders",
+                        placeholder=r"D:\Development"),
+                  button("Save", "claude-code-folders-save"))
         yield heading("Sessions")
         yield Static(id="claude-code-sessions")
 
@@ -924,6 +959,9 @@ class ModelSettingsScreen(ModalScreen):
         self.query_one("#claude-code-status", Static).update(claude_code_line(listening, self.claude_code.listen))
         self.query_one("#claude-code-hooks", Static).update(claude_hooks_line(state, line))
         self.query_one("#claude-code-sessions", Static).update(claude_sessions_text(self.claude_code.sessions()))
+        line = self.claude_code.run_status() if self.claude_code.run else "○ Off"
+        style = DIM if line.startswith("○") else BAD if line.startswith("×") else GOOD
+        self.query_one("#claude-code-run-status", Static).update(Text(line, style=style))
 
     def save_game_vocabulary(self) -> None:
         if self.game is not None:
@@ -1307,6 +1345,11 @@ class ModelSettingsScreen(ModalScreen):
                 self.game.watch = event.value
                 self.game.save_watch(event.value)
             return
+        if event.switch.id == "claude-code-run":
+            if self.claude_code is not None and event.value != self.claude_code.run:
+                self.claude_code.run = event.value
+                self.claude_code.save_run(event.value)
+            return
         if event.switch.id == "claude-code-transcripts":
             if self.claude_code is not None and event.value != self.claude_code.transcripts:
                 self.claude_code.transcripts = event.value
@@ -1530,6 +1573,8 @@ class ModelSettingsScreen(ModalScreen):
             self.save_game_vocabulary()
         elif button == "claude-code-port-save":
             self.claude_code.save_port(self.query_one("#claude-code-port", Input).value)
+        elif button == "claude-code-folders-save":
+            self.claude_code.save_folders(self.query_one("#claude-code-folders", Input).value)
         elif button == "claude-code-add-hooks":
             self.claude_code.add_hooks()
         elif button == "claude-code-remove-hooks":

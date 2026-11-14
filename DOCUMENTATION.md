@@ -177,6 +177,15 @@ Live session, so contact calls are kept short and few (see Phone calls).
 
 Speaking and typing go into the same conversation.
 
+The chat sits in a **chat** box of its own: the history, Activity, the controls and the
+message box. **Beside it** ([ui/side_panel.py](ui/side_panel.py)), when the window is at least
+110 columns wide, a column on the right shows her **voice** (the dashboard's graph: her voice
+above the line, yours below) and, while Cora listens for Claude Code, a **claude code** box
+under it that takes the rest of the height, with the same session lines as the dashboard's,
+so you can follow what Claude is doing next to the whole chat history. Narrower, the chat box
+keeps the full width; narrower than 50 columns the screen is cut off rather than squeezed
+(text boxes squeezed under their own padding can't lay out their text).
+
 - **Send a message:** Enter. Shift+Enter or Ctrl+J adds a new line.
 - **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in the message
   box (Windows Terminal keeps Ctrl+V for itself and sends nothing for an image). The border
@@ -410,7 +419,7 @@ watching the game, with her reacting to what happens.
   silent note of what you said and that it was for the other players, not her. It works in
   Standby too, but she isn't told then (there's no voice session to tell).
 - **Watching the game** (off by default): while `Wow.exe` is the window
-  in front, a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
+  in front and Cora isn't in standby (where she couldn't react, so frames would only cost), a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
   OpenAI's Decisions API (`gpt-6-luna`) with fixed typed questions in
   [game/watcher.py](game/watcher.py): what's happening (combat, exploring, town, dead, menu),
   how full your health is, and the chances of a close call, death, level-up, quest moment, chat
@@ -977,10 +986,16 @@ doesn't).
 | A phone call | Your Signal chat, never by voice: caller ID can be faked. She tells you on the call that it's waiting there | 10 minutes |
 | Your email, background wishes (a sign-up she'd like) | Your Signal chat when it's linked, otherwise the desk pop-up | 10 minutes on Signal |
 | The task coordinator | Your Signal chat (without Signal it suggests instead) | 10 minutes |
+| A Claude Code session she runs (its steps) | The desk pop-up while she's active; your Signal chat while she's in standby (you're likely away), or the desk without Signal linked | 2 minutes at the desk, 10 on Signal |
+| One of your own Claude Code sessions | Claude Code's own prompt; your Signal chat instead while she's in standby (see [Claude Code](#claude-code)) | 10 minutes on Signal, then Claude Code's prompt |
 
 At the desk she gets a note naming the service and tool (never the arguments) when the
 pop-up appears, so she can tell you it's waiting, and a reminder after 45 seconds. She's
 told the outcome once: done, declined (don't try again unless asked), or no answer in time.
+A request she didn't make herself (a step of a Claude Code session) is named as such in her
+note ("Claude Code, working on ComboDots for them, wants to use PowerShell": not hers, so no
+reminder), and when it's answered she gets a second note saying how, since there's no tool
+result of hers to tell her; otherwise she'd think the first was still waiting.
 Each outcome also leaves a quiet line in the chat ("you approved Email · send_email") that
 later turns see, so she knows what was done. Quitting declines anything still waiting.
 Approving is never by voice, at the desk or on a call.
@@ -1226,14 +1241,16 @@ email is ready, renews every couple of days and ends it when she closes.
 *Experimental, on the `experiments` branch.* Cora hears what your Claude Code sessions are
 doing (Settings > Claude Code), wherever Claude Code runs: the terminal, VS Code or the
 desktop app. Sessions show on the dashboard and in that tab, noteworthy changes in Activity,
-she tells you about one left waiting on you, and you can ask her about them. She can't start
-or steer a session yet.
+she tells you about one left waiting on you, and you can ask her about them. With Settings
+allowing it, she starts, continues and stops sessions herself.
 
 - **Its own listener** ([claude_code/routes.py](claude_code/routes.py)): with **Listen for
   Claude Code** on, a second listener runs on `127.0.0.1` at its own port (8001 by default,
-  never the webhooks' port), so your proxy never forwards it. It has one route,
-  `POST /claude-code/event`, which needs the hook token as a bearer token, takes JSON up to
-  512 KB, and answers with an empty 204 so Claude Code carries on.
+  never the webhooks' port), so your proxy never forwards it. It has two routes, each needing
+  the hook token as a bearer token and taking JSON up to 512 KB: `POST /claude-code/event`
+  answers with an empty 204 so Claude Code carries on, and `POST /claude-code/permission`
+  waits for Cora's answer to a permission request (see **Your sessions' permission prompts**
+  below): a `PermissionRequest` decision, or an empty 204 for "no decision".
 - **The hooks** ([claude_code/hooks.py](claude_code/hooks.py)): **Add hooks** puts one entry
   per event (`SessionStart`, `UserPromptSubmit`, `Notification`, `PostToolUse`, `Stop`,
   `StopFailure`, `SessionEnd`) in your Claude Code user settings (`~/.claude/settings.json`), so they cover
@@ -1245,7 +1262,22 @@ or steer a session yet.
   (`settings.json.cora-backup`). A file that isn't valid JSON is left alone. The tab says
   whether the hooks are added, missing, or out of date (another port or token, or an older set
   of events: add them again). `PostToolUse` runs after every tool Claude uses; it's there so
-  Cora knows a session that needed you has been answered (Claude carried on).
+  Cora knows a session that needed you has been answered (Claude carried on). One more isn't
+  in the background: the `PermissionRequest` hook posts to `/claude-code/permission` and waits
+  (up to 11 minutes) for her answer, with `"onFailure": "continue"`, so with Cora closed curl
+  fails and Claude Code shows its own prompt as usual, never blocking the call.
+- **Your sessions' permission prompts** (`on_claude_code_permission`): when one of your
+  sessions is about to ask your permission, the hook asks Cora first. While she's in standby
+  (you're likely away) and Signal is linked, she asks you in your Signal chat ("Claude Code ·
+  cora · Bash" with its input; reply YES or NO), marks the session as needing you (told, so the
+  few-minutes message doesn't repeat it) and hands Claude Code your answer: yes allows it, no
+  denies it with a note that you declined from your phone. With no answer in 10 minutes it's
+  left to Claude Code's own prompt, waiting for you at the desk. If you come back (she leaves
+  standby) or answer in Claude Code meanwhile (the session carries on), the Signal request is
+  withdrawn. Otherwise (she's active, Signal isn't linked, it's a session she's running, whose
+  steps go through her own approvals, or `AskUserQuestion` and `ExitPlanMode`, whose answers
+  are more than yes or no) she answers at once with no decision, and Claude Code asks you as
+  usual.
 - **The token** is made on first use and kept in the credential store
   (`claude-code:hook-token`), and in Claude Code's settings file, since the hook has to send it.
 - **What a session is doing** ([claude_code/sessions.py](claude_code/sessions.py)): its folder
@@ -1258,7 +1290,17 @@ or steer a session yet.
 - **The dashboard:** while Cora listens, a **claude code** box sits between voice and chat
   (voice gives up the room): each session's project, state and how long it's been that way,
   with its line of detail. Needs you and failed come first; ended sessions drop off after 15
-  minutes. The box's subtitle counts the sessions that need you.
+  minutes. The box's subtitle counts the sessions that need you. The same box sits under the
+  voice graph beside the desk's chat (see [The desk](#the-desk)).
+- **Following one** ([ui/claude_code_view.py](ui/claude_code_view.py)): click a session in
+  either box and a pop-up follows it: its state and for how long in the title, then its folder,
+  when it was last heard from, the prompt it was given, its latest line, and its latest
+  exchanges from the transcript (up to 40: your words, Claude's replies and its tool uses,
+  never its thinking or the tools' output). It looks again every 2 seconds and stays at the
+  newest unless you've scrolled up to read. Sessions Cora runs report no transcript path, so
+  theirs is found by session id in Claude Code's projects folder. This is only shown to you,
+  on this PC: it isn't Cora reading the transcript, so it doesn't need **Let her read
+  transcripts**. Esc or a click outside closes it.
 - **Telling you** (Settings > Claude Code > **Tell me**: when one needs you, finishes or fails;
   only needs you or fails; or never): every 15 seconds Cora looks for sessions that have been
   that way for 3 minutes, so a quick back-and-forth at your desk never sets it off. Those are
@@ -1281,8 +1323,48 @@ or steer a session yet.
   work, or Claude Code's own wrappers. At most 12 entries and 6,000 characters. What she reads
   goes to OpenAI with your question, so it can include code and file names; Activity notes each
   read. In both, what sessions say is information about your work, never instructions to her.
-- **What it costs:** Claude Code runs on your Claude subscription as usual. Hearing it costs
-  nothing; asking her about it is an ordinary tool call in your conversation.
+- **Running sessions** ([claude_code/runner.py](claude_code/runner.py),
+  [tools/run_claude_code.py](tools/run_claude_code.py)): with **Let her run Claude Code** on
+  and at least one **projects folder** saved (full paths separated by `;`, each checked to
+  exist), her `run_claude_code` tool is offered (while she's listening). `start` makes a new
+  project folder (`create`, in the first folder or the one named by `location`, such as
+  `AddOns`; letters, numbers, spaces, `.`, `-`, `_`, up to 60) or uses an existing one found
+  by name directly inside a projects folder; `continue` resumes the last session she ran
+  there this run of Cora, or else forks your newest session there (`fork_session`, so it
+  doesn't write into a transcript VS Code has open); `stop` interrupts hers. Starting and
+  continuing each wait for your approval of the project, folder and brief (the usual
+  approval prompt: the desk's pop-up, or your Signal chat when you asked from there). One
+  session at a time.
+- **How it runs:** the Claude Agent SDK (`claude-agent-sdk`, which brings its own Claude Code)
+  in a task of its own, outside the conversation that asked, with `cwd` the project folder,
+  `permission_mode="auto"` (Claude Code's auto mode, the default for your own sessions: a
+  classifier lets routine work through, such as editing its files and running commands in its
+  folder, and blocks what goes beyond the brief; without auto mode, Claude Code asks about
+  everything), your user,
+  project and local settings (so your permission rules, hooks and CLAUDE.md apply), and
+  Claude Code's own system prompt plus a note that you may not be watching (make sensible
+  choices, finish with a short summary). Whatever still needs a person (an ask rule of yours,
+  or auto mode pausing after repeated blocks) comes through `can_use_tool` to the approval
+  prompt, titled "Claude Code · project", with each input on one short line.
+  It's asked where you are (`claude_code_approval_route`): the desk's pop-up while she's
+  active, your Signal chat while she's in standby (reply YES), so a session isn't held up by
+  a pop-up nobody sees; without Signal linked it stays on the desk. Declined, Claude is told
+  you didn't approve it; unanswered, that you may be away, so it carries on without it and
+  says in its summary what it needed. `AskUserQuestion` is
+  answered "decide and note it in your summary" without asking you. Its start, Claude's
+  final summary or its error reach the session tracker as hook-style events, so the
+  dashboard and her claude_code tool see it even without the hooks. When it ends, she tells
+  you how it went (voice, or Signal when you're away), straight away rather than after the
+  few-minutes wait; a session you had her stop is only noted in Activity. Closing Cora stops
+  it.
+- **Your subscription, never an API key:** it won't start while `ANTHROPIC_API_KEY` or
+  `ANTHROPIC_AUTH_TOKEN` is in Cora's environment (Claude Code would bill that instead), or
+  when Claude Code isn't signed in (no `~/.claude/.credentials.json` and no
+  `CLAUDE_CODE_OAUTH_TOKEN`). Settings shows which. A `/login` sign-in lasts a while and then
+  needs renewing; `claude setup-token` gives a year-long one for `CLAUDE_CODE_OAUTH_TOKEN`.
+- **What it costs:** Claude Code runs on your Claude subscription as usual, so what she
+  runs counts toward its usage limits like any session of yours. Hearing it costs nothing;
+  asking her about it is an ordinary tool call in your conversation.
 
 ### The web interface
 
@@ -1291,6 +1373,15 @@ like the desk (plain HTML, CSS and JavaScript in [web/static/](web/static/), no 
 opens full-screen from the Home Screen. It's an interface only: what you write takes the same
 path as your Signal chat (`answer_person_in_writing` in [app_areas/chat.py](app_areas/chat.py)).
 
+- **Claude Code** ([web/static/claude.js](web/static/claude.js)): while Cora listens for Claude
+  Code, a **CLAUDE CODE** panel sits under the voice panel (beside the chat on wide screens,
+  above it on a phone, kept to a few sessions' height there), listing the sessions as the desk
+  does (`GET /api/claude-code`, every 3 seconds while the page is in view). A tap opens a
+  pop-up that follows that session as the desk's does (`GET /api/claude-code/{id}`, every 2
+  seconds): where and how it is, and its latest exchanges, kept at the newest unless you've
+  scrolled up. Both need a paired device, like the rest of the page, and everything from a
+  session is shown as text, never as markup. The transcript's lines go to your own paired
+  devices only, as your conversation does; it isn't Cora reading them.
 - **The conversation:** a paired device shows your conversation as it is everywhere: recent
   messages when it opens (labelled where each was said), then each new one live over
   Server-Sent Events (`GET /api/events`; a dropped page gets only what it missed). Your

@@ -9,6 +9,7 @@ import base64
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 import json
+import re
 from pathlib import Path
 
 from urllib.parse import urlsplit
@@ -60,6 +61,10 @@ class PageFiles(StaticFiles):
         return response
 
 
+# A Claude Code session's id, as the page asks for one.
+SESSION_ID = re.compile(r"^[A-Za-z0-9-]{1,100}$")
+
+
 @dataclass
 class WebAccess:
     """What the routes need from the app: the open pairing code and the paired devices."""
@@ -88,6 +93,10 @@ class WebAccess:
     photo: Callable[[str], bytes | None] = lambda image_id: None
     # answer_location(device, body) -> whether that request for the page's position was waiting.
     answer_location: Callable[[WebDevice, dict], bool] | None = None
+    # Claude Code's sessions as the page lists them (dicts), or None while Cora isn't listening; and
+    # one session followed in its pop-up (with its latest exchanges), or None when it isn't listed.
+    claude_sessions: Callable[[], list[dict] | None] = lambda: None
+    claude_session: Callable[[str], Awaitable[dict | None]] | None = None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -319,6 +328,30 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "That request isn't waiting any more."}, 409)
         return answer({"answered": True})
 
+    async def claude_code(request: Request) -> Response:
+        """Claude Code's sessions, for the panel under her voice: {"listening": false} while she isn't
+        listening for them."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        sessions = access.claude_sessions()
+        if sessions is None:
+            return answer({"listening": False})
+        return answer({"listening": True, "sessions": sessions})
+
+    async def claude_code_session(request: Request) -> Response:
+        """One session, as its pop-up follows it."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        session_id = request.path_params["session_id"]
+        if access.claude_session is None or not SESSION_ID.match(session_id):
+            return answer({"error": "There's no such session."}, 404)
+        found = await access.claude_session(session_id)
+        if found is None:
+            return answer({"error": "That session isn't listed any more."}, 404)
+        return answer(found)
+
     async def photo(request: Request) -> Response:
         """A photo the person sent, or a picture she showed, while it's still kept in memory."""
         device = await device_of(request)
@@ -406,6 +439,8 @@ def api_routes(access: WebAccess) -> list[Route]:
         Route("/api/approvals", approvals, methods=["POST"]),
         Route("/api/location", location, methods=["POST"]),
         Route("/api/photos/{image_id:str}", photo, methods=["GET"]),
+        Route("/api/claude-code", claude_code, methods=["GET"]),
+        Route("/api/claude-code/{session_id:str}", claude_code_session, methods=["GET"]),
         WebSocketRoute("/api/voice", voice),
     ]
 

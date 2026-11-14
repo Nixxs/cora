@@ -22,20 +22,39 @@ class ServicesMixin:
 
     def show_confirmation(self, request) -> None:
         self.push_screen(ConfirmScreen(request, self.confirmations.answer))
-        self.tell_cora_approval_waiting(request.title, request.tool)
+        self.tell_cora_approval_waiting(request.title, request.tool, on_behalf=request.on_behalf)
+
+    def remind_cora_approval_waiting(self, request) -> None:
+        """Her own requests only: one on someone else's behalf isn't hers to chase."""
+        if request.on_behalf is None:
+            self.tell_cora_approval_waiting(request.title, request.tool, reminder=True)
 
     @work(group="approval-notes")
     async def tell_cora_approval_waiting(self, service: str, tool: str, reminder: bool = False,
-                                         on_signal: bool = False) -> None:
+                                         on_signal: bool = False, on_behalf: str | None = None) -> None:
         """Let Cora know her request waits on the pop-up (or, on a call, in the Signal chat), so she
         can tell the person."""
         try:
             if on_signal:
-                await self.live.send_approval_waiting(service, tool, on_signal=True)
+                await self.live.send_approval_waiting(service, tool, on_signal=True, on_behalf=on_behalf)
             else:
-                await self.live.send_approval_waiting(service, tool, reminder=reminder)
+                await self.live.send_approval_waiting(service, tool, reminder=reminder, on_behalf=on_behalf)
         except Exception as error:
             # The pop-up still works without her mentioning it.
+            self.activity.write(f"Approval note to Cora failed ({type(error).__name__}).", "Approval note failed")
+
+    def approval_ended(self, request, outcome: str) -> None:
+        """How a request ended: a quiet line in the chat (and her later history), and for one she
+        didn't make herself, a note to her now, so she isn't left thinking it still waits."""
+        self.conversation.show_approval_outcome(f"{request.title} · {request.tool}", outcome)
+        if request.on_behalf is not None and self.live.connection is not None and self.live.ready:
+            self.tell_cora_approval_outcome(request.tool, outcome, request.on_behalf)
+
+    @work(group="approval-notes")
+    async def tell_cora_approval_outcome(self, tool: str, outcome: str, on_behalf: str) -> None:
+        try:
+            await self.live.send_approval_outcome(tool, outcome, on_behalf)
+        except Exception as error:
             self.activity.write(f"Approval note to Cora failed ({type(error).__name__}).", "Approval note failed")
 
     def close_confirmation(self, request) -> None:

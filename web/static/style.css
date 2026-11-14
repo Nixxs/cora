@@ -248,6 +248,15 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 
 /* ── Voice: a strip above the conversation; a panel beside it on wide screens ── */
 
+/* Voice, and Claude Code's sessions under it while Cora listens for them. */
+#side {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+  min-height: 0;
+}
+
 #voice-panel {
   flex-shrink: 0;
   margin-top: 6px;
@@ -602,6 +611,88 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 #link-status.offline { color: var(--error); }
 #link-status.offline::before { content: "○ "; }
 
+/* ── Claude Code: its sessions under her voice, and the pop-up that follows one ── */
+
+#claude-panel {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* On a phone it sits above the conversation, so it keeps to a few sessions' height. */
+  max-height: 28vh;
+}
+.title-count { background: var(--bg); padding: 0 6px; color: var(--waiting); font-size: 12px; }
+.title-count:empty { display: none; }
+#claude-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 10px 8px;
+}
+.claude-session {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 6px 6px;
+  border-radius: 6px;
+  margin-bottom: 4px;
+}
+.claude-session:hover, .claude-session:focus-visible { background: var(--bg-hover); outline: none; }
+.claude-head { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.claude-project { color: var(--text); }
+.claude-meta { color: var(--dim); font-size: 13px; }
+.claude-detail {
+  display: block;
+  padding-left: 18px;
+  color: #6f7c94;
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+.claude-dot { color: var(--dim); }
+.claude-dot.state-needs-you { color: var(--waiting); }
+.claude-dot.state-failed { color: var(--error); }
+.claude-dot.state-working, .claude-dot.state-started { color: var(--you); }
+.claude-dot.state-finished { color: var(--active); }
+.claude-none { color: #6f7c94; font-size: 13px; margin: 0; }
+
+#claude-dialog {
+  width: min(94vw, 1100px);
+  height: min(88vh, 900px);
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  color: var(--text);
+  flex-direction: column;
+}
+#claude-dialog[open] { display: flex; }
+#claude-dialog::backdrop { background: rgba(20, 24, 32, 0.7); }
+.claude-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a3446;
+}
+#claude-dialog-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+#claude-dialog-close { font-size: 22px; line-height: 1; padding: 0 6px; color: var(--dim); }
+#claude-dialog-close:hover { color: var(--text); }
+#claude-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px 16px;
+  font-size: 14px;
+}
+#claude-dialog-body p { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.claude-where { color: var(--dim); }
+.claude-rule { color: var(--border); margin-top: 16px !important; }
+.claude-said .who { font-weight: 600; margin-right: 4px; }
+.claude-said.you .who { color: var(--you); }
+.claude-said.claude .who { color: var(--cora); }
+
 /* ── Wider screens: the iPad mini and up ── */
 
 @media (min-width: 700px) {
@@ -635,7 +726,11 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
     grid-template-areas: "main voice" "status status";
   }
   #main { grid-area: main; }
-  #voice-panel { grid-area: voice; display: flex; flex-direction: column; }
+  #side { grid-area: voice; }
+  #voice-panel { flex: 1; display: flex; flex-direction: column; }
+  /* With Claude Code's sessions under it, voice keeps to its size and they take the rest. */
+  .with-claude #voice-panel { flex: 0 0 auto; }
+  #claude-panel { flex: 1; max-height: none; }
   #status-bar { grid-area: status; }
   .voice-body {
     flex: 1;

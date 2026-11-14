@@ -1,12 +1,15 @@
-"""The last few exchanges of a Claude Code session, from its transcript, for Cora to read.
+"""The last few exchanges of a Claude Code session, from its transcript: for Cora to read, and for
+you to follow a session in its pop-up.
 
-Only with Settings > Claude Code > "Let her read transcripts" on: what's read here goes to Cora's
-model. Only files in Claude Code's own projects folder are read, and only their end. Your words,
-Claude's replies and a short note of each tool it used; never its thinking or the tools' output.
+For Cora only with Settings > Claude Code > "Let her read transcripts" on: what she reads goes to her
+model. The pop-up only shows it to you, on this PC. Only files in Claude Code's own projects folder
+are read, and only their end. Your words, Claude's replies and a short note of each tool it used;
+never its thinking or the tools' output.
 """
 
 import json
 from pathlib import Path
+import re
 
 from .sessions import short
 
@@ -16,6 +19,11 @@ TAIL_BYTES = 1024 * 1024
 EXCHANGES_MAX = 12
 ENTRY_MAX_CHARS = 600
 TOTAL_MAX_CHARS = 6000
+# How much the session pop-up shows: more than Cora reads, since it's only for you.
+SHOWN_EXCHANGES_MAX = 40
+SHOWN_ENTRY_MAX_CHARS = 2000
+SHOWN_TOTAL_MAX_CHARS = 30000
+SESSION_ID = re.compile(r"^[A-Za-z0-9-]{1,100}$")
 # Of a tool's input, the part that says what it did.
 TOOL_FIELDS = ("command", "file_path", "path", "pattern", "url", "query", "description", "prompt")
 
@@ -30,6 +38,20 @@ def transcript_file(path: str, projects: Path = PROJECTS_DIR) -> Path | None:
     if resolved.suffix != ".jsonl" or not resolved.is_file() or not resolved.is_relative_to(root):
         return None
     return resolved
+
+
+def session_transcript(session_id: str, transcript_path: str = "", projects: Path = PROJECTS_DIR) -> str | None:
+    """A session's transcript: the path its hooks gave, or else the file named after it in Claude
+    Code's projects folder (sessions Cora runs report no path). None when there's neither."""
+    if transcript_path:
+        return transcript_path
+    if not SESSION_ID.match(session_id or ""):
+        return None
+    try:
+        found = next(projects.glob(f"*/{session_id}.jsonl"), None)
+    except OSError:
+        return None
+    return str(found) if found is not None else None
 
 
 def tail_lines(path: Path, limit: int = TAIL_BYTES) -> list[str]:
@@ -49,7 +71,7 @@ def tool_note(block: dict) -> str:
     return f"used {name}: {short(what, 200)}" if what else f"used {name}"
 
 
-def entry_texts(entry: dict) -> list[tuple[str, str, bool]]:
+def entry_texts(entry: dict, entry_max: int = ENTRY_MAX_CHARS) -> list[tuple[str, str, bool]]:
     """(who, text, is a tool note) for what one transcript line says, who being 'you' or 'claude'."""
     if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant") \
             or entry.get("isSidechain") or entry.get("isMeta"):
@@ -70,13 +92,14 @@ def entry_texts(entry: dict) -> list[tuple[str, str, bool]]:
             text = block["text"].strip()
             # Claude Code's own wrappers (reminders, command output) aren't what either of you said.
             if text and not text.startswith("<"):
-                found.append((who, short(text, ENTRY_MAX_CHARS), False))
+                found.append((who, short(text, entry_max), False))
         elif block.get("type") == "tool_use" and who == "claude":
             found.append((who, tool_note(block), True))
     return found
 
 
-def recent_exchanges(path: str, projects: Path = PROJECTS_DIR) -> list[dict] | None:
+def recent_exchanges(path: str, projects: Path = PROJECTS_DIR, most: int = EXCHANGES_MAX,
+                     total_max: int = TOTAL_MAX_CHARS, entry_max: int = ENTRY_MAX_CHARS) -> list[dict] | None:
     """The newest exchanges, oldest first, within the size limits; None if it can't be read."""
     transcript = transcript_file(path, projects)
     if transcript is None:
@@ -92,11 +115,11 @@ def recent_exchanges(path: str, projects: Path = PROJECTS_DIR) -> list[dict] | N
             entry = json.loads(line)
         except ValueError:
             continue
-        for who, text, is_tool in reversed(entry_texts(entry)):
+        for who, text, is_tool in reversed(entry_texts(entry, entry_max)):
             if is_tool and picked and picked[-1]["tools"]:
                 picked[-1]["tools"] += 1
                 continue
-            if len(picked) >= EXCHANGES_MAX or total + len(text) > TOTAL_MAX_CHARS:
+            if len(picked) >= most or total + len(text) > total_max:
                 return exchanges(picked)
             picked.append({"who": who, "said": text, "tools": 1 if is_tool else 0})
             total += len(text)

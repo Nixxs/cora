@@ -5,7 +5,7 @@ line in Activity, and what it costs is summed up there every minute. A moment wo
 (game/moments.py) is described from its frame and, while she's active, offered to Live through
 attention, which drops it if it's gone stale. About once a minute a frame is also read for the game's
 state (game/state.py), which goes to Live as silent context whenever it changes, and again to each
-new Live session."""
+new Live session. Nothing is sent while she's in standby: she couldn't react, so it would only cost."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -81,13 +81,15 @@ class GameWatchMixin:
     def start_game_watch(self) -> None:
         if self.closing or self.game_watch_worker is not None:
             return
-        self.game_screen_watcher = GameWatcher(self.game_frame_seen, self.game_frame_failed, in_front=game_in_front)
+        # Paused in standby, as if the game weren't in front: no screenshots, no calls.
+        self.game_screen_watcher = GameWatcher(self.game_frame_seen, self.game_frame_failed,
+                                               in_front=lambda: not self.standby and game_in_front())
         self.game_watch_scene = None
         self.game_state_clock = StateClock()
         self.game_watch_worker = self.run_worker(self.game_screen_watcher.run(), group="game-watch", exclusive=True)
         self.game_watch_timer = self.set_interval(SUMMARY_SECONDS, self.report_game_watch)
-        self.activity.write("Watching the game: a frame every 2 seconds while WoW is in front, answers to "
-                            f"{LOG_PATH.name}; reactions {self.game_chattiness}.", "Game watch on")
+        self.activity.write("Watching the game: a frame every 2 seconds while WoW is in front (not in standby), "
+                            f"answers to {LOG_PATH.name}; reactions {self.game_chattiness}.", "Game watch on")
 
     def stop_game_watch(self) -> None:
         worker, self.game_watch_worker = self.game_watch_worker, None

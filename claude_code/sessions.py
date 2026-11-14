@@ -71,6 +71,8 @@ def describe(event: dict) -> tuple[str, str | None] | None:
         return FAILED, short(event.get("error_details") or event.get("error"))
     if name == "Notification" and event.get("notification_type") in WAITING_NOTIFICATIONS:
         return NEEDS_YOU, short(event.get("message"))
+    if name == "PermissionRequest" and isinstance(event.get("tool_name"), str):
+        return NEEDS_YOU, short(f"Claude needs your permission to use {event['tool_name']}")
     if name == "SessionEnd":
         return ENDED, short(event.get("reason"))
     return None

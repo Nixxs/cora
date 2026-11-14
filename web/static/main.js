@@ -85,6 +85,8 @@ async function showApp(deviceName) {
   startChat(deviceName);
   const { setupVoice } = await import("./voice.js");
   setupVoice();
+  const { setupClaudeCode } = await import("./claude.js");
+  setupClaudeCode();
 }
 
 // The code from the QR link is read, then taken out of the address so it isn't left in history.

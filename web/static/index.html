@@ -40,7 +40,9 @@
   </main>
 
   <main id="app" class="screen" hidden>
-    <!-- Her voice: above the conversation on narrow screens, beside it on wide ones. -->
+    <!-- Her voice, and Claude Code's sessions under it: above the conversation on narrow screens,
+         beside it on wide ones. -->
+    <div id="side">
     <section id="voice-panel" class="frame">
       <header class="frame-title"><span class="title-name">VOICE</span></header>
       <div class="voice-body">
@@ -53,6 +55,17 @@
         </div>
       </div>
     </section>
+
+    <!-- Shown while Cora listens for Claude Code (claude.js); a tap follows a session. -->
+    <section id="claude-panel" class="frame" hidden>
+      <header class="frame-title">
+        <span class="title-name">CLAUDE CODE</span>
+        <span class="title-fill" aria-hidden="true"></span>
+        <span class="title-count" id="claude-count"></span>
+      </header>
+      <div id="claude-list"></div>
+    </section>
+    </div>
 
     <div id="main">
       <section id="chat-panel" class="frame">
@@ -89,6 +102,15 @@
       <span id="link-status" class="linked">web</span>
     </footer>
   </main>
+
+  <!-- One Claude Code session, followed while open. -->
+  <dialog id="claude-dialog" class="frame">
+    <header class="claude-dialog-head">
+      <span id="claude-dialog-title">Claude Code</span>
+      <button type="button" id="claude-dialog-close" aria-label="Close">×</button>
+    </header>
+    <div id="claude-dialog-body"></div>
+  </dialog>
 
   <script type="module" src="main.js"></script>
 </body>

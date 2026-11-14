@@ -20,6 +20,7 @@ from ui.chat_widgets import SelectableRichLog, TitleBar
 from ui.composer import ChatComposer
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
+from ui.side_panel import ChatRow, SidePanel
 from ui.api_key_view import ApiKeyScreen
 from ui.model_settings import EmailControls
 from messaging.container import signal_port, start_container, stop_container
@@ -170,32 +171,39 @@ class CoraApp(
     def compose(self) -> ComposeResult:
         yield TitleBar("dashboard")
         with Vertical(id="chat-panel"):
-            yield SelectableRichLog(id="chat-output", wrap=True, min_width=1)
-            with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
-                yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
-            with HorizontalGroup(id="status-bar"):
-                yield Button(
-                    "○ Disconnected", id="chat-status", disabled=True,
-                    classes="state-disconnected",
-                    tooltip="Live is disconnected. Ctrl+R to reconnect.",
-                )
-                yield Button("🎙× Mic", id="mic-status", tooltip="Mute microphone")
-                yield Button("🔊 Speaker", id="speaker-status", tooltip="Mute speaker")
-                yield Static("────────", id="speaker-level")
-                yield Button("Wake off", id="wake-status", tooltip="Enable local Hey Cora listening in standby")
-            with Vertical(id="input-frame"):
-                yield ChatComposer(
-                    placeholder="Type a message to Cora...",
-                    id="chat-input",
-                    soft_wrap=True,
-                    show_line_numbers=False,
-                    highlight_cursor_line=False,
-                )
+            # The chat in a box of its own, with Cora's voice and Claude Code's sessions beside it
+            # when there's room.
+            with ChatRow(id="chat-row"):
+                with Vertical(id="desk-chat", classes="dashboard-box"):
+                    yield SelectableRichLog(id="chat-output", wrap=True, min_width=1)
+                    with Collapsible(title="Activity · Ready", collapsed=True, id="activity-panel"):
+                        yield RichLog(id="activity-output", wrap=True, min_width=1, max_lines=500)
+                    with HorizontalGroup(id="status-bar"):
+                        yield Button(
+                            "○ Disconnected", id="chat-status", disabled=True,
+                            classes="state-disconnected",
+                            tooltip="Live is disconnected. Ctrl+R to reconnect.",
+                        )
+                        yield Button("🎙× Mic", id="mic-status", tooltip="Mute microphone")
+                        yield Button("🔊 Speaker", id="speaker-status", tooltip="Mute speaker")
+                        yield Static("────────", id="speaker-level")
+                        yield Button("Wake off", id="wake-status",
+                                     tooltip="Enable local Hey Cora listening in standby")
+                    with Vertical(id="input-frame"):
+                        yield ChatComposer(
+                            placeholder="Type a message to Cora...",
+                            id="chat-input",
+                            soft_wrap=True,
+                            show_line_numbers=False,
+                            highlight_cursor_line=False,
+                        )
+                yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(), id="side-panel")
 
     def on_mount(self) -> None:
         if self.freeze_memory:
             self.set_timer(MEMORY_SETTLE_SECONDS, settle_memory)
         self.query_one("#chat-input", ChatComposer).focus()
+        self.query_one("#desk-chat").border_title = "chat"
         self.activity = Activity(
             self.query_one("#activity-panel", Collapsible),
             self.query_one("#activity-output", RichLog),
@@ -316,6 +324,7 @@ class CoraApp(
             can_call=lambda number: self.can_call_out(number),
             place_call=lambda *args, **options: self.place_task_call(*args, **options),
             look_at_claude_code=lambda project, recent: self.look_at_claude_code(project, recent),
+            run_claude_code=lambda *args: self.run_claude_code(*args),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -472,11 +481,9 @@ class CoraApp(
         # Tool calls that change things wait here for the person's answer.
         self.confirmations = Confirmations(
             show=self.show_confirmation, close=self.close_confirmation, write_activity=self.activity.write,
-            remind=lambda request: self.tell_cora_approval_waiting(request.title, request.tool, reminder=True),
+            remind=lambda request: self.remind_cora_approval_waiting(request),
             # How each ended goes in the chat, and into the history Cora is given later.
-            on_outcome=lambda request, outcome: self.conversation.show_approval_outcome(
-                f"{request.title} · {request.tool}", outcome,
-            ),
+            on_outcome=lambda request, outcome: self.approval_ended(request, outcome),
             # While the person is on a phone call: in their Signal chat, never by voice (see phone_calls).
             elsewhere=lambda: self.phone_approval_route(),
         )
@@ -657,7 +664,7 @@ class CoraApp(
                     self.voice_bands, self.conversation, self.audio_status,
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context, load_spend=self.load_spend,
-                    claude_sessions=lambda: self.claude_sessions.recent() if self.claude_code_listen else None,
+                    claude_sessions=self.claude_sessions_shown,
                 ))
         elif event.button.id == "chat-status":
             if self.standby:
@@ -725,6 +732,9 @@ class CoraApp(
                 self.webhook_server.stop()
         if self.claude_code_server is not None:
             self.claude_code_server.stop()
+        # A Claude Code session she's running stops with her.
+        if self.claude_code_runner.current is not None and self.claude_code_runner.current.task is not None:
+            self.claude_code_runner.current.task.cancel()
         # Nothing still waiting for approval may run while shutting down.
         self.confirmations.decline_all()
         self.email_account.cancel_sign_in()

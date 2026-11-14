@@ -15,13 +15,16 @@ from app_areas.claude_code import ClaudeCodeMixin
 from app_areas.web_interface import WebInterfaceMixin
 from claude_code import hooks, transcripts
 from tools.claude_code import ClaudeCodeTool, validate_arguments as validate_tool_arguments
-from claude_code.routes import BODY_MAX_BYTES, EVENT_PATH, claude_code_routes
+from claude_code.routes import BODY_MAX_BYTES, EVENT_PATH, PERMISSION_PATH, claude_code_routes, permission_decision
 from claude_code.sessions import (
     ENDED, FAILED, FINISHED, NEEDS_YOU, SESSIONS_MAX, STARTED, TELL_AFTER, TELL_CHOICES, WORKING, SessionTracker,
     project_name, tell_text,
 )
 from server.listener import build_app
-from ui.dashboard import claude_code_lines
+from ui.claude_code_view import claude_code_lines, follow_text
+from claude_code.transcripts import recent_exchanges, session_transcript
+
+NOW = datetime(2026, 11, 14, 9, 0, tzinfo=timezone.utc)
 
 TOKEN = "abcDEF123_-tokentokentokentokentokentoken"
 PORT = 8001
@@ -229,7 +232,8 @@ class ClaudeCodeToolTests(unittest.IsolatedAsyncioTestCase):
                 validate_tool_arguments(bad)
 
     def test_only_offered_while_listening(self):
-        app = SimpleNamespace(maps_key="key", calling_out_problem=lambda: None, claude_code_listen=False)
+        app = SimpleNamespace(maps_key="key", calling_out_problem=lambda: None, claude_code_listen=False,
+                              can_run_claude_code=lambda: False)
         self.assertIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
         app.claude_code_listen = True
         self.assertNotIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
@@ -264,7 +268,8 @@ class ClaudeCodeToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("hasn't let you", (await self.look("cora", recent=True))["recent_exchanges"])
         self.app.claude_code_transcripts = True
         # Read from this folder in place of Claude Code's own projects folder.
-        with patch.object(transcripts.recent_exchanges, "__defaults__", (Path(folder.name),)):
+        with patch.object(transcripts.recent_exchanges, "__defaults__",
+                          (Path(folder.name), *transcripts.recent_exchanges.__defaults__[1:])):
             read = await self.look("cora", recent=True)
         self.assertEqual(read["recent_exchanges"],
                          {"project": "cora", "exchanges": [{"who": "you", "said": "fix the tests"}]})
@@ -281,6 +286,45 @@ class ClaudeCodeToolTests(unittest.IsolatedAsyncioTestCase):
         sent = connection.response.item.create.await_args.kwargs["item"]
         self.assertEqual((sent["call_id"], json.loads(sent["output"])["status"]), ("call-1", "ok"))
         connection.response.create.assert_awaited_once()
+
+
+class FollowingASessionTests(unittest.TestCase):
+    """The pop-up that follows a session: found by its path, or by its id for sessions Cora runs."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.projects = Path(folder.name)
+        (self.projects / "D--Games-ComboDots").mkdir()
+        self.transcript = self.projects / "D--Games-ComboDots" / "abc-123.jsonl"
+        lines = [{"type": "user", "message": {"content": "make five dots " + "x" * 900}}]
+        lines += [{"type": "assistant", "message": {"content": [{"type": "text", "text": f"step {n}"}]}}
+                  for n in range(30)]
+        self.transcript.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
+
+    def test_a_transcript_is_found_by_its_path_or_its_session_id(self):
+        self.assertEqual(session_transcript("abc-123", "given.jsonl", self.projects), "given.jsonl")
+        self.assertEqual(session_transcript("abc-123", "", self.projects), str(self.transcript))
+        self.assertIsNone(session_transcript("missing", "", self.projects))
+        self.assertIsNone(session_transcript("../abc-123", "", self.projects))
+
+    def test_the_pop_up_shows_more_than_cora_reads(self):
+        hers = recent_exchanges(str(self.transcript), self.projects)
+        yours = recent_exchanges(str(self.transcript), self.projects, most=40, total_max=30000, entry_max=2000)
+        self.assertEqual(len(hers), 12)
+        self.assertEqual(len(yours), 31)
+        self.assertGreater(len(yours[0]["said"]), 900)
+
+    def test_its_text_says_where_how_long_and_what_was_said(self):
+        tracker = SessionTracker(clock=lambda: NOW)
+        session = tracker.update({"hook_event_name": "UserPromptSubmit", "session_id": "abc-123",
+                                  "cwd": "D:\\Games\\ComboDots", "prompt": "make five dots"})
+        text = follow_text(session, NOW, [{"who": "you", "said": "make five dots"},
+                                          {"who": "claude", "said": "done"}])
+        self.assertTrue(text.startswith("D:\\Games\\ComboDots\nworking for under a minute"))
+        self.assertIn("Asked: make five dots", text)
+        self.assertTrue(text.rstrip().endswith("Claude: done"))
+        self.assertIn("can't be read", follow_text(session, NOW, None))
 
 
 class RouteTests(unittest.TestCase):
@@ -316,6 +360,27 @@ class RouteTests(unittest.TestCase):
     def test_only_posts_reach_it(self):
         self.assertEqual(self.client.get(EVENT_PATH).status_code, 405)
 
+    def test_a_permission_request_gets_her_decision_or_nothing(self):
+        decisions = []
+
+        async def on_permission(heard):
+            decisions.append(heard)
+            return permission_decision(heard["tool_name"] == "Bash", "no")
+
+        client = TestClient(build_app(claude_code_routes(lambda: self.token, self.heard.append, on_permission)))
+        headers = {"Authorization": f"Bearer {TOKEN}"}
+        allowed = client.post(PERMISSION_PATH, json={"tool_name": "Bash"}, headers=headers)
+        self.assertEqual(allowed.json()["hookSpecificOutput"],
+                         {"hookEventName": "PermissionRequest", "decision": {"behavior": "allow"}})
+        denied = client.post(PERMISSION_PATH, json={"tool_name": "WebFetch"}, headers=headers).json()
+        self.assertEqual(denied["hookSpecificOutput"]["decision"], {"behavior": "deny", "message": "no"})
+        self.assertEqual(client.post(PERMISSION_PATH, json={"tool_name": "Bash"}).status_code, 401)
+        self.assertEqual(len(decisions), 2)
+        # Without a handler: nothing, so Claude Code asks itself.
+        none = self.client.post(PERMISSION_PATH, json={"tool_name": "Bash"}, headers=headers)
+        self.assertEqual((none.status_code, none.content), (204, b""))
+        self.assertEqual(self.heard, [])
+
 
 class HookSettingsTests(unittest.TestCase):
     def setUp(self):
@@ -337,6 +402,21 @@ class HookSettingsTests(unittest.TestCase):
         self.assertEqual(hooks.hooks_state(settings, PORT, TOKEN), hooks.CURRENT)
         # Theirs untouched by adding.
         self.assertEqual(len(theirs["hooks"]["Stop"]), 1)
+
+    def test_the_permission_hook_waits_for_her_and_never_blocks_when_she_is_closed(self):
+        settings = hooks.with_cora({}, PORT, TOKEN)
+        [group] = settings["hooks"]["PermissionRequest"]
+        [hook] = group["hooks"]
+        self.assertNotIn("async", hook)
+        self.assertEqual(hook["onFailure"], "continue")
+        self.assertIn(f"http://127.0.0.1:{PORT}{PERMISSION_PATH}", hook["command"])
+        self.assertGreater(hook["timeout"], 600)
+        self.assertEqual(hooks.without_cora(settings), {})
+
+    def test_hooks_added_before_the_permission_hook_are_out_of_date(self):
+        settings = hooks.with_cora({}, PORT, TOKEN)
+        del settings["hooks"]["PermissionRequest"]
+        self.assertEqual(hooks.hooks_state(settings, PORT, TOKEN), hooks.OUTDATED)
 
     def test_adding_again_replaces_corass_hooks_rather_than_doubling_them(self):
         settings = hooks.with_cora(hooks.with_cora({}, PORT, "old"), PORT + 1, TOKEN)

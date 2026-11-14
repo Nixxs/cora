@@ -112,6 +112,9 @@ class SettingsMixin:
                     listen=self.claude_code_listen, port=self.claude_code_port,
                     tell=self.claude_code_tell, save_tell=self.save_claude_code_tell,
                     transcripts=self.claude_code_transcripts, save_transcripts=self.save_claude_code_transcripts,
+                    run=self.claude_code_run, save_run=self.save_claude_code_run,
+                    folders=list(self.claude_code_folders), save_folders=self.save_claude_code_folders,
+                    run_status=self.claude_code_run_status,
                 ),
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,

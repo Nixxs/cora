@@ -44,7 +44,8 @@ TOKEN_SECONDS = 30
 
 @dataclass
 class OnCallApproval:
-    """How a request to use a tool is asked while the person is on a call (see Confirmations)."""
+    """How a request to use a tool is asked in the person's Signal chat instead of the desk's pop-up
+    (see Confirmations): while they're on a call, and Claude Code's while she's in standby."""
 
     ask_approval: object
     approval_seconds: float = APPROVAL_SECONDS
@@ -150,7 +151,8 @@ class PhoneCallsMixin:
         ask = self.signal_approval_asker(account, person, self.signal_settings.allowed_number)
 
         async def ask_on_signal(request) -> bool:
-            self.tell_cora_approval_waiting(request.title, request.tool, on_signal=True)
+            self.tell_cora_approval_waiting(request.title, request.tool, on_signal=True,
+                                            on_behalf=request.on_behalf)
             return await ask(request)
 
         return OnCallApproval(ask_on_signal)

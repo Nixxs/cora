@@ -9,13 +9,28 @@ Screen > .screen--selection {
 
 #chat-panel, #dashboard-panel {
     height: 1fr;
+    /* A window narrower than this cuts them off rather than squeezing text boxes under their own
+       padding, where they can't lay out their text (a crash). */
+    min-width: 50;
     background: #141820;
     border: round #7799cc;
     border-top: none;
     padding: 0 1;
 }
 
+#chat-row {
+    height: 1fr;
+}
+
+/* The desk's chat in a box of its own: history, Activity, the controls and the message box. */
+#desk-chat {
+    width: 1fr;
+    height: 1fr;
+    min-width: 30;
+}
+
 #chat-output {
+    width: 1fr;
     height: 1fr;
     background: transparent;
     background-tint: transparent;
@@ -69,7 +84,8 @@ Screen > .screen--selection {
 
 #chat-status {
     width: 1fr;
-    min-width: 0;
+    /* Never narrower than its padding: squeezed to nothing, its text can't be laid out (a crash). */
+    min-width: 5;
     height: 1;
     min-height: 1;
     padding: 0;
@@ -159,6 +175,7 @@ Screen > .screen--selection {
 
 #chat-input, #dashboard-input {
     height: 1;
+    min-width: 10;
     margin: 0;
     padding: 0 1;
     border: none;
@@ -321,6 +338,57 @@ Screen > .screen--selection {
 #dashboard-claude-scroll {
     height: 1fr;
     scrollbar-size: 1 0;
+}
+
+/* Beside the chat's history: voice, with Claude Code's sessions below it while Cora listens. */
+#side-panel {
+    width: 46;
+    height: 1fr;
+}
+
+#side-claude {
+    display: none;
+    height: 1fr;
+}
+
+#side-panel.with-claude-code #side-claude {
+    display: block;
+}
+
+/* While Claude Code shows, voice keeps a small box and the sessions take the rest. */
+#side-panel.with-claude-code #side-voice {
+    height: 10;
+}
+
+#side-claude-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+/* Each Claude Code session in a list: a click follows it in a pop-up. */
+.claude-session {
+    margin-bottom: 1;
+}
+
+.claude-none {
+    color: #415575;
+}
+
+#side-speaker-graph, #side-mic-graph {
+    height: 1fr;
+}
+
+#side-speaker-graph {
+    color: #8fcca6;
+}
+
+#side-mic-graph {
+    color: #a6acd8;
+}
+
+#side-voice-axis {
+    height: 1;
+    color: #415575;
 }
 
 #voice-box {

@@ -228,7 +228,14 @@ class KeyboardPersistence:
         """{"listen": bool, "port": int, "tell": str, "transcripts": bool} from Settings > Claude Code."""
         store = AppSettingsStore(self._get_store().engine)
         return {"listen": store.claude_code_listen(), "port": store.claude_code_port(),
-                "tell": store.claude_code_tell(), "transcripts": store.claude_code_transcripts()}
+                "tell": store.claude_code_tell(), "transcripts": store.claude_code_transcripts(),
+                "run": store.claude_code_run(), "folders": store.claude_code_folders()}
+
+    def save_claude_code_run(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_run(on)
+
+    def save_claude_code_folders(self, folders: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_folders(folders)
 
     def save_claude_code_transcripts(self, on: bool) -> None:
         AppSettingsStore(self._get_store().engine).set_claude_code_transcripts(on)

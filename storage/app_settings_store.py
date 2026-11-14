@@ -1,5 +1,6 @@
 """General settings from Settings > General, such as her voice; one without a saved value uses its default."""
 
+import json
 from pathlib import Path
 
 from sqlalchemy import Engine, delete, func, select
@@ -196,6 +197,26 @@ class AppSettingsStore:
 
     def set_claude_code_listen(self, on: bool) -> None:
         self._set("claude_code_listen", "on" if on else "off")
+
+    def claude_code_run(self) -> bool:
+        """Whether she may start Claude Code sessions herself; off unless switched on."""
+        return self._switch("claude_code_run") is True
+
+    def set_claude_code_run(self, on: bool) -> None:
+        self._set("claude_code_run", "on" if on else "off")
+
+    def claude_code_folders(self) -> list[str]:
+        """The folders her Claude Code projects live in ([] for none)."""
+        try:
+            saved = json.loads(self._get("claude_code_folders") or "[]")
+        except ValueError:
+            return []
+        return [folder for folder in saved if isinstance(folder, str)] if isinstance(saved, list) else []
+
+    def set_claude_code_folders(self, folders: list[str]) -> None:
+        if not isinstance(folders, list) or not all(isinstance(folder, str) for folder in folders):
+            raise ValueError("The folders must be a list of paths.")
+        self._set("claude_code_folders", json.dumps(folders))
 
     def claude_code_transcripts(self) -> bool:
         """Whether her claude_code tool may read session transcripts; off unless switched on."""

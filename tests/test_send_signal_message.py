@@ -123,7 +123,8 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, ConfirmScreen)
             self.assertEqual(app.screen.request.title, "Signal")
             app.signal.client.send.assert_not_called()
-            app.live.send_approval_waiting.assert_awaited_once_with("Signal", "send_signal_message", reminder=False)
+            app.live.send_approval_waiting.assert_awaited_once_with("Signal", "send_signal_message", reminder=False,
+                                                                     on_behalf=None)
             await pilot.click("#confirm-approve")
             for _ in range(30):
                 if app.signal.client.send.await_count:

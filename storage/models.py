@@ -788,10 +788,17 @@ class AppSettingRecord(Base):
         CheckConstraint(
             "key IN ('voice', 'spend_project', 'start_mode', 'idle_minutes', 'standby_farewell', 'wake_word', "
             "'conversation_gap', 'backup_copy_dir', 'twilio_region', 'game_push_to_talk', 'game_chat_channel', "
-            "'game_transcription', 'game_vocabulary', 'game_watch', 'game_chattiness')",
+            "'game_transcription', 'game_vocabulary', 'game_watch', 'game_chattiness', "
+            "'claude_code_listen', 'claude_code_port', 'claude_code_tell', 'claude_code_transcripts', "
+            "'claude_code_run', 'claude_code_folders')",
             name="app_settings_key_check",
         ),
-        CheckConstraint("btrim(value) <> '' AND char_length(value) <= 200", name="app_settings_value_check"),
+        # The projects folders are a JSON list of paths, so they may run longer.
+        CheckConstraint(
+            "btrim(value) <> '' AND char_length(value) <= "
+            "CASE WHEN key = 'claude_code_folders' THEN 2000 ELSE 200 END",
+            name="app_settings_value_check",
+        ),
         {"schema": "public"},
     )
 

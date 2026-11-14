@@ -78,7 +78,8 @@ class WebInterfaceMixin:
                          send_message=self.answer_on_web, feed=self.web_feed, feed_ready=self.web_feed_ready,
                          answer_approval=self.answer_web_approval, voice=self.web_voice,
                          on_listening=self.on_web_listening, on_talk=self.on_web_talk, photo=self.web_photo,
-                         answer_location=lambda device, body: self.whereabouts.answer(device.name, body))
+                         answer_location=lambda device, body: self.whereabouts.answer(device.name, body),
+                         claude_sessions=self.web_claude_sessions, claude_session=self.web_claude_session)
 
     def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
         """A page starts or stops talking to her (see voice_talk)."""
@@ -254,12 +255,15 @@ class WebInterfaceMixin:
 
     def unavailable_tools(self) -> frozenset[str]:
         """Tools not set up, so not offered anywhere: show_map without a Google Maps key,
-        call_someone until calling out is set up, and claude_code while Cora isn't listening for it."""
+        call_someone until calling out is set up, claude_code while Cora isn't listening for it, and
+        run_claude_code unless Settings lets her run sessions."""
         missing = set() if self.maps_key else {"show_map"}
         if self.calling_out_problem():
             missing.add("call_someone")
         if not self.claude_code_listen:
             missing.add("claude_code")
+        if not self.can_run_claude_code():
+            missing.add("run_claude_code")
         return frozenset(missing)
 
     def show_map(self, view: maps.MapView) -> bool:
