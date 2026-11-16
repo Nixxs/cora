@@ -1,4 +1,6 @@
-"""What each Claude Code session is doing, as its hooks report it; kept for this run only.
+"""What each Claude Code session is doing, as its hooks report it; kept for this run only, with
+the last day's sessions read from their transcripts when she starts listening (see
+transcripts.past_sessions).
 
 Events come from Claude Code on this PC, but what Claude or you wrote in them is still just text:
 shown to you, never taken by Cora as instructions.
@@ -191,6 +193,19 @@ class SessionTracker:
             oldest = min(self.sessions.values(), key=lambda kept: kept.updated_at)
             del self.sessions[oldest.session_id]
         return session
+
+    def add_past(self, sessions: list[ClaudeSession]) -> int:
+        """Sessions from before she was listening (read from their transcripts); any already heard
+        stays as heard. How many were added."""
+        added = 0
+        for session in sessions:
+            if session.session_id not in self.sessions:
+                self.sessions[session.session_id] = session
+                added += 1
+        while len(self.sessions) > SESSIONS_MAX:
+            oldest = min(self.sessions.values(), key=lambda kept: kept.updated_at)
+            del self.sessions[oldest.session_id]
+        return added
 
     def recent(self) -> list[ClaudeSession]:
         """Newest first."""

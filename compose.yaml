@@ -58,6 +58,10 @@ services:
     image: ollama/ollama:0.40.16
     profiles: ["local-model"]
     restart: "no"
+    environment:
+      # The model stays loaded while the container's up, so answers come quickly; Cora stopping
+      # the container once it's idle (Settings > Local model) is what frees the GPU.
+      OLLAMA_KEEP_ALIVE: "-1"
     ports:
       - "127.0.0.1:${CORA_LOCAL_MODEL_PORT:-11434}:11434"
     volumes:

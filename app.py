@@ -330,6 +330,7 @@ class CoraApp(
             run_claude_code=lambda *args: self.run_claude_code(*args),
             place_map_pins=lambda route, lines: self.place_game_map_pins(route, lines),
             run_map_pins_command=lambda line: self.run_game_map_pins_command(line),
+            consult_rocky=lambda question, new_topic: self.consult_rocky(question, new_topic),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.

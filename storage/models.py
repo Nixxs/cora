@@ -790,7 +790,8 @@ class AppSettingRecord(Base):
             "'conversation_gap', 'backup_copy_dir', 'twilio_region', 'game_push_to_talk', 'game_chat_channel', "
             "'game_transcription', 'game_vocabulary', 'game_watch', 'game_chattiness', "
             "'claude_code_listen', 'claude_code_port', 'claude_code_tell', 'claude_code_transcripts', "
-            "'claude_code_run', 'claude_code_folders')",
+            "'claude_code_run', 'claude_code_folders', 'local_model_name', 'local_model_idle', "
+            "'local_model_consult')",
             name="app_settings_key_check",
         ),
         # The projects folders are a JSON list of paths, so they may run longer.

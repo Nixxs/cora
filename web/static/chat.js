@@ -2,8 +2,8 @@
 // and messages sent from here with her reply streaming back as she writes it.
 
 import {
-  addApproval, addMap, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
-  startWriting,
+  addApproval, addMap, addMessage, addNotice, addPicture, addRocky, attachPhoto, clearChat, setLink, setStatus,
+  setupComposer, startWriting,
 } from "./ui.js";
 import { hasPhoto, setupPhotos, takePhoto } from "./photo.js";
 import { answerLocate, setupLocation } from "./location.js";
@@ -86,6 +86,12 @@ function follow(deviceName) {
     const map = JSON.parse(event.data);
     markDay(new Date(map.at));
     addMap({ caption: map.caption, embed: map.embed, link: map.link, when: new Date(map.at) });
+  });
+  // Rocky's answer to her, word for word, wherever she asked him: above her reply.
+  events.addEventListener("rocky", (event) => {
+    const rocky = JSON.parse(event.data);
+    markDay(new Date(rocky.at));
+    addRocky({ question: rocky.question, html: rocky.html, when: new Date(rocky.at) });
   });
   events.addEventListener("approval_done", (event) => {
     const done = JSON.parse(event.data);

@@ -100,6 +100,11 @@ class LiveSessionMixin:
         except Exception as error:
             self.activity.write(f"Claude Code settings unavailable ({type(error).__name__}).", "Settings")
         try:
+            self.apply_local_model_settings(
+                await self.conversation_persistence.call_database(self.persistence.load_local_model_settings))
+        except Exception as error:
+            self.activity.write(f"Local model settings unavailable ({type(error).__name__}).", "Settings")
+        try:
             self.remember_claude_code_sessions(
                 await self.conversation_persistence.call_database(self.persistence.load_claude_code_sessions))
         except Exception as error:

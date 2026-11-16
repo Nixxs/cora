@@ -24,8 +24,9 @@ OUT_OF_ROUNDS = (
 )
 # How long one tool result may take; long enough for an approval pop-up to be answered.
 TOOL_RESULT_SECONDS = 180
-# Tools that take longer than that by design: a browsing job.
-SLOW_TOOLS = {"use_browser": USE_BROWSER_SECONDS}
+# Tools that take longer than that by design: a browsing job, and Rocky (starting the local model,
+# then loading and answering).
+SLOW_TOOLS = {"use_browser": USE_BROWSER_SECONDS, "consult_rocky": 420}
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY, *CALL_ONLY})
@@ -47,8 +48,11 @@ class BackendRoute:
     def __init__(
         self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None,
         ask_approval=None, approval_seconds: float = 0, tool_seconds: float | None = None,
-        email_party: tuple | None = None, asked_where: str = "on Signal",
+        email_party: tuple | None = None, asked_where: str = "on Signal", channel: str = "",
     ) -> None:
+        # The person's own chat this is ("desk", "signal", "web", "email"; "" for anyone else's), so a
+        # tool knows how what it shows reaches them.
+        self.channel = channel
         # Tools not offered in this kind of conversation, and refused if called anyway.
         self.excluded = frozenset(excluded)
         # In a client's chat, (their id, their name): memory search only finds what they may know.

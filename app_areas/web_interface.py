@@ -255,8 +255,9 @@ class WebInterfaceMixin:
 
     def unavailable_tools(self) -> frozenset[str]:
         """Tools not set up, so not offered anywhere: show_map without a Google Maps key,
-        call_someone until calling out is set up, claude_code while Cora isn't listening for it, and
-        run_claude_code unless Settings lets her run sessions."""
+        call_someone until calling out is set up, claude_code while Cora isn't listening for it,
+        run_claude_code unless Settings lets her run sessions, and consult_rocky unless Settings lets
+        her consult Rocky."""
         missing = set() if self.maps_key else {"show_map"}
         if self.calling_out_problem():
             missing.add("call_someone")
@@ -264,6 +265,8 @@ class WebInterfaceMixin:
             missing.add("claude_code")
         if not self.can_run_claude_code():
             missing.add("run_claude_code")
+        if not self.can_consult_rocky():
+            missing.add("consult_rocky")
         return frozenset(missing)
 
     def show_map(self, view: maps.MapView) -> bool:
@@ -350,7 +353,7 @@ class WebInterfaceMixin:
                 # Tools that change things are asked about on the page, with Approve and Deny.
                 route = BackendRoute(
                     excluded=WEB_EXCLUDED | self.unavailable_tools(), ask_approval=self.ask_on_web, approval_seconds=APPROVAL_SECONDS,
-                    tool_seconds=APPROVAL_SECONDS + 60, asked_where="on the web page",
+                    tool_seconds=APPROVAL_SECONDS + 60, asked_where="on the web page", channel="web",
                 )
                 reply = await self.reply_in_writing(
                     content, history, route, WEB_CHAT_INSTRUCTIONS, on_text=on_text,

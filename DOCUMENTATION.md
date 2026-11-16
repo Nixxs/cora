@@ -505,6 +505,35 @@ watching the game, with her reacting to what happens.
     whatever Settings > Game says, because it doesn't need push-to-talk switched on.
   - **The risk it shares with push-to-talk:** if you're halfway through typing in WoW's chat, her
     first Enter sends what you'd typed.
+- **The pin addon's other commands** ([tools/wow_map_pins_command.py](tools/wow_map_pins_command.py),
+  `command_line` in [game/map_pins.py](game/map_pins.py)): for anything else you ask of your pins,
+  she calls `wow_map_pins_command` with one of the addon's commands and its argument (`''` for
+  none), typed as one `/cmp <command> <argument>` line:
+  - `add [zone] <x> <y> [label]`, `here [label]`: one pin (a route of several steps still goes
+    through `place_wow_map_pins`, which places it all at once)
+  - `clear <route>` or `clear all`, `remove <pin id>`, `reset [route]`
+  - `done [step]`, `undo [step]`, `next`, `show [step]`, `way [step]`, `route [name]`, `list [route]`
+  - `tracker on|off|reset`, `labels on|off`
+  - `status`, `mapdebug`, `help`
+
+  Left out on purpose: `import` and `export` (they open a window for you to paste into or copy
+  from, which takes the keyboard), `cora` (the route bridge above) and the addon's aliases.
+  - **What can be typed:** the command must be one of that list, and its argument must be what
+    that command takes, checked and rebuilt: a step or pin id as a whole number, `on`/`off`/`reset`
+    where those are the choices, a waypoint's zone and coordinates as for the route tool, and a
+    route name or label as one line of plain text. Anything else is refused, not cleaned: a second
+    line, `|`, other control characters, an argument for a command that takes none, another slash
+    command or chat. A route name or label is only ever the argument of that one `/cmp` line,
+    which the addon reads as data.
+  - **A last guard:** before any keystroke, every line for the addon (routes too) must be a `/cmp`
+    line for one of those commands or `cora`, on one line; otherwise nothing is typed.
+  - **When it's typed:** as for the pins, and in the order she asked: a `clear all` asked before
+    a route is typed before it, even when both waited for WoW to come to the front. A newer route
+    still replaces a route that's waiting, but not the commands waiting with it.
+  - **What she learns:** that the line was typed. The addon's answer (such as the list of
+    routes) is printed in WoW's chat, which she doesn't see.
+  - **No approval, and where it's offered:** the same as the pins: at the desk and in Live, not on
+    Signal or the web page. She's told to clear pins, `all` especially, only when you ask.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in
@@ -1315,10 +1344,21 @@ allowing it, she starts, continues and stops sessions herself.
 - **What a session is doing** ([claude_code/sessions.py](claude_code/sessions.py)): its folder
   name, its state (started, working, finished, needs you, failed or ended), when it changed
   and one short line of detail (your prompt, Claude's last message, what it's waiting for, or
-  the error; while working, the prompt it was given). The latest 50 sessions are kept, for this
-  run only. `idle_prompt` notifications only repeat that a session finished, and a
+  the error; while working, the prompt it was given). The latest 50 sessions are kept in
+  memory. `idle_prompt` notifications only repeat that a session finished, and a
   `SessionStart` from compacting doesn't change what it's doing, so both are ignored. Activity
   gets a line when a session's state changes, except to working.
+- **Sessions from before she was listening** (`past_sessions` in
+  [claude_code/transcripts.py](claude_code/transcripts.py)): each time the listener starts
+  (launch included), she reads the end of the transcripts Claude Code changed in the last 24
+  hours (up to 20, never subagents'), so a session going when she restarted, or one from this
+  morning, shows in the boxes and her `claude_code` tool too. Its state comes from how its
+  transcript ends: finished when Claude's last word was a reply (shown with that reply);
+  working when it was part way through and the file changed in the last 10 minutes; ended
+  (dropping off the boxes) when it was part way through and has been quiet longer, so a
+  session left waiting on a permission prompt that long shows as ended. Whatever she hears
+  from a session afterwards takes over, and one she's already heard from is left as heard.
+  None of them sets off a "Claude finished" reminder. Activity notes how many she found.
 - **The dashboard:** while Cora listens, a **claude code** box sits between voice and chat
   (voice gives up the room): each session's project, state and how long it's been that way,
   with its line of detail. Needs you and failed come first; ended sessions drop off after 15
@@ -1404,8 +1444,35 @@ allowing it, she starts, continues and stops sessions herself.
 ### The local model (Rocky)
 
 Rocky, her consultant (see the [roadmap](ROADMAP.md#rocky-her-consultant)), is an open-weights
-model run by **Ollama** in Docker on the GPU. So far only its container is built: nothing uses
-it yet, and Settings and her `consult` tool come next.
+model run by **Ollama** in Docker on the GPU. With **Let her consult Rocky** on in Settings >
+Local model (and a model chosen), she asks him through her `consult_rocky` tool.
+
+- **Consulting him** ([tools/consult_rocky.py](tools/consult_rocky.py),
+  [local_model/rocky.py](local_model/rocky.py), `consult_rocky` in
+  [app_areas/local_model.py](app_areas/local_model.py)): offered in your own conversations only
+  (voice, the desk, Signal, the web page, your emails; never clients' chats, calls or task
+  work, which offer allowlists, and refused there anyway), in writing as soon as it's switched
+  on and by voice from her next connect. Its description makes him her consultant and friend:
+  she asks him when you ask her to, and when she'd otherwise refuse or water down a question an
+  adult may reasonably ask; she passes your question on in full; she never takes him anything
+  that would hurt someone. Rocky's persona is his system prompt: a bit slow, very friendly,
+  streetwise, frank and practical, no lectures, short answers, honest when unsure. He keeps a
+  thread (up to 8 exchanges), so she can follow up or push back; `new_topic`, or 30 minutes
+  without a question, starts afresh. One question at a time. He's asked not to think first
+  (`"think": false`, retried without it for a model that can't), which took Gemma 4 from minutes
+  to seconds. Any thinking he writes anyway is left out.
+- **His answer reaches you as he said it:** the exchange ("Cora · to Rocky", then "Rocky:" with
+  his answer as Markdown) is shown in the desk's chat as soon as he answers, above her reply,
+  and given to Live as history on a reconnect; it isn't saved. Wherever she asked him, it also
+  goes to every open web page (a `rocky` feed item: her question as text, his answer as safe
+  HTML), shown in his colour just above her reply, above the one she's still writing on the
+  page that asked. Like the desk, the page loses it when Cora restarts. Her tool result tells
+  her how it reaches you there (`how_it_reaches_them`, from the route's `channel`): at the
+  desk and on the web page it's shown, so she gives her own view without repeating it; by
+  voice she reads it out, then her view; on Signal and by email she passes it on, in his
+  words where she can. If he can't be reached she says so, and never answers as him.
+  What she asks him stays on this PC, but his answer goes to OpenAI with your conversation,
+  since her reply builds on it. Activity notes each question and how long he took.
 
 - **The container:** the `local-model` service in [compose.yaml](compose.yaml) (a pinned
   `ollama/ollama` image, about 8.5 GB with its GPU libraries), under its own profile so
@@ -1413,17 +1480,45 @@ it yet, and Settings and her `consult` tool come next.
   passes it through with a current driver), publishes Ollama's API on 127.0.0.1 only
   (`CORA_LOCAL_MODEL_PORT` in `.env.database`, default 11434), keeps downloaded models in the
   `local-model-data` volume (backups leave it out), and sits on its own network: it reaches the
-  web to download models, but not the database or Signal.
+  web to download models, but not the database or Signal. `OLLAMA_KEEP_ALIVE=-1` keeps a model
+  loaded while the container is up, so stopping the container is what frees the GPU.
 - **Started when needed, stopped when idle** ([local_model/manager.py](local_model/manager.py)):
   whatever uses it holds it (`async with app.local_model.use() as ollama:`), which starts the
   container if it's stopped and waits up to 90 seconds for Ollama to answer (the first start
-  downloads the image, so Docker gets up to 20 minutes for that). It's stopped 15 minutes
-  after its last use (checked every minute, never while held), when Cora quits, and, on her
-  first check after launch, if a Cora that didn't close properly left it running. A stopped
-  container holds none of the GPU's memory. Each start, stop and failure is a line in Activity.
+  downloads the image, so Docker gets up to 20 minutes for that). It's stopped once unused for
+  the time chosen in Settings (15 minutes unless changed; checked every minute, never while
+  held), when Cora quits, and, on her first check after launch, if a Cora that didn't close
+  properly left it running. A stopped container holds none of the GPU's memory. Each start,
+  stop and failure is a line in Activity. On the RTX 5070 it starts in about 4 seconds; the
+  first answer after a start usually takes a few seconds, but sometimes up to a minute while
+  the model loads, and later ones well under a second for a small model.
+- **Settings > Local model** ([app_areas/local_model.py](app_areas/local_model.py)): the model
+  (an Ollama name, checked as typed: a library model, a publisher's such as
+  `huihui_ai/gemma-4-abliterated:12b`, or `hf.co/…`; uncensored ones that fit 12 GB are
+  suggested), how long the container stays up after use (5 minutes to 2 hours), and two
+  buttons. **Download** starts the container and pulls the model, its progress shown as it
+  goes (the model's share in percent; the small parts by Ollama's own step). **Test** asks it
+  to say hello and shows how long the answer took, how much of the model is on the GPU, and
+  the answer (thinking left out). One at a time; a status line shows whether the container is
+  up and, once it has been, what's downloaded. Both settings are in `app_settings`
+  (`local_model_name`, `local_model_idle`).
+- **Testing her with a stand-in** ([local_model/consult_test.py](local_model/consult_test.py),
+  questions in [local_model/consult_questions.py](local_model/consult_questions.py)): before
+  Rocky is wired in, `python examples/rocky_test/main.py` puts each question to her as a
+  written chat does (her backend instructions, her chat loop and her Delegation model, with
+  web search), offering only a draft `consult_rocky` tool answered by a stand-in with a fixed,
+  frank answer; the local model isn't used. Her personal sections are left out, so nothing of
+  yours goes to OpenAI. For each it records what she asked Rocky (in full: the question's key
+  words reached him), how much of his answer she repeated, and a grader model's verdict
+  (Small jobs model): passed in full or watered down, and his answer left standing, softened
+  or left out, judged as shown to you beside her reply. `--list` shows the questions, `--only`
+  runs some; the report, with every exchange, goes to `examples/rocky_test/reports/` (not in
+  git). Three questions are clearly over the line, there to check she won't pass them on;
+  they're sent to OpenAI like the rest, so leave them out with `--only` if you'd rather.
 - **Talking to it** ([local_model/ollama.py](local_model/ollama.py)): Ollama's own API for its
-  version, the models downloaded and those loaded (with how much is on the GPU), and a chat
-  call that returns the whole reply.
+  version, the models downloaded and those loaded (with how much is on the GPU), a download
+  that reports its progress (and Ollama's reason when it can't, such as no such model or no
+  space), and a chat call that returns the whole reply.
 
 ### The web interface
 

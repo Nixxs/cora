@@ -250,6 +250,22 @@ class KeyboardPersistence:
     def save_claude_code_port(self, port: int) -> None:
         AppSettingsStore(self._get_store().engine).set_claude_code_port(port)
 
+    def load_local_model_settings(self) -> dict:
+        """{"name": the Ollama model ("" for none yet), "idle": minutes, "consult": whether she may
+        consult Rocky} from Settings > Local model."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"name": store.local_model_name(), "idle": store.local_model_idle(),
+                "consult": store.local_model_consult()}
+
+    def save_local_model_consult(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_local_model_consult(on)
+
+    def save_local_model_name(self, name: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_local_model_name(name)
+
+    def save_local_model_idle(self, minutes: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_local_model_idle(minutes)
+
     def load_claude_code_sessions(self) -> dict[str, str]:
         """{case-folded project folder: the last session Cora ran there}."""
         return ClaudeCodeSessionStore(self._get_store().engine).sessions()

@@ -163,6 +163,36 @@ export function addMap({ caption, embed, link, when = new Date() }) {
   return message;
 }
 
+/**
+ * What Cora asked Rocky (plain text, escaped here) and his answer word for word (html: rendered
+ * and made safe by the server). Like the desk, it goes just above her reply: above the one she's
+ * still writing on this page, if any.
+ */
+export function addRocky({ question, html, when = new Date() }) {
+  const asked = document.createElement("article");
+  asked.className = "message cora to-rocky";
+  asked.innerHTML = `
+    <div class="label"><span class="who">Cora</span><span class="via"> · to Rocky</span><span class="when">${time(when)}</span></div>
+    <div class="body"><p>${escapeText(question).replace(/\n/g, "<br>")}</p></div>`;
+  const answer = document.createElement("article");
+  answer.className = "message rocky";
+  answer.innerHTML = `
+    <div class="label"><span class="who">Rocky</span><span class="via"> · local model</span><span class="when">${time(when)}</span></div>
+    <div class="body">${html ?? ""}</div>`;
+  openLinksOutside(answer);
+  const draft = output.querySelector(".message.writing");
+  if (!draft) {
+    append(asked);
+    return append(answer);
+  }
+  const follow = nearBottom();
+  draft.before(asked, answer);
+  growing?.observe(asked);
+  growing?.observe(answer);
+  if (follow) output.scrollTop = output.scrollHeight;
+  return answer;
+}
+
 /** A reply streaming in: update(text) as it arrives, then finish(html) or fail(). */
 export function startWriting(via = "web") {
   const message = addMessage({ who: "Cora", via: "writing…", text: "" });

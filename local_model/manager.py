@@ -18,8 +18,9 @@ from .ollama import OllamaClient
 PROFILE = "local-model"
 SERVICE = "local-model"
 OFF, STARTING, READY, STOPPING = "off", "starting", "ready", "stopping"
-# How long it stays up after its last use (Settings will choose this).
+# How long it stays up after its last use (Settings > Local model chooses).
 IDLE_MINUTES = 15
+IDLE_CHOICES = (5, 15, 30, 60, 120)
 # Docker starting it, then Ollama answering.
 READY_SECONDS = 90
 FIRST_START_SECONDS = 1200

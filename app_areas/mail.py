@@ -339,11 +339,11 @@ class MailMixin:
         """As in their Signal chat; approvals on Signal when it's linked, otherwise the pop-up at the desk."""
         account, person = self.signal.status.account, self.signal_settings.person_recipient
         if self.signal.status.state != SIGNAL_LINKED or not account or not person:
-            return BackendRoute(excluded=PERSON_EMAIL_EXCLUDED)
+            return BackendRoute(excluded=PERSON_EMAIL_EXCLUDED, channel="email")
         return BackendRoute(
             excluded=PERSON_EMAIL_EXCLUDED,
             ask_approval=self.signal_approval_asker(account, person, self.signal_settings.allowed_number),
-            approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60,
+            approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60, channel="email",
         )
 
     @work(group="person-email", exit_on_error=False)

@@ -826,7 +826,7 @@ ModelSettingsScreen {
     border-left: vkey #2a3140;
 }
 
-#services-scroll, #general-scroll, #game-scroll, #claude-code-scroll {
+#services-scroll, #general-scroll, #game-scroll, #claude-code-scroll, #local-model-scroll {
     height: auto;
     max-height: 40;
     scrollbar-size-vertical: 1;

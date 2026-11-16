@@ -11,6 +11,7 @@
   --dim: #8f98a8;
   --you: #7fb8d8;
   --cora: #7fbf73;
+  --rocky: #d7a06a;
   --active: #8fcca6;
   --standby: #a6acd8;
   --waiting: #e0c080;
@@ -361,6 +362,10 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 }
 .label .who { color: var(--you); }
 .message.cora .label .who { color: var(--cora); }
+/* Her question to Rocky, quieter than what she says to you; and his answer, in his own colour. */
+.message.to-rocky .body { color: var(--dim); font-style: italic; }
+.message.rocky .label .who { color: var(--rocky); }
+.message.rocky .body { border-left: 2px solid rgba(215, 160, 106, 0.45); padding-left: 10px; }
 .label .via { color: var(--dim); font-weight: 400; }
 .label .when { color: var(--dim); font-weight: 400; opacity: 0.6; margin-left: 6px; }
 

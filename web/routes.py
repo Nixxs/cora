@@ -21,7 +21,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.staticfiles import StaticFiles
 
 from storage.web_device_store import WebDevice
-from .feed import MESSAGE, FeedMessage, Locate, MessageFeed, Status
+from .feed import MESSAGE, ROCKY, FeedMessage, Locate, MessageFeed, Status
 from .pairing import NO_CODE, PAIRED, Pairing, new_token, token_hash
 from .rendering import chat_html
 from .voice import VoiceRelay
@@ -145,7 +145,13 @@ async def reply_lines(updates: asyncio.Queue):
 
 def feed_event(feed: MessageFeed, message: FeedMessage) -> str:
     """One feed item as a server-sent event. A message: hers as safe HTML, the person's as plain
-    text. An approval or its end: its details, shown by the page as text, never as markup."""
+    text. An approval or its end: its details, shown by the page as text, never as markup. Rocky's
+    answer: as safe HTML, like hers, with her question as plain text."""
+    if message.kind == ROCKY:
+        data = message.data or {}
+        body = {"question": data.get("question", ""), "html": chat_html(data.get("answer", "")),
+                "at": message.at.isoformat()}
+        return f"id: {feed.event_id(message)}\nevent: {ROCKY}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
     if message.kind != MESSAGE:
         body = {**(message.data or {}), "at": message.at.isoformat()}
         return f"id: {feed.event_id(message)}\nevent: {message.kind}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"

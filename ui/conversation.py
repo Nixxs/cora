@@ -24,9 +24,20 @@ APPROVAL_FOR_CORA = {"approved": "You approved my request to use {}.", "declined
                      "timed out": "You didn't answer my request to use {} in time, so it wasn't done."}
 
 # Who is speaking, coloured so messages tell apart at a glance; the name stays as text too.
-SPEAKER_STYLES = {"Cora": "bold #7fbf73", "You": "bold #7fb8d8"}
-# A message's label, like "Cora:", "You · Signal:" or "Cora · on screen:".
-SPEAKER_LABEL = re.compile(r"(You|Cora)( · [^:\n]+)?:")
+SPEAKER_STYLES = {"Cora": "bold #7fbf73", "You": "bold #7fb8d8", "Rocky": "bold #d7a06a"}
+# A message's label, like "Cora:", "You · Signal:", "Cora · on screen:" or "Rocky:".
+SPEAKER_LABEL = re.compile(r"(You|Cora|Rocky)( · [^:\n]+)?:")
+# What Cora asked Rocky, her consultant, shown above his answer.
+ROCKY_ASKED = "Cora · to Rocky: "
+
+
+class RockyAnswer(ChatMarkdown):
+    """What Rocky said, shown as he said it; in the history later turns are given as hers to know,
+    with what she asked him. Not saved: her reply says what she made of it."""
+
+    def __init__(self, question: str, answer: str) -> None:
+        super().__init__(answer, code_theme="monokai")
+        self.for_cora = f"(I asked Rocky, my consultant: {question}\nHe said: {answer})"
 
 
 class ApprovalNote(str):
@@ -188,7 +199,9 @@ class Conversation:
         history = []
         remaining = 6000
         for entry in reversed(self.log_entries):
-            if isinstance(entry, ChatMarkdown):
+            if isinstance(entry, RockyAnswer):  # before ChatMarkdown, which it's built on
+                role, text = "assistant", entry.for_cora
+            elif isinstance(entry, ChatMarkdown):
                 role, text = "assistant", entry.markup
             elif isinstance(entry, str) and entry.startswith("You: "):
                 role, text = "user", entry[5:]
@@ -355,6 +368,12 @@ class Conversation:
         self.write_log(PhotoNote(f"· {shown}", f"(The photo I sent. {described})"))
         if (photo := PHOTO_ID.match(described)) is not None:
             self.tell(self.photo_listeners, photo.group(1))
+
+    def show_rocky(self, question: str, answer: str) -> None:
+        """Rocky's answer to her question, word for word, so she doesn't stand between him and the person."""
+        self.flush_transcript()
+        self.log_entries.extend(["", f"{ROCKY_ASKED}{question}", "", "Rocky:", RockyAnswer(question, answer), ""])
+        self.redraw_log()
 
     def show_note(self, text: str) -> None:
         """A quiet line in the chat, not saved and not part of her history."""
