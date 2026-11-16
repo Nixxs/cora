@@ -21,7 +21,8 @@ from claude_code.sessions import (
     project_name, tell_text,
 )
 from server.listener import build_app
-from ui.claude_code_view import claude_code_lines, follow_text
+from ui.claude_code_view import claude_code_lines, follow_parts
+from ui.context_view import part_text
 from claude_code.transcripts import recent_exchanges, session_transcript
 
 NOW = datetime(2026, 11, 14, 9, 0, tzinfo=timezone.utc)
@@ -319,12 +320,15 @@ class FollowingASessionTests(unittest.TestCase):
         tracker = SessionTracker(clock=lambda: NOW)
         session = tracker.update({"hook_event_name": "UserPromptSubmit", "session_id": "abc-123",
                                   "cwd": "D:\\Games\\ComboDots", "prompt": "make five dots"})
-        text = follow_text(session, NOW, [{"who": "you", "said": "make five dots"},
-                                          {"who": "claude", "said": "done"}])
+        parts = follow_parts(session, NOW, [{"who": "you", "said": "make five dots"},
+                                            {"who": "claude", "said": "**done**"}])
+        text = "\n\n".join(part_text(part) for part in parts)
         self.assertTrue(text.startswith("D:\\Games\\ComboDots\nworking for under a minute"))
         self.assertIn("Asked: make five dots", text)
-        self.assertTrue(text.rstrip().endswith("Claude: done"))
-        self.assertIn("can't be read", follow_text(session, NOW, None))
+        # What each said is kept as its Markdown, under who said it, to be shown formatted.
+        self.assertEqual(parts[-1][0].plain, "Claude")
+        self.assertEqual(parts[-1][1], "**done**")
+        self.assertIn("can't be read", part_text(follow_parts(session, NOW, None)[-1]))
 
 
 class RouteTests(unittest.TestCase):

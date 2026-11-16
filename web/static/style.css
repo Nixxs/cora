@@ -686,10 +686,13 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
   padding: 12px 16px 16px;
   font-size: 14px;
 }
-#claude-dialog-body p { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
+#claude-dialog-body > p { margin: 0 0 10px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .claude-where { color: var(--dim); }
 .claude-rule { color: var(--border); margin-top: 16px !important; }
-.claude-said .who { font-weight: 600; margin-right: 4px; }
+/* What each said is its Markdown, styled as her replies are (.body). */
+.claude-said { margin: 0 0 14px; }
+.claude-said .who { font-weight: 600; margin-bottom: 2px; }
+.claude-said .body p { white-space: normal; }
 .claude-said.you .who { color: var(--you); }
 .claude-said.claude .who { color: var(--cora); }
 

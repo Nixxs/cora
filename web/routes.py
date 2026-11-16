@@ -340,7 +340,8 @@ def api_routes(access: WebAccess) -> list[Route]:
         return answer({"listening": True, "sessions": sessions})
 
     async def claude_code_session(request: Request) -> Response:
-        """One session, as its pop-up follows it."""
+        """One session, as its pop-up follows it: each exchange also as "html", its Markdown
+        rendered as her replies are (raw HTML escaped, only web and mail links)."""
         device = await device_of(request)
         if device is None:
             return answer({"error": "This device isn't paired."}, 401)
@@ -350,6 +351,9 @@ def api_routes(access: WebAccess) -> list[Route]:
         found = await access.claude_session(session_id)
         if found is None:
             return answer({"error": "That session isn't listed any more."}, 404)
+        if found.get("exchanges"):
+            found = {**found, "exchanges": [{**exchange, "html": chat_html(exchange["said"])}
+                                            for exchange in found["exchanges"]]}
         return answer(found)
 
     async def photo(request: Request) -> Response:

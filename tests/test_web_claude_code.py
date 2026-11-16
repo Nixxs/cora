@@ -31,7 +31,9 @@ class ClaudeCodeRouteTests(unittest.IsolatedAsyncioTestCase):
 
         async def claude_session(session_id):
             self.asked.append(session_id)
-            return {"project": "ComboDots", "exchanges": []} if session_id == "s1" else None
+            return {"project": "ComboDots", "exchanges": self.exchanges} if session_id == "s1" else None
+
+        self.exchanges = []
 
         self.access = WebAccess(Pairing(), AsyncMock(), find_device, claude_sessions=lambda: self.sessions,
                                 claude_session=claude_session)
@@ -64,6 +66,16 @@ class ClaudeCodeRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.get("/api/claude-code/a.b")).status_code, 404)
         self.assertEqual(self.asked, ["s1", "gone"])
 
+    async def test_what_each_said_comes_as_safe_formatted_markdown(self):
+        self.exchanges = [{"who": "claude", "said": "Under **Demonstrated Experience**.\n"
+                                                    "<script>alert(1)</script> [x](javascript:alert(1))"}]
+        [exchange] = (await self.get("/api/claude-code/s1")).json()["exchanges"]
+        self.assertEqual(exchange["said"], self.exchanges[0]["said"])
+        self.assertIn("<strong>Demonstrated Experience</strong>", exchange["html"])
+        self.assertIn("&lt;script&gt;", exchange["html"])
+        self.assertNotIn("<script", exchange["html"])
+        self.assertNotIn('href="javascript', exchange["html"])
+
 
 class ClaudeCodeForThePageTests(unittest.IsolatedAsyncioTestCase):
     """What the app gives the page, from the sessions it's heard."""
@@ -92,7 +104,10 @@ class ClaudeCodeForThePageTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ClaudeCodePageTests(unittest.TestCase):
-    def test_the_page_shows_what_a_session_said_as_text_never_markup(self):
+    def test_the_page_adds_markup_only_from_the_servers_safe_rendering(self):
         script = (STATIC_DIR / "claude.js").read_text(encoding="utf-8")
         self.assertNotIn("innerHTML", script)
+        self.assertNotIn("insertAdjacentHTML", script)
+        self.assertEqual(script.count("parseFromString("), 1)
+        self.assertIn("parseFromString(exchange.html", script)
         self.assertIn('id="claude-panel"', (STATIC_DIR / "index.html").read_text(encoding="utf-8"))

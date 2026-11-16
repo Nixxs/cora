@@ -1,6 +1,7 @@
 // Claude Code's sessions under her voice, as at the desk: shown while Cora listens for them, each
 // one opening a pop-up that follows it (what it's doing and its latest exchanges, as they come).
-// Everything from a session is shown as text, never as markup.
+// Everything from a session is shown as text, never as markup, except what each said in an
+// exchange: that's its Markdown as the server rendered it and made safe ("html"), as her replies are.
 
 const panel = document.getElementById("claude-panel");
 const list = document.getElementById("claude-list");
@@ -63,7 +64,30 @@ async function refresh() {
   count.textContent = waiting ? `${waiting} need${waiting === 1 ? "s" : ""} you` : "";
 }
 
+/** What one said: its rendered Markdown when the server sent it, otherwise its plain text. */
+function saidBody(exchange) {
+  const body = el("div", "body");
+  if (typeof exchange.html !== "string") {
+    body.append(el("p", "", exchange.said));
+    return body;
+  }
+  const rendered = new DOMParser().parseFromString(exchange.html, "text/html").body;
+  body.append(...rendered.childNodes);
+  // Links open in the browser, not in place of Cora.
+  for (const link of body.querySelectorAll("a")) {
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+  }
+  return body;
+}
+
+let shownJson = "";
+
 function showFollowed(session) {
+  // Unchanged: left as it is, so what you've selected stays selected.
+  const json = JSON.stringify(session);
+  if (json === shownJson && dialogBody.childElementCount) return;
+  shownJson = json;
   if (!session) {
     dialogTitle.textContent = "Claude Code";
     dialogBody.replaceChildren(el("p", "claude-none", "This session isn't listed any more."));
@@ -82,8 +106,8 @@ function showFollowed(session) {
     parts.push(el("p", "claude-none", "Nothing said yet."));
   }
   for (const exchange of session.exchanges || []) {
-    const said = el("p", `claude-said ${exchange.who === "you" ? "you" : "claude"}`);
-    said.append(el("span", "who", exchange.who === "you" ? "You" : "Claude"), document.createTextNode(` ${exchange.said}`));
+    const said = el("div", `claude-said ${exchange.who === "you" ? "you" : "claude"}`);
+    said.append(el("div", "who", exchange.who === "you" ? "You" : "Claude"), saidBody(exchange));
     parts.push(said);
   }
   dialogBody.replaceChildren(...parts);

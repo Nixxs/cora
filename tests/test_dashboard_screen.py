@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 from textual.containers import HorizontalScroll
 from textual.geometry import Size
-from textual.widgets import Button, Label, Static, TextArea
+from textual.widgets import Button, Label, Static
 
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
@@ -34,7 +34,7 @@ from ui.meters import (
     HEAT_STYLES, HOVER_STYLE, LABEL_STYLE, MAX_WEEKS, MIN_WEEKS, TONE_STYLES, TRACK_STYLE, CalendarHeatmap,
     ContextMeters, Meters, ToneRibbon, meter_bar,
 )
-from ui.context_view import ContextScreen, DetailScreen
+from ui.context_view import ContextScreen, DetailScreen, MarkdownView
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 
@@ -732,7 +732,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, DetailScreen)
             self.assertIn("Lesson for [b]Sarah[/b]", str(app.screen.query_one("#context-view-title", Label).render()))
-            full = app.screen.query_one("#context-view-text", TextArea).text
+            full = app.screen.query_one("#context-view-text", MarkdownView).text
             self.assertIn("x" * 200, full)
             self.assertIn("Brief for Sam:\nAsk which weekday suits [her].", full)
 
@@ -776,8 +776,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, ContextScreen)
             title = str(app.screen.query_one("#context-view-title", Label).render())
             self.assertTrue(title.startswith("tools · backend · ~"))
-            text = app.screen.query_one("#context-view-text", TextArea)
-            self.assertTrue(text.read_only)
+            text = app.screen.query_one("#context-view-text", MarkdownView)
             self.assertIn('"name": "close_app"', text.text)
             # Clicking inside the box keeps it open for reading and selecting.
             await pilot.click(text)
@@ -919,13 +918,13 @@ class ChatSidePanelTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.click(entry)
                 for _ in range(30):
                     if isinstance(app.screen, ClaudeSessionScreen) and "make five dots" in \
-                            app.screen.query_one("#context-view-text", TextArea).text:
+                            app.screen.query_one("#context-view-text", MarkdownView).text:
                         break
                     await pilot.pause(0.1)
                 self.assertIsInstance(app.screen, ClaudeSessionScreen)
-                shown = app.screen.query_one("#context-view-text", TextArea).text
-                self.assertIn("You: make five dots", shown)
-                self.assertIn("Claude: used PowerShell: ls", shown)
+                shown = app.screen.query_one("#context-view-text", MarkdownView).text
+                self.assertIn("You\nmake five dots", shown)
+                self.assertIn("Claude\nused PowerShell: ls", shown)
                 self.assertIn("ComboDots · needs you", str(app.screen.query_one("#context-view-title").render()))
                 app.claude_sessions.update({"hook_event_name": "PostToolUse", "session_id": "s1"})
                 for _ in range(40):

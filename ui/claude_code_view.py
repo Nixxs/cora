@@ -13,13 +13,13 @@ from textual import work
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.events import Click
-from textual.widgets import Label, Static, TextArea
+from textual.widgets import Label, Static
 
 from claude_code.sessions import ENDED, FAILED, FINISHED, NEEDS_YOU, STARTED, WORKING, how_long
 from claude_code.transcripts import (
     SHOWN_ENTRY_MAX_CHARS, SHOWN_EXCHANGES_MAX, SHOWN_TOTAL_MAX_CHARS, recent_exchanges, session_transcript,
 )
-from ui.context_view import DetailScreen
+from ui.context_view import DetailScreen, MarkdownView, Part
 from ui.meters import LABEL_STYLE, TRACK_STYLE
 from ui.when import ago
 
@@ -62,23 +62,30 @@ def claude_code_lines(sessions, now) -> Text:
     return lines or Text(NO_SESSIONS, style=TRACK_STYLE)
 
 
-def follow_text(session, now, exchanges: list[dict] | None) -> str:
-    """The pop-up's text: where and how the session is, then its latest exchanges, newest last."""
-    lines = [session.cwd, f"{session.state} for {how_long(now - session.since)} · "
-                          f"last heard {ago(session.updated_at, now)}"]
+# The pop-up's labels for who said what, coloured as the chat's speakers are.
+SAID_BY = {"you": ("You", "bold #7fb8d8"), "claude": ("Claude", "bold #7fbf73")}
+
+
+def follow_parts(session, now, exchanges: list[dict] | None) -> list[Part]:
+    """The pop-up's text: where and how the session is, then its latest exchanges, newest last,
+    each shown as the Markdown it was written in."""
+    where = Text(session.cwd, style=LABEL_STYLE)
+    where.append(f"\n{session.state} for {how_long(now - session.since)} · "
+                 f"last heard {ago(session.updated_at, now)}")
+    parts: list[Part] = [where]
     if session.prompt:
-        lines += ["", f"Asked: {session.prompt}"]
+        parts.append(Text.assemble(("Asked: ", LABEL_STYLE), session.prompt))
     if session.detail and session.detail != session.prompt:
-        lines += ["", f"Latest: {session.detail}"]
-    lines += ["", "── latest exchanges ──", ""]
+        parts.append(Text.assemble(("Latest: ", LABEL_STYLE), session.detail))
+    parts.append(Text("── latest exchanges ──", style=TRACK_STYLE))
     if exchanges is None:
-        lines.append("Its transcript can't be read (yet).")
+        parts.append(Text("Its transcript can't be read (yet).", style=TRACK_STYLE))
     elif not exchanges:
-        lines.append("Nothing said yet.")
+        parts.append(Text("Nothing said yet.", style=TRACK_STYLE))
     for exchange in exchanges or []:
-        who = "You" if exchange["who"] == "you" else "Claude"
-        lines += [f"{who}: {exchange['said']}", ""]
-    return "\n".join(lines).rstrip() + "\n"
+        who, style = SAID_BY["you" if exchange["who"] == "you" else "claude"]
+        parts.append((Text(who, style=style), exchange["said"]))
+    return parts
 
 
 def read_exchanges(session) -> list[dict] | None:
@@ -95,11 +102,10 @@ class ClaudeSessionScreen(DetailScreen):
     bottom (the newest) unless you've scrolled up to read."""
 
     def __init__(self, session_id: str, find_session: Callable) -> None:
-        super().__init__("Claude Code", "Loading…")
+        super().__init__("Claude Code · loading…", "")
         self.session_id = session_id
         # find_session(session_id) -> the session as it is now, or None once it's no longer listed.
         self.find_session = find_session
-        self.shown_once = False
 
     def on_mount(self) -> None:
         super().on_mount()
@@ -110,25 +116,18 @@ class ClaudeSessionScreen(DetailScreen):
     async def follow(self) -> None:
         session = self.find_session(self.session_id)
         if session is None:
-            self.show("Claude Code", "This session isn't listed any more.\n")
+            self.show("Claude Code", [Text("This session isn't listed any more.")])
             return
         exchanges = await asyncio.to_thread(read_exchanges, session)
         now = datetime.now(timezone.utc)
         self.show(f"Claude Code · {session.project} · {session.state} for {how_long(now - session.since)}",
-                  follow_text(session, now, exchanges))
+                  follow_parts(session, now, exchanges))
 
-    def show(self, title: str, text: str) -> None:
+    def show(self, title: str, parts: list[Part]) -> None:
         if not self.is_attached:
             return
         self.query_one("#context-view-title", Label).update(title)
-        area = self.query_one("#context-view-text", TextArea)
-        if area.text == text:
-            return
-        at_end = area.scroll_y >= area.max_scroll_y - 1
-        area.load_text(text)
-        if at_end or not self.shown_once:
-            area.scroll_end(animate=False)
-        self.shown_once = True
+        self.query_one("#context-view-text", MarkdownView).show(parts, keep_at_end=True)
 
 
 class SessionEntry(Static):

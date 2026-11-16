@@ -380,7 +380,10 @@ top right (● active, ○ standby) enters standby or resumes.
 | background | When each background job last saved something, and when the timed ones are next due |
 
 Anything clickable brightens under the mouse; its pop-up scrolls and can be selected and
-copied, and Esc or a click outside closes it. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
+copied, and Esc or a click outside closes it. Pop-ups show their text as Markdown, as the chat
+does (`MarkdownView` in [ui/context_view.py](ui/context_view.py)), except that a single line
+break stays a line break and tags like `<system-reminder>` stay as written, since much of what's
+shown (prompts, instructions, transcripts) isn't written as Markdown; JSON shows as a code block. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
 values and notes it in Activity); the context box reads the running app once a second. Its
 item sizes are estimates (about four bytes a token). Tuning constants (refresh rate, bar
 fall, history limits, graph timing, voice bands) are at the top of
@@ -1325,7 +1328,7 @@ allowing it, she starts, continues and stops sessions herself.
   either box and a pop-up follows it: its state and for how long in the title, then its folder,
   when it was last heard from, the prompt it was given, its latest line, and its latest
   exchanges from the transcript (up to 40: your words, Claude's replies and its tool uses,
-  never its thinking or the tools' output). It looks again every 2 seconds and stays at the
+  never its thinking or the tools' output), each formatted from its Markdown. It looks again every 2 seconds and stays at the
   newest unless you've scrolled up to read. Sessions Cora runs report no transcript path, so
   theirs is found by session id in Claude Code's projects folder. This is only shown to you,
   on this PC: it isn't Cora reading the transcript, so it doesn't need **Let her read
@@ -1408,8 +1411,10 @@ path as your Signal chat (`answer_person_in_writing` in [app_areas/chat.py](app_
   does (`GET /api/claude-code`, every 3 seconds while the page is in view). A tap opens a
   pop-up that follows that session as the desk's does (`GET /api/claude-code/{id}`, every 2
   seconds): where and how it is, and its latest exchanges, kept at the newest unless you've
-  scrolled up. Both need a paired device, like the rest of the page, and everything from a
-  session is shown as text, never as markup. The transcript's lines go to your own paired
+  scrolled up. Both need a paired device, like the rest of the page. What each said in an
+  exchange comes formatted: the server renders its Markdown (`html`) as it renders her replies
+  ([web/rendering.py](web/rendering.py): raw HTML escaped, only web and mail links); everything
+  else from a session is shown as text, never as markup. The transcript's lines go to your own paired
   devices only, as your conversation does; it isn't Cora reading them.
 - **The conversation:** a paired device shows your conversation as it is everywhere: recent
   messages when it opens (labelled where each was said), then each new one live over
