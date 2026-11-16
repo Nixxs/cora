@@ -27,12 +27,18 @@ def signal_port() -> int:
 
 
 def _compose(*args: str) -> None:
+    compose("signal", *args)
+
+
+def compose(profile: str, *args: str, timeout: float = 180) -> str:
+    """Blocking: `docker compose` with the project's compose file and that profile; its output."""
     if not ENV_FILE.exists():
         raise ContainerError("No .env.database file; set up the database first")
     try:
         result = subprocess.run(
-            ["docker", "compose", "--env-file", str(ENV_FILE), "--profile", "signal", *args],
-            cwd=ROOT, capture_output=True, text=True, timeout=180,
+            ["docker", "compose", "--env-file", str(ENV_FILE), "--profile", profile, *args],
+            # UTF-8, not Windows' code page: Docker's progress output has characters it can't decode.
+            cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
         )
     except FileNotFoundError:
         raise ContainerError("Docker is not installed or not on PATH") from None
@@ -41,6 +47,7 @@ def _compose(*args: str) -> None:
     if result.returncode != 0:
         lines = [line for line in result.stderr.strip().splitlines() if line.strip()]
         raise ContainerError(lines[-1][:200] if lines else f"docker compose exited with {result.returncode}")
+    return result.stdout
 
 
 async def start_container() -> None:

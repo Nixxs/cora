@@ -4,15 +4,18 @@ Holding the middle mouse button mutes Live's microphone and records; letting go 
 (with OpenAI, or on this PC) and, if World of Warcraft is the window in front, types it into the game's chat. Cora is
 told quietly what was said, so she knows it was for the game, not her.
 
-Map pins (place_wow_map_pins) go the same way: the CoraMapPins addon's commands, typed while WoW is in
-front, or as soon as it comes to the front within PIN_WAIT_SECONDS."""
+Map pins (place_wow_map_pins) and the pin addon's other commands (wow_map_pins_command) go the same
+way: the CoraMapPins addon's /cmp lines, typed while WoW is in front, or as soon as it comes to the front
+within PIN_WAIT_SECONDS, in the order Cora asked for them."""
 
 import asyncio
+from dataclasses import dataclass
 from time import monotonic
 
 from textual import work
 
 from game.chat_line import CHANNELS, DEFAULT_CHANNEL, casual, chat_line, chat_text, game_in_front, type_into_game
+from game.map_pins import is_addon_line
 from game.moments import CHATTINESS, DEFAULT_CHATTINESS
 from game.mouse_button import MiddleButtonWatcher
 from game.speech import (
@@ -33,6 +36,27 @@ PINS_WAITING_MESSAGE = (
     "WoW isn't the window in front, so the pins will be typed into it as soon as it is, within two "
     "minutes. Tell them to switch to the game."
 )
+COMMAND_TYPED_MESSAGE = (
+    "The command was typed into WoW for CoraMapPins. The game doesn't answer back: the addon prints its "
+    "reply in their chat, which you don't see, so don't say what it did beyond what the command does."
+)
+COMMAND_WAITING_MESSAGE = (
+    "WoW isn't the window in front, so the command will be typed into it as soon as it is, within two "
+    "minutes (after anything else still waiting). Tell them to switch to the game."
+)
+
+
+@dataclass(eq=False)
+class AddonJob:
+    """Lines for the CoraMapPins addon waiting for WoW: a whole route (place_wow_map_pins) or one
+    command (wow_map_pins_command)."""
+    route: str | None  # the route's name; None for a command
+    lines: list[str]
+    give_up: float = 0.0
+
+    @property
+    def what(self) -> str:
+        return self.route if self.route is not None else self.lines[0]
 
 
 class GameMixin:
@@ -55,8 +79,10 @@ class GameMixin:
         self.game_lock = asyncio.Lock()
         # Held while typing into the game, so a push-to-talk line never lands inside a batch of map pins.
         self.game_typing_lock = asyncio.Lock()
-        # Map pins waiting for WoW to come to the front: (route, lines, give up at), newest only.
-        self.game_pending_pins: tuple[str, list[str], float] | None = None
+        # Addon lines waiting for WoW to come to the front, oldest first: commands in the order asked,
+        # and at most one route (a newer one replaces it).
+        self.game_pending_pins: list[AddonJob] = []
+        self.game_pins_waiter = None
 
     def apply_game_settings(self, saved: dict) -> None:
         """Settings > Game, once at launch."""
@@ -207,65 +233,126 @@ class GameMixin:
     async def place_game_map_pins(self, route: str, lines: list[str]) -> dict:
         """place_wow_map_pins, with lines from game.map_pins: typed now if WoW is in front, else kept
         until it is (the newest route replacing one still waiting). The result goes back to Cora."""
+        result = await self.send_to_map_pins_addon(AddonJob(route, lines))
+        if result["status"] != "ok":
+            return result
+        if result.get("waiting"):
+            return {"status": "ok", "waiting": True, "message": PINS_WAITING_MESSAGE}
+        return {"status": "ok", "placed": len(lines) - 2, "message": PINS_TYPED_MESSAGE}
+
+    async def run_game_map_pins_command(self, line: str) -> dict:
+        """wow_map_pins_command, with a line from game.map_pins.command_line: typed now if WoW is in
+        front, else kept until it is, after anything already waiting."""
+        result = await self.send_to_map_pins_addon(AddonJob(None, [line]))
+        if result["status"] != "ok":
+            return result
+        if result.get("waiting"):
+            return {"status": "ok", "waiting": True, "command": line, "message": COMMAND_WAITING_MESSAGE}
+        return {"status": "ok", "typed": line, "message": COMMAND_TYPED_MESSAGE}
+
+    async def send_to_map_pins_addon(self, job: AddonJob) -> dict:
+        """Types the job (after anything still waiting) if WoW is in front, else queues it."""
         if self.closing:
-            return {"status": "error", "message": "Cora is closing; nothing was placed."}
-        if await asyncio.to_thread(game_in_front):
-            # The newest route wins: one still waiting for the game is dropped.
-            self.game_pending_pins = None
-            try:
-                await self.type_map_pins(lines)
-            except OSError as error:
-                self.map_pins_failed(route, error)
-                return {"status": "error", "message": f"The pins couldn't be typed into the game ({error})."}
-            self.map_pins_placed(route, len(lines) - 2)
-            return {"status": "ok", "placed": len(lines) - 2, "message": PINS_TYPED_MESSAGE}
-        self.game_pending_pins = (route, lines, monotonic() + PIN_WAIT_SECONDS)
-        self.conversation.show_note(f"Map pins for WoW, typed when the game is in front: {route}")
-        self.activity.write(f"Map pins '{route}' wait for WoW to be the window in front (up to "
-                            f"{PIN_WAIT_SECONDS:.0f} seconds).", "Map pins")
-        self.wait_to_place_map_pins()
-        return {"status": "ok", "waiting": True, "message": PINS_WAITING_MESSAGE}
-
-    async def type_map_pins(self, lines: list[str]) -> None:
-        """Each line as its own Enter, line, Enter batch. OSError when WoW leaves the front part-way;
-        the addon then places nothing, as it only places a route at its last line."""
+            return {"status": "error", "message": "Cora is closing; nothing was typed into the game."}
+        if not job.lines or not all(map(is_addon_line, job.lines)):
+            # Built by game.map_pins, so never expected: the last guard against typing anything else.
+            self.activity.write("Refused to type a line into WoW that isn't a CoraMapPins command.", "Map pins")
+            return {"status": "error", "message": "That isn't a CoraMapPins command; nothing was typed."}
         async with self.game_typing_lock:
-            for index, line in enumerate(lines):
-                if index and not await asyncio.to_thread(game_in_front):
-                    raise OSError("WoW stopped being the window in front part-way, so nothing was placed")
-                await asyncio.to_thread(type_into_game, line)
-                if index < len(lines) - 1:
-                    await asyncio.sleep(PIN_LINE_GAP_SECONDS)
+            if job.route is not None:
+                # The newest route wins: one still waiting for the game is dropped.
+                self.game_pending_pins = [each for each in self.game_pending_pins if each.route is None]
+            if await asyncio.to_thread(game_in_front):
+                jobs, self.game_pending_pins = [*self.game_pending_pins, job], []
+                failures = await self.type_addon_jobs(jobs)
+                if job in failures:
+                    noun = "pins" if job.route is not None else "command"
+                    return {"status": "error",
+                            "message": f"The {noun} couldn't be typed into the game ({failures[job]})."}
+                return {"status": "ok"}
+            job.give_up = monotonic() + PIN_WAIT_SECONDS
+            self.game_pending_pins.append(job)
+            if job.route is not None:
+                self.conversation.show_note(f"Map pins for WoW, typed when the game is in front: {job.route}")
+                self.activity.write(f"Map pins '{job.route}' wait for WoW to be the window in front (up to "
+                                    f"{PIN_WAIT_SECONDS:.0f} seconds).", "Map pins")
+            else:
+                self.conversation.show_note(f"For WoW, typed when the game is in front: {job.what}")
+                self.activity.write(f"'{job.what}' waits for WoW to be the window in front (up to "
+                                    f"{PIN_WAIT_SECONDS:.0f} seconds).", "Map pins")
+            # One waiter at a time; a running one picks up what's just been added.
+            if self.game_pins_waiter is None or self.game_pins_waiter.is_finished:
+                self.game_pins_waiter = self.wait_to_place_map_pins()
+        return {"status": "ok", "waiting": True}
 
-    @work(group="game-map-pins", exclusive=True)
+    async def type_addon_jobs(self, jobs: list[AddonJob]) -> dict:
+        """Types each job in turn, WoW having just been seen in front, and reports each one. Returns
+        {job: error} for those that weren't (fully) typed. The caller holds game_typing_lock."""
+        failures = {}
+        for index, job in enumerate(jobs):
+            try:
+                await self.type_map_pins(job.lines, checked=index == 0)
+            except OSError as error:
+                failures[job] = error
+                self.map_pins_failed(job, error)
+                continue
+            self.map_pins_placed(job)
+        return failures
+
+    async def type_map_pins(self, lines: list[str], checked: bool = True) -> None:
+        """Each line as its own Enter, line, Enter batch; checked: WoW was just seen in front, so the
+        first line needn't look again. OSError when WoW isn't in front for a line; for a route the addon
+        then places nothing, as it only places a route at its last line. The caller holds
+        game_typing_lock."""
+        for index, line in enumerate(lines):
+            if (index or not checked) and not await asyncio.to_thread(game_in_front):
+                raise OSError("WoW stopped being the window in front part-way, so nothing was placed"
+                              if index else "WoW wasn't the window in front, so nothing was typed")
+            await asyncio.to_thread(type_into_game, line)
+            if index < len(lines) - 1:
+                await asyncio.sleep(PIN_LINE_GAP_SECONDS)
+
+    @work(group="game-map-pins")
     async def wait_to_place_map_pins(self) -> None:
-        while not self.closing and self.game_pending_pins is not None:
-            route, lines, give_up = self.game_pending_pins
-            if monotonic() >= give_up:
-                self.game_pending_pins = None
-                self.conversation.show_note(f"Map pins not placed (WoW wasn't brought to the front): {route}")
-                self.activity.write(f"Map pins '{route}' not placed: WoW wasn't the window in front in time.",
-                                    "Map pins")
+        while not self.closing and self.game_pending_pins:
+            now = monotonic()
+            for job in [each for each in self.game_pending_pins if now >= each.give_up]:
+                self.game_pending_pins.remove(job)
+                self.map_pins_gave_up(job)
+            if not self.game_pending_pins:
                 return
             if await asyncio.to_thread(game_in_front):
-                self.game_pending_pins = None
-                try:
-                    await self.type_map_pins(lines)
-                except OSError as error:
-                    self.map_pins_failed(route, error)
-                    return
-                self.map_pins_placed(route, len(lines) - 2)
-                return
+                async with self.game_typing_lock:
+                    jobs, self.game_pending_pins = self.game_pending_pins, []
+                    await self.type_addon_jobs(jobs)
+                continue
             await asyncio.sleep(PIN_CHECK_SECONDS)
 
-    def map_pins_placed(self, route: str, count: int) -> None:
-        self.conversation.show_note(f"Cora put {count} map pin{'s' if count != 1 else ''} in WoW: {route}")
-        self.activity.write(f"Typed {count} map pin{'s' if count != 1 else ''} ('{route}') into WoW for CoraMapPins.",
-                            "Map pins")
+    def map_pins_placed(self, job: AddonJob) -> None:
+        if job.route is None:
+            self.conversation.show_note(f"Cora typed into WoW: {job.what}")
+            self.activity.write(f"Typed '{job.what}' into WoW for CoraMapPins.", "Map pins")
+            return
+        count = len(job.lines) - 2
+        plural = "s" if count != 1 else ""
+        self.conversation.show_note(f"Cora put {count} map pin{plural} in WoW: {job.route}")
+        self.activity.write(f"Typed {count} map pin{plural} ('{job.route}') into WoW for CoraMapPins.", "Map pins")
 
-    def map_pins_failed(self, route: str, error: OSError) -> None:
-        self.conversation.show_note(f"Map pins not placed in WoW: {route}")
-        self.activity.write(f"Map pins '{route}' couldn't be typed into WoW: {error}", "Map pins")
+    def map_pins_failed(self, job: AddonJob, error: OSError) -> None:
+        if job.route is None:
+            self.conversation.show_note(f"Not typed into WoW: {job.what}")
+            self.activity.write(f"'{job.what}' couldn't be typed into WoW: {error}", "Map pins")
+            return
+        self.conversation.show_note(f"Map pins not placed in WoW: {job.route}")
+        self.activity.write(f"Map pins '{job.route}' couldn't be typed into WoW: {error}", "Map pins")
+
+    def map_pins_gave_up(self, job: AddonJob) -> None:
+        if job.route is None:
+            self.conversation.show_note(f"Not typed into WoW (it wasn't brought to the front): {job.what}")
+            self.activity.write(f"'{job.what}' not typed: WoW wasn't the window in front in time.", "Map pins")
+            return
+        self.conversation.show_note(f"Map pins not placed (WoW wasn't brought to the front): {job.route}")
+        self.activity.write(f"Map pins '{job.route}' not placed: WoW wasn't the window in front in time.", "Map pins")
 
     @work(group="model-settings-save")
     async def save_game_transcription(self, choice: str) -> None:

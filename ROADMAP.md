@@ -89,7 +89,8 @@ To do on this branch:
 - [x] Claude Code 3: running sessions (Agent SDK)
 - [x] Claude Code 4a: her sessions' approvals reach you where you are
 - [x] Claude Code 4b: your own sessions' approvals through Cora (permission-request hook)
-- [ ] Rocky 1: the container and Settings
+- [x] Rocky 1a: the local model's container (Ollama on the GPU, started and stopped by Cora)
+- [ ] Rocky 1b: the Local model section in Settings (model, idle time, download, test)
 - [ ] Rocky 2: test her first, with a stand-in Rocky
 - [ ] Rocky 3: Rocky as her consultant and friend
 - [ ] Rocky 4: a direct line (if the test shows it's needed)
@@ -152,11 +153,13 @@ alone. It has an OpenAI-style endpoint, so Cora's existing client works with a d
 address. The desk's RTX 5070 (12 GB) runs models up to about 14B parameters entirely on the
 GPU, and larger ones more slowly with part of the model in system memory.
 
-1. **The container and Settings:** the compose service, plus a Local model section in
-   Settings with which model to use (for example an "abliterated" or uncensored community
-   version of an open model), how long it stays up after use, a download button and a test
-   button. Cora starts the container when she needs it and stops it after the idle time, the
-   way she starts and stops Signal's.
+1. **The container and Settings**, in two halves. *1a, the container:* *Built* (see
+   [The local model](DOCUMENTATION.md#the-local-model-rocky)): the `local-model` compose
+   service on the GPU, started when something needs it and stopped 15 minutes after, or when
+   she quits; checked on the RTX 5070 (fully on the GPU, a few seconds to start). *1b,
+   Settings:* a Local model section with which model to use (for example an "abliterated" or
+   uncensored community version of an open model), how long it stays up after use, a
+   download button with progress and a test button.
 2. **Test her first, before building the rest:** a stand-in consultant that returns fixed,
    frank answers, run against a set of real questions (frank medical, legal, drug-safety and
    adult questions, dark humour, and a few that are clearly over the line). It checks two

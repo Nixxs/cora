@@ -1401,6 +1401,30 @@ allowing it, she starts, continues and stops sessions herself.
   runs counts toward its usage limits like any session of yours. Hearing it costs nothing;
   asking her about it is an ordinary tool call in your conversation.
 
+### The local model (Rocky)
+
+Rocky, her consultant (see the [roadmap](ROADMAP.md#rocky-her-consultant)), is an open-weights
+model run by **Ollama** in Docker on the GPU. So far only its container is built: nothing uses
+it yet, and Settings and her `consult` tool come next.
+
+- **The container:** the `local-model` service in [compose.yaml](compose.yaml) (a pinned
+  `ollama/ollama` image, about 8.5 GB with its GPU libraries), under its own profile so
+  `docker compose up` leaves it alone. It gets the NVIDIA GPU (Docker Desktop's WSL 2 backend
+  passes it through with a current driver), publishes Ollama's API on 127.0.0.1 only
+  (`CORA_LOCAL_MODEL_PORT` in `.env.database`, default 11434), keeps downloaded models in the
+  `local-model-data` volume (backups leave it out), and sits on its own network: it reaches the
+  web to download models, but not the database or Signal.
+- **Started when needed, stopped when idle** ([local_model/manager.py](local_model/manager.py)):
+  whatever uses it holds it (`async with app.local_model.use() as ollama:`), which starts the
+  container if it's stopped and waits up to 90 seconds for Ollama to answer (the first start
+  downloads the image, so Docker gets up to 20 minutes for that). It's stopped 15 minutes
+  after its last use (checked every minute, never while held), when Cora quits, and, on her
+  first check after launch, if a Cora that didn't close properly left it running. A stopped
+  container holds none of the GPU's memory. Each start, stop and failure is a line in Activity.
+- **Talking to it** ([local_model/ollama.py](local_model/ollama.py)): Ollama's own API for its
+  version, the models downloaded and those loaded (with how much is on the GPU), and a chat
+  call that returns the whole reply.
+
 ### The web interface
 
 Cora on your phone, tablet or laptop, at the root of the public address: one page that looks
@@ -1526,6 +1550,7 @@ before anything else.
 | [sign_ups/](sign_ups/) | Signing up to sites: the password, the guarded session and the records. |
 | [server/](server/) | The HTTP listener, built from route groups (the public one, and Claude Code's local one). |
 | [claude_code/](claude_code/) | Hearing Claude Code: its hook route, Cora's hooks in its settings, and what each session is doing. |
+| [local_model/](local_model/) | Rocky's local model: Ollama's API, and starting and stopping its container. |
 | [web/](web/) | The web interface: pairing, routes and API, rendering, the live feed, voice relay, location, maps and the page in `static/`. |
 | [phone/](phone/) | Twilio: TwiML and the REST call, the signed routes and stream, audio conversion and the goodbye watch. |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Numbered SQL migrations. |

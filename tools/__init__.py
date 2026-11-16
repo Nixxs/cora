@@ -44,6 +44,9 @@ from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as
 from .place_wow_map_pins import (
     PlaceWowMapPinsTool, SCHEMA as WOW_PINS_SCHEMA, validate_arguments as validate_wow_pins_arguments,
 )
+from .wow_map_pins_command import (
+    SCHEMA as WOW_COMMAND_SCHEMA, WowMapPinsCommandTool, validate_arguments as validate_wow_command_arguments,
+)
 from .show_map import ShowMapTool, SCHEMA as MAP_SCHEMA, validate_arguments as validate_map_arguments
 from .where_is_person import WhereIsPersonTool, SCHEMA as WHERE_SCHEMA, validate_arguments as validate_where_arguments
 from .request_sign_up import (
@@ -71,6 +74,10 @@ async def _no_game_pins(route, lines):
     return {"status": "error", "message": "Placing map pins in the game isn't available here."}
 
 
+async def _no_game_commands(line):
+    return {"status": "error", "message": "Running map pin commands in the game isn't available here."}
+
+
 async def _no_sign_ups(url):
     return None, "Signing up isn't available here."
 
@@ -87,7 +94,7 @@ def create_tool_registry(
     kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
     look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
-    place_map_pins=_no_game_pins,
+    place_map_pins=_no_game_pins, run_map_pins_command=_no_game_commands,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -175,4 +182,7 @@ def create_tool_registry(
     # Pins on the person's WoW map, typed into the game through the push-to-talk keyboard bridge.
     wow_pins = PlaceWowMapPinsTool(get_connection, is_closing, place_map_pins, write_debug)
     registry.register(WOW_PINS_SCHEMA, validate_wow_pins_arguments, wow_pins.handle)
+    # The addon's other /cmp commands (clear, done, tracker...), one checked line, the same way.
+    wow_command = WowMapPinsCommandTool(get_connection, is_closing, run_map_pins_command, write_debug)
+    registry.register(WOW_COMMAND_SCHEMA, validate_wow_command_arguments, wow_command.handle)
     return registry

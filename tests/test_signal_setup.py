@@ -212,7 +212,7 @@ class ContainerTests(unittest.TestCase):
     def test_compose_runs_with_the_signal_profile_and_reports_dockers_last_line(self):
         with patch("messaging.container.subprocess.run") as run, \
                 patch.object(container, "ENV_FILE", MagicMock(exists=lambda: True, __str__=lambda self: ".env.database")):
-            run.return_value = SimpleNamespace(returncode=0, stderr="")
+            run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
             container._compose("up", "-d", "signal")
             command = run.call_args.args[0]
             self.assertEqual(command[:2], ["docker", "compose"])

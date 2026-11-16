@@ -31,11 +31,11 @@ SLOW_TOOLS = {"use_browser": USE_BROWSER_SECONDS}
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY, *CALL_ONLY})
 # Signal, away from the desk: nothing that needs the screen either, and not where they are (that's
 # for the web page, as are maps). Tools that change things are offered: the person approves them in the chat.
-# Not pins in their game either: they're typed in at the desk, without asking.
-SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image", "where_is_person", "show_map",
-                                      "place_wow_map_pins"}
+# Not pins in their game either, nor the pin addon's other commands: they're typed in at the desk, without asking.
+GAME_TOOLS = frozenset({"place_wow_map_pins", "wow_map_pins_command"})
+SIGNAL_EXCLUDED = STANDBY_EXCLUDED | GAME_TOOLS | {"look_at_screen", "show_web_image", "where_is_person", "show_map"}
 # The web page, often on a phone: like Signal, except that the page shows her pictures.
-WEB_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "place_wow_map_pins"}
+WEB_EXCLUDED = STANDBY_EXCLUDED | GAME_TOOLS | {"look_at_screen"}
 
 TOOL_REFUSED ='{"status": "error", "message": "That tool is not available here."}'
 TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in time; do not guess its result."}'

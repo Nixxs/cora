@@ -114,10 +114,10 @@ class SchemaTests(unittest.TestCase):
         self.assertIn("place_wow_map_pins", SIGNAL_EXCLUDED)
         self.assertIn("place_wow_map_pins", WEB_EXCLUDED)
 
-    def test_registered_last_with_a_safe_default(self):
+    def test_registered_with_a_safe_default(self):
         registry = create_tool_registry(get_connection=lambda: None, is_closing=lambda: False, shutdown=None,
                                         request_standby=None, write_debug=MagicMock(), schedule=MagicMock())
-        self.assertEqual(registry.schemas()[-1], SCHEMA)
+        self.assertEqual(registry.schemas()[-2], SCHEMA)
 
 
 def connection():
@@ -185,7 +185,7 @@ class PlacingTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("typed when the game is in front: r", self.notes(app))
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
             self.assertEqual([call.args[0] for call in typed.call_args_list], EXAMPLE_LINES)
-            self.assertIsNone(app.game_pending_pins)
+            self.assertEqual(app.game_pending_pins, [])
             self.assertIn("Cora put 3 map pins in WoW: r", self.notes(app))
 
     async def test_gives_up_if_wow_never_comes_to_the_front(self):
