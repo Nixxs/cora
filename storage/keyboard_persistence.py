@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
 
+from .claude_code_session_store import ClaudeCodeSessionStore
 from .client_store import Client, ClientStore
 from .conversation_store import ConversationStore
 from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
@@ -248,6 +249,13 @@ class KeyboardPersistence:
 
     def save_claude_code_port(self, port: int) -> None:
         AppSettingsStore(self._get_store().engine).set_claude_code_port(port)
+
+    def load_claude_code_sessions(self) -> dict[str, str]:
+        """{case-folded project folder: the last session Cora ran there}."""
+        return ClaudeCodeSessionStore(self._get_store().engine).sessions()
+
+    def save_claude_code_session(self, folder: str, session_id: str) -> None:
+        ClaudeCodeSessionStore(self._get_store().engine).remember(folder, session_id)
 
     def load_backup_copy_dir(self) -> str | None:
         """The second backup folder, "" for none, or None when never set in Settings."""

@@ -159,6 +159,27 @@ class RunnerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((tracker.sessions["s1"].state, tracker.sessions["s1"].project), (FINISHED, "site"))
         self.assertEqual(self.runner.sessions[str(self.folder).casefold()], "s1")
 
+    async def test_her_session_is_saved_once_for_after_a_restart(self):
+        saved = []
+
+        async def remember(folder, session_id):
+            saved.append((folder, session_id))
+
+        self.runner.remember = remember
+        self.runner.start("site", self.folder, "make a site")
+        await self.finished()
+        # Heard at its start and again in its result: saved the once.
+        self.assertEqual(saved, [(str(self.folder).casefold(), "s1")])
+
+    async def test_a_failed_save_doesnt_stop_the_session(self):
+        self.runner.remember = AsyncMock(side_effect=OSError("database down"))
+        self.runner.start("site", self.folder, "make a site")
+        self.assertEqual((await self.finished())["state"], "finished")
+        self.assertEqual(self.runner.sessions[str(self.folder).casefold()], "s1")
+        line, kind = self.runner.write_activity.call_args.args
+        self.assertIn("wasn't saved (OSError)", line)
+        self.assertEqual(kind, "Claude Code error")
+
     async def test_one_at_a_time(self):
         self.runner.start("site", self.folder, "make a site")
         with self.assertRaises(RuntimeError):
@@ -396,6 +417,20 @@ class RunToolTests(unittest.IsolatedAsyncioTestCase):
         self.app.claude_code_runner.sessions[str(folder).casefold()] = "hers"
         await self.run_it("continue", "cora", False, brief="more")
         self.assertEqual(self.started[-1], ("cora", folder, "more", "hers", False))
+
+    async def test_after_a_restart_she_continues_her_own_saved_session(self):
+        folder = self.root / "Development" / "cora"
+        key = str(folder).casefold()
+        # Since this launch she's run one elsewhere; the saved ones fill in behind it.
+        self.app.claude_code_runner.sessions["d:\\elsewhere"] = "this-launch"
+        ClaudeCodeMixin.remember_claude_code_sessions(self.app, {key: "before-restart",
+                                                                 "d:\\elsewhere": "older"})
+        self.assertEqual(self.app.claude_code_runner.sessions,
+                         {key: "before-restart", "d:\\elsewhere": "this-launch"})
+        # Even with one of the person's own sessions in the folder, hers is carried on, not forked.
+        self.app.claude_sessions.update({"hook_event_name": "Stop", "session_id": "vscode", "cwd": str(folder)})
+        await self.run_it("continue", "cora", False, brief="more")
+        self.assertEqual(self.started[-1], ("cora", folder, "more", "before-restart", False))
 
     async def test_one_at_a_time_and_stopping(self):
         self.app.claude_code_runner.busy = True

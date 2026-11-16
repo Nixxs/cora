@@ -79,6 +79,8 @@ class ClaudeCodeMixin:
             ask_approval=self.approve_claude_code_step, on_event=self.on_claude_code_event,
             on_done=self.claude_code_run_done, write_activity=lambda *line: self.activity.write(*line),
             schedule=lambda run, context: asyncio.get_running_loop().create_task(run, context=context),
+            remember=lambda folder, session_id: self.conversation_persistence.call_database(
+                self.persistence.save_claude_code_session, folder, session_id),
         )
         self.claude_code_server: Listener | None = None
         self.claude_code_worker = None
@@ -103,6 +105,11 @@ class ClaudeCodeMixin:
         self.claude_code_listen = saved.get("listen") is True
         if self.claude_code_listen:
             self.restart_claude_code()
+
+    def remember_claude_code_sessions(self, saved: dict[str, str]) -> None:
+        """The sessions she ran before this launch, once at launch: any she's started since are newer."""
+        runner = self.claude_code_runner
+        runner.sessions = {**saved, **runner.sessions}
 
     @work(group="claude-code-setup", exit_on_error=False)
     async def restart_claude_code(self) -> None:

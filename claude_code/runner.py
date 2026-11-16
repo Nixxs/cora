@@ -171,6 +171,7 @@ class ClaudeCodeRunner:
         write_activity: Callable[[str, str], None], schedule: Callable,
         client_factory: Callable = default_client, options_factory: Callable = default_options,
         clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+        remember: Callable[[str, str], Awaitable[None]] | None = None,
     ) -> None:
         # ask_approval(project, tool, shown input) -> APPROVED, DECLINED or TIMED_OUT (Cora's approval
         # prompts, wherever you are).
@@ -185,8 +186,12 @@ class ClaudeCodeRunner:
         self.client_factory = client_factory
         self.options_factory = options_factory
         self.clock = clock
+        # remember(case-folded folder, session id): kept across restarts (the database); None keeps
+        # them for this run of Cora only.
+        self.remember = remember
         self.current: Run | None = None
-        # The last session Cora ran in each project folder (this run of Cora only), to continue it.
+        # The last session Cora ran in each project folder, to continue it (filled from the database
+        # at launch).
         self.sessions: dict[str, str] = {}
 
     @property
@@ -237,6 +242,21 @@ class ClaudeCodeRunner:
             return PermissionResultDeny(message=UNANSWERED_STEP if outcome == TIMED_OUT else DECLINED_STEP)
         return permit
 
+    async def keep(self, run: Run) -> None:
+        """Its session, as this folder's to continue: saved for after a restart when it's new. A
+        failed save only means a restart forgets it, so the session carries on regardless."""
+        folder = str(run.folder).casefold()
+        if not run.session_id or self.sessions.get(folder) == run.session_id:
+            return
+        self.sessions[folder] = run.session_id
+        if self.remember is None:
+            return
+        try:
+            await self.remember(folder, run.session_id)
+        except Exception as error:
+            self.write_activity(f"Claude Code's session in {run.project} wasn't saved ({type(error).__name__}), "
+                                "so she won't find it to continue after a restart.", "Claude Code error")
+
     def event(self, run: Run, name: str, **fields) -> None:
         if run.session_id:
             self.on_event({"hook_event_name": name, "session_id": run.session_id, "cwd": str(run.folder), **fields})
@@ -253,7 +273,7 @@ class ClaudeCodeRunner:
                 async for message in client.receive_response():
                     if isinstance(message, SystemMessage) and message.subtype == "init":
                         run.session_id = str(message.data.get("session_id") or "")
-                        self.sessions[str(run.folder).casefold()] = run.session_id
+                        await self.keep(run)
                         self.event(run, "UserPromptSubmit", prompt=run.brief)
                     elif isinstance(message, AssistantMessage) and message.parent_tool_use_id is None:
                         said = " ".join(block.text for block in message.content if isinstance(block, TextBlock))
@@ -261,7 +281,7 @@ class ClaudeCodeRunner:
                             run.last_text = said
                     elif isinstance(message, ResultMessage):
                         run.session_id = run.session_id or message.session_id
-                        self.sessions[str(run.folder).casefold()] = run.session_id
+                        await self.keep(run)
                         text = message.result or run.last_text
                         state = "failed" if message.is_error else "finished"
             if run.stopping:

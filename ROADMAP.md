@@ -125,8 +125,9 @@ Cora's environment (it would take over) and never bare mode (it ignores the subs
    in the projects folders chosen in Settings. Each start is approved; Claude edits its
    project's files freely and asks (through her approval prompt) for anything else. She
    tells you when it's done. Continuing one of your own sessions forks it, so the two don't
-   write into one transcript. Still to come: remembering her sessions across restarts. You can
-   follow any session (click it at the desk or on the web page) as it works.
+   write into one transcript. Which session she last ran in each project is kept in the
+   database, so "continue" carries on hers after a restart. You can follow any session (click
+   it at the desk or on the web page) as it works.
 4. **Approving from anywhere**, in two halves:
    - *4a, her sessions.* *Built*: what a session she runs needs approving is asked where you
      are: the desk's pop-up while she's active, your Signal chat (reply YES) while she's in

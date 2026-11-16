@@ -1362,8 +1362,11 @@ allowing it, she starts, continues and stops sessions herself.
   project folder (`create`, in the first folder or the one named by `location`, such as
   `AddOns`; letters, numbers, spaces, `.`, `-`, `_`, up to 60) or uses an existing one found
   by name directly inside a projects folder; `continue` resumes the last session she ran
-  there this run of Cora, or else forks your newest session there (`fork_session`, so it
-  doesn't write into a transcript VS Code has open); `stop` interrupts hers. Starting and
+  there, or else forks your newest session there (`fork_session`, so it doesn't write into a
+  transcript VS Code has open). Which session she last ran in each folder is kept in the
+  database (`claude_code_sessions`, [storage/claude_code_session_store.py](storage/claude_code_session_store.py)),
+  so it survives a restart; a folder she hasn't run in for 30 days is forgotten, as Claude
+  Code clears its transcripts after 30 days by default; `stop` interrupts hers. Starting and
   continuing each wait for your approval of the project, folder and brief (the usual
   approval prompt: the desk's pop-up, or your Signal chat when you asked from there). One
   session at a time.

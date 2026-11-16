@@ -100,6 +100,13 @@ class LiveSessionMixin:
         except Exception as error:
             self.activity.write(f"Claude Code settings unavailable ({type(error).__name__}).", "Settings")
         try:
+            self.remember_claude_code_sessions(
+                await self.conversation_persistence.call_database(self.persistence.load_claude_code_sessions))
+        except Exception as error:
+            # Without them, "continue" carries on the person's newest session in that folder instead.
+            self.activity.write(f"Claude Code's earlier sessions unavailable ({type(error).__name__}).",
+                                "Claude Code")
+        try:
             saved = await self.conversation_persistence.call_database(self.persistence.load_standby_settings)
             gap = await self.conversation_persistence.call_database(self.persistence.load_conversation_gap)
             twilio_region = await self.conversation_persistence.call_database(self.persistence.load_twilio_region)

@@ -1177,3 +1177,19 @@ class DesireWorkerStateRecord(Base):
     id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, default=1, server_default="1")
     last_reflected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+
+
+class ClaudeCodeSessionRecord(Base):
+    """The last Claude Code session Cora ran in a project folder (case-folded), to continue it."""
+
+    __tablename__ = "claude_code_sessions"
+    __table_args__ = (
+        CheckConstraint("btrim(folder) <> '' AND char_length(folder) <= 1000",
+                        name="claude_code_sessions_folder_check"),
+        CheckConstraint("session_id ~ '^[A-Za-z0-9_-]{1,100}$'", name="claude_code_sessions_session_id_check"),
+        {"schema": "public"},
+    )
+
+    folder: Mapped[str] = mapped_column(Text, primary_key=True)
+    session_id: Mapped[str] = mapped_column(Text)
+    ran_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
