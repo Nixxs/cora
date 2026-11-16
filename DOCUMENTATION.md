@@ -473,6 +473,35 @@ watching the game, with her reacting to what happens.
   where you are when you say "this is cozy". It's sent as an appended instruction
   (`session.instructions.append`) that tells her to say nothing: as a thinking note it made her
   speak every time, with where you were and what to do next, twice over when two notes were close.
+- **Map pins in the game** ([tools/place_wow_map_pins.py](tools/place_wow_map_pins.py),
+  [game/map_pins.py](game/map_pins.py)): when you ask where something is in the game or to mark a
+  quest's steps, and she has coordinates from a reliable source, she calls `place_wow_map_pins`
+  (a route name and 1-10 steps of zone, x, y and label, in order). Numbered pins appear on your map,
+  along with the CoraMapPins addon's next-step box (the addon is in
+  `F:\World of Warcraft\_forever_\Interface\AddOns\CoraMapPins`; see its README).
+  - **How it gets in:** through the same keyboard bridge as push-to-talk. The route becomes the
+    addon's own commands (`/cmp cora begin <count> <route>`, then one `/cmp cora pin <zone> <x>
+    <y> <label>` per step, then `/cmp cora end`), each typed as its own Enter, line, Enter batch.
+    The batches are 0.15 seconds apart, and a push-to-talk line never lands inside them.
+  - **When it's typed:** only while `Wow.exe` is in front. If it isn't (you typed the question in
+    her window), the pins wait up to 2 minutes for you to switch to the game, and the chat shows a
+    line either way. If the game leaves the front part-way, typing stops before `end`.
+  - **What can be typed:** every value is checked:
+    - the zone must be a name of letters, spaces, `'` or `-`, and is refused rather than "cleaned"
+    - x and y must be numbers from 0 to 100
+    - labels and the route name are cut to one line of plain text with no `|`
+
+    Nothing she says can become a chat message or any other command.
+  - **What she learns:** the game doesn't answer, so she's told the pins were typed, not that they
+    appeared. In the game, one chat line confirms them, and the addon places nothing until `end`,
+    so a cut-off batch changes nothing.
+  - **No approval is asked**, unlike other tools that change things outside Cora. You ask for the
+    pins while playing, approving would mean leaving the game, and she can only type those three
+    commands.
+  - **Where it's offered:** at the desk and in Live, but not on Signal or the web page. It's offered
+    whatever Settings > Game says, because it doesn't need push-to-talk switched on.
+  - **The risk it shares with push-to-talk:** if you're halfway through typing in WoW's chat, her
+    first Enter sends what you'd typed.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in

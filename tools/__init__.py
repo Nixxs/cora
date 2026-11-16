@@ -41,6 +41,9 @@ from .end_call import SCHEMA as END_CALL_SCHEMA, EndCallTool, validate_arguments
 from .call_someone import SCHEMA as CALL_SOMEONE_SCHEMA, CallSomeoneTool, validate_arguments as validate_call_arguments
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
+from .place_wow_map_pins import (
+    PlaceWowMapPinsTool, SCHEMA as WOW_PINS_SCHEMA, validate_arguments as validate_wow_pins_arguments,
+)
 from .show_map import ShowMapTool, SCHEMA as MAP_SCHEMA, validate_arguments as validate_map_arguments
 from .where_is_person import WhereIsPersonTool, SCHEMA as WHERE_SCHEMA, validate_arguments as validate_where_arguments
 from .request_sign_up import (
@@ -64,6 +67,10 @@ async def _no_claude_code_runs(action, project, create, location, brief):
     return {"status": "error", "message": "Running Claude Code isn't available here."}
 
 
+async def _no_game_pins(route, lines):
+    return {"status": "error", "message": "Placing map pins in the game isn't available here."}
+
+
 async def _no_sign_ups(url):
     return None, "Signing up isn't available here."
 
@@ -80,6 +87,7 @@ def create_tool_registry(
     kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
     look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
+    place_map_pins=_no_game_pins,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -164,4 +172,7 @@ def create_tool_registry(
     # The person's own chats only: clients' chats and task work offer allowlists without it.
     note_detail = NoteDetailTool(get_connection, is_closing, write_debug)
     registry.register(NOTE_DETAIL_SCHEMA, validate_note_detail_arguments, note_detail.handle)
+    # Pins on the person's WoW map, typed into the game through the push-to-talk keyboard bridge.
+    wow_pins = PlaceWowMapPinsTool(get_connection, is_closing, place_map_pins, write_debug)
+    registry.register(WOW_PINS_SCHEMA, validate_wow_pins_arguments, wow_pins.handle)
     return registry

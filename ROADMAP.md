@@ -274,10 +274,20 @@ lore. One small step at a time, each runnable:
    `_forever_/Logs`); still to check how quickly it reaches the disk, and whether `/chatlog`
    and `QuestCache.log` (quest ids) help. Forever's addons can't read the combat log or health
    in combat, so no addon.
+7. **Map pins.** *Built* (see [Playing games](DOCUMENTATION.md#playing-games)).
+   `place_wow_map_pins` types routes into the game for the CoraMapPins addon (labelled,
+   numbered pins and a next-step box), as its `/cmp cora` commands through push-to-talk's
+   keyboard bridge. Checked offline against the addon's own tests (a shared example).
+   To check in the game:
+   - that the typed `/cmp cora` lines run, with one "Cora placed" line in chat
+   - that she only places pins when asked, and with coordinates she looked up rather than
+     guessed
+   - that nothing is typed while you're writing in WoW's chat
 
 Later, a **game profile** per game (its process, questions, screen regions, chat command and
 feeds) would let the same parts work for other games; typing into games with kernel
-anti-cheat stays off. Cora never sends input to a game on her own.
+anti-cheat stays off. Cora only sends input to a game when the person does (push-to-talk)
+or asks for map pins (only the addon's own commands), never to chat on her own.
 
 ### Installable Cora (paused)
 

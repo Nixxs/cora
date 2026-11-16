@@ -325,6 +325,7 @@ class CoraApp(
             place_call=lambda *args, **options: self.place_task_call(*args, **options),
             look_at_claude_code=lambda project, recent: self.look_at_claude_code(project, recent),
             run_claude_code=lambda *args: self.run_claude_code(*args),
+            place_map_pins=lambda route, lines: self.place_game_map_pins(route, lines),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
