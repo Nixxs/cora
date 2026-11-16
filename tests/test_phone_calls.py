@@ -362,7 +362,7 @@ class PhoneCallAppTests(unittest.IsolatedAsyncioTestCase):
                 outcome = await app.confirmations.ask("tasks", "send_email", {"to": "a@example.com"}, title="Email")
                 self.assertEqual(outcome, APPROVED)
                 self.assertEqual(asked, [("+61400000009", YOU, "send_email")])
-                told.assert_called_once_with("Email", "send_email", on_signal=True)
+                told.assert_called_once_with("Email", "send_email", on_signal=True, on_behalf=None)
                 pop_up.assert_not_called()
             # Without Signal linked, it waits on the desk instead.
             app.signal.status = SignalStatus(NOT_LINKED)

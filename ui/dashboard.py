@@ -7,6 +7,7 @@ from textual.containers import Horizontal, HorizontalGroup, HorizontalScroll, Ve
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
+from claude_code.sessions import NEEDS_YOU
 from context_window import BACKEND, VOICE, short_tokens
 from devices.audio_bands import BAND_COUNT
 from memory.store import fade_weight
@@ -16,6 +17,8 @@ from subconscious.emotions.feeling_rules import FEELING_WORDS, FEELINGS, band
 from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
+from ui.claude_code_view import ClaudeSessionList
+from ui.when import ago, whole_unit
 from ui.composer import ChatComposer
 from ui.context_view import ContextScreen, DetailScreen
 from ui.meters import (
@@ -40,6 +43,7 @@ SIGN_UP_STYLES = {"done": "#8fc49a", "signing_up": "#7fb8d8", "confirm_email": "
                   "failed": "#d27a7a"}
 SIGN_UP_STATES = {"done": "signed up", "signing_up": "signing up", "confirm_email": "confirm email",
                   "blocked": "blocked", "failed": "failed"}
+# A Claude Code session's dot, and the order they're listed in: what needs you first.
 # A desire's strength: bright once she's working toward it, softer while held, dim while forming.
 DESIRE_STYLES = {"pursuing": "#e0b45c", "held": "#c9a86a"}
 DESIRE_STATES = {"pursuing": "pursuing", "held": "held", "candidate": "forming"}
@@ -66,23 +70,8 @@ BOX_TITLES = {
     "tasks-box": "tasks",
     "context-box": "context",
     "background-box": "background",
+    "claude-code-box": "claude code",
 }
-
-
-def whole_unit(seconds: float) -> str | None:
-    """The largest whole unit, like '5m', '3h' or '2d'; None under a minute."""
-    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
-        if seconds >= size:
-            return f"{int(seconds // size)}{unit}"
-    return None
-
-
-def ago(then, now) -> str:
-    """How long ago: 'never', 'just now', '5m ago', '3h ago', '2d ago'."""
-    if then is None:
-        return "never"
-    span = whole_unit((now - then).total_seconds())
-    return f"{span} ago" if span else "just now"
 
 
 def until(when, now) -> str:
@@ -189,8 +178,10 @@ class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
     def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
-                 load_spend=None) -> None:
+                 load_spend=None, claude_sessions=None) -> None:
         super().__init__()
+        # Returns Claude Code's sessions (newest first), or None while Cora isn't listening for them.
+        self.claude_sessions = claude_sessions
         # Reads (Spend or None, message, hint) for the spend chart off the UI thread; None leaves it out.
         self.load_spend = load_spend
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
@@ -236,6 +227,12 @@ class DashboardScreen(Screen):
                         yield Static("─", classes="voice-line")
                         yield Button("🎙 mic", id="dashboard-mic")
                         yield Static("─╯", classes="voice-line")
+                # Shown while Cora listens for Claude Code; the voice box gives up the room.
+                with Vertical(id="claude-code-box", classes="dashboard-box"):
+                    # One entry per session; a click follows it in a pop-up.
+                    yield ClaudeSessionList(
+                        lambda: self.claude_sessions() if self.claude_sessions is not None else None,
+                        id="dashboard-claude-scroll")
                 with Vertical(id="chat-box", classes="dashboard-box"):
                     yield SelectableRichLog(id="dashboard-chat", wrap=True, min_width=1)
                     yield BorderLine(id="dashboard-input-line")
@@ -335,6 +332,8 @@ class DashboardScreen(Screen):
             self.set_interval(SPEND_REFRESH_SECONDS, self.refresh_spend)
         self.show_context()
         self.set_interval(1, self.show_context)
+        self.show_claude_code()
+        self.set_interval(1, self.show_claude_code)
 
     @work(group="dashboard-spend", exclusive=True)
     async def refresh_spend(self) -> None:
@@ -453,6 +452,16 @@ class DashboardScreen(Screen):
             return
         for item, task in zip(shown, tasks):
             item.show(task_text(task, now), task_detail(task, now))
+
+    def show_claude_code(self) -> None:
+        sessions = self.claude_sessions() if self.claude_sessions is not None else None
+        self.query_one("#dashboard-top").set_class(sessions is not None, "with-claude-code")
+        if sessions is None:
+            return
+        self.query_one("#dashboard-claude-scroll", ClaudeSessionList).show(sessions, datetime.now(timezone.utc))
+        waiting = sum(session.state == NEEDS_YOU for session in sessions)
+        self.query_one("#claude-code-box").border_subtitle = (
+            f"{waiting} need{'s' if waiting == 1 else ''} you" if waiting else "")
 
     def show_context(self) -> None:
         started = bool(self.context.startup)

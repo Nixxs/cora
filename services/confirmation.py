@@ -27,6 +27,9 @@ class ConfirmationRequest:
     arguments: dict
     # What the pop-up and Cora's notes call it: a service's title, or a name for one of Cora's own tools.
     given_title: str | None = None
+    # Who asked, when it isn't one of Cora's own tool calls (Claude Code, working for the person): she
+    # gets her own outcomes as tool results, so she's told about these separately.
+    on_behalf: str | None = None
     id: int = field(default_factory=lambda: next(_ids))
     answer: asyncio.Future = field(default_factory=lambda: asyncio.get_running_loop().create_future())
 
@@ -58,18 +61,22 @@ class Confirmations:
         self.remind_after = remind_after
         self.waiting: list[ConfirmationRequest] = []
 
-    async def ask(self, service_id: str, tool: str, arguments: dict, title: str | None = None) -> str:
+    async def ask(self, service_id: str, tool: str, arguments: dict, title: str | None = None,
+                  route=None, on_behalf: str | None = None) -> str:
         """Wait for the person's answer: APPROVED, DECLINED or TIMED_OUT.
 
         `title` names one of Cora's own tools' areas (such as Signal); a service's comes from the catalogue.
         A call from a chat that asks in the chat (the person's own Signal) is asked there instead of
-        with the pop-up; only their own reply answers it.
+        with the pop-up; only their own reply answers it. `route` asks somewhere chosen by the caller
+        instead (Claude Code's requests, on Signal while she's in standby). `on_behalf` names who asked
+        when it isn't Cora herself (see ConfirmationRequest).
         """
         # Imported here: the tools package imports this module, so a top-level import would be circular.
         from tools.route import current_route
 
-        request = ConfirmationRequest(service_id, tool, dict(arguments), title)
-        route = current_route.get()
+        request = ConfirmationRequest(service_id, tool, dict(arguments), title, on_behalf)
+        if route is None:
+            route = current_route.get()
         if route is None:
             route = self.elsewhere()
         if route is not None and getattr(route, "ask_approval", None) is not None:

@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Engine
 
+from .claude_code_session_store import ClaudeCodeSessionStore
 from .client_store import Client, ClientStore
 from .conversation_store import ConversationStore
 from .dashboard_snapshot import DashboardSnapshot, read_dashboard_snapshot
@@ -223,6 +224,38 @@ class KeyboardPersistence:
 
     def save_game_vocabulary(self, words: str) -> None:
         AppSettingsStore(self._get_store().engine).set_game_vocabulary(words)
+
+    def load_claude_code_settings(self) -> dict:
+        """{"listen": bool, "port": int, "tell": str, "transcripts": bool} from Settings > Claude Code."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"listen": store.claude_code_listen(), "port": store.claude_code_port(),
+                "tell": store.claude_code_tell(), "transcripts": store.claude_code_transcripts(),
+                "run": store.claude_code_run(), "folders": store.claude_code_folders()}
+
+    def save_claude_code_run(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_run(on)
+
+    def save_claude_code_folders(self, folders: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_folders(folders)
+
+    def save_claude_code_transcripts(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_transcripts(on)
+
+    def save_claude_code_tell(self, choice: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_tell(choice)
+
+    def save_claude_code_listen(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_listen(on)
+
+    def save_claude_code_port(self, port: int) -> None:
+        AppSettingsStore(self._get_store().engine).set_claude_code_port(port)
+
+    def load_claude_code_sessions(self) -> dict[str, str]:
+        """{case-folded project folder: the last session Cora ran there}."""
+        return ClaudeCodeSessionStore(self._get_store().engine).sessions()
+
+    def save_claude_code_session(self, folder: str, session_id: str) -> None:
+        ClaudeCodeSessionStore(self._get_store().engine).remember(folder, session_id)
 
     def load_backup_copy_dir(self) -> str | None:
         """The second backup folder, "" for none, or None when never set in Settings."""

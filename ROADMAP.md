@@ -79,7 +79,20 @@ Nothing is broken; these keep things healthy as she grows.
 ## Experiments (the `experiments` branch)
 
 Built on their own branch, outside the feature freeze, in small steps that can each be tried
-before the next.
+before the next. Each piece gets a sub-branch off `experiments`.
+
+To do on this branch:
+
+- [x] Claude Code 1a: hearing sessions (hooks, a listener of its own, Settings > Claude Code)
+- [x] Claude Code 1b: the dashboard panel, and telling you when one finishes or needs you
+- [x] Claude Code 2: asking about them
+- [x] Claude Code 3: running sessions (Agent SDK)
+- [x] Claude Code 4a: her sessions' approvals reach you where you are
+- [x] Claude Code 4b: your own sessions' approvals through Cora (permission-request hook)
+- [ ] Rocky 1: the container and Settings
+- [ ] Rocky 2: test her first, with a stand-in Rocky
+- [ ] Rocky 3: Rocky as her consultant and friend
+- [ ] Rocky 4: a direct line (if the test shows it's needed)
 
 ### Claude Code
 
@@ -90,28 +103,49 @@ address, and the **Claude Agent SDK** (Python), which runs Claude Code from insi
 Both run on your Claude subscription, never a per-token API key: no `ANTHROPIC_API_KEY` in
 Cora's environment (it would take over) and never bare mode (it ignores the subscription).
 
-1. **Watching sessions:** HTTP hooks in the user Claude Code settings send session start and
-   end, finished, waiting for input and permission requests to a new address on Cora's
-   listener (with a token). Sessions in VS Code and the terminal are covered too. A Claude
-   Code panel at the desk shows each session by project and what it's doing, and Cora lets
-   you know (Signal or wherever you are) when one finishes or is waiting on you. No new
-   libraries.
-2. **Asking about them:** a tool for listing recent sessions by project and saying what's
-   going on in one ("what's Claude doing in cora?").
-3. **Running sessions:** an Agent SDK service, following the MCP services' pattern (a
-   switch in Settings, one long-lived task, status in the activity log). It starts or
-   resumes a session in a project folder, streams progress to the panel and can interrupt.
-   Resuming a session that's also open in VS Code forks it, so the two don't write into
-   one transcript.
-4. **Approving from anywhere:** Claude Code's permission requests come through the Agent
-   SDK's permission callback (and the permission-request hook for VS Code sessions) to
-   Cora's existing approval prompts, so you can approve or refuse from Signal, the web
-   page or the desk.
+1. **Watching sessions**, in two halves:
+   - *1a, hearing them.* *Built* (see [Claude Code](DOCUMENTATION.md#claude-code)): background
+     command hooks in your Claude Code user settings post session start and end, prompts,
+     finished, failed and "needs you" to a listener of its own on 127.0.0.1:8001, with a token.
+     It's never the public listener, which Caddy forwards to the internet. HTTP hooks were
+     passed over: they don't run on SessionStart, and they'd fail visibly whenever Cora is
+     closed. Settings > Claude Code adds and removes the hooks and lists the sessions, and
+     Activity gets a line for each change. Checked with real VS Code and headless sessions.
+   - *1b, telling you.* *Built*: a claude code box on the dashboard (between voice and chat,
+     while listening), and Cora letting you know (voice, or Signal when you're away) about a
+     session left needing you, finished or failed for 3 minutes, chosen in Settings. A
+     `PostToolUse` hook tells her you've answered, so she doesn't chase what you already
+     approved. Permission requests (the `PermissionRequest` hook) wait for step 4.
+2. **Asking about them:** *Built*: her `claude_code` tool lists recent sessions, or one
+   project's ("what's Claude doing in cora?"), and, with **Let her read transcripts** on in
+   Settings (off by default, since what she reads goes to OpenAI), the last few exchanges of
+   that project's newest session.
+3. **Running sessions:** *Built*: her `run_claude_code` tool starts (a new project or an
+   existing one), continues or stops a session through the Agent SDK, on your subscription,
+   in the projects folders chosen in Settings. Each start is approved; Claude edits its
+   project's files freely and asks (through her approval prompt) for anything else. She
+   tells you when it's done. Continuing one of your own sessions forks it, so the two don't
+   write into one transcript. Which session she last ran in each project is kept in the
+   database, so "continue" carries on hers after a restart. You can follow any session (click
+   it at the desk or on the web page) as it works.
+4. **Approving from anywhere**, in two halves:
+   - *4a, her sessions.* *Built*: what a session she runs needs approving is asked where you
+     are: the desk's pop-up while she's active, your Signal chat (reply YES) while she's in
+     standby, the desk without Signal linked. Unanswered, Claude is told you may be away and
+     carries on without it.
+   - *4b, your sessions.* *Built*: a `PermissionRequest` hook for VS Code and terminal
+     sessions asks Cora first. While she's in standby she asks you on Signal and gives Claude
+     Code your answer; otherwise, or with no answer in 10 minutes, or with Cora closed, Claude
+     Code asks you itself as usual.
 
-### A private local model
+### Rocky, her consultant
 
-An uncensored open-weights model Cora can ask when you want an answer her main model won't
-give. It's off most of the time and only runs when needed. **Ollama** runs in Docker, like
+**Rocky** is an uncensored open-weights model running locally, and Cora treats him as her
+consultant and her friend. He's a bit slow and very friendly, and he knows all about the
+seedier side of life. A small local model won't be as sharp as her, and his persona owns
+that: she goes to him for the frank answer, not the clever one, and she's fond of him. She
+asks him when you want an answer her main model won't give. He's off most of the time and
+only runs when needed. **Ollama** runs in Docker, like
 the browser and Signal: a `local-model` profile in [compose.yaml](compose.yaml) with the GPU
 passed through and a volume for the downloaded models, so `docker compose up` leaves it
 alone. It has an OpenAI-style endpoint, so Cora's existing client works with a different
@@ -129,15 +163,16 @@ GPU, and larger ones more slowly with part of the model in system memory.
    things: whether she passes the question on in full or refuses or waters it down, and
    whether she relays the answer or softens it. The result decides how much of step 4 is
    needed.
-3. **A consultant, not a tool:** he has his own name and persona (his system prompt), and she
-   talks with him: a `consult` tool keeps a thread going, so she can follow up, push back
+3. **A consultant and friend, not a tool:** Rocky's persona is his system prompt, and her
+   notes describe him as her consultant and friend, so she talks with him the way she would
+   with a friend: a `consult` tool keeps a thread going, so she can follow up, push back
    or ask him to explain, and a new topic starts a new thread. He's offered only while
    switched on (like `show_map`). She goes to him when you ask, or when she'd otherwise
    refuse. The thread is shown word for word at the desk and on the web page as it happens,
    and her tool description says you see his answers yourself, so she gives her own view
    rather than retelling (or softening) his.
-4. **A direct line, if the test shows it's needed:** typing "@consultant …" (or his name) at
-   the desk or on the web page sends your words straight to him, and his answer is shown to
+4. **A direct line, if the test shows it's needed:** typing "@rocky …" at the desk or on
+   the web page sends your words straight to him, and his answer is shown to
    you, so neither the question nor the answer reaches OpenAI. Talking to him by voice
    without OpenAI would need local speech (faster-whisper, already used for the wake word,
    plus a local voice), which belongs with [Local models, after 1.0](#local-models-after-10).
@@ -240,10 +275,20 @@ lore. One small step at a time, each runnable:
    `_forever_/Logs`); still to check how quickly it reaches the disk, and whether `/chatlog`
    and `QuestCache.log` (quest ids) help. Forever's addons can't read the combat log or health
    in combat, so no addon.
+7. **Map pins.** *Built* (see [Playing games](DOCUMENTATION.md#playing-games)).
+   `place_wow_map_pins` types routes into the game for the CoraMapPins addon (labelled,
+   numbered pins and a next-step box), as its `/cmp cora` commands through push-to-talk's
+   keyboard bridge. Checked offline against the addon's own tests (a shared example).
+   To check in the game:
+   - that the typed `/cmp cora` lines run, with one "Cora placed" line in chat
+   - that she only places pins when asked, and with coordinates she looked up rather than
+     guessed
+   - that nothing is typed while you're writing in WoW's chat
 
 Later, a **game profile** per game (its process, questions, screen regions, chat command and
 feeds) would let the same parts work for other games; typing into games with kernel
-anti-cheat stays off. Cora never sends input to a game on her own.
+anti-cheat stays off. Cora only sends input to a game when the person does (push-to-talk)
+or asks for map pins (only the addon's own commands), never to chat on her own.
 
 ### Installable Cora (paused)
 

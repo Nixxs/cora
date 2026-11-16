@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -5,6 +6,7 @@ from rich.text import Text
 from textual.app import ComposeResult
 from textual.compose import compose
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.events import Click
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
@@ -87,6 +89,115 @@ class GameControls:
     # How often she reacts to what she sees: "off" (only records), "quiet", "normal" or "chatty".
     chattiness: str = "normal"
     save_chattiness: Callable[[str], None] = lambda level: None
+
+
+@dataclass
+class ClaudeCodeControls:
+    """Settings > Claude Code: hearing your Claude Code sessions; the app owns the listener and the hooks."""
+
+    # status() -> (the listener's line, "" when off; the hooks' (state, line)).
+    status: Callable[[], tuple[str, tuple[str, str]]]
+    # sessions() -> what each session is doing (claude_code.sessions.ClaudeSession), newest first.
+    sessions: Callable[[], list]
+    set_listen: Callable[[bool], None]
+    # save_port(port as typed): the app checks it and says if not.
+    save_port: Callable[[str], None]
+    add_hooks: Callable[[], None]
+    remove_hooks: Callable[[], None]
+    listen: bool = False
+    port: int = 8001
+    # Which sessions left waiting she tells you about: "all", "needs" or "off".
+    tell: str = "all"
+    save_tell: Callable[[str], None] = lambda choice: None
+    # Whether her claude_code tool may read the end of a session's transcript.
+    transcripts: bool = False
+    save_transcripts: Callable[[bool], None] = lambda on: None
+    # Whether she may run sessions herself, and the folders their projects live in.
+    run: bool = False
+    save_run: Callable[[bool], None] = lambda on: None
+    folders: list = field(default_factory=list)
+    # save_folders(folders as typed, separated by ';'): the app checks each and says if not.
+    save_folders: Callable[[str], None] = lambda text: None
+    # run_status() -> a line on whether she can run them now (signed in, no API key) and what's running.
+    run_status: Callable[[], str] = lambda: ""
+
+
+CLAUDE_CODE_HELP = (
+    "Cora hears what your Claude Code sessions are doing, in the terminal, VS Code or the desktop app: "
+    "when one starts, finishes, needs you or ends. Claude Code's hooks post each event to Cora on this PC "
+    "only, on a port of its own that your proxy never forwards, with a token. Sessions show on the dashboard, "
+    "here and in Activity, and you can ask her about them."
+)
+CLAUDE_CODE_TRANSCRIPTS_HELP = (
+    "Ask her what's going on in a project and she sees each session's state and one line of detail. "
+    "With this on, she can also read the last few exchanges of a session's transcript when that line "
+    "isn't enough: your messages, Claude's replies and the tools it used (never its thinking or the "
+    "tools' output). What she reads goes to OpenAI with your question, so it can include code and "
+    "file names from your projects. Activity notes each time she reads one."
+)
+CLAUDE_CODE_RUN_HELP = (
+    "Ask her to have Claude build or change something (\"get Claude to make me a WoW addon that...\") and "
+    "she starts a Claude Code session for you, after you approve its brief. It runs in the background on "
+    "your Claude subscription, never an API key, one at a time; she tells you when it's done. It runs in "
+    "Claude Code's auto mode: routine work in its folder goes ahead, risky steps are blocked, and what "
+    "still needs you comes for approval: on the desk while she's active, on Signal while she's in standby. "
+    "Big jobs use a good part of your subscription's usage window. For a "
+    "sign-in that lasts, run claude setup-token and put the token in Cora's environment as "
+    "CLAUDE_CODE_OAUTH_TOKEN."
+)
+CLAUDE_CODE_FOLDERS_HELP = (
+    "Full paths, separated by ;. New projects go in the first unless she's asked for another (such as "
+    "World of Warcraft's _retail_\\Interface\\AddOns for addons); she can carry on any project folder "
+    "inside them."
+)
+CLAUDE_CODE_TELL_LABELS = {
+    "all": "When one needs me, finishes or fails",
+    "needs": "Only when one needs me or fails",
+    "off": "Never",
+}
+CLAUDE_CODE_TELL_HELP = (
+    "Once a session has sat that way for 3 minutes without you, so working at your desk doesn't set "
+    "it off. By voice while she's active, otherwise on Signal. Once each time."
+)
+CLAUDE_CODE_HOOKS_HELP = (
+    "Added to your Claude Code user settings (.claude/settings.json in your home folder), so they cover "
+    "every project. Only Cora's entries are changed, and a copy of the file as it was is kept beside it "
+    "(settings.json.cora-backup). They run in the background, so Claude never waits on them, and do "
+    "nothing while Cora is closed. One runs after each tool Claude uses, so she knows once you've "
+    "answered it. One isn't in the background: when Claude is about to ask your permission, it checks "
+    "with Cora first. While she's in standby she asks you on Signal and answers for you; otherwise, or "
+    "with Cora closed, Claude Code asks you as usual. The file holds the hook token."
+)
+
+
+def claude_code_line(listening: str, listen: bool) -> Text:
+    if not listen:
+        return Text("○ Off", style=DIM)
+    if listening.startswith("Listening"):
+        return Text(f"● {listening}", style=GOOD)
+    return Text(f"× {listening}", style=BAD) if listening else Text("◌ Starting…", style=BUSY)
+
+
+def claude_hooks_line(state: str, line: str) -> Text:
+    if not state:
+        return Text("◌ Checking…", style=BUSY)
+    style, mark = {"current": (GOOD, "●"), "missing": (WARN, "○"), "outdated": (WARN, "○")}.get(state, (BAD, "×"))
+    return Text(f"{mark} {line}", style=style)
+
+
+def claude_sessions_text(sessions: list) -> Text:
+    if not sessions:
+        return Text("No sessions heard since Cora started.", style=DIM)
+    text = Text()
+    for index, session in enumerate(sessions):
+        when = session.updated_at.astimezone().strftime("%H:%M")
+        style = {"needs you": WARN, "failed": BAD, "finished": GOOD}.get(session.state, FIELD)
+        text.append(("\n" if index else "") + session.project, style=f"bold {FIELD}")
+        text.append(f"  {session.state}", style=style)
+        text.append(f"  {when}", style=DIM)
+        if session.detail:
+            text.append(f"\n  {session.detail}", style=DIM)
+    return text
 
 
 # The chat channels push-to-talk offers, as Settings shows them.
@@ -533,11 +644,12 @@ class ModelSettingsScreen(ModalScreen):
         signal: SignalControls | None = None, email: EmailControls | None = None,
         webhooks: WebhookControls | None = None, web: WebControls | None = None,
         phone: PhoneControls | None = None, general: GeneralControls | None = None,
-        game: GameControls | None = None,
+        game: GameControls | None = None, claude_code: ClaudeCodeControls | None = None,
     ) -> None:
         super().__init__()
         self.general = general
         self.game = game
+        self.claude_code = claude_code
         self.models = dict(models)
         self.save = save
         self.screen_looking = screen_looking
@@ -556,6 +668,10 @@ class ModelSettingsScreen(ModalScreen):
         self.tool_switches: dict[str, list[str]] = {}
         # The tabs built so far (fill_tab), and the spend projects known, for when General is built.
         self.filled: set[str] = set()
+        # Held while a tab is built, so closing waits rather than pulling widgets out mid-mount.
+        self.building = asyncio.Lock()
+        # Set once every tab is built (tests wait on it).
+        self.all_built = asyncio.Event()
         self.spend_projects: list[tuple[str, str]] = []
 
     def compose(self) -> ComposeResult:
@@ -583,6 +699,9 @@ class ModelSettingsScreen(ModalScreen):
                 if self.game is not None:
                     with TabPane("Game", id="settings-game"):
                         yield VerticalScroll(id="game-scroll")
+                if self.claude_code is not None:
+                    with TabPane("Claude Code", id="settings-claude-code"):
+                        yield VerticalScroll(id="claude-code-scroll")
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
                         yield VerticalScroll(id="services-scroll")
@@ -619,9 +738,20 @@ class ModelSettingsScreen(ModalScreen):
 
     async def fill_tab(self, pane_id: str) -> None:
         """Build one tab's contents, once; the Models tab is built with the screen."""
+        async with self.building:
+            await self.build_tab(pane_id)
+
+    async def action_dismiss(self, result=None) -> None:
+        """Close, once any tab being built is done (Escape and the Close button)."""
+        async with self.building:
+            if self.is_attached and self.app.screen is self:
+                self.dismiss(result)
+
+    async def build_tab(self, pane_id: str) -> None:
         scroll_id, parts = {
             "settings-general": ("general-scroll", self.compose_general_tab),
             "settings-game": ("game-scroll", self.compose_game),
+            "settings-claude-code": ("claude-code-scroll", self.compose_claude_code),
             "settings-services": ("services-scroll", self.compose_services_tab),
         }.get(pane_id, (None, None))
         # Not once Settings has been closed, which can happen before the tabs' turn comes.
@@ -630,12 +760,27 @@ class ModelSettingsScreen(ModalScreen):
         self.filled.add(pane_id)
         await self.query_one(f"#{scroll_id}", VerticalScroll).mount_all(compose(self, parts()))
         if pane_id == "settings-services":
-            await self.show_services()
-            self.set_interval(0.5, self.show_services)
+            await self.while_open(self.show_services)
+            self.set_interval(0.5, lambda: self.while_open(self.show_services))
+        if pane_id == "settings-claude-code":
+            await self.while_open(self.show_claude_code)
+            self.set_interval(1.0, lambda: self.while_open(self.show_claude_code))
+
+    async def while_open(self, show) -> None:
+        """Refresh a tab, unless Settings is closing: its widgets are going, so there's nothing to show."""
+        try:
+            shown = show()
+            if asyncio.iscoroutine(shown):
+                await shown
+        except NoMatches:
+            # Closing Settings, or Cora itself, takes the widgets out from under it; anything else is a bug.
+            if self.app.is_running and self.is_attached and self.app.screen is self:
+                raise
 
     async def fill_tabs(self) -> None:
-        for pane_id in ("settings-general", "settings-game", "settings-services"):
+        for pane_id in ("settings-general", "settings-game", "settings-claude-code", "settings-services"):
             await self.fill_tab(pane_id)
+        self.all_built.set()
 
     async def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
         # A tab opened before its turn is filled straight away.
@@ -773,6 +918,50 @@ class ModelSettingsScreen(ModalScreen):
                     "(somewhere to explore or fish, a bit of lore).")
         yield Select([(label, level) for level, label in CHATTINESS_LABELS.items()],
                      value=self.game.chattiness, allow_blank=False, id="game-chattiness", compact=True)
+
+    def compose_claude_code(self) -> ComposeResult:
+        yield heading("Hearing your sessions")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.claude_code.listen, id="claude-code-listen")
+            yield Label("Listen for Claude Code", classes="settings-label")
+        yield Static(id="claude-code-status", classes="service-reason")
+        yield note(CLAUDE_CODE_HELP)
+        yield field("Local port", "On 127.0.0.1 only. Not the webhooks' port.")
+        yield row(entry(value=str(self.claude_code.port), id="claude-code-port", placeholder="8001"),
+                  button("Save", "claude-code-port-save"))
+        yield field("Hooks", CLAUDE_CODE_HOOKS_HELP)
+        yield Static(id="claude-code-hooks", classes="service-reason")
+        yield actions(button("Add hooks", "claude-code-add-hooks"), button("Remove hooks", "claude-code-remove-hooks"))
+        yield field("Tell me", CLAUDE_CODE_TELL_HELP)
+        yield Select([(label, choice) for choice, label in CLAUDE_CODE_TELL_LABELS.items()],
+                     value=self.claude_code.tell, allow_blank=False, id="claude-code-tell", compact=True)
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.claude_code.transcripts, id="claude-code-transcripts")
+            yield Label("Let her read transcripts", classes="settings-label")
+        yield note(CLAUDE_CODE_TRANSCRIPTS_HELP)
+        yield heading("Running sessions")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.claude_code.run, id="claude-code-run")
+            yield Label("Let her run Claude Code", classes="settings-label")
+        yield Static(id="claude-code-run-status", classes="service-reason")
+        yield note(CLAUDE_CODE_RUN_HELP)
+        yield field("Projects folders", CLAUDE_CODE_FOLDERS_HELP)
+        yield row(entry(value="; ".join(self.claude_code.folders), id="claude-code-folders",
+                        placeholder=r"D:\Development"),
+                  button("Save", "claude-code-folders-save"))
+        yield heading("Sessions")
+        yield Static(id="claude-code-sessions")
+
+    def show_claude_code(self) -> None:
+        if not self.query("#claude-code-status"):
+            return
+        listening, (state, line) = self.claude_code.status()
+        self.query_one("#claude-code-status", Static).update(claude_code_line(listening, self.claude_code.listen))
+        self.query_one("#claude-code-hooks", Static).update(claude_hooks_line(state, line))
+        self.query_one("#claude-code-sessions", Static).update(claude_sessions_text(self.claude_code.sessions()))
+        line = self.claude_code.run_status() if self.claude_code.run else "○ Off"
+        style = DIM if line.startswith("○") else BAD if line.startswith("×") else GOOD
+        self.query_one("#claude-code-run-status", Static).update(Text(line, style=style))
 
     def save_game_vocabulary(self) -> None:
         if self.game is not None:
@@ -934,7 +1123,7 @@ class ModelSettingsScreen(ModalScreen):
     def fit_scrolls(self) -> None:
         """Keep the long tabs' scrolling areas inside the window, so Close always shows."""
         rows = max(6, min(40, self.app.size.height - self.CHROME_ROWS))
-        for scroll in self.query("#general-scroll, #services-scroll"):
+        for scroll in self.query("#general-scroll, #services-scroll, #claude-code-scroll"):
             scroll.styles.max_height = rows
 
     def on_resize(self) -> None:
@@ -1156,6 +1345,21 @@ class ModelSettingsScreen(ModalScreen):
                 self.game.watch = event.value
                 self.game.save_watch(event.value)
             return
+        if event.switch.id == "claude-code-run":
+            if self.claude_code is not None and event.value != self.claude_code.run:
+                self.claude_code.run = event.value
+                self.claude_code.save_run(event.value)
+            return
+        if event.switch.id == "claude-code-transcripts":
+            if self.claude_code is not None and event.value != self.claude_code.transcripts:
+                self.claude_code.transcripts = event.value
+                self.claude_code.save_transcripts(event.value)
+            return
+        if event.switch.id == "claude-code-listen":
+            if self.claude_code is not None and event.value != self.claude_code.listen:
+                self.claude_code.listen = event.value
+                self.claude_code.set_listen(event.value)
+            return
         if event.switch.id == "game-push-to-talk":
             if self.game is not None and event.value != self.game.push_to_talk:
                 self.game.push_to_talk = event.value
@@ -1199,6 +1403,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.spend_project:
                 self.general.spend_project = event.value
                 self.general.save_spend_project(event.value)
+            return
+        if event.select.id == "claude-code-tell":
+            if self.claude_code is not None and event.value != self.claude_code.tell:
+                self.claude_code.tell = event.value
+                self.claude_code.save_tell(event.value)
             return
         if event.select.id == "game-chattiness":
             if self.game is not None and event.value != self.game.chattiness:
@@ -1362,6 +1571,14 @@ class ModelSettingsScreen(ModalScreen):
         button = event.button.id or ""
         if button == "game-vocabulary-save":
             self.save_game_vocabulary()
+        elif button == "claude-code-port-save":
+            self.claude_code.save_port(self.query_one("#claude-code-port", Input).value)
+        elif button == "claude-code-folders-save":
+            self.claude_code.save_folders(self.query_one("#claude-code-folders", Input).value)
+        elif button == "claude-code-add-hooks":
+            self.claude_code.add_hooks()
+        elif button == "claude-code-remove-hooks":
+            self.claude_code.remove_hooks()
         elif button == "openai-key-save":
             self.save_openai_key()
         elif button == "admin-key-save":
@@ -1435,4 +1652,4 @@ class ModelSettingsScreen(ModalScreen):
             # Turning the switch off also saves the service as off and disconnects it.
             self.query_one(f"#service-enabled-{service_id}", Switch).value = False
         else:
-            self.dismiss()
+            self.run_worker(self.action_dismiss(), group="settings-close", exclusive=True)

@@ -13,7 +13,11 @@ from .change_calendar import (
 from .check_calendar import (
     CheckCalendarTool, SCHEMA as CHECK_CALENDAR_SCHEMA, validate_arguments as validate_check_calendar_arguments,
 )
+from .claude_code import ClaudeCodeTool, SCHEMA as CLAUDE_CODE_SCHEMA, validate_arguments as validate_claude_code_arguments
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
+from .run_claude_code import (
+    RunClaudeCodeTool, SCHEMA as RUN_CLAUDE_CODE_SCHEMA, validate_arguments as validate_run_claude_code_arguments,
+)
 from .close_task import CloseTaskTool, SCHEMA as CLOSE_TASK_SCHEMA, validate_arguments as validate_close_task_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
@@ -37,6 +41,9 @@ from .end_call import SCHEMA as END_CALL_SCHEMA, EndCallTool, validate_arguments
 from .call_someone import SCHEMA as CALL_SOMEONE_SCHEMA, CallSomeoneTool, validate_arguments as validate_call_arguments
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
+from .place_wow_map_pins import (
+    PlaceWowMapPinsTool, SCHEMA as WOW_PINS_SCHEMA, validate_arguments as validate_wow_pins_arguments,
+)
 from .show_map import ShowMapTool, SCHEMA as MAP_SCHEMA, validate_arguments as validate_map_arguments
 from .where_is_person import WhereIsPersonTool, SCHEMA as WHERE_SCHEMA, validate_arguments as validate_where_arguments
 from .request_sign_up import (
@@ -50,6 +57,18 @@ async def _not_set_up(*args, **kwargs):
 
 async def _nowhere(refresh):
     return {"status": "error", "message": "Checking where the person is isn't available here."}
+
+
+async def _no_claude_code(project, recent_exchanges):
+    return {"status": "error", "message": "Claude Code's sessions aren't available here."}
+
+
+async def _no_claude_code_runs(action, project, create, location, brief):
+    return {"status": "error", "message": "Running Claude Code isn't available here."}
+
+
+async def _no_game_pins(route, lines):
+    return {"status": "error", "message": "Placing map pins in the game isn't available here."}
 
 
 async def _no_sign_ups(url):
@@ -67,6 +86,8 @@ def create_tool_registry(
     signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
     kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
+    look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
+    place_map_pins=_no_game_pins,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -142,7 +163,16 @@ def create_tool_registry(
         registry.register(schema, validate, tool.handle)
     sign_up = RequestSignUpTool(get_connection, is_closing, write_debug, check_sign_up, confirm, begin_sign_up)
     registry.register(SIGN_UP_SCHEMA, validate_sign_up_arguments, sign_up.handle)
+    # The person's Claude Code sessions (offered while Cora listens for them); their own chats only.
+    claude_code = ClaudeCodeTool(get_connection, is_closing, look_at_claude_code, write_debug)
+    registry.register(CLAUDE_CODE_SCHEMA, validate_claude_code_arguments, claude_code.handle)
+    # Starting, continuing or stopping one (offered while Settings lets her run them); approved each time.
+    run_tool = RunClaudeCodeTool(get_connection, is_closing, run_claude_code, write_debug)
+    registry.register(RUN_CLAUDE_CODE_SCHEMA, validate_run_claude_code_arguments, run_tool.handle)
     # The person's own chats only: clients' chats and task work offer allowlists without it.
     note_detail = NoteDetailTool(get_connection, is_closing, write_debug)
     registry.register(NOTE_DETAIL_SCHEMA, validate_note_detail_arguments, note_detail.handle)
+    # Pins on the person's WoW map, typed into the game through the push-to-talk keyboard bridge.
+    wow_pins = PlaceWowMapPinsTool(get_connection, is_closing, place_map_pins, write_debug)
+    registry.register(WOW_PINS_SCHEMA, validate_wow_pins_arguments, wow_pins.handle)
     return registry

@@ -167,6 +167,21 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(app.game_watch_worker)
                 app.persistence.save_game_watch.assert_called_once_with(False)
 
+    async def test_nothing_is_looked_at_in_standby(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            async def forever(watcher):
+                await asyncio.sleep(3600)
+
+            with patch.object(GameWatcher, "run", forever), patch.object(game_watch, "game_in_front", return_value=True):
+                app.apply_game_settings({"watch": True})
+                await pilot.pause()
+                watcher = app.game_screen_watcher
+                app.standby = False
+                self.assertTrue(watcher.in_front())
+                app.standby = True
+                self.assertFalse(watcher.in_front())
+                app.stop_game_watch()
+
     async def test_unset_settings_dont_start_it(self):
         async with keyboard_tests.running_app() as (app, pilot):
             app.apply_game_settings(MagicMock())

@@ -748,15 +748,25 @@ class CoraLive:
         self.context.note(note)
 
     async def send_approval_waiting(self, service: str, tool: str, reminder: bool = False,
-                                    on_signal: bool = False) -> None:
+                                    on_signal: bool = False, on_behalf: str | None = None) -> None:
         """Tell Cora a tool call of hers is waiting on the person's approval pop-up (or, on a phone
-        call, in their Signal chat)."""
+        call, in their Signal chat). on_behalf names who asked when it isn't her own call (Claude
+        Code, working for the person): she's told it isn't hers, and is told again when it's answered."""
         connection = self.connection
         if connection is None or not self.ready:
             raise RuntimeError("Live is not ready for an approval note")
 
         event_id = f"approval_{uuid4().hex}"
-        if on_signal:
+        if on_behalf is not None:
+            where = ("in their Signal chat (they're on a phone call), where replying YES approves it"
+                     if on_signal else "on an approval pop-up on their screen")
+            content = (
+                f"Approval note, not a message from the person. {on_behalf} wants to use {tool}, and "
+                f"it's waiting {where}. It isn't your own request and you aren't waiting on it: if it "
+                "helps, mention it once in a few words, and don't bring it up again. You'll get a note "
+                "when they've answered. Only they can approve it. Do not mention this note."
+            )
+        elif on_signal:
             content = (
                 "Approval note, not a message from the person. Your request to use the "
                 f"{service} tool {tool} changes something, and they're on a phone call, so it's been "
@@ -781,6 +791,19 @@ class CoraLive:
                 "approve it, and nothing said aloud approves it. Do not mention this note."
             )
         await self.append_commentary(connection, event_id, content)
+
+    async def send_approval_outcome(self, tool: str, outcome: str, on_behalf: str) -> None:
+        """Tell Cora how a request she didn't make herself ended (she gets her own as tool results)."""
+        connection = self.connection
+        if connection is None or not self.ready:
+            raise RuntimeError("Live is not ready for an approval note")
+        answered = {"approved": "approved", "declined": "declined"}.get(outcome)
+        what = f"The person {answered} it" if answered else "Nobody answered in time, so it was refused"
+        await self.append_commentary(connection, f"approval_{uuid4().hex}", (
+            f"Approval note, not a message from the person. {on_behalf} asked to use {tool}. {what}, "
+            "and that request is no longer waiting. Nothing more is needed; if you say anything, keep it "
+            "to a few words. Do not mention this note."
+        ))
 
     async def send_standby_alert(self, event_id: str) -> None:
         connection = self.connection

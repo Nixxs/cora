@@ -12,7 +12,7 @@ import numpy as np
 from PIL import Image
 from textual.containers import HorizontalScroll
 from textual.geometry import Size
-from textual.widgets import Button, Label, Static, TextArea
+from textual.widgets import Button, Label, Static
 
 from devices.audio_bands import BAND_COUNT, audio_bands
 from live import CoraLive
@@ -28,12 +28,13 @@ from subconscious.relationship.relationship_rules import RelationshipValues
 from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
 from ui.composer import IMAGE_MARKER, ChatComposer
+from ui.claude_code_view import ClaudeSessionScreen
 from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
 from ui.meters import (
     HEAT_STYLES, HOVER_STYLE, LABEL_STYLE, MAX_WEEKS, MIN_WEEKS, TONE_STYLES, TRACK_STYLE, CalendarHeatmap,
     ContextMeters, Meters, ToneRibbon, meter_bar,
 )
-from ui.context_view import ContextScreen, DetailScreen
+from ui.context_view import ContextScreen, DetailScreen, MarkdownView
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
 
@@ -250,8 +251,25 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             for box_id, title in BOX_TITLES.items():
                 box = app.screen.query_one(f"#{box_id}")
                 self.assertEqual(box.border_title, title)
+                if box_id == "claude-code-box":
+                    # Hidden until Cora listens for Claude Code.
+                    self.assertEqual(box.size.width, 0)
+                    continue
                 self.assertGreater(box.size.width, 0)
                 self.assertGreater(box.size.height, 0)
+
+    async def test_claude_code_sits_between_voice_and_chat_while_cora_listens(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.claude_code_listen = True
+            await pilot.click("#view-button")
+            await pilot.pause()
+            voice, box, chat = (app.screen.query_one(f"#{box_id}")
+                                for box_id in ("voice-column", "claude-code-box", "chat-box"))
+            self.assertGreater(box.size.width, 0)
+            self.assertLess(voice.region.x, box.region.x)
+            self.assertLess(box.region.x, chat.region.x)
+            self.assertEqual(str(app.screen.query_one("#dashboard-claude-scroll .claude-none").render()),
+                             "no sessions yet")
 
     async def test_middle_row_pans_sideways_when_its_boxes_do_not_fit(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -714,7 +732,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, DetailScreen)
             self.assertIn("Lesson for [b]Sarah[/b]", str(app.screen.query_one("#context-view-title", Label).render()))
-            full = app.screen.query_one("#context-view-text", TextArea).text
+            full = app.screen.query_one("#context-view-text", MarkdownView).text
             self.assertIn("x" * 200, full)
             self.assertIn("Brief for Sam:\nAsk which weekday suits [her].", full)
 
@@ -758,8 +776,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsInstance(app.screen, ContextScreen)
             title = str(app.screen.query_one("#context-view-title", Label).render())
             self.assertTrue(title.startswith("tools · backend · ~"))
-            text = app.screen.query_one("#context-view-text", TextArea)
-            self.assertTrue(text.read_only)
+            text = app.screen.query_one("#context-view-text", MarkdownView)
             self.assertIn('"name": "close_app"', text.text)
             # Clicking inside the box keeps it open for reading and selecting.
             await pilot.click(text)
@@ -866,6 +883,79 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.press("escape")
             await pilot.pause()
             self.assertIsInstance(app.screen, DashboardScreen)
+
+
+class ChatSidePanelTests(unittest.IsolatedAsyncioTestCase):
+    """Beside the chat's history: her voice, and Claude Code's sessions while she listens."""
+
+    async def test_it_shows_when_theres_room_with_claude_code_while_listening(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            panel = app.query_one("#side-panel")
+            # The tests' usual 90 columns: the chat keeps the whole width.
+            self.assertFalse(panel.display)
+            await pilot.resize_terminal(150, 40)
+            await pilot.pause()
+            self.assertTrue(panel.display)
+            self.assertGreater(app.query_one("#chat-output").size.width, 80)
+            self.assertFalse(app.query_one("#side-claude").display)
+            with patch.object(app, "voice_bands", return_value=((1.0,) * BAND_COUNT, ())):
+                panel.sample_voice()
+            self.assertEqual(app.query_one("#side-speaker-graph", BrailleGraph).values, (1.0,) * BAND_COUNT)
+            app.claude_code_listen = True
+            app.claude_sessions.update({"hook_event_name": "Notification", "session_id": "s1",
+                                        "cwd": "D:\\Development\\ComboDots", "notification_type": "permission_prompt",
+                                        "message": "Claude needs your permission to use PowerShell"})
+            panel.show_claude_code()
+            await pilot.pause()
+            self.assertTrue(app.query_one("#side-claude").display)
+            [entry] = app.query("#side-claude-scroll SessionEntry")
+            self.assertIn("ComboDots", str(entry.render()))
+            self.assertEqual(app.query_one("#side-claude").border_subtitle, "1 needs you")
+            # A click follows it in a pop-up, which keeps up as it changes.
+            with patch("ui.claude_code_view.read_exchanges",
+                       return_value=[{"who": "you", "said": "make five dots"},
+                                     {"who": "claude", "said": "used PowerShell: ls (after 2 other tool uses)"}]):
+                await pilot.click(entry)
+                for _ in range(30):
+                    if isinstance(app.screen, ClaudeSessionScreen) and "make five dots" in \
+                            app.screen.query_one("#context-view-text", MarkdownView).text:
+                        break
+                    await pilot.pause(0.1)
+                self.assertIsInstance(app.screen, ClaudeSessionScreen)
+                shown = app.screen.query_one("#context-view-text", MarkdownView).text
+                self.assertIn("You\nmake five dots", shown)
+                self.assertIn("Claude\nused PowerShell: ls", shown)
+                self.assertIn("ComboDots · needs you", str(app.screen.query_one("#context-view-title").render()))
+                app.claude_sessions.update({"hook_event_name": "PostToolUse", "session_id": "s1"})
+                for _ in range(40):
+                    if "· working" in str(app.screen.query_one("#context-view-title").render()):
+                        break
+                    await pilot.pause(0.1)
+                self.assertIn("ComboDots · working", str(app.screen.query_one("#context-view-title").render()))
+                await pilot.press("escape")
+                await pilot.pause()
+            await pilot.resize_terminal(90, 35)
+            await pilot.pause()
+            self.assertFalse(panel.display)
+
+    async def test_shrinking_the_window_never_crashes_the_chat_or_the_dashboard(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.standby = True
+            for opened in (False, True):
+                await pilot.resize_terminal(150, 40)
+                if opened:
+                    await pilot.pause()
+                    app.query_one("#view-button").press()
+                    for _ in range(30):
+                        if isinstance(app.screen, DashboardScreen):
+                            break
+                        await pilot.pause(0.1)
+                    self.assertIsInstance(app.screen, DashboardScreen)
+                for width in (100, 60, 40, 20, 10, 3):
+                    for height in (40, 6):
+                        await pilot.resize_terminal(width, height)
+                        await pilot.pause(0.05)
+                        self.assertIsNone(app._exception, (width, height))
 
 
 if __name__ == "__main__":

@@ -2,7 +2,8 @@
 
 Typing happens in one SendInput batch (Enter, the line, Enter): Windows never mixes a batch with
 the person's own keys, so a held W can't slip "wwww" into the message. Only when the game is the
-window in front; Cora never sends anything to the game on her own."""
+window in front. Cora never types chat on her own: the only other lines are the CoraMapPins addon's
+map-pin commands, built from checked values when she's asked for pins (see map_pins.py)."""
 
 import ctypes
 import os

@@ -1,15 +1,18 @@
 """Clicking a feeling, an interest or a finding on the dashboard opens it in full. Mocked storage only."""
 
 import asyncio
+import io
 from datetime import datetime, timedelta, timezone
 import unittest
 from unittest.mock import MagicMock, patch
 
-from textual.widgets import Label, TextArea
+from textual.widgets import Label
 
 from storage.dashboard_snapshot import DashboardSnapshot, interest_details
 from subconscious.emotions.feeling_rules import Reaction
-from ui.context_view import DetailScreen
+from rich.console import Console
+
+from ui.context_view import DetailScreen, MarkdownView, PopupMarkdown, as_markdown
 from ui.meters import Openable, ReadableMeters
 import test_keyboard_persistence as keyboard_tests
 
@@ -41,7 +44,7 @@ class DetailTests(unittest.IsolatedAsyncioTestCase):
         self.assertLessEqual(abs(box.x - (app.size.width - box.right)), 1)
         self.assertLess(app.screen.styles.background.a, 1)
         title =str(app.screen.query_one("#context-view-title", Label).render())
-        return title, app.screen.query_one("#context-view-text", TextArea).text
+        return title, app.screen.query_one("#context-view-text", MarkdownView).text
 
     async def test_her_latest_feeling_opens_with_its_whole_reason(self):
         now = datetime.now(timezone.utc)
@@ -106,6 +109,29 @@ class InterestDetailsTests(unittest.TestCase):
         self.assertEqual(details["Tides"], "Why the sea moves.\n\nHow it emerged: A beach walk.\n\n"
                                            "Latest finding (20 Oct 2026): Spring tides follow the moon.")
         self.assertEqual(details["Owls"], "Night birds.\n\nHow it emerged: A barn.")
+
+
+class PopupMarkdownTests(unittest.TestCase):
+    """Pop-ups show their text as Markdown, without losing any of what was written."""
+
+    def shown(self, text):
+        console = Console(width=60, color_system=None, record=True, file=io.StringIO())
+        console.print(PopupMarkdown(as_markdown(text)))
+        return [line.rstrip() for line in console.export_text().splitlines()]
+
+    def test_markdown_is_formatted(self):
+        shown = self.shown("# Referees\n\nThey go under **Demonstrated Experience**.\n\n- one\n- two")
+        self.assertIn("They go under Demonstrated Experience.", shown)
+        self.assertFalse(any("**" in line or line.startswith("#") for line in shown))
+
+    def test_its_own_line_breaks_and_tags_stay(self):
+        shown = self.shown("Brief for Sam:\nAsk which weekday.\n<system-reminder>kept</system-reminder>")
+        self.assertEqual(shown[:3], ["Brief for Sam:", "Ask which weekday.", "<system-reminder>kept</system-reminder>"])
+
+    def test_json_is_a_code_block(self):
+        self.assertEqual(as_markdown('{"name": "close_app"}'), '```json\n{"name": "close_app"}\n```')
+        self.assertEqual(as_markdown('{"say": "````"}'), '`````json\n{"say": "````"}\n`````')
+        self.assertEqual(as_markdown("{not json"), "{not json")
 
 
 if __name__ == "__main__":

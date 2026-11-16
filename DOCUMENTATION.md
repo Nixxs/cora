@@ -177,6 +177,15 @@ Live session, so contact calls are kept short and few (see Phone calls).
 
 Speaking and typing go into the same conversation.
 
+The chat sits in a **chat** box of its own: the history, Activity, the controls and the
+message box. **Beside it** ([ui/side_panel.py](ui/side_panel.py)), when the window is at least
+110 columns wide, a column on the right shows her **voice** (the dashboard's graph: her voice
+above the line, yours below) and, while Cora listens for Claude Code, a **claude code** box
+under it that takes the rest of the height, with the same session lines as the dashboard's,
+so you can follow what Claude is doing next to the whole chat history. Narrower, the chat box
+keeps the full width; narrower than 50 columns the screen is cut off rather than squeezed
+(text boxes squeezed under their own padding can't lay out their text).
+
 - **Send a message:** Enter. Shift+Enter or Ctrl+J adds a new line.
 - **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in the message
   box (Windows Terminal keeps Ctrl+V for itself and sends nothing for an image). The border
@@ -371,7 +380,10 @@ top right (● active, ○ standby) enters standby or resumes.
 | background | When each background job last saved something, and when the timed ones are next due |
 
 Anything clickable brightens under the mouse; its pop-up scrolls and can be selected and
-copied, and Esc or a click outside closes it. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
+copied, and Esc or a click outside closes it. Pop-ups show their text as Markdown, as the chat
+does (`MarkdownView` in [ui/context_view.py](ui/context_view.py)), except that a single line
+break stays a line break and tags like `<system-reminder>` stay as written, since much of what's
+shown (prompts, instructions, transcripts) isn't written as Markdown; JSON shows as a code block. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
 values and notes it in Activity); the context box reads the running app once a second. Its
 item sizes are estimates (about four bytes a token). Tuning constants (refresh rate, bar
 fall, history limits, graph timing, voice bands) are at the top of
@@ -410,7 +422,7 @@ watching the game, with her reacting to what happens.
   silent note of what you said and that it was for the other players, not her. It works in
   Standby too, but she isn't told then (there's no voice session to tell).
 - **Watching the game** (off by default): while `Wow.exe` is the window
-  in front, a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
+  in front and Cora isn't in standby (where she couldn't react, so frames would only cost), a screenshot of the main screen every 2 seconds, shrunk to 1024 px wide, goes to
   OpenAI's Decisions API (`gpt-6-luna`) with fixed typed questions in
   [game/watcher.py](game/watcher.py): what's happening (combat, exploring, town, dead, menu),
   how full your health is, and the chances of a close call, death, level-up, quest moment, chat
@@ -464,6 +476,35 @@ watching the game, with her reacting to what happens.
   where you are when you say "this is cozy". It's sent as an appended instruction
   (`session.instructions.append`) that tells her to say nothing: as a thinking note it made her
   speak every time, with where you were and what to do next, twice over when two notes were close.
+- **Map pins in the game** ([tools/place_wow_map_pins.py](tools/place_wow_map_pins.py),
+  [game/map_pins.py](game/map_pins.py)): when you ask where something is in the game or to mark a
+  quest's steps, and she has coordinates from a reliable source, she calls `place_wow_map_pins`
+  (a route name and 1-10 steps of zone, x, y and label, in order). Numbered pins appear on your map,
+  along with the CoraMapPins addon's next-step box (the addon is in
+  `F:\World of Warcraft\_forever_\Interface\AddOns\CoraMapPins`; see its README).
+  - **How it gets in:** through the same keyboard bridge as push-to-talk. The route becomes the
+    addon's own commands (`/cmp cora begin <count> <route>`, then one `/cmp cora pin <zone> <x>
+    <y> <label>` per step, then `/cmp cora end`), each typed as its own Enter, line, Enter batch.
+    The batches are 0.15 seconds apart, and a push-to-talk line never lands inside them.
+  - **When it's typed:** only while `Wow.exe` is in front. If it isn't (you typed the question in
+    her window), the pins wait up to 2 minutes for you to switch to the game, and the chat shows a
+    line either way. If the game leaves the front part-way, typing stops before `end`.
+  - **What can be typed:** every value is checked:
+    - the zone must be a name of letters, spaces, `'` or `-`, and is refused rather than "cleaned"
+    - x and y must be numbers from 0 to 100
+    - labels and the route name are cut to one line of plain text with no `|`
+
+    Nothing she says can become a chat message or any other command.
+  - **What she learns:** the game doesn't answer, so she's told the pins were typed, not that they
+    appeared. In the game, one chat line confirms them, and the addon places nothing until `end`,
+    so a cut-off batch changes nothing.
+  - **No approval is asked**, unlike other tools that change things outside Cora. You ask for the
+    pins while playing, approving would mean leaving the game, and she can only type those three
+    commands.
+  - **Where it's offered:** at the desk and in Live, but not on Signal or the web page. It's offered
+    whatever Settings > Game says, because it doesn't need push-to-talk switched on.
+  - **The risk it shares with push-to-talk:** if you're halfway through typing in WoW's chat, her
+    first Enter sends what you'd typed.
 - The mouse hook only watches: the click still reaches the game, so leave the middle button
   unbound in WoW. Clicks made by programs are ignored. Windows only. The parts are in
   [game/](game/) and [app_areas/game.py](app_areas/game.py); its settings are in
@@ -977,10 +1018,16 @@ doesn't).
 | A phone call | Your Signal chat, never by voice: caller ID can be faked. She tells you on the call that it's waiting there | 10 minutes |
 | Your email, background wishes (a sign-up she'd like) | Your Signal chat when it's linked, otherwise the desk pop-up | 10 minutes on Signal |
 | The task coordinator | Your Signal chat (without Signal it suggests instead) | 10 minutes |
+| A Claude Code session she runs (its steps) | The desk pop-up while she's active; your Signal chat while she's in standby (you're likely away), or the desk without Signal linked | 2 minutes at the desk, 10 on Signal |
+| One of your own Claude Code sessions | Claude Code's own prompt; your Signal chat instead while she's in standby (see [Claude Code](#claude-code)) | 10 minutes on Signal, then Claude Code's prompt |
 
 At the desk she gets a note naming the service and tool (never the arguments) when the
 pop-up appears, so she can tell you it's waiting, and a reminder after 45 seconds. She's
 told the outcome once: done, declined (don't try again unless asked), or no answer in time.
+A request she didn't make herself (a step of a Claude Code session) is named as such in her
+note ("Claude Code, working on ComboDots for them, wants to use PowerShell": not hers, so no
+reminder), and when it's answered she gets a second note saying how, since there's no tool
+result of hers to tell her; otherwise she'd think the first was still waiting.
 Each outcome also leaves a quiet line in the chat ("you approved Email · send_email") that
 later turns see, so she knows what was done. Quitting declines anything still waiting.
 Approving is never by voice, at the desk or on a call.
@@ -1014,7 +1061,8 @@ contact asks.
 
 - **Tokens and keys** (GitHub, Twilio, the Google Maps key, her sign-up password, webhook
   secrets, the email app ID, and the OpenAI API and Admin keys when saved in the app) are kept in the system credential store (Windows Credential
-  Manager), never in a file, `.env` or the database. Her email sign-in is too big for it, so
+  Manager), never in a file, `.env` or the database. The one exception is the Claude Code hook
+  token, which is also in Claude Code's own settings file because its hooks send it. Her email sign-in is too big for it, so
   it's in a file encrypted for your Windows user (`%LOCALAPPDATA%\cora\email-sign-in.bin`).
   Paired web devices are kept only as SHA-256 hashes of their tokens.
 - **The database** (Docker volume) holds conversations, memories, your key details and
@@ -1220,6 +1268,139 @@ email is ready, renews every couple of days and ends it when she closes.
   itself, once per burst. A forged call could at most cause an extra check. Requests are capped
   in size.
 
+### Claude Code
+
+*Experimental, on the `experiments` branch.* Cora hears what your Claude Code sessions are
+doing (Settings > Claude Code), wherever Claude Code runs: the terminal, VS Code or the
+desktop app. Sessions show on the dashboard and in that tab, noteworthy changes in Activity,
+she tells you about one left waiting on you, and you can ask her about them. With Settings
+allowing it, she starts, continues and stops sessions herself.
+
+- **Its own listener** ([claude_code/routes.py](claude_code/routes.py)): with **Listen for
+  Claude Code** on, a second listener runs on `127.0.0.1` at its own port (8001 by default,
+  never the webhooks' port), so your proxy never forwards it. It has two routes, each needing
+  the hook token as a bearer token and taking JSON up to 512 KB: `POST /claude-code/event`
+  answers with an empty 204 so Claude Code carries on, and `POST /claude-code/permission`
+  waits for Cora's answer to a permission request (see **Your sessions' permission prompts**
+  below): a `PermissionRequest` decision, or an empty 204 for "no decision".
+- **The hooks** ([claude_code/hooks.py](claude_code/hooks.py)): **Add hooks** puts one entry
+  per event (`SessionStart`, `UserPromptSubmit`, `Notification`, `PostToolUse`, `Stop`,
+  `StopFailure`, `SessionEnd`) in your Claude Code user settings (`~/.claude/settings.json`), so they cover
+  every project. Each is an `async` command hook running `curl.exe`, which posts the event's
+  JSON from stdin. Async means Claude never waits on it, and while Cora is closed curl just
+  fails quietly. It works whether Claude Code runs hooks in Git Bash, PowerShell or cmd. Adding
+  replaces any entries of Cora's (the ones posting to `/claude-code/event`), **Remove hooks**
+  takes only those out, and both keep a copy of the file as it was
+  (`settings.json.cora-backup`). A file that isn't valid JSON is left alone. The tab says
+  whether the hooks are added, missing, or out of date (another port or token, or an older set
+  of events: add them again). `PostToolUse` runs after every tool Claude uses; it's there so
+  Cora knows a session that needed you has been answered (Claude carried on). One more isn't
+  in the background: the `PermissionRequest` hook posts to `/claude-code/permission` and waits
+  (up to 11 minutes) for her answer, with `"onFailure": "continue"`, so with Cora closed curl
+  fails and Claude Code shows its own prompt as usual, never blocking the call.
+- **Your sessions' permission prompts** (`on_claude_code_permission`): when one of your
+  sessions is about to ask your permission, the hook asks Cora first. While she's in standby
+  (you're likely away) and Signal is linked, she asks you in your Signal chat ("Claude Code ·
+  cora · Bash" with its input; reply YES or NO), marks the session as needing you (told, so the
+  few-minutes message doesn't repeat it) and hands Claude Code your answer: yes allows it, no
+  denies it with a note that you declined from your phone. With no answer in 10 minutes it's
+  left to Claude Code's own prompt, waiting for you at the desk. If you come back (she leaves
+  standby) or answer in Claude Code meanwhile (the session carries on), the Signal request is
+  withdrawn. Otherwise (she's active, Signal isn't linked, it's a session she's running, whose
+  steps go through her own approvals, or `AskUserQuestion` and `ExitPlanMode`, whose answers
+  are more than yes or no) she answers at once with no decision, and Claude Code asks you as
+  usual.
+- **The token** is made on first use and kept in the credential store
+  (`claude-code:hook-token`), and in Claude Code's settings file, since the hook has to send it.
+- **What a session is doing** ([claude_code/sessions.py](claude_code/sessions.py)): its folder
+  name, its state (started, working, finished, needs you, failed or ended), when it changed
+  and one short line of detail (your prompt, Claude's last message, what it's waiting for, or
+  the error; while working, the prompt it was given). The latest 50 sessions are kept, for this
+  run only. `idle_prompt` notifications only repeat that a session finished, and a
+  `SessionStart` from compacting doesn't change what it's doing, so both are ignored. Activity
+  gets a line when a session's state changes, except to working.
+- **The dashboard:** while Cora listens, a **claude code** box sits between voice and chat
+  (voice gives up the room): each session's project, state and how long it's been that way,
+  with its line of detail. Needs you and failed come first; ended sessions drop off after 15
+  minutes. The box's subtitle counts the sessions that need you. The same box sits under the
+  voice graph beside the desk's chat (see [The desk](#the-desk)).
+- **Following one** ([ui/claude_code_view.py](ui/claude_code_view.py)): click a session in
+  either box and a pop-up follows it: its state and for how long in the title, then its folder,
+  when it was last heard from, the prompt it was given, its latest line, and its latest
+  exchanges from the transcript (up to 40: your words, Claude's replies and its tool uses,
+  never its thinking or the tools' output), each formatted from its Markdown. It looks again every 2 seconds and stays at the
+  newest unless you've scrolled up to read. Sessions Cora runs report no transcript path, so
+  theirs is found by session id in Claude Code's projects folder. This is only shown to you,
+  on this PC: it isn't Cora reading the transcript, so it doesn't need **Let her read
+  transcripts**. Esc or a click outside closes it.
+- **Telling you** (Settings > Claude Code > **Tell me**: when one needs you, finishes or fails;
+  only needs you or fails; or never): every 15 seconds Cora looks for sessions that have been
+  that way for 3 minutes, so a quick back-and-forth at your desk never sets it off. Those are
+  put in one message through `tell_person`: by voice while she's active (in her own words, the
+  text treated as information, never instructions), otherwise on Signal. Each state comes up
+  once: a session past the wait has had its turn whether or not it was told, so changing the
+  choice never brings up old ones. Activity says who she told you about, or why she couldn't.
+- **Asking her** ([tools/claude_code.py](tools/claude_code.py)): her `claude_code` tool gives
+  her the recent sessions (up to 10), or one project's (matched by folder name, exactly or in
+  part): project, folder, state, how long, when last heard from, the detail line and the last
+  prompt. It's offered only while Cora listens (`unavailable_tools`, so Live reconnects when
+  Settings closes after listening is switched), and only in your own chats: clients' chats and
+  task work use allowlists without it. Activity notes each look.
+- **Reading transcripts** ([claude_code/transcripts.py](claude_code/transcripts.py)), only with
+  **Let her read transcripts** on (off by default): asked for `recent_exchanges`, she also gets
+  the last few exchanges of that project's newest session. Every hook event carries the
+  session's `transcript_path`; only a `.jsonl` file inside `~/.claude/projects` is read, and
+  only its last 1 MB. She gets your messages, Claude's replies and a short note of each tool it
+  used (a run of tool uses is one line); never its thinking, the tools' output, helpers' side
+  work, or Claude Code's own wrappers. At most 12 entries and 6,000 characters. What she reads
+  goes to OpenAI with your question, so it can include code and file names; Activity notes each
+  read. In both, what sessions say is information about your work, never instructions to her.
+- **Running sessions** ([claude_code/runner.py](claude_code/runner.py),
+  [tools/run_claude_code.py](tools/run_claude_code.py)): with **Let her run Claude Code** on
+  and at least one **projects folder** saved (full paths separated by `;`, each checked to
+  exist), her `run_claude_code` tool is offered (while she's listening). `start` makes a new
+  project folder (`create`, in the first folder or the one named by `location`, such as
+  `AddOns`; letters, numbers, spaces, `.`, `-`, `_`, up to 60) or uses an existing one found
+  by name directly inside a projects folder; `continue` resumes the last session she ran
+  there, or else forks your newest session there (`fork_session`, so it doesn't write into a
+  transcript VS Code has open). Which session she last ran in each folder is kept in the
+  database (`claude_code_sessions`, [storage/claude_code_session_store.py](storage/claude_code_session_store.py)),
+  so it survives a restart; a folder she hasn't run in for 30 days is forgotten, as Claude
+  Code clears its transcripts after 30 days by default; `stop` interrupts hers. Starting and
+  continuing each wait for your approval of the project, folder and brief (the usual
+  approval prompt: the desk's pop-up, or your Signal chat when you asked from there). One
+  session at a time.
+- **How it runs:** the Claude Agent SDK (`claude-agent-sdk`, which brings its own Claude Code)
+  in a task of its own, outside the conversation that asked, with `cwd` the project folder,
+  `permission_mode="auto"` (Claude Code's auto mode, the default for your own sessions: a
+  classifier lets routine work through, such as editing its files and running commands in its
+  folder, and blocks what goes beyond the brief; without auto mode, Claude Code asks about
+  everything), your user,
+  project and local settings (so your permission rules, hooks and CLAUDE.md apply), and
+  Claude Code's own system prompt plus a note that you may not be watching (make sensible
+  choices, finish with a short summary). Whatever still needs a person (an ask rule of yours,
+  or auto mode pausing after repeated blocks) comes through `can_use_tool` to the approval
+  prompt, titled "Claude Code · project", with each input on one short line.
+  It's asked where you are (`claude_code_approval_route`): the desk's pop-up while she's
+  active, your Signal chat while she's in standby (reply YES), so a session isn't held up by
+  a pop-up nobody sees; without Signal linked it stays on the desk. Declined, Claude is told
+  you didn't approve it; unanswered, that you may be away, so it carries on without it and
+  says in its summary what it needed. `AskUserQuestion` is
+  answered "decide and note it in your summary" without asking you. Its start, Claude's
+  final summary or its error reach the session tracker as hook-style events, so the
+  dashboard and her claude_code tool see it even without the hooks. When it ends, she tells
+  you how it went (voice, or Signal when you're away), straight away rather than after the
+  few-minutes wait; a session you had her stop is only noted in Activity. Closing Cora stops
+  it.
+- **Your subscription, never an API key:** it won't start while `ANTHROPIC_API_KEY` or
+  `ANTHROPIC_AUTH_TOKEN` is in Cora's environment (Claude Code would bill that instead), or
+  when Claude Code isn't signed in (no `~/.claude/.credentials.json` and no
+  `CLAUDE_CODE_OAUTH_TOKEN`). Settings shows which. A `/login` sign-in lasts a while and then
+  needs renewing; `claude setup-token` gives a year-long one for `CLAUDE_CODE_OAUTH_TOKEN`.
+- **What it costs:** Claude Code runs on your Claude subscription as usual, so what she
+  runs counts toward its usage limits like any session of yours. Hearing it costs nothing;
+  asking her about it is an ordinary tool call in your conversation.
+
 ### The web interface
 
 Cora on your phone, tablet or laptop, at the root of the public address: one page that looks
@@ -1227,6 +1408,17 @@ like the desk (plain HTML, CSS and JavaScript in [web/static/](web/static/), no 
 opens full-screen from the Home Screen. It's an interface only: what you write takes the same
 path as your Signal chat (`answer_person_in_writing` in [app_areas/chat.py](app_areas/chat.py)).
 
+- **Claude Code** ([web/static/claude.js](web/static/claude.js)): while Cora listens for Claude
+  Code, a **CLAUDE CODE** panel sits under the voice panel (beside the chat on wide screens,
+  above it on a phone, kept to a few sessions' height there), listing the sessions as the desk
+  does (`GET /api/claude-code`, every 3 seconds while the page is in view). A tap opens a
+  pop-up that follows that session as the desk's does (`GET /api/claude-code/{id}`, every 2
+  seconds): where and how it is, and its latest exchanges, kept at the newest unless you've
+  scrolled up. Both need a paired device, like the rest of the page. What each said in an
+  exchange comes formatted: the server renders its Markdown (`html`) as it renders her replies
+  ([web/rendering.py](web/rendering.py): raw HTML escaped, only web and mail links); everything
+  else from a session is shown as text, never as markup. The transcript's lines go to your own paired
+  devices only, as your conversation does; it isn't Cora reading them.
 - **The conversation:** a paired device shows your conversation as it is everywhere: recent
   messages when it opens (labelled where each was said), then each new one live over
   Server-Sent Events (`GET /api/events`; a dropped page gets only what it missed). Your
@@ -1332,7 +1524,8 @@ before anything else.
 | [messaging/](messaging/) | Her Signal account: the `signal-cli` client, linking, listening, images and the commitment check. |
 | [mail/](mail/) | Her mailbox and calendar through Microsoft Graph, mail sorting, formatting, and Graph's webhook routes. |
 | [sign_ups/](sign_ups/) | Signing up to sites: the password, the guarded session and the records. |
-| [server/](server/) | The one HTTP listener, built from route groups. |
+| [server/](server/) | The HTTP listener, built from route groups (the public one, and Claude Code's local one). |
+| [claude_code/](claude_code/) | Hearing Claude Code: its hook route, Cora's hooks in its settings, and what each session is doing. |
 | [web/](web/) | The web interface: pairing, routes and API, rendering, the live feed, voice relay, location, maps and the page in `static/`. |
 | [phone/](phone/) | Twilio: TwiML and the REST call, the signed routes and stream, audio conversion and the goodbye watch. |
 | [migrate.py](migrate.py), [migrations/](migrations/) | Numbered SQL migrations. |
