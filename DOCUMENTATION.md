@@ -187,8 +187,11 @@ keeps the full width; narrower than 50 columns the screen is cut off rather than
 (text boxes squeezed under their own padding can't lay out their text).
 
 - **Send a message:** Enter. Shift+Enter or Ctrl+J adds a new line.
-- **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in the message
-  box (Windows Terminal keeps Ctrl+V for itself and sends nothing for an image). The border
+- **Send an image:** click **+img** beside the message box to choose a file in Windows' own
+  file picker (`pick_image_file` in [ui/composer.py](ui/composer.py), through tkinter; the
+  web page has the same button), or copy a screenshot (Win+Shift+S) and press Ctrl+Alt+V in
+  the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for an image).
+  A chosen file goes the same way as a pasted image from here on. The border
   shows "image attached · Esc removes"; type a question if you like and press Enter. A
   separate one-off model request reads the image, with your message as the question, and
   only its short description enters her session, shown as a quiet line under your message
@@ -1482,7 +1485,39 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   words where she can. If he can't be reached she says so, and never answers as him.
   What she asks him stays on this PC, but his answer goes to OpenAI with your conversation,
   since her reply builds on it. Activity notes each question and how long he took.
-- **Asking him yourself (`@rocky …`):** a message starting `@rocky` at the desk or on the web
+- **Asking him yourself (`@rocky …`, or the chat on Rocky):** the chip at the left of each
+  message box (**Cora ›** / **Rocky ›**, in their colours; [ui/composer.py](ui/composer.py)
+  `ChatModeChip`, shown once Rocky has a model: before that there's only Cora, and the page
+  learns which from `/api/session`'s `rocky`) says who your typed messages go to, and a click or tap moves it on; the
+  box's prompt changes with it ("Type to Rocky (private…)"). The desk's two boxes share one
+  mode, back to Cora each launch; each web page keeps its own, in that browser. With it on
+  Rocky every message goes to him as if it began `@rocky`. Voice, Signal and email are always
+  Cora.
+- **Group chat (the chip on Group):** each typed message gets one round, so the two can never
+  set each other off: your message is shown, then Rocky answers it (`ask_rocky_in_group`),
+  streamed under it, then Cora replies in writing (in standby at the desk, or on the web
+  page; never while her voice is on: see below), given his answer (`group_note` in [live.py](live.py): build on him or correct him,
+  don't repeat him; her `consult_rocky` isn't offered for that turn). His "thread" there is
+  the conversation as shown (`GroupThread`, from `group_transcript`: your lines, hers and his,
+  labelled "Nick:" and "Cora:", without notes or his private answers), so he sees what she
+  said too. A labelled conversation invites a small model to write everyone's lines, so he's
+  stopped where a new line starts someone's turn (Ollama's `stop`, `stop_at`), anything after
+  one is cut (`own_turn`, bold labels too) along with any "From memory…" line he writes himself,
+  and his earlier answers are shown back to him without the line under them. His answer is part of her conversation (`GroupRockyAnswer`: her later turns are
+  given it) and goes to every web page, but isn't saved, so your messages and his answers reach
+  OpenAI as any chat with her does. He may browse first, and the line under his answer says
+  what he looked at. An image goes to both: he sees it himself, she has her own look at it. If
+  he can't answer, a quiet line says so and she answers on her own. On the web page the reply stream
+  carries his turn first (`rocky_delta`, `rocky_status`, `rocky_done` or `rocky_none`), then
+  hers; at the desk the box is free for your next message while he answers.
+- **With her voice on, the chat is hers alone:** while she isn't in standby, the chip stays on
+  **Cora ›**, dimmed, and clicking it (or its tooltip) says why: Rocky and a group chat come
+  back in standby, and until then she can consult Rocky herself. Voice coming on puts the chip
+  back on Cora (`set_chat_mode`, called from `set_connection_state`); back in standby it stays
+  there until clicked. The web page follows the desk's state (its `status` events) the same
+  way. Rocky listening in on voice (chiming in after her spoken replies) was tried and taken
+  out: in practice it didn't work well.
+- **The direct line (`@rocky`):** a message starting `@rocky` at the desk or on the web
   page goes to Rocky alone (`ask_rocky_directly`), in Live or Standby alike, and needs only a
   model chosen, not her switch. Neither your question nor his answer reaches OpenAI: nothing
   is saved, and the desk shows the exchange ("You · to Rocky: …", "Rocky · thinking…", then
@@ -1493,8 +1528,18 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   30 minutes), apart from his thread with her. The web page posts it to `/api/rocky` instead
   of to her, shows "thinking…" until he answers, and the `rocky` feed item (with `asker`
   "you") shows it on every other page. As a safeguard, `/api/messages` turns away an `@rocky`
-  message (from a page that hasn't reloaded) rather than send it to her. Images can't go to
-  him. If he can't answer, a quiet line says why where his answer would be.
+  message (from a page that hasn't reloaded) rather than send it to her. If he can't answer, a
+  quiet line says why where his answer would be.
+- **Images:** he sees them himself (Gemma 4 takes images; Ollama's `"images"` on a message).
+  An image pasted or chosen with +img at the desk, or a photo from the web page (`/api/rocky`
+  takes one as `/api/messages` does), goes to him as his own copy (`rocky_image`: JPEG, at most
+  1,024 pixels a side, never saved), shown small with your question; with no words he's asked
+  "What do you make of this?". On the direct line it never leaves this PC, so it suits what
+  you'd rather not send to OpenAI. His thread keeps each image with its question, so a
+  follow-up still has it until the thread goes quiet. Whether his model takes images is asked
+  of Ollama once per model (`can_see`, its "vision" capability): if it doesn't, he's told so
+  and says so rather than guessing, the line under his answer says he couldn't see it, and the
+  desk's +img goes while the chip's on Rocky.
 - **He browses** ([local_model/rocky_browsing.py](local_model/rocky_browsing.py), on the direct
   line for now): while the Browser service is connected and not busy with a sign-up or a job
   of her browser helper's, he gets the same read-only tools as her exploring (search, open a

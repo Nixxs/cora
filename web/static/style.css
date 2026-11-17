@@ -503,6 +503,24 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 }
 #chat-input::placeholder { color: #566074; }
 
+/* Who your messages go to: Cora's green, or Rocky's amber. */
+#mode-button {
+  flex-shrink: 0;
+  height: 34px;
+  padding: 0 6px;
+  border-radius: 5px;
+  color: var(--cora);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+#mode-button.mode-rocky { color: var(--rocky); }
+#mode-button.mode-group { color: var(--text-bright); }
+/* Her voice is on at the desk: the chat is hers alone, so the chip stays on Cora, quieter. */
+#mode-button.voice-on { opacity: 0.55; font-weight: 400; }
+#mode-button:hover, #mode-button:focus-visible { background: var(--bg-hover); outline: none; }
+#mode-button:active { background: var(--bg-hover); }
+
 /* The camera button, and the chosen photo's thumbnail until it's sent or removed. */
 /* A text button, like the TUI's own ("settings", "close"), not an emoji. */
 #photo-button {

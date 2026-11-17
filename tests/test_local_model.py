@@ -206,6 +206,9 @@ class OllamaClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(seen, ["Hey ", "Hey mate."])
             self.assertIs(asked[-1]["stream"], True)
         self.assertNotIn("think", asked[-1])
+        # Where to stop goes with the options, beside the context size (which must never change).
+        await ollama.chat("gemma", [], on_text=seen.append, stop=["\nCora:"])
+        self.assertEqual(asked[-1]["options"], {"num_ctx": 16384, "stop": ["\nCora:"]})
 
         def broken(request):
             return httpx.Response(200, content=b'{"message": {"content": "Hey"}}\n{"error": "out of memory"}\n')
@@ -213,6 +216,15 @@ class OllamaClientTests(unittest.IsolatedAsyncioTestCase):
         ollama = OllamaClient("http://ollama.test", transport=httpx.MockTransport(broken))
         with self.assertRaisesRegex(OllamaError, "out of memory"):
             await ollama.chat("gemma", [], on_text=lambda so_far: None)
+
+    async def test_whether_a_model_takes_images(self):
+        for capabilities, sees in ((["completion", "vision", "tools"], True), (["completion"], False), (None, False)):
+            def handle(request, capabilities=capabilities):
+                self.assertEqual(json.loads(request.content), {"model": "gemma"})
+                return httpx.Response(200, json={"capabilities": capabilities})
+
+            ollama = OllamaClient("http://ollama.test", transport=httpx.MockTransport(handle))
+            self.assertIs(await ollama.can_see("gemma"), sees)
 
     def test_model_names(self):
         for name in ("gemma3", "huihui_ai/gemma-4-abliterated:12b", "hf.co/owner/repo:Q4_K_M", "x:31B-q4_K"):

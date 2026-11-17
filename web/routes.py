@@ -78,7 +78,9 @@ class WebAccess:
     # send_message(device, text, on_text, ref) -> her reply, or None if it failed. on_text gets
     # her text so far as it streams in. It carries on if the page goes away, so the reply is still
     # shown at the desk and saved. ref is the page's own mark for the message, carried into the
-    # feed so that page doesn't show it twice.
+    # feed so that page doesn't show it twice. In a group chat it's also given on_rocky(kind, value)
+    # for Rocky's turn first: ("text", so far), ("status", what he's doing), then ("done", his
+    # answer) or ("none", why not).
     send_message: Callable[[WebDevice, str, Callable[[str], None], str | None], Awaitable[str | None]] | None = None
     # The conversation as the page sees it, and waiting until its earlier messages are loaded.
     feed: MessageFeed | None = None
@@ -102,6 +104,8 @@ class WebAccess:
     # (@rocky), never given to Cora; on_text gets it so far as it streams, on_status what he's doing
     # when he browses. Raises RockyUnavailable with what to tell them.
     ask_rocky: Callable[..., Awaitable[str]] | None = None
+    # Whether the page offers Rocky (its mode chip): once a model is chosen for him.
+    rocky_offered: Callable[[], bool] = lambda: False
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -125,6 +129,21 @@ async def read_json(request: Request, max_bytes: int = BODY_MAX_BYTES) -> dict |
     return value if isinstance(value, dict) else None
 
 
+def photo_of(body: dict) -> tuple[bytes | None, Response | None]:
+    """(the photo sent with a message, or None; or the answer refusing it, if it's no good)."""
+    if body.get("image") is None:
+        return None, None
+    try:
+        image = base64.b64decode(str(body["image"]), validate=True)
+    except ValueError:
+        image = b""
+    if not image:
+        return None, answer({"error": "That photo didn't come through. Try again."}, 400)
+    if len(image) > PHOTO_MAX_BYTES:
+        return None, answer({"error": "That photo is too large."}, 413)
+    return image, None
+
+
 def line(value: dict) -> bytes:
     return (json.dumps(value, ensure_ascii=False) + "\n").encode()
 
@@ -134,11 +153,11 @@ async def reply_lines(updates: asyncio.Queue):
     for each new piece, then {"type": "done", "html"} or {"type": "error", "message"}. A ("done",
     None) update is the usual failure; ("error", message) says why. ("status", text) is what Rocky
     is doing on the web ({"type": "status", "text"}); the text starts again from nothing after it."""
-    sent = 0
+    sent = rocky_sent = 0
     while True:
         kind, value = await updates.get()
         # Text that queued up meanwhile goes as one piece, up to whatever came after it.
-        while kind == "text" and not updates.empty():
+        while kind in ("text", "rocky_text") and not updates.empty():
             kind, value = updates.get_nowait()
         if kind == "error":
             yield line({"type": "error", "message": value})
@@ -146,6 +165,24 @@ async def reply_lines(updates: asyncio.Queue):
         if kind == "status":
             sent = 0
             yield line({"type": "status", "text": value})
+            continue
+        # In a group chat, Rocky's turn comes first, the same way: {"type": "rocky_delta", "text"},
+        # "rocky_status", then "rocky_done" (his answer as safe HTML) or "rocky_none" (why not).
+        if kind == "rocky_text":
+            delta = value[rocky_sent:]
+            rocky_sent = len(value)
+            if delta:
+                yield line({"type": "rocky_delta", "text": delta})
+            continue
+        if kind == "rocky_status":
+            rocky_sent = 0
+            yield line({"type": "rocky_status", "text": value})
+            continue
+        if kind == "rocky_done":
+            yield line({"type": "rocky_done", "html": chat_html(value)})
+            continue
+        if kind == "rocky_none":
+            yield line({"type": "rocky_none", "message": value})
             continue
         if kind == "text":
             delta = value[sent:] if value.startswith(value[:sent]) else value
@@ -203,7 +240,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         device = await device_of(request)
         if device is None:
             return answer({"paired": False}, 401)
-        return answer({"paired": True, "device": device.name})
+        return answer({"paired": True, "device": device.name, "rocky": access.rocky_offered()})
 
     async def pair(request: Request) -> Response:
         body = await read_json(request)
@@ -218,7 +255,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         token = new_token()
         device = await access.add_device(str(body.get("name", "")), token_hash(token))
         access.on_paired(device)
-        response = answer({"paired": True, "device": device.name})
+        response = answer({"paired": True, "device": device.name, "rocky": access.rocky_offered()})
         response.set_cookie(COOKIE, token, max_age=COOKIE_SECONDS, path="/", secure=True, httponly=True,
                             samesite="strict")
         return response
@@ -231,16 +268,9 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "Cora can't take messages here yet."}, 503)
         body = await read_json(request, PHOTO_BODY_MAX_BYTES)
         text = str(body.get("text", "")).strip() if body is not None else ""
-        image = None
-        if body is not None and body.get("image") is not None:
-            try:
-                image = base64.b64decode(str(body["image"]), validate=True)
-            except ValueError:
-                return answer({"error": "That photo didn't come through. Try again."}, 400)
-            if not image:
-                return answer({"error": "That photo didn't come through. Try again."}, 400)
-            if len(image) > PHOTO_MAX_BYTES:
-                return answer({"error": "That photo is too large."}, 413)
+        image, refused = photo_of(body) if body is not None else (None, None)
+        if refused is not None:
+            return refused
         if not text and image is None:
             return answer({"error": "Send the message as JSON, with some text or a photo."}, 400)
         if len(text) > MESSAGE_MAX_CHARS:
@@ -252,10 +282,16 @@ def api_routes(access: WebAccess) -> list[Route]:
         ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
 
+        # A group chat (the page's chip on Group): Rocky answers first, streamed the same way (a
+        # photo goes to him as well as her).
+        group = body.get("group") is True
+
         async def reply() -> None:
             try:
                 # The photo only when there is one, so senders without photos keep four arguments.
                 extra = {"image": image} if image is not None else {}
+                if group:
+                    extra["on_rocky"] = lambda kind, value: updates.put_nowait((f"rocky_{kind}", value))
                 updates.put_nowait(("done", await access.send_message(
                     device, text, lambda so_far: updates.put_nowait(("text", so_far)), ref, **extra,
                 )))
@@ -274,28 +310,34 @@ def api_routes(access: WebAccess) -> list[Route]:
         })
 
     async def rocky(request: Request) -> Response:
-        """@rocky from the page: {"question", "ref"} -> his answer streamed as he writes it, like
-        her replies (reply_lines), or {"error"} if it can't be asked."""
+        """@rocky from the page: {"question", "ref"[, "image"]} -> his answer streamed as he writes
+        it, like her replies (reply_lines), or {"error"} if it can't be asked. image: a photo, as
+        with a message to her, which he sees himself (never leaving Cora's PC)."""
         device = await device_of(request)
         if device is None:
             return answer({"error": "This device isn't paired."}, 401)
         if access.ask_rocky is None:
             return answer({"error": "Rocky can't be asked from here yet."}, 503)
-        body = await read_json(request, MESSAGE_BODY_MAX_BYTES)
+        body = await read_json(request, PHOTO_BODY_MAX_BYTES)
         if body is None or not isinstance(body.get("question"), str):
             return answer({"error": "Send the question as JSON."}, 400)
         question = body["question"].strip()
         if len(question) > QUESTION_MAX_CHARS:
             return answer({"error": f"That's too long for Rocky: at most {QUESTION_MAX_CHARS} characters."}, 413)
+        image, refused = photo_of(body)
+        if refused is not None:
+            return refused
         ref = body.get("ref")
         ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
 
         async def ask() -> None:
             try:
+                # The photo only when there is one, so askers without photos keep five arguments.
+                extra = {"image": image} if image is not None else {}
                 updates.put_nowait(("done", await access.ask_rocky(
                     device, question, ref, lambda so_far: updates.put_nowait(("text", so_far)),
-                    lambda doing: updates.put_nowait(("status", doing)),
+                    lambda doing: updates.put_nowait(("status", doing)), **extra,
                 )))
             except RockyUnavailable as error:
                 updates.put_nowait(("error", str(error)))

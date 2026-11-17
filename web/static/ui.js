@@ -164,14 +164,21 @@ export function addMap({ caption, embed, link, when = new Date() }) {
 }
 
 /** A question to Rocky, as plain text (escaped here): Cora's, or yours (@rocky). via: where yours
- * was asked ("web · iPad"). */
-function rockyQuestion({ asker, question, via = "", when }) {
+ * was asked ("web · iPad"); photo: the photo sent with it from this page (a local address). */
+function rockyQuestion({ asker, question, via = "", when, photo = null }) {
   const asked = document.createElement("article");
   asked.className = `message ${asker === "you" ? "you" : "cora"} to-rocky`;
   const where = ` · to Rocky${via ? ` · ${via}` : ""}`;
   asked.innerHTML = `
     <div class="label"><span class="who">${asker === "you" ? "You" : "Cora"}</span><span class="via">${escapeText(where)}</span><span class="when">${time(when)}</span></div>
     <div class="body"><p>${escapeText(question).replace(/\n/g, "<br>")}</p></div>`;
+  if (photo) {
+    const image = document.createElement("img");
+    image.className = "photo";
+    image.src = photo;
+    image.alt = "Photo sent to Rocky";
+    asked.querySelector(".body").prepend(image);
+  }
   return asked;
 }
 
@@ -191,8 +198,10 @@ function rockyAnswer(html, when, via = " · local model") {
  * one she's still writing on this page, if any.
  */
 export function addRocky({ asker = "cora", question, html, via = "", when = new Date() }) {
-  const asked = rockyQuestion({ asker, question, via, when });
   const answer = rockyAnswer(html, when);
+  // In a group chat he answers your message, shown just above: no question of his own.
+  if (asker === "group") return append(answer);
+  const asked = rockyQuestion({ asker, question, via, when });
   const draft = asker === "cora" ? output.querySelector(".message.cora.writing") : null;
   if (!draft) {
     append(asked);
@@ -208,9 +217,10 @@ export function addRocky({ asker = "cora", question, html, via = "", when = new 
 
 /** Your question to Rocky from this page (@rocky), and his answer to come, like startWriting's:
  * update(text) as it streams in, then finish(html), or fail(why) (why: shown in its place if
- * nothing had come yet; what had stays, marked incomplete). */
-export function askingRocky(question, via) {
-  append(rockyQuestion({ asker: "you", question, via, when: new Date() }));
+ * nothing had come yet; what had stays, marked incomplete). question null: his turn in a group
+ * chat, under your message. */
+export function askingRocky(question, via, photo = null) {
+  if (question !== null) append(rockyQuestion({ asker: "you", question, via, when: new Date(), photo }));
   const answer = append(rockyAnswer("<p></p>", new Date(), " · thinking…"));
   answer.classList.add("writing");
   const body = answer.querySelector(".body");

@@ -14,9 +14,13 @@ class ChatSubmission:
     def __init__(self, *, persistence, conversation, live, backend_work,
                  is_closing, is_reconnecting, is_standby, schedule,
                  record_activity, write_activity, notify, trace, send_without_live=None, keep_image=None,
-                 ask_rocky=None):
-        # ask_rocky(question): "@rocky …" goes to Rocky alone, never to Cora (see ask_rocky_directly).
+                 ask_rocky=None, chat_mode=lambda: "cora", ask_group=None):
+        # ask_rocky(question): "@rocky …", or anything with the chat's mode on Rocky (chat_mode()),
+        # goes to Rocky alone, never to Cora (see ask_rocky_directly).
         self.ask_rocky = ask_rocky
+        self.chat_mode = chat_mode
+        # await ask_group(message[, image_png]) -> Rocky's answer (or None) in a group chat, before hers.
+        self.ask_group = ask_group
         # In Standby, a typed message goes here instead: answered in writing without waking Live.
         self.send_without_live = send_without_live
         # keep_image(jpeg) -> id: a pasted image is kept in memory for look_again (see tools/look_again.py).
@@ -49,13 +53,18 @@ class ChatSubmission:
             self.notify("Your image is still being sent; this message is kept until it is done.")
             return
         rocky = direct_question(message) if self.ask_rocky is not None else None
+        if rocky is None and self.ask_rocky is not None and self.chat_mode() == "rocky":
+            rocky = message
         if rocky is not None:
-            # Straight to Rocky, in Live or Standby alike: not saved, and never sent to her.
-            if composer.image_png:
-                self.notify("Rocky can't see images. Remove it to ask him; your draft is kept.", severity="warning")
-                return
+            # Straight to Rocky, in Live or Standby alike: not saved, and never sent to her. An image
+            # goes with it, which he sees himself (it never leaves this PC either).
+            image_png = composer.image_png
             composer.clear()
-            self.ask_rocky(rocky)
+            composer.remove_image()
+            if image_png is None:
+                self.ask_rocky(rocky)
+            else:
+                self.ask_rocky(rocky, image_png)
             return
         if self.is_standby() and self.send_without_live is None:
             self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
@@ -68,7 +77,7 @@ class ChatSubmission:
             self.sending_image = True
             composer.clear()
             composer.remove_image()
-            composer.parent.border_subtitle = SENDING_IMAGE
+            composer.frame.border_subtitle = SENDING_IMAGE
         else:
             composer.disabled = True
         self.conversation.flush_transcript()
@@ -130,9 +139,29 @@ class ChatSubmission:
             if self.is_closing():
                 # Saved text remains pending; shutdown must not start a new send.
                 return
+            # A group chat: one round, their message, then Rocky's turn, then hers with his answer
+            # (in writing). An image goes to both: he sees it himself, she has her look at it. While
+            # her voice is on the chat is hers alone (its chip says so: set_chat_mode).
             without_live = self.is_standby() and self.send_without_live is not None
+            group = self.ask_group is not None and self.chat_mode() == "group" and without_live
+            rocky_said = history = None
+            if group:
+                # Taken before the message is shown, so it isn't given to her twice.
+                history = self.conversation.get_reconnect_history()
+                self.show_sent(shown, image_png=image_png, image_seen=image_seen, caption=message)
+                sent = True
+                # Free to type the next one while he answers. (With an image it was freed as it was
+                # sent, so what's in it now is the next message: kept.)
+                if not image_png:
+                    composer.clear()
+                composer.disabled = self.is_closing() or self.is_reconnecting()
+                rocky_said = await (self.ask_group(message, image_png) if image_png else self.ask_group(message))
+                if self.is_closing():
+                    return
             try:
-                if without_live:
+                if group:
+                    self.send_without_live(message, image_seen, group=True, rocky_said=rocky_said, history=history)
+                elif without_live:
                     # The written reply arrives later; Live stays closed.
                     self.send_without_live(message, image_seen)
                 else:
@@ -155,20 +184,11 @@ class ChatSubmission:
 
             self.pending_message = None
             await self.record_keyboard_delivery(message_id, "sent")
+            if group:
+                # Shown before Rocky's turn.
+                return
             sent = True
-            self.conversation.flush_transcript()
-            self.conversation.write_log(f"You: {shown}")
-            # Saved above; the web page hears of it here.
-            self.conversation.announce("user", shown, "keyboard")
-            if image_png:
-                # Shown small in the chat (click for the pop-up), kept only in memory.
-                image = Image.open(io.BytesIO(image_png)).convert("RGB")
-                image.thumbnail((1024, 1024))
-                self.conversation.write_log(ChatImage(image, message or "Pasted image"))
-                if image_seen and image_seen.startswith("Photo img"):
-                    # Under the thumbnail: its description and id, for later turns.
-                    self.conversation.show_photo_note(image_seen)
-            self.conversation.write_log("")
+            self.show_sent(shown, image_png=image_png, image_seen=image_seen, caption=message)
             if not image_png:
                 composer.clear()
                 composer.remove_image()
@@ -178,11 +198,28 @@ class ChatSubmission:
                 if not sent:
                     self.restore_draft(composer, message, image_png)
                 elif composer.image_png is None:
-                    composer.parent.border_subtitle = ""
+                    composer.frame.border_subtitle = ""
             self.record_activity()
             composer.disabled = self.is_closing() or self.is_reconnecting()
             if not composer.disabled:
                 composer.focus()
+
+    def show_sent(self, shown: str, image_png: bytes | None = None, image_seen: str | None = None,
+                  caption: str = "") -> None:
+        """Their message in the chat, and to the web page (it was saved before sending), with any
+        image under it."""
+        self.conversation.flush_transcript()
+        self.conversation.write_log(f"You: {shown}")
+        self.conversation.announce("user", shown, "keyboard")
+        if image_png:
+            # Shown small in the chat (click for the pop-up), kept only in memory.
+            image = Image.open(io.BytesIO(image_png)).convert("RGB")
+            image.thumbnail((1024, 1024))
+            self.conversation.write_log(ChatImage(image, caption or "Pasted image"))
+            if image_seen and image_seen.startswith("Photo img"):
+                # Under the thumbnail: its description and id, for later turns.
+                self.conversation.show_photo_note(image_seen)
+        self.conversation.write_log("")
 
     @staticmethod
     def restore_draft(composer: ChatComposer, message: str, image_png: bytes) -> None:

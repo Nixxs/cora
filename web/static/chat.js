@@ -108,7 +108,11 @@ function follow(deviceName) {
   });
   // Cora asks where you are: answered only with "where" on.
   events.addEventListener("locate", (event) => answerLocate(JSON.parse(event.data).id));
-  events.addEventListener("status", (event) => setStatus(JSON.parse(event.data).state));
+  events.addEventListener("status", (event) => {
+    const { state } = JSON.parse(event.data);
+    setStatus(state);
+    followVoice(state);
+  });
   events.addEventListener("error", async () => {
     // The browser retries by itself while it can; closed means it gave up.
     setLink(events.readyState === EventSource.CLOSED ? "offline" : "reconnecting");
@@ -149,12 +153,19 @@ function showApproval(request) {
   }));
 }
 
-/** Her reply arrives one JSON object a line: pieces as she writes, then the finished reply. */
-async function readReply(response, draft) {
+/** Her reply arrives one JSON object a line: pieces as she writes, then the finished reply. In a
+ * group chat Rocky's turn comes first the same way (rocky_* pieces, into rocky's bubble). */
+async function readReply(response, draft, rocky = null) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
   let written = "";
+  let rockyWritten = "";
+  let rockyDone = rocky === null;
+  const endRocky = () => {
+    if (!rockyDone) rocky.fail();
+    rockyDone = true;
+  };
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -164,7 +175,24 @@ async function readReply(response, draft) {
     for (const text of lines) {
       if (!text.trim()) continue;
       const update = JSON.parse(text);
+      if (rocky && update.type.startsWith("rocky_")) {
+        if (update.type === "rocky_delta") {
+          rockyWritten += update.text;
+          rocky.update(rockyWritten);
+        } else if (update.type === "rocky_status") {
+          rockyWritten = "";
+          rocky.status(update.text);
+        } else if (update.type === "rocky_done") {
+          rocky.finish(update.html);
+          rockyDone = true;
+        } else if (update.type === "rocky_none") {
+          rockyDone = true;
+          rocky.fail(update.message);
+        }
+        continue;
+      }
       if (update.type === "delta") {
+        endRocky();
         written += update.text;
         draft.update(written);
       } else if (update.type === "status") {
@@ -172,9 +200,11 @@ async function readReply(response, draft) {
         written = "";
         draft.status?.(update.text);
       } else if (update.type === "done") {
+        endRocky();
         draft.finish(update.html);
         return;
       } else if (update.type === "error") {
+        endRocky();
         draft.fail();
         addNotice(update.message);
         return;
@@ -182,6 +212,7 @@ async function readReply(response, draft) {
     }
   }
   // The stream ended without a finished reply: the connection dropped part way.
+  endRocky();
   draft.fail();
   addNotice(DROPPED);
 }
@@ -193,18 +224,92 @@ function newRef() {
 // "@rocky …": to Rocky alone, never to Cora (as the desk's chat_submission and Cora's PC check too).
 const DIRECT_ROCKY = /^@rocky\b[\s:,]*/i;
 
-/** Your question straight to Rocky: shown here as you asked, then his answer (or why not). */
-async function askRocky(question, ref) {
-  if (hasPhoto()) addNotice("Rocky can't see photos: yours is still attached for your next message to Cora.");
+// Who your messages go to from this page: Cora, Rocky alone (as if each began "@rocky"), or both
+// as a group chat (Rocky answers first, then Cora, who sees his answer). Each device keeps its
+// own, in this browser only; Cora unless changed.
+const MODES = ["cora", "rocky", "group"];
+const MODE_NAMES = { cora: "Cora", rocky: "Rocky", group: "Group" };
+const MODE_PLACEHOLDERS = {
+  cora: "Type to Cora…", rocky: "Type to Rocky (private)…", group: "Type to Cora and Rocky…",
+};
+const MODE_LABELS = {
+  cora: "Messages go to Cora: tap for Rocky",
+  rocky: "Messages go to Rocky alone, Cora doesn't see them: tap for a group chat",
+  group: "A group chat: Rocky answers first, then Cora, who sees his answer: tap for Cora",
+};
+const MODE_KEY = "cora-chat-mode";
+let chatMode = "cora";
+// While her voice is on at the desk, the chat is hers alone (as the desk's chip shows): Rocky and
+// a group chat come back when she's in standby.
+const VOICE_ON_STATES = ["active", "connecting", "disconnecting"];
+const VOICE_ON = "Cora's voice is on, so the chat is hers alone (she can still consult Rocky). Rocky and group chat come back when she's in standby.";
+let voiceOn = false;
+
+function showMode() {
+  const button = document.getElementById("mode-button");
+  button.textContent = `${MODE_NAMES[chatMode]} ›`;
+  button.className = `mode-${chatMode}${voiceOn ? " voice-on" : ""}`;
+  button.setAttribute("aria-label", voiceOn ? VOICE_ON : MODE_LABELS[chatMode]);
+  button.title = voiceOn ? VOICE_ON : "";
+  document.getElementById("chat-input").placeholder = MODE_PLACEHOLDERS[chatMode];
+}
+
+function saveMode() {
+  try {
+    localStorage.setItem(MODE_KEY, chatMode);
+  } catch {
+    // Still switched for now; just not remembered.
+  }
+}
+
+/** The desk's Live state, as it changes: her voice on puts the chat on Cora. */
+function followVoice(state) {
+  voiceOn = VOICE_ON_STATES.includes(state);
+  if (voiceOn && chatMode !== "cora") {
+    chatMode = "cora";
+    saveMode();
+  }
+  if (!document.getElementById("mode-button").hidden) showMode();
+}
+
+/** The mode chip, shown only when there's somebody besides Cora to talk to. */
+function setupMode(rockyOffered) {
+  if (!rockyOffered) {
+    // No model for Rocky yet: Cora only (what was chosen before is kept for when he's back).
+    document.getElementById("mode-button").hidden = true;
+    return;
+  }
+  try {
+    const saved = localStorage.getItem(MODE_KEY);
+    if (MODES.includes(saved)) chatMode = saved;
+  } catch {
+    // No storage here (a private window): Cora each time.
+  }
+  showMode();
+  document.getElementById("mode-button").addEventListener("click", () => {
+    if (voiceOn) {
+      addNotice(VOICE_ON);
+      return;
+    }
+    chatMode = MODES[(MODES.indexOf(chatMode) + 1) % MODES.length];
+    saveMode();
+    showMode();
+  });
+}
+
+/** Your question straight to Rocky, with a photo if one was chosen (he sees it himself, and it
+ * never leaves Cora's PC): shown here as you asked, then his answer (or why not). */
+async function askRocky(question, ref, photo = null) {
   markDay(new Date());
-  const pending = askingRocky(question, thisDevice ? `web · ${thisDevice}` : "web");
+  const pending = askingRocky(question || "What do you make of this?", thisDevice ? `web · ${thisDevice}` : "web",
+    photo?.url);
   let response;
   try {
     response = await fetch("/api/rocky", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, ref }),
+      body: JSON.stringify(photo ? { question, ref, image: photo.base64 } : { question, ref }),
     });
   } catch {
     pending.fail(UNREACHABLE);
@@ -231,8 +336,11 @@ async function send(text) {
   const ref = newRef();
   sentHere.add(ref);
   const direct = DIRECT_ROCKY.exec(text);
-  if (direct) {
-    await askRocky(text.slice(direct[0].length).trim(), ref);
+  if (direct || chatMode === "rocky") {
+    const question = direct ? text.slice(direct[0].length).trim() : text;
+    const photo = hasPhoto() ? await takePhoto() : null;
+    if (!question && !photo && !direct) return;
+    await askRocky(question, ref, photo);
     return;
   }
   // A photo chosen with the camera button goes with this message; she sees it herself.
@@ -240,16 +348,23 @@ async function send(text) {
   if (!text && !photo) return;
   markDay(new Date());
   addMessage({ who: "You", via: thisDevice ? `web · ${thisDevice}` : "web", text, photo: photo?.url });
+  // A group chat: Rocky's turn first, under your message, then hers. A photo goes to both: he sees
+  // it himself, as she does.
+  const group = chatMode === "group";
+  const rocky = group ? askingRocky(null) : null;
   const draft = startWriting("web");
+  const body = photo ? { text, ref, image: photo.base64 } : { text, ref };
+  if (group) body.group = true;
   let response;
   try {
     response = await fetch("/api/messages", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(photo ? { text, ref, image: photo.base64 } : { text, ref }),
+      body: JSON.stringify(body),
     });
   } catch {
+    rocky?.fail();
     draft.fail();
     addNotice(UNREACHABLE);
     return;
@@ -260,20 +375,23 @@ async function send(text) {
     return;
   }
   if (!response.ok || !response.body) {
-    const body = await response.json().catch(() => ({}));
+    const answer = await response.json().catch(() => ({}));
+    rocky?.fail();
     draft.fail();
-    addNotice(body.error || UNREACHABLE);
+    addNotice(answer.error || UNREACHABLE);
     return;
   }
   try {
-    await readReply(response, draft);
+    await readReply(response, draft, rocky);
   } catch {
+    rocky?.fail();
     draft.fail();
     addNotice(DROPPED);
   }
 }
 
-export function startChat(deviceName) {
+export function startChat(deviceName, rockyOffered = false) {
+  setupMode(rockyOffered);
   setupComposer(send, hasPhoto);
   setupPhotos(addNotice);
   setupLocation(addNotice);

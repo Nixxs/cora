@@ -2,15 +2,21 @@
 the switch in Settings. The local model is a stand-in here."""
 
 import asyncio
+import base64
 from datetime import date
+import io
 import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
+from PIL import Image
 from textual.widgets import Switch, TabbedContent
 
-from app_areas.local_model import NOT_ON_CONSULTS, REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, LocalModelMixin
+from app_areas.local_model import (
+    NOT_ON_CONSULTS, REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, LocalModelMixin,
+)
 from app_areas.web_interface import WebInterfaceMixin
 from backend_chat import BackendRoute
 from local_model.manager import LocalModel
@@ -22,14 +28,17 @@ from local_model.rocky_browsing import (
     needs_looking, no_browser_note,
 )
 from subconscious.interests.browse_exploration import BrowserAccess
+from live import typed_content
 from local_model.rocky import (
-    DIRECT_PERSONA, PERSONA, THREAD_EXCHANGES, THREAD_IDLE_SECONDS, RockyThread, RockyUnavailable, answer_text,
-    direct_question, shown_so_far,
+    DIRECT_PERSONA, PERSONA, GroupThread, stop_at, THREAD_EXCHANGES, THREAD_IDLE_SECONDS, RockyThread, RockyUnavailable, answer_text,
+    IMAGE_QUESTION, direct_question, rocky_image, shown_so_far,
 )
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from tools.consult_rocky import NAME, ConsultRockyTool, validate_arguments
 from tools.route import current_route
 from ui.chat_submission import ChatSubmission
+from ui.composer import IMAGE_MARKER, VOICE_ON_NOTE, VOICE_ON_TOOLTIP, ChatComposer, ChatModeChip
+from ui.chat_widgets import ChatImage
 from ui.conversation import ROCKY_ASKED, YOU_TO_ROCKY, Conversation, DirectRockyAnswer, QuietNote, RockyAnswer
 from ui.model_settings import ModelSettingsScreen
 from web import routes
@@ -78,16 +87,30 @@ class ThreadTests(unittest.TestCase):
         self.assertEqual(shown_so_far("<think>hmm</think>\nStraight up"), "Straight up")
         self.assertEqual(shown_so_far("Straight up"), "Straight up")
 
+    def test_a_speaker_label_he_copies_is_taken_off(self):
+        self.assertEqual(answer_text("Nick: I hear ya loud and clear, mate!", "Nick"), "I hear ya loud and clear, mate!")
+        self.assertEqual(answer_text("Rocky: Sure thing."), "Sure thing.")
+        self.assertEqual(answer_text("Cora (for Nick): Sure."), "Sure.")
+        self.assertEqual(shown_so_far("  nick:  It sure does", "Nick"), "It sure does")
+        # Only labels: anything else before a colon stays.
+        self.assertEqual(answer_text("Short answer: no."), "Short answer: no.")
+        self.assertEqual(answer_text("Nickel: it's a metal.", "Nick"), "Nickel: it's a metal.")
+        self.assertIn("don't start yours with any name", RockyThread(direct=True).messages("hi", False, "Nick")[0]["content"])
+
 
 class StandInOllama:
     def __init__(self, reply="Straight up: serotonin syndrome is the risk."):
         self.reply = reply
         self.asked = []
+        self.sees = True
 
     async def version(self):
         return "0.40.16"
 
-    async def chat(self, model, messages, on_text=None):
+    async def can_see(self, model):
+        return self.sees
+
+    async def chat(self, model, messages, on_text=None, stop=None):
         self.asked.append((model, messages))
         if isinstance(self.reply, Exception):
             raise self.reply
@@ -404,7 +427,7 @@ class BrowsingTests(unittest.IsolatedAsyncioTestCase):
         self.app.rocky_browses = lambda *args: LocalModelMixin.rocky_browses(self.app, *args)
         self.ollama.turns = [searched(), Turn("It's risky, mate (drugsand.me).", [])]
 
-        async def turn(model, messages, tools=None, on_text=None):
+        async def turn(model, messages, tools=None, on_text=None, stop=None):
             self.ollama.asked.append((model, [dict(message) for message in messages]))
             reply = self.ollama.turns.pop(0)
             if on_text and reply.content:
@@ -496,6 +519,217 @@ class BrowserSharingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.app.rocky_wants_browser)
 
 
+class GroupChatTests(unittest.IsolatedAsyncioTestCase):
+    """A group chat: the person's message, Rocky's turn (seeing the conversation), then Cora's."""
+
+    def setUp(self):
+        self.conversation = Conversation(MagicMock(), MagicMock(), MagicMock(), record_message=MagicMock())
+
+    def test_he_sees_the_conversation_labelled_and_not_whats_private(self):
+        c = self.conversation
+        c.write_log("You: is ket safe with weed?")
+        c.show_written_reply("Mostly, but go slow.", label="Cora", channel="keyboard")
+        c.ask_rocky_directly("a private one", "").finish("private answer")
+        c.show_note("Cora checked where you are.")
+        draft = c.rocky_in_group()
+        draft.finish("Go slow, mate.")
+        c.write_log("You · web · iPad: and with booze?")
+        self.assertEqual(c.group_transcript(), [
+            ("person", "is ket safe with weed?"), ("cora", "Mostly, but go slow."),
+            ("rocky", "Go slow, mate."), ("person", "and with booze?")])
+        messages = GroupThread(c.group_transcript).messages("and with booze?", False, "Nick")
+        self.assertIn("in a group chat with Nick and Cora", messages[0]["content"])
+        self.assertEqual([(m["role"], m["content"]) for m in messages[1:]], [
+            ("user", "Nick: is ket safe with weed?\n\nCora: Mostly, but go slow."),
+            ("assistant", "Go slow, mate."), ("user", "Nick: and with booze?")])
+        # His group answer is part of her conversation; his private one isn't.
+        said = [item["content"][0]["text"] for item in c.get_reconnect_history()]
+        self.assertIn("(Rocky, in our group chat, said: Go slow, mate.)", said)
+        self.assertNotIn("private answer", " ".join(said))
+
+    def test_he_writes_only_his_own_turn(self):
+        said = ("Love the new setup, mate!\n\nCora: Just bear in mind I'm the brains.\n\n"
+                "*From memory: he didn't look anything up.*")
+        self.assertEqual(answer_text(said, "Nick"), "Love the new setup, mate!")
+        self.assertEqual(answer_text("Sure.\n**Cora:** me too", "Nick"), "Sure.")
+        self.assertEqual(answer_text("Ha.\nNick: what?", "Nick"), "Ha.")
+        self.assertEqual(shown_so_far("Go slow.\n\nCo", "Nick"), "Go slow.\n\nCo")
+        self.assertEqual(shown_so_far("Go slow.\n\nCora: and", "Nick"), "Go slow.\n\n")
+        # A name mid-sentence is just a name.
+        self.assertEqual(answer_text("Ask Cora: she knows.", "Nick"), "Ask Cora: she knows.")
+        self.assertIn("\nCora:", stop_at("Nick"))
+        self.assertIn("\nNick:", stop_at("Nick"))
+        self.assertIn("never write Cora's reply", GroupThread(lambda: []).messages("hi", False)[0]["content"])
+
+    def test_he_isnt_shown_the_line_under_his_answers(self):
+        self.conversation.write_log("You: hi")
+        self.conversation.rocky_in_group().finish("Hey mate!\n\n*From memory: he didn't look anything up.*")
+        self.assertEqual(self.conversation.group_transcript()[-1], ("rocky", "Hey mate!"))
+
+    def test_her_turn_is_given_his_answer(self):
+        content = typed_content("and with booze?", group=True, rocky_said="Don't, mate.")
+        self.assertEqual(content[0]["text"], "and with booze?")
+        self.assertIn("His answer: Don't, mate.", content[1]["text"])
+        self.assertIn("Don't repeat what he said", content[1]["text"])
+        self.assertIn("he couldn't answer this time", typed_content("x", group=True)[1]["text"])
+        self.assertEqual(len(typed_content("x")), 1)
+
+    async def test_his_turn_is_shown_published_and_returned_for_hers(self):
+        ConsultTests.setUp(self)
+        self.app.conversation = self.conversation
+        self.app.rocky_group_thread = GroupThread(self.conversation.group_transcript)
+        self.conversation.write_log("You: is ket safe with weed?")
+        said = await LocalModelMixin.ask_rocky_in_group(self.app, "is ket safe with weed?")
+        self.assertTrue(said.startswith("Straight up: serotonin syndrome is the risk.\n\n*From memory"))
+        item = self.app.web_feed.items[-1]
+        self.assertEqual((item.kind, item.data["asker"]), (ROCKY, "group"))
+        self.assertEqual(self.ollama.asked[0][1][-1]["content"], "The person: is ket safe with weed?")
+        # No model: why, in his place, and her turn goes ahead without him.
+        self.app.local_model_name = ""
+        self.assertIsNone(await LocalModelMixin.ask_rocky_in_group(self.app, "again?"))
+        self.assertIn("Cora's answering on her own", self.conversation.log_entries[-3])
+
+
+class VoiceOnTests(unittest.IsolatedAsyncioTestCase):
+    """While her voice is on the chat is hers alone: the chip stays on Cora, dimmed, saying why."""
+
+    async def test_voice_on_puts_the_chat_on_cora_and_standby_lets_it_change_again(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.local_model_name = "huihui_ai/gemma-4-abliterated:12b"
+            chip = app.query_one("#chat-mode", ChatModeChip)
+            app.standby = True
+            app.set_chat_mode("group")
+            self.assertEqual(app.chat_mode, "group")
+            # Her voice comes on: Cora, dimmed, with why.
+            app.standby = False
+            app.set_connection_state("active")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(chip.label)), ("cora", "Cora ›"))
+            self.assertTrue(chip.has_class("voice-on"))
+            self.assertEqual(chip.tooltip, VOICE_ON_TOOLTIP)
+            app.notify = MagicMock()
+            await pilot.click("#chat-mode")
+            await pilot.pause()
+            self.assertEqual(app.chat_mode, "cora")
+            app.notify.assert_called_once_with(VOICE_ON_NOTE)
+            # Back in standby: still Cora until it's clicked, then the others again.
+            app.standby = True
+            app.set_connection_state("standby")
+            await pilot.pause()
+            self.assertFalse(chip.has_class("voice-on"))
+            self.assertEqual(app.chat_mode, "cora")
+            await pilot.click("#chat-mode")
+            await pilot.pause()
+            self.assertEqual(app.chat_mode, "rocky")
+
+
+class GroupSubmissionTests(unittest.IsolatedAsyncioTestCase):
+    """At the desk: shown, then his turn, then hers with his answer, live or in Standby."""
+
+    async def submit(self, standby: bool, image=None):
+        order = []
+        conversation = MagicMock()
+        conversation.get_reconnect_history.side_effect = lambda: order.append("history") or ["earlier"]
+        conversation.write_log.side_effect = lambda line: order.append(line) if line else None
+
+        async def ask_group(message):
+            order.append(f"rocky: {message}")
+            return "Don't, mate."
+
+        live = MagicMock()
+        live.send_text = AsyncMock(side_effect=lambda *a, **k: order.append(("live", a, k)))
+        send_without_live = MagicMock(side_effect=lambda *a, **k: order.append(("written", a, k)))
+        persistence = MagicMock()
+        persistence.call_database = AsyncMock()
+        submission = ChatSubmission(
+            persistence=persistence, conversation=conversation, live=live, backend_work=MagicMock(),
+            is_closing=lambda: False, is_reconnecting=lambda: False, is_standby=lambda: standby,
+            schedule=MagicMock(), record_activity=MagicMock(), write_activity=MagicMock(), notify=MagicMock(),
+            trace=MagicMock(), send_without_live=send_without_live, ask_rocky=MagicMock(),
+            chat_mode=lambda: "group", ask_group=ask_group,
+        )
+        composer = MagicMock(image_png=image, disabled=True)
+        await submission.submit_keyboard_message("and with booze?", uuid4(), composer)
+        return order, conversation
+
+    async def test_in_standby_she_writes_after_him_with_his_answer(self):
+        order, conversation = await self.submit(standby=True)
+        self.assertEqual(order[:3], ["history", "You: and with booze?", "rocky: and with booze?"])
+        self.assertEqual(order[3], ("written", ("and with booze?", None),
+                                    {"group": True, "rocky_said": "Don't, mate.", "history": ["earlier"]}))
+        conversation.announce.assert_called_once_with("user", "and with booze?", "keyboard")
+
+    async def test_with_her_voice_on_its_hers_alone(self):
+        order, _ = await self.submit(standby=False)
+        self.assertNotIn("rocky: and with booze?", order)
+        self.assertEqual(order, [("live", ("and with booze?",), {}), "You: and with booze?"])
+
+
+def png(size=(1600, 900), colour="red") -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", size, colour).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class ImageTests(unittest.IsolatedAsyncioTestCase):
+    """He sees images himself (his model takes them): his own small copy, never leaving this PC."""
+
+    def setUp(self):
+        ConsultTests.setUp(self)
+        self.app.conversation = Conversation(MagicMock(), MagicMock(), MagicMock(), record_message=MagicMock())
+        self.app.rocky_vision = {}
+        self.app.rocky_sees = lambda ollama, model: LocalModelMixin.rocky_sees(self.app, ollama, model)
+        self.app.set_chat_mode = MagicMock()
+        self.app.chat_mode = "rocky"
+
+    def test_his_copy_is_a_small_jpeg(self):
+        copy = base64.b64decode(rocky_image(png()))
+        with Image.open(io.BytesIO(copy)) as image:
+            self.assertEqual((image.format, max(image.size)), ("JPEG", 1024))
+        with self.assertRaises(Exception):
+            rocky_image(b"not an image")
+
+    def test_his_thread_keeps_each_image_with_its_question(self):
+        thread = RockyThread(direct=True)
+        first = thread.messages("what's this pill?", False, "Nick", images=["abc"])
+        self.assertEqual(first[-1], {"role": "user", "content": "Nick: what's this pill?", "images": ["abc"]})
+        thread.add("what's this pill?", "Looks like an E, mate.", ["abc"])
+        follow_up = thread.messages("is it strong?", False, "Nick")
+        self.assertEqual(follow_up[1]["images"], ["abc"])
+        self.assertNotIn("images", follow_up[-1])
+        group = GroupThread(lambda: [("person", "[image] this?")]).messages("this?", False, "Nick", images=["xyz"])
+        self.assertEqual(group[-1]["images"], ["xyz"])
+
+    async def test_asked_directly_he_sees_the_image_and_the_chat_shows_it(self):
+        answer = await LocalModelMixin.ask_rocky_directly(self.app, "", image=png())
+        _, messages = self.ollama.asked[0]
+        self.assertEqual(messages[-1]["content"], f"The person: {IMAGE_QUESTION}")
+        self.assertEqual(len(messages[-1]["images"]), 1)
+        entries = self.app.conversation.log_entries
+        self.assertIn(f"{YOU_TO_ROCKY}: [image] {IMAGE_QUESTION}", entries)
+        self.assertTrue(any(isinstance(entry, ChatImage) for entry in entries))
+        self.assertEqual(self.app.web_feed.items[-1].data["question"], f"[image] {IMAGE_QUESTION}")
+        self.assertNotIn("couldn't see", answer)
+        # Still nothing for her: an image in the chat is never part of her history.
+        self.assertEqual(self.app.conversation.get_reconnect_history(), [])
+
+    async def test_a_model_that_cant_see_says_so_rather_than_guessing(self):
+        self.ollama.sees = False
+        answer = await LocalModelMixin.ask_rocky_directly(self.app, "what's this pill?", image=png())
+        _, messages = self.ollama.asked[0]
+        self.assertNotIn("images", messages[-1])
+        self.assertIn("you can't see images", messages[0]["content"])
+        self.assertIn("He couldn't see the image", answer)
+        self.assertIs(self.app.rocky_vision["huihui_ai/gemma-4-abliterated:12b"], False)
+        self.app.set_chat_mode.assert_called_once_with("rocky")
+
+    async def test_in_a_group_chat_he_sees_it_too(self):
+        self.app.rocky_group_thread = GroupThread(self.app.conversation.group_transcript)
+        self.app.conversation.write_log("You: [image] what's this pill?")
+        await LocalModelMixin.ask_rocky_in_group(self.app, "what's this pill?", image=png())
+        self.assertEqual(len(self.ollama.asked[0][1][-1]["images"]), 1)
+
+
 class DeskSubmissionTests(unittest.TestCase):
     def setUp(self):
         self.asked, self.notify, self.schedule = MagicMock(), MagicMock(), MagicMock()
@@ -519,12 +753,22 @@ class DeskSubmissionTests(unittest.TestCase):
         self.submit("Hi Cora")
         self.schedule.assert_called_once()
 
-    def test_not_with_an_image(self):
-        composer = self.submit("@rocky what is this pill?", image=b"png")
-        self.asked.assert_not_called()
+    def test_with_the_chat_on_rocky_every_message_goes_to_him(self):
+        mode = ["rocky"]
+        self.submission.chat_mode = lambda: mode[0]
+        self.submit("how strong is ket?")
+        self.asked.assert_called_once_with("how strong is ket?")
         self.schedule.assert_not_called()
-        composer.clear.assert_not_called()
-        self.assertIn("can't see images", self.notify.call_args.args[0])
+        mode[0] = "cora"
+        self.submit("Hi Cora")
+        self.schedule.assert_called_once()
+
+    def test_an_image_goes_to_him_too(self):
+        composer = self.submit("@rocky what is this pill?", image=b"png")
+        self.asked.assert_called_once_with("what is this pill?", b"png")
+        self.schedule.assert_not_called()
+        composer.clear.assert_called_once()
+        composer.remove_image.assert_called_once()
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):
@@ -562,6 +806,43 @@ class DeskTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(history[-1]["role"], "assistant")
             self.assertIn("I asked Rocky, my consultant: A dark funeral joke?", said)
             self.assertIn("He said: My grandad's last words", said)
+
+    async def test_the_chip_switches_who_messages_go_to_on_both_chat_boxes(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            chip, composer = app.query_one("#chat-mode", ChatModeChip), app.query_one("#chat-input", ChatComposer)
+            # In standby (with her voice on, the chat is Cora's alone: VoiceOnTests).
+            app.standby = True
+            # No model for Rocky: no chip, and messages go to Cora whatever was chosen.
+            self.assertFalse(chip.display)
+            app.set_chat_mode("rocky")
+            self.assertEqual(app.chat_mode, "cora")
+            app.local_model_name = "huihui_ai/gemma-4-abliterated:12b"
+            app.set_chat_mode("cora")
+            await pilot.pause()
+            self.assertTrue(chip.display)
+            self.assertEqual((app.chat_mode, str(chip.label)), ("cora", "Cora ›"))
+            await pilot.click("#chat-mode")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(chip.label)), ("rocky", "Rocky ›"))
+            self.assertTrue(chip.has_class("mode-rocky"))
+            self.assertIn("Rocky (private", composer.placeholder)
+            self.assertIs(app.focused, composer)
+            # The dashboard's chip shows the same, and moves both on.
+            await pilot.click("#view-button")
+            await pilot.pause()
+            dashboard_chip = app.screen.query_one("#dashboard-chat-mode", ChatModeChip)
+            self.assertEqual(str(dashboard_chip.label), "Rocky ›")
+            self.assertIn("Rocky (private", app.screen.query_one("#dashboard-input", ChatComposer).placeholder)
+            await pilot.click("#dashboard-chat-mode")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(dashboard_chip.label), str(chip.label)), ("group", "Group ›", "Group ›"))
+            self.assertIn("Cora and Rocky", app.screen.query_one("#dashboard-input", ChatComposer).placeholder)
+            await pilot.click("#dashboard-chat-mode")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(dashboard_chip.label), str(chip.label)), ("cora", "Cora ›", "Cora ›"))
+            # A pasted image still marks the box's border, past the row it shares with the chip.
+            composer.attach_image(b"png")
+            self.assertEqual(app.query_one("#input-frame").border_subtitle, IMAGE_MARKER)
 
     async def test_the_switch_in_settings(self):
         async with keyboard_tests.running_app() as (app, pilot):

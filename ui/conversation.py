@@ -1,7 +1,10 @@
 """Conversation history, transcript grouping, and written-answer display."""
 
+import io
 import re
 from urllib.parse import urlsplit
+
+from PIL import Image
 
 from rich.text import Text
 from textual.widgets import RichLog
@@ -43,26 +46,58 @@ class RockyAnswer(ChatMarkdown):
         self.for_cora = f"(I asked Rocky, my consultant: {question}\nHe said: {answer})"
 
 
+# How much of the conversation Rocky is given in a group chat.
+GROUP_TRANSCRIPT_CHARS = 6000
+# The italic line under his answers saying what he looked up (rocky_browsing.looked_line).
+LOOKED_UNDER = re.compile(r"\s*\*(?:From memory:|He searched|He read)[^\n]*\*\s*$")
+
+
+def person_line(entry: str) -> str | None:
+    """What the person said, from a chat line of theirs (typed, spoken, on Signal, by email or on
+    the web page), or None for any other line."""
+    if entry.startswith("You: "):
+        return entry[5:]
+    for prefix in (SIGNAL_PREFIX, EMAIL_PREFIX):
+        if entry.startswith(prefix):
+            return entry[len(prefix):]
+    if web := WEB_LINE.match(entry):
+        return entry[web.end():]
+    return None
+
+
+class GroupRockyAnswer(RockyAnswer):
+    """What Rocky said in a group chat, answering the person before Cora does: part of her
+    conversation (her later turns are given it), but not saved."""
+
+    def __init__(self, answer: str) -> None:
+        ChatMarkdown.__init__(self, answer, code_theme="monokai")
+        self.for_cora = f"(Rocky, in our group chat, said: {answer})"
+
+
 class DirectRockyAnswer(ChatMarkdown):
     """What Rocky said to the person directly (@rocky): shown only, never saved or given to Cora, so
     neither the question nor his answer reaches OpenAI."""
 
 
 class DirectRockyDraft:
-    """The person's question to Rocky, then "thinking…" until his answer, or why there isn't one,
-    takes its place. Entries are only ever appended, so its place stays right meanwhile."""
+    """The person's question to Rocky (or, in a group chat, just their own message above it), then
+    "thinking…" until his answer, or why there isn't one, takes its place. Entries are only ever
+    appended, so its place stays right meanwhile. answer(text) is what his answer is shown as:
+    private to the person (DirectRockyAnswer), or part of Cora's conversation (GroupRockyAnswer)."""
 
-    def __init__(self, conversation: "Conversation", index: int) -> None:
+    def __init__(self, conversation: "Conversation", index: int,
+                 answer=lambda text: DirectRockyAnswer(text, code_theme="monokai")) -> None:
         self.conversation = conversation
         self.index = index
+        self.answer = answer
 
     def update(self, so_far: str) -> None:
-        """His answer so far, as it streams in: still never part of her history."""
+        """His answer so far, as it streams in (a direct one: still never part of her history)."""
         if not so_far.strip():
             return
         entries = self.conversation.log_entries
         entries[self.index] = "Rocky:"
-        entries[self.index + 1] = DirectRockyAnswer(so_far, code_theme="monokai")
+        entries[self.index + 1] = self.answer(so_far)
         self.conversation.schedule_redraw()
 
     def looking(self, what: str) -> None:
@@ -76,7 +111,7 @@ class DirectRockyDraft:
     def finish(self, answer: str) -> None:
         entries = self.conversation.log_entries
         entries[self.index] = "Rocky:"
-        entries[self.index + 1] = DirectRockyAnswer(answer, code_theme="monokai")
+        entries[self.index + 1] = self.answer(answer)
         self.conversation.redraw_log()
 
     def fail(self, why: str) -> None:
@@ -239,6 +274,34 @@ class Conversation:
 
     def remove_mirror(self, output: RichLog) -> None:
         self.mirrors.remove(output)
+
+    def group_transcript(self, max_chars: int = GROUP_TRANSCRIPT_CHARS, most: int = 16) -> list[tuple[str, str]]:
+        """The conversation as Rocky sees it in a group chat: (who, said) oldest first, who being
+        "person", "cora" or "rocky"; the latest within max_chars and most. Quiet notes, photos'
+        descriptions and his private (@rocky) answers aren't in it."""
+        said, remaining = [], max_chars
+        for entry in reversed(self.log_entries):
+            if isinstance(entry, (DirectRockyAnswer, ApprovalNote, QuietNote)):
+                continue
+            if isinstance(entry, RockyAnswer):  # before ChatMarkdown, which it's built on
+                # Without Cora's line under it about what he looked up, so he doesn't copy it.
+                who, text = "rocky", LOOKED_UNDER.sub("", entry.markup)
+            elif isinstance(entry, ChatMarkdown):
+                who, text = "cora", entry.markup
+            elif isinstance(entry, str) and entry.startswith("Cora: "):
+                who, text = "cora", entry[6:]
+            elif isinstance(entry, str) and (person := person_line(entry)) is not None:
+                who, text = "person", person
+            else:
+                continue
+            if not text.strip():
+                continue
+            text = text[-remaining:]
+            said.append((who, text))
+            remaining -= len(text)
+            if remaining <= 0 or len(said) >= most:
+                break
+        return list(reversed(said))
 
     def get_reconnect_history(self) -> list[dict]:
         """Bounded visible chat, not tool calls, internal reasoning, or unsent drafts."""
@@ -423,13 +486,30 @@ class Conversation:
         self.log_entries.extend(["", f"{ROCKY_ASKED}{question}", "", "Rocky:", RockyAnswer(question, answer), ""])
         self.redraw_log()
 
-    def ask_rocky_directly(self, question: str, where: str = "") -> DirectRockyDraft:
-        """The person's question to Rocky ("You · to Rocky: …", or "You · to Rocky · web · iPad: …"
-        from the web page), with "thinking…" below it for his answer. Neither is saved nor part of
-        her history: "You · to Rocky" isn't a line she's given."""
+    def rocky_in_group(self) -> DirectRockyDraft:
+        """Rocky's turn in a group chat, under the person's message (already shown): "thinking…"
+        until his answer, which is part of her conversation (GroupRockyAnswer)."""
         self.flush_transcript()
-        asked = f"{YOU_TO_ROCKY}{f' · {where}' if where else ''}: {question}"
-        self.log_entries.extend(["", asked, "", ROCKY_THINKING, "", ""])
+        self.log_entries.extend(["", ROCKY_THINKING, "", ""])
+        self.redraw_log()
+        return DirectRockyDraft(self, len(self.log_entries) - 3, answer=GroupRockyAnswer)
+
+    def ask_rocky_directly(self, question: str, where: str = "", image: bytes | None = None) -> DirectRockyDraft:
+        """The person's question to Rocky ("You · to Rocky: …", or "You · to Rocky · web · iPad: …"
+        from the web page), with any image sent with it shown small under it, and "thinking…"
+        below for his answer. None of it is saved or part of her history: "You · to Rocky" isn't a
+        line she's given, and an image in the chat never is."""
+        self.flush_transcript()
+        asked = f"{YOU_TO_ROCKY}{f' · {where}' if where else ''}: {'[image] ' if image else ''}{question}"
+        shown = [asked]
+        if image is not None:
+            try:
+                picture = Image.open(io.BytesIO(image)).convert("RGB")
+                picture.thumbnail((1024, 1024))
+                shown.append(ChatImage(picture, question))
+            except Exception:
+                pass  # He's still sent it (or told it couldn't be read); only the thumbnail's missing.
+        self.log_entries.extend(["", *shown, "", ROCKY_THINKING, "", ""])
         self.redraw_log()
         return DirectRockyDraft(self, len(self.log_entries) - 3)
 

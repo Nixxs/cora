@@ -13,7 +13,7 @@ from uuid import UUID
 from textual import work
 
 from backend_chat import WEB_EXCLUDED, BackendRoute
-from live import typed_content
+from live import group_note, typed_content
 from messaging.images import photo_content, photo_described, read_photo
 from messaging.messages import APPROVAL_SECONDS, image_seen_content
 from messaging.receiver import WITHHELD_IMAGE
@@ -80,8 +80,10 @@ class WebInterfaceMixin:
                          on_listening=self.on_web_listening, on_talk=self.on_web_talk, photo=self.web_photo,
                          answer_location=lambda device, body: self.whereabouts.answer(device.name, body),
                          claude_sessions=self.web_claude_sessions, claude_session=self.web_claude_session,
-                         ask_rocky=lambda device, question, ref, on_text, on_status: self.ask_rocky_directly(
-                             question, device.name, ref, from_web=True, on_text=on_text, on_status=on_status))
+                         ask_rocky=lambda device, question, ref, on_text, on_status, image=None: self.ask_rocky_directly(
+                             question, device.name, ref, from_web=True, on_text=on_text, on_status=on_status,
+                             image=image),
+                         rocky_offered=self.rocky_offered)
 
     def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
         """A page starts or stops talking to her (see voice_talk)."""
@@ -333,12 +335,14 @@ class WebInterfaceMixin:
             self.web_feed.seed(rows)
 
     async def answer_on_web(self, device: WebDevice, text: str, on_text, ref: str | None = None,
-                            image: bytes | None = None) -> str | None:
+                            image: bytes | None = None, on_rocky=None) -> str | None:
         """A message from the web page: the same conversation as the desk, answered like Signal.
 
         One at a time, so a second message is answered with the first exchange in its history.
         on_text gets her reply so far as it streams to the page; the desk shows the finished one.
         image: a photo sent with it, which she sees herself on this turn (see read_web_photo).
+        on_rocky: a group chat (the page's chip on Group): Rocky answers first (ask_rocky_in_group),
+        on_rocky(kind, value) hearing his turn as it goes, and her turn is given his answer.
         """
         content, described = typed_content(text), None
         if image is not None:
@@ -351,14 +355,33 @@ class WebInterfaceMixin:
                 self.conversation.show_photo_note(described)
 
         async def write(history: list[dict]) -> str | None:
+            turn = content
+            excluded = WEB_EXCLUDED | self.unavailable_tools()
+            if on_rocky is not None:
+                # His turn first: their message is shown by now, so it's the last he sees.
+                try:
+                    rocky_said = await self.ask_rocky_in_group(
+                        text, device.name, ref, on_text=lambda so_far: on_rocky("text", so_far),
+                        on_status=lambda doing: on_rocky("status", doing), image=image)
+                except Exception as error:
+                    # Whatever went wrong with his turn, she still answers.
+                    self.activity.write(f"Rocky's group turn failed ({type(error).__name__}).", "Rocky error")
+                    rocky_said = None
+                if rocky_said is None:
+                    on_rocky("none", "Rocky couldn't answer this time: Cora's answering on her own.")
+                else:
+                    on_rocky("done", rocky_said)
+                turn = content + [{"type": "input_text", "text": group_note(rocky_said)}]
+                # He's answered already: she doesn't consult him as well.
+                excluded = excluded | {"consult_rocky"}
             try:
                 # Tools that change things are asked about on the page, with Approve and Deny.
                 route = BackendRoute(
-                    excluded=WEB_EXCLUDED | self.unavailable_tools(), ask_approval=self.ask_on_web, approval_seconds=APPROVAL_SECONDS,
+                    excluded=excluded, ask_approval=self.ask_on_web, approval_seconds=APPROVAL_SECONDS,
                     tool_seconds=APPROVAL_SECONDS + 60, asked_where="on the web page", channel="web",
                 )
                 reply = await self.reply_in_writing(
-                    content, history, route, WEB_CHAT_INSTRUCTIONS, on_text=on_text,
+                    turn, history, route, WEB_CHAT_INSTRUCTIONS, on_text=on_text,
                 )
                 if not reply:
                     raise ValueError("empty reply")
