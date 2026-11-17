@@ -1495,8 +1495,8 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   Cora.
 - **Group chat (the chip on Group):** each typed message gets one round, so the two can never
   set each other off: your message is shown, then Rocky answers it (`ask_rocky_in_group`),
-  streamed under it, then Cora replies, live by voice, in writing on standby or on the web
-  page, given his answer (`group_note` in [live.py](live.py): build on him or correct him,
+  streamed under it, then Cora replies in writing (in standby at the desk, or on the web
+  page; never while her voice is on: see below), given his answer (`group_note` in [live.py](live.py): build on him or correct him,
   don't repeat him; her `consult_rocky` isn't offered for that turn). His "thread" there is
   the conversation as shown (`GroupThread`, from `group_transcript`: your lines, hers and his,
   labelled "Nick:" and "Cora:", without notes or his private answers), so he sees what she
@@ -1509,7 +1509,15 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   what he looked at. A message with an image is hers alone (he can't see images); if he can't
   answer, a quiet line says so and she answers on her own. On the web page the reply stream
   carries his turn first (`rocky_delta`, `rocky_status`, `rocky_done` or `rocky_none`), then
-  hers; at the desk the box is free for your next message while he answers. A message starting `@rocky` at the desk or on the web
+  hers; at the desk the box is free for your next message while he answers.
+- **With her voice on, the chat is hers alone:** while she isn't in standby, the chip stays on
+  **Cora ›**, dimmed, and clicking it (or its tooltip) says why: Rocky and a group chat come
+  back in standby, and until then she can consult Rocky herself. Voice coming on puts the chip
+  back on Cora (`set_chat_mode`, called from `set_connection_state`); back in standby it stays
+  there until clicked. The web page follows the desk's state (its `status` events) the same
+  way. Rocky listening in on voice (chiming in after her spoken replies) was tried and taken
+  out: in practice it didn't work well.
+- **The direct line (`@rocky`):** a message starting `@rocky` at the desk or on the web
   page goes to Rocky alone (`ask_rocky_directly`), in Live or Standby alike, and needs only a
   model chosen, not her switch. Neither your question nor his answer reaches OpenAI: nothing
   is saved, and the desk shows the exchange ("You · to Rocky: …", "Rocky · thinking…", then

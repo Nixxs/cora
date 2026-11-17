@@ -11,7 +11,9 @@ from uuid import uuid4
 
 from textual.widgets import Switch, TabbedContent
 
-from app_areas.local_model import NOT_ON_CONSULTS, REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, LocalModelMixin
+from app_areas.local_model import (
+    NOT_ON_CONSULTS, REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, LocalModelMixin,
+)
 from app_areas.web_interface import WebInterfaceMixin
 from backend_chat import BackendRoute
 from local_model.manager import LocalModel
@@ -32,7 +34,7 @@ from session_config import BACKEND_MODEL, MODEL_AREAS
 from tools.consult_rocky import NAME, ConsultRockyTool, validate_arguments
 from tools.route import current_route
 from ui.chat_submission import ChatSubmission
-from ui.composer import IMAGE_MARKER, ChatComposer, ChatModeChip
+from ui.composer import IMAGE_MARKER, VOICE_ON_NOTE, VOICE_ON_TOOLTIP, ChatComposer, ChatModeChip
 from ui.conversation import ROCKY_ASKED, YOU_TO_ROCKY, Conversation, DirectRockyAnswer, QuietNote, RockyAnswer
 from ui.model_settings import ModelSettingsScreen
 from web import routes
@@ -580,6 +582,39 @@ class GroupChatTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Cora's answering on her own", self.conversation.log_entries[-3])
 
 
+class VoiceOnTests(unittest.IsolatedAsyncioTestCase):
+    """While her voice is on the chat is hers alone: the chip stays on Cora, dimmed, saying why."""
+
+    async def test_voice_on_puts_the_chat_on_cora_and_standby_lets_it_change_again(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.local_model_name = "huihui_ai/gemma-4-abliterated:12b"
+            chip = app.query_one("#chat-mode", ChatModeChip)
+            app.standby = True
+            app.set_chat_mode("group")
+            self.assertEqual(app.chat_mode, "group")
+            # Her voice comes on: Cora, dimmed, with why.
+            app.standby = False
+            app.set_connection_state("active")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(chip.label)), ("cora", "Cora ›"))
+            self.assertTrue(chip.has_class("voice-on"))
+            self.assertEqual(chip.tooltip, VOICE_ON_TOOLTIP)
+            app.notify = MagicMock()
+            await pilot.click("#chat-mode")
+            await pilot.pause()
+            self.assertEqual(app.chat_mode, "cora")
+            app.notify.assert_called_once_with(VOICE_ON_NOTE)
+            # Back in standby: still Cora until it's clicked, then the others again.
+            app.standby = True
+            app.set_connection_state("standby")
+            await pilot.pause()
+            self.assertFalse(chip.has_class("voice-on"))
+            self.assertEqual(app.chat_mode, "cora")
+            await pilot.click("#chat-mode")
+            await pilot.pause()
+            self.assertEqual(app.chat_mode, "rocky")
+
+
 class GroupSubmissionTests(unittest.IsolatedAsyncioTestCase):
     """At the desk: shown, then his turn, then hers with his answer, live or in Standby."""
 
@@ -616,10 +651,10 @@ class GroupSubmissionTests(unittest.IsolatedAsyncioTestCase):
                                     {"group": True, "rocky_said": "Don't, mate.", "history": ["earlier"]}))
         conversation.announce.assert_called_once_with("user", "and with booze?", "keyboard")
 
-    async def test_live_she_answers_by_voice_after_him(self):
+    async def test_with_her_voice_on_its_hers_alone(self):
         order, _ = await self.submit(standby=False)
-        self.assertEqual(order[-1], ("live", ("and with booze?",), {"group": True, "rocky_said": "Don't, mate."}))
-        self.assertEqual(order.count("You: and with booze?"), 1)
+        self.assertNotIn("rocky: and with booze?", order)
+        self.assertEqual(order, [("live", ("and with booze?",), {}), "You: and with booze?"])
 
 
 class DeskSubmissionTests(unittest.TestCase):
@@ -702,6 +737,8 @@ class DeskTests(unittest.IsolatedAsyncioTestCase):
     async def test_the_chip_switches_who_messages_go_to_on_both_chat_boxes(self):
         async with keyboard_tests.running_app() as (app, pilot):
             chip, composer = app.query_one("#chat-mode", ChatModeChip), app.query_one("#chat-input", ChatComposer)
+            # In standby (with her voice on, the chat is Cora's alone: VoiceOnTests).
+            app.standby = True
             # No model for Rocky: no chip, and messages go to Cora whatever was chosen.
             self.assertFalse(chip.display)
             app.set_chat_mode("rocky")

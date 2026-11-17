@@ -100,7 +100,37 @@ To do on this branch:
 - [x] Chat modes 1: the mode chip by each message box (Cora or Rocky), at the desk and on the web page
 - [x] Chat modes 2: +img at the desk (the system's file picker; pasting stays)
 - [x] Chat modes 3: group mode for typed messages (Rocky answers, then Cora; one round per message)
-- [ ] Chat modes 4: Rocky listening in on voice (he chimes in in the chat; she can pick it up)
+- [x] Chat modes 4: voice is Cora's alone (the chip stays on Cora while her voice is on; Rocky listening in on voice was tried and taken out)
+- [ ] Calls 1: keep the whole conversation in a call's transcript (see [Calls from real use](#calls-from-real-use))
+- [ ] Calls 2: pressing phone keys for menus ("press 3 for a new purchase")
+- [ ] Calls 3: staying quiet for recorded menus and hold messages
+- [ ] Calls 4: pacing a call's audio within Live's limits
+- [ ] Calls 5: following a call live, at the desk and on the web page
+
+### Calls from real use
+
+Her first real call (to The Good Guys Cockburn, about two air conditioners, 17 November
+2026) reached a person after about three minutes of phone menu and hold, but what mattered
+was lost:
+
+1. **The whole conversation in the transcript.** A task step holds 4,000 characters and
+   `transcript_step` keeps the start: the menu and hold ads filled it, and the conversation
+   with the person who answered was cut, so her report (written from it) said nothing was
+   confirmed and she couldn't say in the chat what was said. Keep the end rather than the
+   start, shorten recorded menus and hold messages in the saved copy, or keep calls in full
+   somewhere larger.
+2. **Pressing phone keys.** She can't send keypad tones, so she spoke to the menu ("New
+   purchase, please") until it routed her anyway. A tool to press keys (Twilio can play DTMF
+   digits on a live call) gets her through "press 3" menus.
+3. **Quiet for recordings.** She greeted the recorded menu as if it were a person: she should
+   tell a recording from a person and wait out menus and hold messages.
+4. **Pacing the call's audio.** Live dropped audio once ("Input audio is arriving too quickly"):
+   a call's queued audio is sent as fast as it comes, so a backlog (a busy moment, or audio
+   before her session was ready) goes out in a burst past 1.2x real time. Pace it as the wake
+   buffer already is, or drop a stale backlog when her session connects.
+5. **Following a call live.** Nothing shows a task call while it's on; Activity only notes
+   events. Show it on the dashboard and the web page like a Claude Code session, with its
+   transcript as it happens.
 
 ### Claude Code
 

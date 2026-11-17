@@ -108,7 +108,11 @@ function follow(deviceName) {
   });
   // Cora asks where you are: answered only with "where" on.
   events.addEventListener("locate", (event) => answerLocate(JSON.parse(event.data).id));
-  events.addEventListener("status", (event) => setStatus(JSON.parse(event.data).state));
+  events.addEventListener("status", (event) => {
+    const { state } = JSON.parse(event.data);
+    setStatus(state);
+    followVoice(state);
+  });
   events.addEventListener("error", async () => {
     // The browser retries by itself while it can; closed means it gave up.
     setLink(events.readyState === EventSource.CLOSED ? "offline" : "reconnecting");
@@ -235,13 +239,37 @@ const MODE_LABELS = {
 };
 const MODE_KEY = "cora-chat-mode";
 let chatMode = "cora";
+// While her voice is on at the desk, the chat is hers alone (as the desk's chip shows): Rocky and
+// a group chat come back when she's in standby.
+const VOICE_ON_STATES = ["active", "connecting", "disconnecting"];
+const VOICE_ON = "Cora's voice is on, so the chat is hers alone (she can still consult Rocky). Rocky and group chat come back when she's in standby.";
+let voiceOn = false;
 
 function showMode() {
   const button = document.getElementById("mode-button");
   button.textContent = `${MODE_NAMES[chatMode]} ›`;
-  button.className = `mode-${chatMode}`;
-  button.setAttribute("aria-label", MODE_LABELS[chatMode]);
+  button.className = `mode-${chatMode}${voiceOn ? " voice-on" : ""}`;
+  button.setAttribute("aria-label", voiceOn ? VOICE_ON : MODE_LABELS[chatMode]);
+  button.title = voiceOn ? VOICE_ON : "";
   document.getElementById("chat-input").placeholder = MODE_PLACEHOLDERS[chatMode];
+}
+
+function saveMode() {
+  try {
+    localStorage.setItem(MODE_KEY, chatMode);
+  } catch {
+    // Still switched for now; just not remembered.
+  }
+}
+
+/** The desk's Live state, as it changes: her voice on puts the chat on Cora. */
+function followVoice(state) {
+  voiceOn = VOICE_ON_STATES.includes(state);
+  if (voiceOn && chatMode !== "cora") {
+    chatMode = "cora";
+    saveMode();
+  }
+  if (!document.getElementById("mode-button").hidden) showMode();
 }
 
 /** The mode chip, shown only when there's somebody besides Cora to talk to. */
@@ -259,12 +287,12 @@ function setupMode(rockyOffered) {
   }
   showMode();
   document.getElementById("mode-button").addEventListener("click", () => {
-    chatMode = MODES[(MODES.indexOf(chatMode) + 1) % MODES.length];
-    try {
-      localStorage.setItem(MODE_KEY, chatMode);
-    } catch {
-      // Still switched for now; just not remembered.
+    if (voiceOn) {
+      addNotice(VOICE_ON);
+      return;
     }
+    chatMode = MODES[(MODES.indexOf(chatMode) + 1) % MODES.length];
+    saveMode();
     showMode();
   });
 }

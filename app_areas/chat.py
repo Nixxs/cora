@@ -9,7 +9,7 @@ from textual.actions import SkipAction
 from textual.widgets import TextArea
 from textual import events, work
 
-from ui.composer import ChatComposer, ChatModeChip, file_png, pick_image_file
+from ui.composer import VOICE_ON_NOTE, ChatComposer, ChatModeChip, file_png, next_mode, pick_image_file
 from live import typed_content
 from backend_chat import STANDBY_EXCLUDED, BackendRoute
 from session_config import instruction_sections
@@ -36,14 +36,25 @@ class ChatMixin:
         return bool(getattr(self, "local_model_name", ""))
 
     def set_chat_mode(self, mode: str) -> None:
-        """Who typed messages at the desk go to (Cora, or Rocky alone), shown by the chip beside
-        every chat box open (the dashboard's shows it as it opens). Cora, with the chip hidden,
-        until Rocky has a model."""
+        """Who typed messages at the desk go to (Cora, Rocky alone, or a group chat), shown by the
+        chip beside every chat box open (the dashboard's shows it as it opens). Cora, with the chip
+        hidden, until Rocky has a model; and Cora while her voice is on (not in standby), with the
+        chip dimmed, since Rocky and a group chat don't work well with it. Called again whenever
+        her voice comes on or goes to standby (set_connection_state): back in standby it stays on
+        Cora until it's clicked."""
         offered = self.rocky_offered()
-        self.chat_mode = mode if offered else "cora"
+        voice_on = not self.standby
+        self.chat_mode = mode if offered and not voice_on else "cora"
         for screen in self.screen_stack:
             for chip in screen.query(ChatModeChip):
-                chip.show(self.chat_mode, offered)
+                chip.show(self.chat_mode, offered, voice_on)
+
+    def next_chat_mode(self) -> None:
+        """The chip clicked: the next mode, or while her voice is on, why it stays on Cora."""
+        if not self.standby:
+            self.notify(VOICE_ON_NOTE)
+            return
+        self.set_chat_mode(next_mode(self.chat_mode))
 
     @work(group="choose-image", exit_on_error=False)
     async def choose_chat_image(self, composer: ChatComposer) -> None:

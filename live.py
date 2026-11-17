@@ -474,9 +474,9 @@ class CoraLive:
                 self.send_microphone(connection, self.on_mic_status)
             )
 
-    async def send_text(self, message: str, image_seen: str | None = None, group: bool = False,
-                        rocky_said: str | None = None) -> None:
-        """A typed message for her to answer; in a group chat (group), with Rocky's answer to it."""
+    async def send_text(self, message: str, image_seen: str | None = None) -> None:
+        """A typed message for her to answer by voice. (Never a group chat's: while her voice is
+        on, the chat is hers alone.)"""
         connection = self.connection
         if connection is None or not self.ready:
             raise RuntimeError("Wait until Cora shows Connected before sending text.")
@@ -485,8 +485,6 @@ class CoraLive:
         # This send does not wait for Live's timeline acknowledgment.
         context_id = f"typed_context_{uuid4().hex}"
         attached = " with an image attached" if image_seen else ""
-        if group:
-            attached += " in a group chat, after Rocky answered it"
         mirror = (
             f"Silent typed-context mirror: the person submitted this typed message{attached} to the "
             "Responses backend as user-provided conversation data: "
@@ -498,7 +496,7 @@ class CoraLive:
         self.trace("send.after", event_type="session.thinking.append", client_event_id=context_id)
         self.context.note(mirror)
 
-        content = typed_content(message, image_seen, group, rocky_said)
+        content = typed_content(message, image_seen)
         # Use the backend belonging to the existing voice session.
         self.trace("send.before", event_type="response.item.create", submission_id=context_id)
         await connection.response.item.create(

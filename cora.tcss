@@ -201,6 +201,12 @@ Screen > .screen--selection {
     color: #e0e6ef;
 }
 
+/* Her voice is on: the chat is hers alone, so the chip stays on Cora, quieter (it says why). */
+.chat-mode.voice-on {
+    color: #5f8a58;
+    text-style: none;
+}
+
 .chat-mode:hover, .chat-mode:focus {
     background: #202838;
     text-style: bold;

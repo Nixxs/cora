@@ -17,7 +17,7 @@ from openai_key import apply_api_key, has_key
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
 from ui.chat_widgets import SelectableRichLog, TitleBar
-from ui.composer import ChatComposer, ChatModeChip, next_mode
+from ui.composer import ChatComposer, ChatModeChip
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
 from ui.side_panel import ChatRow, SidePanel
@@ -686,7 +686,7 @@ class CoraApp(
             for composer in event.button.parent.query(ChatComposer):
                 self.choose_chat_image(composer)
         elif event.button.id in ("chat-mode", "dashboard-chat-mode"):
-            self.set_chat_mode(next_mode(self.chat_mode))
+            self.next_chat_mode()
             # Straight back to typing, in the box beside it.
             for composer in event.button.parent.query(ChatComposer):
                 composer.focus()

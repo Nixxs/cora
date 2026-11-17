@@ -180,7 +180,8 @@ class LocalModelMixin:
         first if he chooses, and his answer streams into the desk's chat under it (and to on_text
         and on_status: the page that asked, if any). Unlike @rocky it's part of her conversation,
         so it goes to every web page and her next turn is given it. Returns his answer with the
-        line under it, for her turn; None (with why, shown) if he hasn't one."""
+        line under it, for her turn; None (with why, shown) if he hasn't one. Typed only, and in
+        Standby or on the web page: while her voice is on, the chat is hers alone (set_chat_mode)."""
         draft = self.conversation.rocky_in_group()
         name = self.rocky_person_name()
 

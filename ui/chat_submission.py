@@ -136,9 +136,12 @@ class ChatSubmission:
             if self.is_closing():
                 # Saved text remains pending; shutdown must not start a new send.
                 return
-            # A group chat: one round, their message, then Rocky's turn, then hers with his answer.
-            # He can't see images, so one with an image is hers alone.
-            group = self.ask_group is not None and self.chat_mode() == "group" and not image_png
+            # A group chat: one round, their message, then Rocky's turn, then hers with his answer
+            # (in writing). He can't see images, so one with an image is hers alone, and while her
+            # voice is on the chat is hers alone too (its chip says so: set_chat_mode).
+            without_live = self.is_standby() and self.send_without_live is not None
+            group = (self.ask_group is not None and self.chat_mode() == "group" and not image_png
+                     and without_live)
             rocky_said = history = None
             if group:
                 # Taken before the message is shown, so it isn't given to her twice.
@@ -151,9 +154,8 @@ class ChatSubmission:
                 rocky_said = await self.ask_group(message)
                 if self.is_closing():
                     return
-            without_live = self.is_standby() and self.send_without_live is not None
             try:
-                if without_live and group:
+                if group:
                     self.send_without_live(message, image_seen, group=True, rocky_said=rocky_said, history=history)
                 elif without_live:
                     # The written reply arrives later; Live stays closed.
@@ -161,9 +163,7 @@ class ChatSubmission:
                 else:
                     self.backend_work.start_typed_request()
                     self.trace("typed.submit", message_id=str(message_id))
-                    if group:
-                        await self.live.send_text(message, group=True, rocky_said=rocky_said)
-                    elif image_seen:
+                    if image_seen:
                         await self.live.send_text(message, image_seen=image_seen)
                     else:
                         await self.live.send_text(message)
