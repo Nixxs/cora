@@ -2,8 +2,8 @@
 // and messages sent from here with her reply streaming back as she writes it.
 
 import {
-  addApproval, addMap, addMessage, addNotice, addPicture, attachPhoto, clearChat, setLink, setStatus, setupComposer,
-  startWriting,
+  addApproval, addMap, addMessage, addNotice, addPicture, addRocky, askingRocky, attachPhoto, clearChat, setLink,
+  setStatus, setupComposer, startWriting,
 } from "./ui.js";
 import { hasPhoto, setupPhotos, takePhoto } from "./photo.js";
 import { answerLocate, setupLocation } from "./location.js";
@@ -87,6 +87,15 @@ function follow(deviceName) {
     markDay(new Date(map.at));
     addMap({ caption: map.caption, embed: map.embed, link: map.link, when: new Date(map.at) });
   });
+  // Rocky's answer, word for word: to her, wherever she asked him (above her reply), or to you
+  // directly (@rocky) from the desk or another page. This page's own are already shown.
+  events.addEventListener("rocky", (event) => {
+    const rocky = JSON.parse(event.data);
+    if (rocky.ref && sentHere.has(rocky.ref)) return;
+    markDay(new Date(rocky.at));
+    const via = rocky.asker === "you" ? (rocky.ref ? ["web", rocky.device].filter(Boolean).join(" · ") : "desk") : "";
+    addRocky({ asker: rocky.asker, question: rocky.question, html: rocky.html, via, when: new Date(rocky.at) });
+  });
   events.addEventListener("approval_done", (event) => {
     const done = JSON.parse(event.data);
     approvals.get(done.id)?.settle(done.outcome);
@@ -158,6 +167,10 @@ async function readReply(response, draft) {
       if (update.type === "delta") {
         written += update.text;
         draft.update(written);
+      } else if (update.type === "status") {
+        // What Rocky is doing on the web; what he writes after starts afresh.
+        written = "";
+        draft.status?.(update.text);
       } else if (update.type === "done") {
         draft.finish(update.html);
         return;
@@ -177,9 +190,51 @@ function newRef() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
+// "@rocky …": to Rocky alone, never to Cora (as the desk's chat_submission and Cora's PC check too).
+const DIRECT_ROCKY = /^@rocky\b[\s:,]*/i;
+
+/** Your question straight to Rocky: shown here as you asked, then his answer (or why not). */
+async function askRocky(question, ref) {
+  if (hasPhoto()) addNotice("Rocky can't see photos: yours is still attached for your next message to Cora.");
+  markDay(new Date());
+  const pending = askingRocky(question, thisDevice ? `web · ${thisDevice}` : "web");
+  let response;
+  try {
+    response = await fetch("/api/rocky", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, ref }),
+    });
+  } catch {
+    pending.fail(UNREACHABLE);
+    return;
+  }
+  if (response.status === 401) {
+    location.reload();
+    return;
+  }
+  if (!response.ok || !response.body) {
+    const body = await response.json().catch(() => ({}));
+    pending.fail(body.error || "Rocky couldn't answer.");
+    return;
+  }
+  try {
+    // Streamed as he writes, the same way as her replies.
+    await readReply(response, pending);
+  } catch {
+    pending.fail(DROPPED);
+  }
+}
+
 async function send(text) {
   const ref = newRef();
   sentHere.add(ref);
+  const direct = DIRECT_ROCKY.exec(text);
+  if (direct) {
+    await askRocky(text.slice(direct[0].length).trim(), ref);
+    return;
+  }
   // A photo chosen with the camera button goes with this message; she sees it herself.
   const photo = await takePhoto();
   if (!text && !photo) return;

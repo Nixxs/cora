@@ -203,7 +203,7 @@ class SignalChatsMixin:
         route = BackendRoute(
             excluded=SIGNAL_EXCLUDED,
             ask_approval=self.signal_approval_asker(account, person, self.signal_settings.allowed_number),
-            approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60,
+            approval_seconds=APPROVAL_SECONDS, tool_seconds=APPROVAL_SECONDS + 60, channel="signal",
         )
         messages = iter(batch)
 

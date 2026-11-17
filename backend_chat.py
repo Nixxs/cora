@@ -24,18 +24,19 @@ OUT_OF_ROUNDS = (
 )
 # How long one tool result may take; long enough for an approval pop-up to be answered.
 TOOL_RESULT_SECONDS = 180
-# Tools that take longer than that by design: a browsing job.
-SLOW_TOOLS = {"use_browser": USE_BROWSER_SECONDS}
+# Tools that take longer than that by design: a browsing job, and Rocky (starting the local model,
+# then loading and answering).
+SLOW_TOOLS = {"use_browser": USE_BROWSER_SECONDS, "consult_rocky": 420}
 
 # Typing in Standby: she is already resting, and closing the app from a written chat is not offered.
 STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY, *CALL_ONLY})
 # Signal, away from the desk: nothing that needs the screen either, and not where they are (that's
 # for the web page, as are maps). Tools that change things are offered: the person approves them in the chat.
-# Not pins in their game either: they're typed in at the desk, without asking.
-SIGNAL_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "show_web_image", "where_is_person", "show_map",
-                                      "place_wow_map_pins"}
+# Not pins in their game either, nor the pin addon's other commands: they're typed in at the desk, without asking.
+GAME_TOOLS = frozenset({"place_wow_map_pins", "wow_map_pins_command"})
+SIGNAL_EXCLUDED = STANDBY_EXCLUDED | GAME_TOOLS | {"look_at_screen", "show_web_image", "where_is_person", "show_map"}
 # The web page, often on a phone: like Signal, except that the page shows her pictures.
-WEB_EXCLUDED = STANDBY_EXCLUDED | {"look_at_screen", "place_wow_map_pins"}
+WEB_EXCLUDED = STANDBY_EXCLUDED | GAME_TOOLS | {"look_at_screen"}
 
 TOOL_REFUSED ='{"status": "error", "message": "That tool is not available here."}'
 TOOL_NO_RESULT = '{"status": "error", "message": "The tool did not answer in time; do not guess its result."}'
@@ -47,8 +48,11 @@ class BackendRoute:
     def __init__(
         self, excluded: frozenset[str] = frozenset(), memory_scope: tuple | None = None,
         ask_approval=None, approval_seconds: float = 0, tool_seconds: float | None = None,
-        email_party: tuple | None = None, asked_where: str = "on Signal",
+        email_party: tuple | None = None, asked_where: str = "on Signal", channel: str = "",
     ) -> None:
+        # The person's own chat this is ("desk", "signal", "web", "email"; "" for anyone else's), so a
+        # tool knows how what it shows reaches them.
+        self.channel = channel
         # Tools not offered in this kind of conversation, and refused if called anyway.
         self.excluded = frozenset(excluded)
         # In a client's chat, (their id, their name): memory search only finds what they may know.

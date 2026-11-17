@@ -7,11 +7,12 @@ are read, and only their end. Your words, Claude's replies and a short note of e
 never its thinking or the tools' output.
 """
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
 
-from .sessions import short
+from .sessions import CWD_MAX_CHARS, ENDED, FINISHED, WORKING, ClaudeSession, short
 
 PROJECTS_DIR = Path.home() / ".claude" / "projects"
 # How much of the file's end is read: plenty for the last few exchanges, never the whole of a long one.
@@ -124,6 +125,72 @@ def recent_exchanges(path: str, projects: Path = PROJECTS_DIR, most: int = EXCHA
             picked.append({"who": who, "said": text, "tools": 1 if is_tool else 0})
             total += len(text)
     return exchanges(picked)
+
+
+# Sessions heard of before Cora started (or started listening): those whose transcript changed
+# this recently, at most this many, each read from its last part only.
+PAST_WITHIN = timedelta(hours=24)
+PAST_MAX = 20
+PAST_TAIL_BYTES = 256 * 1024
+# One left part way through a task this recently may still be working; longer ago, it ended.
+STILL_WORKING_WITHIN = timedelta(minutes=10)
+
+
+def past_sessions(projects: Path = PROJECTS_DIR, now: datetime | None = None, within: timedelta = PAST_WITHIN,
+                  most: int = PAST_MAX) -> list[ClaudeSession]:
+    """Blocking (file reads): the sessions whose transcripts changed within the last while, newest
+    first, as the tracker would have them had it heard them. Each is already told about, so none
+    sets off a reminder."""
+    now = now or datetime.now(timezone.utc)
+    try:
+        files = [(path.stat().st_mtime, path) for path in projects.glob("*/*.jsonl")]
+    except OSError:
+        return []
+    found = []
+    for mtime, path in sorted(files, reverse=True):
+        changed = datetime.fromtimestamp(mtime, timezone.utc)
+        if now - changed > within or len(found) >= most:
+            break
+        if SESSION_ID.match(path.stem) and (session := past_session(path, changed, now)) is not None:
+            found.append(session)
+    return found
+
+
+def past_session(path: Path, changed: datetime, now: datetime) -> ClaudeSession | None:
+    """One session from the end of its transcript: where it ran, what it was last asked and said,
+    and whether Claude had finished (its last word was a reply) or was part way through."""
+    try:
+        lines = tail_lines(path, PAST_TAIL_BYTES)
+    except OSError:
+        return None
+    cwd = prompt = said = ""
+    last_who = None
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not cwd and isinstance(entry, dict) and isinstance(entry.get("cwd"), str) \
+                and 0 < len(entry["cwd"]) <= CWD_MAX_CHARS:
+            cwd = entry["cwd"]
+        for who, text, is_tool in reversed(entry_texts(entry)):
+            if last_who is None:
+                last_who = "reply" if who == "claude" and not is_tool else "working"
+            if who == "claude" and not is_tool and not said:
+                said = text
+            if who == "you" and not prompt:
+                prompt = text
+        if cwd and prompt and said:
+            break
+    if not cwd or last_who is None:
+        return None
+    if last_who == "reply":
+        state, detail = FINISHED, short(said)
+    else:
+        state = WORKING if now - changed <= STILL_WORKING_WITHIN else ENDED
+        detail = short(prompt)
+    return ClaudeSession(path.stem, cwd, state, detail, changed, changed, short(prompt), told=True,
+                         transcript_path=str(path))
 
 
 def exchanges(picked: list[dict]) -> list[dict]:

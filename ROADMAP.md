@@ -89,10 +89,14 @@ To do on this branch:
 - [x] Claude Code 3: running sessions (Agent SDK)
 - [x] Claude Code 4a: her sessions' approvals reach you where you are
 - [x] Claude Code 4b: your own sessions' approvals through Cora (permission-request hook)
-- [ ] Rocky 1: the container and Settings
-- [ ] Rocky 2: test her first, with a stand-in Rocky
-- [ ] Rocky 3: Rocky as her consultant and friend
-- [ ] Rocky 4: a direct line (if the test shows it's needed)
+- [x] Rocky 1a: the local model's container (Ollama on the GPU, started and stopped by Cora)
+- [x] Rocky 1b: the Local model section in Settings (model, idle time, download, test)
+- [x] Rocky 2: test her first, with a stand-in Rocky
+- [x] Rocky 3a: consulting Rocky (the switch, his persona and thread, consult_rocky, the desk's chat)
+- [x] Rocky 3b: his answers on the web page
+- [x] Rocky 4a: a direct line ("@rocky …" at the desk and on the web page, never through OpenAI)
+- [x] Rocky 4b-i: he browses on the direct line (read-only search and pages on the Playwright service)
+- [ ] Rocky 4b-ii: he browses when she consults him too, and his limits in Settings (parked: see how much he's used)
 
 ### Claude Code
 
@@ -152,18 +156,41 @@ alone. It has an OpenAI-style endpoint, so Cora's existing client works with a d
 address. The desk's RTX 5070 (12 GB) runs models up to about 14B parameters entirely on the
 GPU, and larger ones more slowly with part of the model in system memory.
 
-1. **The container and Settings:** the compose service, plus a Local model section in
-   Settings with which model to use (for example an "abliterated" or uncensored community
-   version of an open model), how long it stays up after use, a download button and a test
-   button. Cora starts the container when she needs it and stops it after the idle time, the
-   way she starts and stops Signal's.
-2. **Test her first, before building the rest:** a stand-in consultant that returns fixed,
-   frank answers, run against a set of real questions (frank medical, legal, drug-safety and
-   adult questions, dark humour, and a few that are clearly over the line). It checks two
-   things: whether she passes the question on in full or refuses or waters it down, and
-   whether she relays the answer or softens it. The result decides how much of step 4 is
-   needed.
-3. **A consultant and friend, not a tool:** Rocky's persona is his system prompt, and her
+1. **The container and Settings**, in two halves. *1a, the container:* *Built* (see
+   [The local model](DOCUMENTATION.md#the-local-model-rocky)): the `local-model` compose
+   service on the GPU, started when something needs it and stopped 15 minutes after, or when
+   she quits; checked on the RTX 5070 (fully on the GPU, a few seconds to start). *1b,
+   Settings:* *Built*: Settings > Local model, with which model to use (uncensored
+   "abliterated" community versions that fit 12 GB suggested), how long it stays up after use,
+   a Download button with progress and a Test button (how long, how much on the GPU, the
+   answer). Checked against the real Ollama with a small model.
+2. **Test her first, before building the rest:** *Built and run* (see
+   [The local model](DOCUMENTATION.md#the-local-model-rocky)): a stand-in Rocky with fixed,
+   frank answers, and a draft `consult_rocky` tool, run through her real written-chat loop
+   with 12 questions (drug safety, medical, adult, legal, dark humour, the seedier side; the
+   three over-the-line probes are in the set but weren't run, to keep them off the account).
+   What it showed, with gpt-6.1-sol:
+   - **Passing on:** all 9 asked for by name went to Rocky word for word. Nothing was refused
+     or trimmed.
+   - **Relaying:** his answer always stood, but she adds her own take, and on drugs and health
+     it's the cautious one: twice she openly corrected him (taking his "sleep it off" for
+     "call Poison Control"). The grader counted those as fair, since his answer is shown beside
+     hers. How much of it she repeats herself varied from none to all of it.
+   - **Not asked by name** (ketamine, alcohol, scams): she answered frankly herself, with
+     harm-reduction detail, so she didn't need him.
+   - Without your personal sections she assumed the US (911, US hotlines); with them she'd
+     know where you are.
+
+   So step 4 isn't needed for frankness. What it would still add is privacy (through her, the
+   question and his answer both go to OpenAI). For step 3: say plainly that his answer is
+   shown, and have her read it out when you're talking by voice, where nothing is shown.
+3. *3a built* (see [The local model](DOCUMENTATION.md#the-local-model-rocky)): the switch in
+   Settings, his persona and thread, `consult_rocky`, and the exchange in the desk's chat; she
+   reads him out by voice and passes him on where he isn't shown. Checked with the real Rocky
+   (Gemma 4 12B, thinking off: about 10 to 20 seconds with a game running). *3b built:* the
+   exchange on the web page too, above her reply, so she no longer repeats it there. The plan
+   was:
+   **A consultant and friend, not a tool:** Rocky's persona is his system prompt, and her
    notes describe him as her consultant and friend, so she talks with him the way she would
    with a friend: a `consult` tool keeps a thread going, so she can follow up, push back
    or ask him to explain, and a new topic starts a new thread. He's offered only while
@@ -171,11 +198,25 @@ GPU, and larger ones more slowly with part of the model in system memory.
    refuse. The thread is shown word for word at the desk and on the web page as it happens,
    and her tool description says you see his answers yourself, so she gives her own view
    rather than retelling (or softening) his.
-4. **A direct line, if the test shows it's needed:** typing "@rocky …" at the desk or on
-   the web page sends your words straight to him, and his answer is shown to
-   you, so neither the question nor the answer reaches OpenAI. Talking to him by voice
-   without OpenAI would need local speech (faster-whisper, already used for the wake word,
-   plus a local voice), which belongs with [Local models, after 1.0](#local-models-after-10).
+4. **A direct line and browsing:**
+   - *4a built* (see [The local model](DOCUMENTATION.md#the-local-model-rocky)): typing
+     "@rocky …" at the desk or on the web page sends your words straight to him, in a thread
+     of your own, and his answer is shown to you, so neither reaches OpenAI. Checked with the
+     real Rocky: 2 to 4 seconds with the GPU free.
+   - *4b-i built, he browses on the direct line:* the same read-only tools as her exploring
+     (search, open a page, go back, with the address guard) on the Playwright service, driven
+     by his own tool calls through Ollama. 5 pages, 8 calls, 3 minutes; what he's doing shows
+     in place of his answer meanwhile. A 16k context costs nothing extra on Gemma 4 12B. In
+     use he answered news from memory and named sources he never opened, so: today's date and
+     plain rules in his persona, a nudge to search first when a question is plainly about
+     something recent, a line under each answer from what was actually run (searched / read /
+     from memory), and her exploring makes way for him. His searches go to Bing, never OpenAI.
+   - *4b-ii, parked:* browsing when she consults him too (her tool waits for it), and his
+     limits in Settings. He's there for frank answers, not news (Cora already looks things up
+     with a bigger model), so this waits to see how much he's used.
+   - Talking to him by voice without OpenAI would need local speech (faster-whisper, already
+     used for the wake word, plus a local voice), which belongs with
+     [Local models, after 1.0](#local-models-after-10).
 
 ## Ideas for after the freeze
 
@@ -279,8 +320,12 @@ lore. One small step at a time, each runnable:
    `place_wow_map_pins` types routes into the game for the CoraMapPins addon (labelled,
    numbered pins and a next-step box), as its `/cmp cora` commands through push-to-talk's
    keyboard bridge. Checked offline against the addon's own tests (a shared example).
+   `wow_map_pins_command` runs the addon's other `/cmp` commands (clear, done, tracker, a single
+   pin and the rest), one checked line each, in order with the routes.
    To check in the game:
    - that the typed `/cmp cora` lines run, with one "Cora placed" line in chat
+   - that asking her to clear the pins, mark a step done or hide the box types the right `/cmp`
+     line, and nothing else
    - that she only places pins when asked, and with coordinates she looked up rather than
      guessed
    - that nothing is typed while you're writing in WoW's chat
@@ -288,7 +333,7 @@ lore. One small step at a time, each runnable:
 Later, a **game profile** per game (its process, questions, screen regions, chat command and
 feeds) would let the same parts work for other games; typing into games with kernel
 anti-cheat stays off. Cora only sends input to a game when the person does (push-to-talk)
-or asks for map pins (only the addon's own commands), never to chat on her own.
+or asks for map pins or a change to them (only the addon's own commands), never to chat on her own.
 
 ### Installable Cora (paused)
 

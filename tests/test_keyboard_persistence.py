@@ -127,6 +127,8 @@ async def running_app(persistence=None, has_key=True):
             patch("sign_ups.password.keyring") as sign_up_keyring, \
             patch("app.EmailAccount"), \
             patch("app.start_container", AsyncMock()), patch("app.stop_container", AsyncMock()), \
+            patch("local_model.manager.start_container", AsyncMock()), \
+            patch("local_model.manager.stop_container", AsyncMock()), \
             patch("app_areas.signal_chats.delete_attachments", AsyncMock()), patch("app_areas.signal_chats.clear_attachments", AsyncMock()), \
             patch.object(CoraApp, "daily_backup", return_value=None):
         app = CoraApp()

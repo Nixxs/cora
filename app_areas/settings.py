@@ -9,7 +9,7 @@ from textual import work
 import openai_key
 import openai_spend
 from ui.model_settings import (
-    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, LocalModelControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
     gap_words,
 )
 from services.catalogue import SERVICES
@@ -115,6 +115,13 @@ class SettingsMixin:
                     run=self.claude_code_run, save_run=self.save_claude_code_run,
                     folders=list(self.claude_code_folders), save_folders=self.save_claude_code_folders,
                     run_status=self.claude_code_run_status,
+                ),
+                local_model=LocalModelControls(
+                    status=self.local_model_status, task=lambda: self.local_model_task,
+                    save_name=self.save_local_model_name, download=self.download_local_model,
+                    test=self.test_local_model, name=self.local_model_name,
+                    idle_minutes=self.local_model.idle_minutes, save_idle_minutes=self.save_local_model_idle,
+                    consult=self.local_model_consult, save_consult=self.save_local_model_consult,
                 ),
                 general=GeneralControls(
                     key_status=await asyncio.to_thread(self.key_status), save_key=self.save_openai_key,

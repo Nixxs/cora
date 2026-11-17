@@ -1,4 +1,6 @@
-"""What each Claude Code session is doing, as its hooks report it; kept for this run only.
+"""What each Claude Code session is doing, as its hooks report it; kept for this run only, with
+the last day's sessions read from their transcripts when she starts listening (see
+transcripts.past_sessions).
 
 Events come from Claude Code on this PC, but what Claude or you wrote in them is still just text:
 shown to you, never taken by Cora as instructions.
@@ -110,9 +112,17 @@ class ClaudeSession:
         return f"{self.project}: {self.state}"
 
 
-def minutes(span: timedelta) -> str:
-    count = max(1, int(span.total_seconds() // 60))
-    return f"{count} minute{'' if count == 1 else 's'}"
+def clock_time(when: datetime, now: datetime) -> str:
+    """'2:41 pm' if it was today, else 'Mon 11:58 pm', in this PC's time zone."""
+    local = when.astimezone()
+    shown = f"{local:%I:%M %p}".lstrip("0").lower()
+    return shown if local.date() == now.astimezone().date() else f"{local:%a} {shown}"
+
+
+# Markdown's emphasis and code marks, which a Signal message or her voice would give as they are.
+MARKDOWN_MARKS = re.compile(r"\*\*|__|`")
+# Where the rest is, when what Claude last said was cut short.
+THE_REST = " (All of it is under Claude Code on Cora's dashboard, or on the web page.)"
 
 
 def how_long(span: timedelta) -> str:
@@ -137,17 +147,22 @@ def summary(session: ClaudeSession, now: datetime) -> dict:
 
 
 def tell_text(sessions: list[ClaudeSession], now: datetime) -> str:
-    """What Cora tells you about sessions left waiting, one line each."""
+    """What Cora tells you about sessions left waiting, one line each, with the time each stopped
+    (how long ago would only ever be the wait, TELL_AFTER) and what Claude last said, as plain
+    text, saying where the rest is if it was cut short."""
     lines = []
     for session in sessions:
-        waited = minutes(now - session.since)
+        at = clock_time(session.since, now)
         if session.state == NEEDS_YOU:
-            line = f"Claude Code in {session.project} has been waiting on you for {waited}"
+            line = f"Claude Code in {session.project} has been waiting on you since {at}"
         elif session.state == FAILED:
-            line = f"Claude Code stopped with an error in {session.project} {waited} ago"
+            line = f"Claude Code stopped with an error in {session.project} at {at}"
         else:
-            line = f"Claude Code finished in {session.project} {waited} ago"
-        lines.append(f"{line}: {session.detail}" if session.detail else f"{line}.")
+            line = f"Claude Code finished in {session.project} at {at}"
+        detail = MARKDOWN_MARKS.sub("", session.detail or "").strip()
+        if detail.endswith("…"):
+            detail += THE_REST
+        lines.append(f"{line}: {detail}" if detail else f"{line}.")
     return "\n".join(lines)
 
 
@@ -191,6 +206,19 @@ class SessionTracker:
             oldest = min(self.sessions.values(), key=lambda kept: kept.updated_at)
             del self.sessions[oldest.session_id]
         return session
+
+    def add_past(self, sessions: list[ClaudeSession]) -> int:
+        """Sessions from before she was listening (read from their transcripts); any already heard
+        stays as heard. How many were added."""
+        added = 0
+        for session in sessions:
+            if session.session_id not in self.sessions:
+                self.sessions[session.session_id] = session
+                added += 1
+        while len(self.sessions) > SESSIONS_MAX:
+            oldest = min(self.sessions.values(), key=lambda kept: kept.updated_at)
+            del self.sessions[oldest.session_id]
+        return added
 
     def recent(self) -> list[ClaudeSession]:
         """Newest first."""

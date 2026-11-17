@@ -3,6 +3,7 @@ what each session is doing."""
 
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -17,8 +18,8 @@ from claude_code import hooks, transcripts
 from tools.claude_code import ClaudeCodeTool, validate_arguments as validate_tool_arguments
 from claude_code.routes import BODY_MAX_BYTES, EVENT_PATH, PERMISSION_PATH, claude_code_routes, permission_decision
 from claude_code.sessions import (
-    ENDED, FAILED, FINISHED, NEEDS_YOU, SESSIONS_MAX, STARTED, TELL_AFTER, TELL_CHOICES, WORKING, SessionTracker,
-    project_name, tell_text,
+    ENDED, FAILED, FINISHED, NEEDS_YOU, SESSIONS_MAX, STARTED, TELL_AFTER, TELL_CHOICES, THE_REST, WORKING,
+    SessionTracker, clock_time, project_name, tell_text,
 )
 from server.listener import build_app
 from ui.claude_code_view import claude_code_lines, follow_parts
@@ -134,13 +135,26 @@ class TellingYouTests(unittest.TestCase):
         self.now += TELL_AFTER
         self.assertEqual(self.tracker.due(TELL_CHOICES["off"]), [])
 
-    def test_what_she_says_names_the_project_the_wait_and_the_detail(self):
+    def test_what_she_says_names_the_project_the_time_and_the_detail(self):
+        stopped = self.now
         self.tracker.update(event("Notification", notification_type="permission_prompt", message="Allow Bash?"))
         self.tracker.update(event("Stop", session_id="s2", cwd="/home/me/site"))
+        self.tracker.update(event("Stop", session_id="s3", cwd="/home/me/docs",
+                                  last_assistant_message="**Built:** the `docs` page. " + "More. " * 80))
         self.now += timedelta(minutes=4)
-        text = tell_text(self.tracker.due(TELL_CHOICES["all"]), self.now)
-        self.assertEqual(text, "Claude Code in cora has been waiting on you for 4 minutes: Allow Bash?\n"
-                               "Claude Code finished in site 4 minutes ago.")
+        at = clock_time(stopped, self.now)
+        lines = tell_text(self.tracker.due(TELL_CHOICES["all"]), self.now).splitlines()
+        self.assertEqual(lines[:2], [f"Claude Code in cora has been waiting on you since {at}: Allow Bash?",
+                                     f"Claude Code finished in site at {at}."])
+        # Plain text, cut short with where to find the rest.
+        self.assertTrue(lines[2].startswith(f"Claude Code finished in docs at {at}: Built: the docs page. More."))
+        self.assertTrue(lines[2].endswith(f"…{THE_REST}"))
+
+    def test_the_time_is_the_clock_time_and_the_day_if_it_wasnt_today(self):
+        now = datetime(2026, 11, 13, 15, 0).astimezone()
+        self.assertEqual(clock_time(now.replace(hour=14, minute=41), now), "2:41 pm")
+        self.assertEqual(clock_time(now.replace(hour=9, minute=5), now), "9:05 am")
+        self.assertEqual(clock_time(now - timedelta(days=1), now), f"{now - timedelta(days=1):%a} 3:00 pm")
 
     def test_the_dashboard_lists_what_needs_you_first_and_drops_old_ended_sessions(self):
         self.tracker.update(event("SessionEnd", session_id="gone", cwd="/old", reason="other"))
@@ -234,7 +248,7 @@ class ClaudeCodeToolTests(unittest.IsolatedAsyncioTestCase):
 
     def test_only_offered_while_listening(self):
         app = SimpleNamespace(maps_key="key", calling_out_problem=lambda: None, claude_code_listen=False,
-                              can_run_claude_code=lambda: False)
+                              can_run_claude_code=lambda: False, can_consult_rocky=lambda: False)
         self.assertIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
         app.claude_code_listen = True
         self.assertNotIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
@@ -329,6 +343,77 @@ class FollowingASessionTests(unittest.TestCase):
         self.assertEqual(parts[-1][0].plain, "Claude")
         self.assertEqual(parts[-1][1], "**done**")
         self.assertIn("can't be read", part_text(follow_parts(session, NOW, None)[-1]))
+
+
+class PastSessionsTests(unittest.IsolatedAsyncioTestCase):
+    """Sessions going (or done) before she started listening, read from their transcripts."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.projects = Path(folder.name) / "projects"
+        self.now = datetime.now(timezone.utc)
+
+    def write(self, project: str, session_id: str, *lines: str, minutes_ago: float = 0) -> Path:
+        path = self.projects / project / f"{session_id}.jsonl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        when = (self.now - timedelta(minutes=minutes_ago)).timestamp()
+        os.utime(path, (when, when))
+        return path
+
+    def past(self):
+        return {session.session_id: session for session in transcripts.past_sessions(self.projects, self.now)}
+
+    def test_finished_part_way_or_ended_from_how_each_transcript_ends(self):
+        cwd = {"cwd": r"D:\Games\ComboDots"}
+        self.write("D--Games-ComboDots", "done-1", transcript_line("user", "make five dots", **cwd),
+                   transcript_line("assistant", [{"type": "text", "text": "Done: **five** dots."}], **cwd),
+                   json.dumps({"type": "mode", "sessionId": "done-1"}), minutes_ago=90)
+        self.write("D--Games-ComboDots", "going-2", transcript_line("user", "fix the colours", **cwd),
+                   transcript_line("assistant", [{"type": "tool_use", "name": "Edit",
+                                                  "input": {"file_path": "dots.lua"}}], **cwd), minutes_ago=3)
+        self.write("d--Development-cora", "gone-3", transcript_line("user", "add tests", cwd=r"D:\Development\cora"),
+                   minutes_ago=200)
+        found = self.past()
+        self.assertEqual((found["done-1"].state, found["done-1"].detail, found["done-1"].prompt),
+                         (FINISHED, "Done: **five** dots.", "make five dots"))
+        self.assertEqual((found["going-2"].state, found["going-2"].detail), (WORKING, "fix the colours"))
+        self.assertEqual((found["gone-3"].state, found["gone-3"].project), (ENDED, "cora"))
+        # None sets off "Claude finished…" when she starts.
+        self.assertTrue(all(session.told for session in found.values()))
+        self.assertEqual(found["done-1"].transcript_path, str(self.projects / "D--Games-ComboDots" / "done-1.jsonl"))
+
+    def test_only_the_last_days_own_sessions(self):
+        line = transcript_line("user", "hello", cwd=r"D:\x")
+        self.write("D--x", "yesterday-1", line, minutes_ago=25 * 60)
+        self.write("D--x", "s1", line)
+        self.write("D--x", "s1/subagents/agent-a1", line)
+        self.write("D--x", "no-folder-2", transcript_line("user", "hello"))
+        self.assertEqual(list(self.past()), ["s1"])
+        for number in range(transcripts.PAST_MAX + 3):
+            self.write("D--x", f"many-{number}", line, minutes_ago=number)
+        self.assertEqual(len(self.past()), transcripts.PAST_MAX)
+
+    def test_what_she_heard_herself_stays_as_heard(self):
+        tracker = SessionTracker(clock=lambda: self.now)
+        tracker.update(event("Notification", "s1", notification_type="permission_prompt", message="Bash?"))
+        self.write("d--cora", "s1", transcript_line("assistant", [{"type": "text", "text": "Done."}], cwd="D:\\cora"))
+        self.write("d--cora", "s2", transcript_line("assistant", [{"type": "text", "text": "Done."}], cwd="D:\\cora"),
+                   minutes_ago=5)
+        self.assertEqual(tracker.add_past(transcripts.past_sessions(self.projects, self.now)), 1)
+        self.assertEqual((tracker.sessions["s1"].state, tracker.sessions["s2"].state), (NEEDS_YOU, FINISHED))
+
+    async def test_she_catches_up_once_listening(self):
+        self.write("d--cora", "s1", transcript_line("user", "add tests", cwd="D:\\cora"))
+        app = SimpleNamespace(claude_sessions=SessionTracker(clock=lambda: self.now), activity=MagicMock())
+        with patch("claude_code.transcripts.PROJECTS_DIR", self.projects), \
+                patch.object(transcripts.past_sessions, "__defaults__",
+                             (self.projects, *transcripts.past_sessions.__defaults__[1:])):
+            await ClaudeCodeMixin.catch_up_claude_code(app)
+        self.assertEqual(app.claude_sessions.sessions["s1"].state, WORKING)
+        app.activity.write.assert_called_once_with("Found 1 Claude Code session from the last day in their "
+                                                   "transcripts.", "Claude Code")
 
 
 class RouteTests(unittest.TestCase):

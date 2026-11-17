@@ -87,6 +87,7 @@ from app_areas.feelings import FEELING_CHECK_SECONDS, FeelingsMixin
 from app_areas.game import GameMixin
 from app_areas.game_watch import GameWatchMixin
 from app_areas.claude_code import ClaudeCodeMixin
+from app_areas.local_model import LocalModelMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -129,7 +130,7 @@ def settle_memory() -> None:
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, App,
 ):
 
     live_trace = None
@@ -278,6 +279,8 @@ class CoraApp(
         self.init_game_watch()
         # Settings > Claude Code: hearing your Claude Code sessions.
         self.init_claude_code()
+        # Rocky's local model: its container, stopped once idle.
+        self.init_local_model()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -326,6 +329,8 @@ class CoraApp(
             look_at_claude_code=lambda project, recent: self.look_at_claude_code(project, recent),
             run_claude_code=lambda *args: self.run_claude_code(*args),
             place_map_pins=lambda route, lines: self.place_game_map_pins(route, lines),
+            run_map_pins_command=lambda line: self.run_game_map_pins_command(line),
+            consult_rocky=lambda question, new_topic: self.consult_rocky(question, new_topic),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
             # Looked up when called: the approval queue is set up after the tools.
@@ -501,7 +506,7 @@ class CoraApp(
             record_activity=self.record_idle_activity, write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
             trace=self.trace_live, send_without_live=self.send_without_live,
-            keep_image=self.kept_images.keep,
+            keep_image=self.kept_images.keep, ask_rocky=self.ask_rocky_at_desk,
         )
         self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(
@@ -800,6 +805,7 @@ class CoraApp(
                     await self.reconnect_worker.wait()
                 except WorkerError:
                     self.activity.write("Reconnect worker stopped", "Reconnect worker stopped")
+            await self.close_local_model()
             await self.live.close()
         finally:
             try:

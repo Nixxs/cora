@@ -163,6 +163,95 @@ export function addMap({ caption, embed, link, when = new Date() }) {
   return message;
 }
 
+/** A question to Rocky, as plain text (escaped here): Cora's, or yours (@rocky). via: where yours
+ * was asked ("web · iPad"). */
+function rockyQuestion({ asker, question, via = "", when }) {
+  const asked = document.createElement("article");
+  asked.className = `message ${asker === "you" ? "you" : "cora"} to-rocky`;
+  const where = ` · to Rocky${via ? ` · ${via}` : ""}`;
+  asked.innerHTML = `
+    <div class="label"><span class="who">${asker === "you" ? "You" : "Cora"}</span><span class="via">${escapeText(where)}</span><span class="when">${time(when)}</span></div>
+    <div class="body"><p>${escapeText(question).replace(/\n/g, "<br>")}</p></div>`;
+  return asked;
+}
+
+function rockyAnswer(html, when, via = " · local model") {
+  const answer = document.createElement("article");
+  answer.className = "message rocky";
+  answer.innerHTML = `
+    <div class="label"><span class="who">Rocky</span><span class="via">${via}</span><span class="when">${time(when)}</span></div>
+    <div class="body">${html ?? ""}</div>`;
+  openLinksOutside(answer);
+  return answer;
+}
+
+/**
+ * A question to Rocky (Cora's, or yours from somewhere else) and his answer word for word (html:
+ * rendered and made safe by the server). Like the desk, hers goes just above her reply: above the
+ * one she's still writing on this page, if any.
+ */
+export function addRocky({ asker = "cora", question, html, via = "", when = new Date() }) {
+  const asked = rockyQuestion({ asker, question, via, when });
+  const answer = rockyAnswer(html, when);
+  const draft = asker === "cora" ? output.querySelector(".message.cora.writing") : null;
+  if (!draft) {
+    append(asked);
+    return append(answer);
+  }
+  const follow = nearBottom();
+  draft.before(asked, answer);
+  growing?.observe(asked);
+  growing?.observe(answer);
+  if (follow) output.scrollTop = output.scrollHeight;
+  return answer;
+}
+
+/** Your question to Rocky from this page (@rocky), and his answer to come, like startWriting's:
+ * update(text) as it streams in, then finish(html), or fail(why) (why: shown in its place if
+ * nothing had come yet; what had stays, marked incomplete). */
+export function askingRocky(question, via) {
+  append(rockyQuestion({ asker: "you", question, via, when: new Date() }));
+  const answer = append(rockyAnswer("<p></p>", new Date(), " · thinking…"));
+  answer.classList.add("writing");
+  const body = answer.querySelector(".body");
+  const label = answer.querySelector(".via");
+  let started = false;
+  return {
+    update(text) {
+      if (!text.trim()) return;
+      started = true;
+      label.textContent = " · writing…";
+      const follow = nearBottom();
+      body.innerHTML = `<p>${escapeText(text).replace(/\n/g, "<br>")}</p>`;
+      if (follow) output.scrollTop = output.scrollHeight;
+    },
+    // What he's doing on the web ('searching for "…"'), in place of anything he'd written.
+    status(text) {
+      started = false;
+      label.textContent = ` · ${text}…`;
+      body.innerHTML = "<p></p>";
+    },
+    finish(html) {
+      answer.classList.remove("writing");
+      label.textContent = " · local model";
+      const follow = nearBottom();
+      body.innerHTML = html;
+      openLinksOutside(answer);
+      if (follow) output.scrollTop = output.scrollHeight;
+    },
+    fail(why) {
+      answer.classList.remove("writing");
+      if (started) {
+        answer.classList.add("incomplete");
+        label.textContent = " · local model";
+      } else {
+        answer.remove();
+      }
+      if (why) addNotice(why);
+    },
+  };
+}
+
 /** A reply streaming in: update(text) as it arrives, then finish(html) or fail(). */
 export function startWriting(via = "web") {
   const message = addMessage({ who: "Cora", via: "writing…", text: "" });

@@ -31,6 +31,9 @@ PHOTO, PICTURE = "photo", "picture"
 MAP = "map"
 # And a quiet line ({"text"}), such as "Cora checked where you are".
 NOTICE = "notice"
+# And Rocky's answer, word for word ({"question", "answer", "asker"}): to her, just before her
+# reply, or to the person directly (@rocky).
+ROCKY = "rocky"
 
 
 @dataclass(frozen=True)
@@ -92,6 +95,15 @@ class MessageFeed:
         """A quiet line in the conversation, for every page."""
         return self._add(FeedMessage(self.seq + 1, "assistant", "web", "", datetime.now(timezone.utc),
                                      kind=NOTICE, data={"text": text}))
+
+    def publish_rocky(self, question: str, answer: str, asker: str = "cora", ref: str | None = None,
+                      device: str | None = None) -> FeedMessage:
+        """A question to Rocky and his answer, for every page (the one she's answering included).
+        asker: "cora" (she consulted him) or "you" (@rocky, asked from the desk, or from the page
+        with ref and device: that page already shows it)."""
+        return self._add(FeedMessage(self.seq + 1, "assistant", "rocky", "", datetime.now(timezone.utc),
+                                     ref=ref, kind=ROCKY, data={"question": question, "answer": answer,
+                                                                "asker": asker}, device=device))
 
     def ask_location(self, request_id: str) -> int:
         """Ask every open page where the person is; returns how many pages were asked."""

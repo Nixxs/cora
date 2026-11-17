@@ -24,9 +24,66 @@ APPROVAL_FOR_CORA = {"approved": "You approved my request to use {}.", "declined
                      "timed out": "You didn't answer my request to use {} in time, so it wasn't done."}
 
 # Who is speaking, coloured so messages tell apart at a glance; the name stays as text too.
-SPEAKER_STYLES = {"Cora": "bold #7fbf73", "You": "bold #7fb8d8"}
-# A message's label, like "Cora:", "You · Signal:" or "Cora · on screen:".
-SPEAKER_LABEL = re.compile(r"(You|Cora)( · [^:\n]+)?:")
+SPEAKER_STYLES = {"Cora": "bold #7fbf73", "You": "bold #7fb8d8", "Rocky": "bold #d7a06a"}
+# A message's label, like "Cora:", "You · Signal:", "Cora · on screen:" or "Rocky:".
+SPEAKER_LABEL = re.compile(r"(You|Cora|Rocky)( · [^:\n]+)?:")
+# What Cora asked Rocky, her consultant, shown above his answer.
+ROCKY_ASKED = "Cora · to Rocky: "
+# What the person asked him directly (@rocky), and his answer while it's coming.
+YOU_TO_ROCKY = "You · to Rocky"
+ROCKY_THINKING = "Rocky · thinking…:"
+
+
+class RockyAnswer(ChatMarkdown):
+    """What Rocky said, shown as he said it; in the history later turns are given as hers to know,
+    with what she asked him. Not saved: her reply says what she made of it."""
+
+    def __init__(self, question: str, answer: str) -> None:
+        super().__init__(answer, code_theme="monokai")
+        self.for_cora = f"(I asked Rocky, my consultant: {question}\nHe said: {answer})"
+
+
+class DirectRockyAnswer(ChatMarkdown):
+    """What Rocky said to the person directly (@rocky): shown only, never saved or given to Cora, so
+    neither the question nor his answer reaches OpenAI."""
+
+
+class DirectRockyDraft:
+    """The person's question to Rocky, then "thinking…" until his answer, or why there isn't one,
+    takes its place. Entries are only ever appended, so its place stays right meanwhile."""
+
+    def __init__(self, conversation: "Conversation", index: int) -> None:
+        self.conversation = conversation
+        self.index = index
+
+    def update(self, so_far: str) -> None:
+        """His answer so far, as it streams in: still never part of her history."""
+        if not so_far.strip():
+            return
+        entries = self.conversation.log_entries
+        entries[self.index] = "Rocky:"
+        entries[self.index + 1] = DirectRockyAnswer(so_far, code_theme="monokai")
+        self.conversation.schedule_redraw()
+
+    def looking(self, what: str) -> None:
+        """What he's doing on the web ('searching for "…"') in place of his answer, which starts
+        again from nothing when he writes."""
+        entries = self.conversation.log_entries
+        entries[self.index] = f"Rocky · {what.replace(':', '')}…:"
+        entries[self.index + 1] = ""
+        self.conversation.schedule_redraw()
+
+    def finish(self, answer: str) -> None:
+        entries = self.conversation.log_entries
+        entries[self.index] = "Rocky:"
+        entries[self.index + 1] = DirectRockyAnswer(answer, code_theme="monokai")
+        self.conversation.redraw_log()
+
+    def fail(self, why: str) -> None:
+        """Why there's no answer, in its place (anything that had streamed in is taken away)."""
+        self.conversation.log_entries[self.index] = QuietNote(f"· {why}")
+        self.conversation.log_entries[self.index + 1] = ""
+        self.conversation.redraw_log()
 
 
 class ApprovalNote(str):
@@ -188,7 +245,11 @@ class Conversation:
         history = []
         remaining = 6000
         for entry in reversed(self.log_entries):
-            if isinstance(entry, ChatMarkdown):
+            if isinstance(entry, DirectRockyAnswer):  # the person's own, never hers
+                continue
+            if isinstance(entry, RockyAnswer):  # before ChatMarkdown, which it's built on
+                role, text = "assistant", entry.for_cora
+            elif isinstance(entry, ChatMarkdown):
                 role, text = "assistant", entry.markup
             elif isinstance(entry, str) and entry.startswith("You: "):
                 role, text = "user", entry[5:]
@@ -355,6 +416,22 @@ class Conversation:
         self.write_log(PhotoNote(f"· {shown}", f"(The photo I sent. {described})"))
         if (photo := PHOTO_ID.match(described)) is not None:
             self.tell(self.photo_listeners, photo.group(1))
+
+    def show_rocky(self, question: str, answer: str) -> None:
+        """Rocky's answer to her question, word for word, so she doesn't stand between him and the person."""
+        self.flush_transcript()
+        self.log_entries.extend(["", f"{ROCKY_ASKED}{question}", "", "Rocky:", RockyAnswer(question, answer), ""])
+        self.redraw_log()
+
+    def ask_rocky_directly(self, question: str, where: str = "") -> DirectRockyDraft:
+        """The person's question to Rocky ("You · to Rocky: …", or "You · to Rocky · web · iPad: …"
+        from the web page), with "thinking…" below it for his answer. Neither is saved nor part of
+        her history: "You · to Rocky" isn't a line she's given."""
+        self.flush_transcript()
+        asked = f"{YOU_TO_ROCKY}{f' · {where}' if where else ''}: {question}"
+        self.log_entries.extend(["", asked, "", ROCKY_THINKING, "", ""])
+        self.redraw_log()
+        return DirectRockyDraft(self, len(self.log_entries) - 3)
 
     def show_note(self, text: str) -> None:
         """A quiet line in the chat, not saved and not part of her history."""

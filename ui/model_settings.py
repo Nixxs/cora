@@ -17,6 +17,7 @@ from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
 from game.chat_line import CHANNELS as GAME_CHANNELS
+from local_model.manager import IDLE_CHOICES
 from openai_spend import likely_cora_project
 from phone.twilio import REGIONS
 from services.catalogue import SERVICES
@@ -122,6 +123,62 @@ class ClaudeCodeControls:
     run_status: Callable[[], str] = lambda: ""
 
 
+@dataclass
+class LocalModelControls:
+    """Settings > Local model: Rocky's model, run by Ollama in Docker; the app owns the container."""
+
+    # status() -> the container's line (and what's downloaded, once known); task() -> how a
+    # download or test is going, or how it went ("" for none yet).
+    status: Callable[[], str]
+    task: Callable[[], str]
+    # save_name(name as typed): the app checks it and says if not.
+    save_name: Callable[[str], None]
+    download: Callable[[], None]
+    test: Callable[[], None]
+    name: str = ""
+    idle_minutes: int = 15
+    save_idle_minutes: Callable[[int], None] = lambda minutes: None
+    # Whether she may consult Rocky (her consult_rocky tool).
+    consult: bool = False
+    save_consult: Callable[[bool], None] = lambda on: None
+
+
+LOCAL_MODEL_HELP = (
+    "Rocky is Cora's consultant, for the frank answers her own models won't give: an open-weights model "
+    "running on this PC's GPU, in Docker (Ollama), so what's asked of him never leaves the PC. Nothing uses "
+    "him yet; her consult tool comes later. The first start downloads Ollama itself (about 8.5 GB)."
+)
+LOCAL_MODEL_NAME_HELP = (
+    "An Ollama model name. Uncensored (\"abliterated\") ones that fit a 12 GB card: "
+    "huihui_ai/gemma-4-abliterated:12b (7.6 GB, the most used), huihui_ai/qwen3.5-abliterated:9b (6.6 GB, "
+    "quicker) or huihui_ai/qwen3-abliterated:14b (9 GB, a tighter fit). Others are on ollama.com; one much "
+    "over 10 GB spills into system memory and runs far slower. Downloads stay in Docker's "
+    "local-model-data volume, until you remove it."
+)
+LOCAL_MODEL_CONSULT_HELP = (
+    "She asks Rocky when you ask her to, and when she'd otherwise refuse or water down a question an adult "
+    "may reasonably ask. He's her consultant and friend, frank where her own model holds back. What he says "
+    "is shown word for word in the chat at the desk; by voice she reads it out, and on Signal or by email she "
+    "passes it on. What she asks him stays on this PC, but his answer goes to OpenAI with the rest of your "
+    "conversation, as her reply builds on it. She won't take him anything that would hurt someone. In "
+    "writing from now; by voice from her next connect."
+)
+LOCAL_MODEL_IDLE_HELP = (
+    "How long the container stays up after Rocky was last used. While it's up his model holds most of the "
+    "GPU's memory (games want it too); once stopped, it holds none, and the next use starts it again: a few "
+    "seconds, and sometimes up to a minute before the first answer while the model loads."
+)
+
+
+def idle_label(minutes: int) -> str:
+    return f"{minutes // 60} hour{'' if minutes == 60 else 's'}" if minutes % 60 == 0 else f"{minutes} minutes"
+
+
+def mark_style(line: str) -> str:
+    """A status line's colour from its mark: ● good, ◌ busy, × bad, ○ dim."""
+    return {"●": GOOD, "◌": BUSY, "×": BAD}.get(line[:1], DIM)
+
+
 CLAUDE_CODE_HELP = (
     "Cora hears what your Claude Code sessions are doing, in the terminal, VS Code or the desktop app: "
     "when one starts, finishes, needs you or ends. Claude Code's hooks post each event to Cora on this PC "
@@ -187,7 +244,7 @@ def claude_hooks_line(state: str, line: str) -> Text:
 
 def claude_sessions_text(sessions: list) -> Text:
     if not sessions:
-        return Text("No sessions heard since Cora started.", style=DIM)
+        return Text("No sessions in the last day.", style=DIM)
     text = Text()
     for index, session in enumerate(sessions):
         when = session.updated_at.astimezone().strftime("%H:%M")
@@ -645,11 +702,13 @@ class ModelSettingsScreen(ModalScreen):
         webhooks: WebhookControls | None = None, web: WebControls | None = None,
         phone: PhoneControls | None = None, general: GeneralControls | None = None,
         game: GameControls | None = None, claude_code: ClaudeCodeControls | None = None,
+        local_model: LocalModelControls | None = None,
     ) -> None:
         super().__init__()
         self.general = general
         self.game = game
         self.claude_code = claude_code
+        self.local_model = local_model
         self.models = dict(models)
         self.save = save
         self.screen_looking = screen_looking
@@ -702,6 +761,9 @@ class ModelSettingsScreen(ModalScreen):
                 if self.claude_code is not None:
                     with TabPane("Claude Code", id="settings-claude-code"):
                         yield VerticalScroll(id="claude-code-scroll")
+                if self.local_model is not None:
+                    with TabPane("Local model", id="settings-local-model"):
+                        yield VerticalScroll(id="local-model-scroll")
                 if self.services is not None:
                     with TabPane("Services", id="settings-services"):
                         yield VerticalScroll(id="services-scroll")
@@ -752,6 +814,7 @@ class ModelSettingsScreen(ModalScreen):
             "settings-general": ("general-scroll", self.compose_general_tab),
             "settings-game": ("game-scroll", self.compose_game),
             "settings-claude-code": ("claude-code-scroll", self.compose_claude_code),
+            "settings-local-model": ("local-model-scroll", self.compose_local_model),
             "settings-services": ("services-scroll", self.compose_services_tab),
         }.get(pane_id, (None, None))
         # Not once Settings has been closed, which can happen before the tabs' turn comes.
@@ -765,6 +828,9 @@ class ModelSettingsScreen(ModalScreen):
         if pane_id == "settings-claude-code":
             await self.while_open(self.show_claude_code)
             self.set_interval(1.0, lambda: self.while_open(self.show_claude_code))
+        if pane_id == "settings-local-model":
+            await self.while_open(self.show_local_model)
+            self.set_interval(0.5, lambda: self.while_open(self.show_local_model))
 
     async def while_open(self, show) -> None:
         """Refresh a tab, unless Settings is closing: its widgets are going, so there's nothing to show."""
@@ -778,7 +844,8 @@ class ModelSettingsScreen(ModalScreen):
                 raise
 
     async def fill_tabs(self) -> None:
-        for pane_id in ("settings-general", "settings-game", "settings-claude-code", "settings-services"):
+        for pane_id in ("settings-general", "settings-game", "settings-claude-code", "settings-local-model",
+                        "settings-services"):
             await self.fill_tab(pane_id)
         self.all_built.set()
 
@@ -963,6 +1030,32 @@ class ModelSettingsScreen(ModalScreen):
         style = DIM if line.startswith("○") else BAD if line.startswith("×") else GOOD
         self.query_one("#claude-code-run-status", Static).update(Text(line, style=style))
 
+    def compose_local_model(self) -> ComposeResult:
+        yield heading("Rocky's model")
+        yield Static(id="local-model-status", classes="service-reason")
+        yield note(LOCAL_MODEL_HELP)
+        yield field("Model", LOCAL_MODEL_NAME_HELP)
+        yield row(entry(value=self.local_model.name, id="local-model-name",
+                        placeholder="huihui_ai/gemma-4-abliterated:12b"),
+                  button("Save", "local-model-name-save"))
+        yield actions(button("Download", "local-model-download"), button("Test", "local-model-test"))
+        yield Static(id="local-model-task", classes="service-reason")
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.local_model.consult, id="local-model-consult")
+            yield Label("Let her consult Rocky", classes="settings-label")
+        yield note(LOCAL_MODEL_CONSULT_HELP)
+        yield field("Stays up", LOCAL_MODEL_IDLE_HELP)
+        yield Select([(f"For {idle_label(minutes)} after use", minutes) for minutes in IDLE_CHOICES],
+                     value=self.local_model.idle_minutes, allow_blank=False, id="local-model-idle", compact=True)
+
+    def show_local_model(self) -> None:
+        if not self.query("#local-model-status"):
+            return
+        status = self.local_model.status()
+        self.query_one("#local-model-status", Static).update(Text(status, style=mark_style(status)))
+        task = self.local_model.task()
+        self.query_one("#local-model-task", Static).update(Text(task, style=mark_style(task)))
+
     def save_game_vocabulary(self) -> None:
         if self.game is not None:
             words = self.query_one("#game-vocabulary", Input).value
@@ -1123,7 +1216,7 @@ class ModelSettingsScreen(ModalScreen):
     def fit_scrolls(self) -> None:
         """Keep the long tabs' scrolling areas inside the window, so Close always shows."""
         rows = max(6, min(40, self.app.size.height - self.CHROME_ROWS))
-        for scroll in self.query("#general-scroll, #services-scroll, #claude-code-scroll"):
+        for scroll in self.query("#general-scroll, #services-scroll, #claude-code-scroll, #local-model-scroll"):
             scroll.styles.max_height = rows
 
     def on_resize(self) -> None:
@@ -1340,6 +1433,11 @@ class ModelSettingsScreen(ModalScreen):
                 self.general.farewell = event.value
                 self.general.save_farewell(event.value)
             return
+        if event.switch.id == "local-model-consult":
+            if self.local_model is not None and event.value != self.local_model.consult:
+                self.local_model.consult = event.value
+                self.local_model.save_consult(event.value)
+            return
         if event.switch.id == "game-watch":
             if self.game is not None and event.value != self.game.watch:
                 self.game.watch = event.value
@@ -1403,6 +1501,11 @@ class ModelSettingsScreen(ModalScreen):
             if self.general is not None and event.value != self.general.spend_project:
                 self.general.spend_project = event.value
                 self.general.save_spend_project(event.value)
+            return
+        if event.select.id == "local-model-idle":
+            if self.local_model is not None and event.value != self.local_model.idle_minutes:
+                self.local_model.idle_minutes = event.value
+                self.local_model.save_idle_minutes(event.value)
             return
         if event.select.id == "claude-code-tell":
             if self.claude_code is not None and event.value != self.claude_code.tell:
@@ -1571,6 +1674,12 @@ class ModelSettingsScreen(ModalScreen):
         button = event.button.id or ""
         if button == "game-vocabulary-save":
             self.save_game_vocabulary()
+        elif button == "local-model-name-save":
+            self.local_model.save_name(self.query_one("#local-model-name", Input).value)
+        elif button == "local-model-download":
+            self.local_model.download()
+        elif button == "local-model-test":
+            self.local_model.test()
         elif button == "claude-code-port-save":
             self.claude_code.save_port(self.query_one("#claude-code-port", Input).value)
         elif button == "claude-code-folders-save":

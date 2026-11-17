@@ -25,8 +25,9 @@ SCHEMA = {
         "destination or a quest chain's steps across zones (in order). Only use coordinates you have "
         "from a reliable source such as Wowhead or a guide, for their version of the game (classic "
         "era); never guess or estimate them, and say so instead if you can't find them. A route with "
-        "the same name replaces the one placed before. You don't see the game: you only learn whether "
-        "the pins were typed into it."
+        "the same name replaces the one placed before. To clear pins, mark steps done or switch the "
+        "box off, use wow_map_pins_command. You don't see the game: you only learn whether the pins "
+        "were typed into it."
     ),
     "parameters": {
         "type": "object",

@@ -26,7 +26,7 @@ from claude_code.sessions import (
 )
 from ui.claude_code_view import DETAIL_PREVIEW_CHARS, read_exchanges, shown_sessions
 from ui.when import ago
-from claude_code.transcripts import recent_exchanges
+from claude_code.transcripts import past_sessions, recent_exchanges
 from server.listener import Listener, build_app
 from storage.webhook_settings_store import check_port
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
@@ -144,6 +144,21 @@ class ClaudeCodeMixin:
             self.claude_code_status = f"Listening on 127.0.0.1:{port}"
             self.activity.write(f"Listening for Claude Code on 127.0.0.1:{port}.", "Claude Code")
         await self.check_claude_code_hooks()
+        await self.catch_up_claude_code()
+
+    async def catch_up_claude_code(self) -> None:
+        """The last day's sessions from their transcripts, so ones going before she started (or
+        started listening) show too; what she hears from here on takes over from them."""
+        try:
+            past = await asyncio.to_thread(past_sessions, now=self.claude_sessions.clock())
+        except Exception as error:
+            self.activity.write(f"Claude Code's earlier sessions couldn't be read ({type(error).__name__}).",
+                                "Claude Code")
+            return
+        added = self.claude_sessions.add_past(past)
+        if added:
+            self.activity.write(f"Found {added} Claude Code session{'' if added == 1 else 's'} from the last "
+                                "day in their transcripts.", "Claude Code")
 
     async def stop_claude_code(self) -> None:
         server, worker = self.claude_code_server, self.claude_code_worker
@@ -282,13 +297,13 @@ class ClaudeCodeMixin:
             if not matching:
                 heard = sorted({session.project for session in sessions})
                 return {"status": "ok", "sessions": [], "message": (
-                    f"No session in a project called {project} since Cora started. "
+                    f"No session in a project called {project} in the last day. "
                     + (f"Projects heard from: {', '.join(heard)}." if heard else "None heard from yet."))}
             sessions = matching
         result = {"status": "ok", "note": SESSIONS_NOTE,
                   "sessions": [summary(session, now) for session in sessions[:SESSIONS_LISTED]]}
         if not sessions:
-            result["message"] = "No sessions heard from since Cora started."
+            result["message"] = "No Claude Code sessions in the last day."
         where = sessions[0].project if project is not None and sessions else "all projects"
         if recent and sessions:
             if not self.claude_code_transcripts:

@@ -291,6 +291,29 @@ If Cloudflare's bot protection covers the address, check Twilio's requests aren'
 carriers (`**21*<number>*11#`), but not all complete it; calling the Twilio number directly
 always works.
 
+### Local model (Rocky)
+
+Rocky, her consultant, runs on your own GPU through Ollama in Docker. It needs an NVIDIA card
+and Docker Desktop with the WSL 2 backend and a current NVIDIA driver (`docker info` lists an
+`nvidia` runtime). Nothing to start: Cora starts the container when it's needed and stops it
+once it's been idle.
+
+1. In Settings › **Local model**, type the model's Ollama name (uncensored ones that fit a
+   12 GB card are suggested there) and press **Save**.
+2. Press **Download**. The first time, Docker also downloads Ollama itself (about 8.5 GB); the
+   model is several GB more. Both stay on the drive Docker Desktop uses.
+3. Press **Test**: it should answer within a minute and show the model fully on the GPU.
+4. Switch on **Let her consult Rocky**, then run `python migrate.py` if you haven't since
+   updating. She uses him in writing straight away, and by voice from her next connect.
+
+To ask him yourself, start a message with `@rocky` at the desk or on the web page (reload the
+page after updating). That needs only steps 1 and 2.
+
+He shares the GPU with whatever else is on it: with a game running he answers more slowly.
+
+To free the space later: `docker compose --profile local-model down` and
+`docker volume rm cora_local-model-data` (the models), `docker image rm ollama/ollama:0.40.16`.
+
 ## Documentation
 
 - [DOCUMENTATION.md](DOCUMENTATION.md): how Cora works, from her memory and inner life to each

@@ -12,6 +12,8 @@ from game.moments import CHATTINESS, DEFAULT_CHATTINESS
 from game.speech import DEFAULT_TRANSCRIPTION, MAX_VOCABULARY_CHARS, TRANSCRIPTION_CHOICES
 from claude_code.routes import DEFAULT_PORT as CLAUDE_CODE_PORT
 from claude_code.sessions import DEFAULT_TELL as DEFAULT_CLAUDE_CODE_TELL, TELL_CHOICES as CLAUDE_CODE_TELL
+from local_model.manager import IDLE_CHOICES, IDLE_MINUTES
+from local_model.ollama import MODEL_NAME
 from session_config import VOICE, VOICE_CHOICES
 from .models import AppSettingRecord
 from .webhook_settings_store import PORTS
@@ -244,6 +246,33 @@ class AppSettingsStore:
         if isinstance(port, bool) or not isinstance(port, int) or port not in PORTS:
             raise ValueError(f"The local port must be between {PORTS.start} and {PORTS.stop - 1}.")
         self._set("claude_code_port", str(port))
+
+    def local_model_name(self) -> str:
+        """The Ollama model Rocky runs, "" until one is chosen."""
+        saved = self._get("local_model_name") or ""
+        return saved if MODEL_NAME.fullmatch(saved) else ""
+
+    def set_local_model_name(self, name: str) -> None:
+        if not MODEL_NAME.fullmatch(name):
+            raise ValueError(f"Not an Ollama model name: {name}")
+        self._set("local_model_name", name)
+
+    def local_model_consult(self) -> bool:
+        """Whether she may consult Rocky; off unless switched on."""
+        return self._switch("local_model_consult") is True
+
+    def set_local_model_consult(self, on: bool) -> None:
+        self._set("local_model_consult", "on" if on else "off")
+
+    def local_model_idle(self) -> int:
+        """Minutes the local model stays up after its last use (15 unless another was chosen)."""
+        saved = self._get("local_model_idle")
+        return int(saved) if saved is not None and saved.isdigit() and int(saved) in IDLE_CHOICES else IDLE_MINUTES
+
+    def set_local_model_idle(self, minutes: int) -> None:
+        if isinstance(minutes, bool) or minutes not in IDLE_CHOICES:
+            raise ValueError(f"Not one of the choices: {minutes}")
+        self._set("local_model_idle", str(minutes))
 
     def spend_project(self) -> str | None:
         """Whose OpenAI spend to show: a project's id or 'all', or None for automatic."""

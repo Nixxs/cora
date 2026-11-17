@@ -15,6 +15,9 @@ from .check_calendar import (
 )
 from .claude_code import ClaudeCodeTool, SCHEMA as CLAUDE_CODE_SCHEMA, validate_arguments as validate_claude_code_arguments
 from .close_app import CloseAppTool, SCHEMA, validate_arguments
+from .consult_rocky import (
+    ConsultRockyTool, SCHEMA as CONSULT_ROCKY_SCHEMA, validate_arguments as validate_consult_rocky_arguments,
+)
 from .run_claude_code import (
     RunClaudeCodeTool, SCHEMA as RUN_CLAUDE_CODE_SCHEMA, validate_arguments as validate_run_claude_code_arguments,
 )
@@ -44,6 +47,9 @@ from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as
 from .place_wow_map_pins import (
     PlaceWowMapPinsTool, SCHEMA as WOW_PINS_SCHEMA, validate_arguments as validate_wow_pins_arguments,
 )
+from .wow_map_pins_command import (
+    SCHEMA as WOW_COMMAND_SCHEMA, WowMapPinsCommandTool, validate_arguments as validate_wow_command_arguments,
+)
 from .show_map import ShowMapTool, SCHEMA as MAP_SCHEMA, validate_arguments as validate_map_arguments
 from .where_is_person import WhereIsPersonTool, SCHEMA as WHERE_SCHEMA, validate_arguments as validate_where_arguments
 from .request_sign_up import (
@@ -67,8 +73,16 @@ async def _no_claude_code_runs(action, project, create, location, brief):
     return {"status": "error", "message": "Running Claude Code isn't available here."}
 
 
+async def _no_rocky(question, new_topic):
+    return {"status": "error", "message": "Rocky isn't available here."}
+
+
 async def _no_game_pins(route, lines):
     return {"status": "error", "message": "Placing map pins in the game isn't available here."}
+
+
+async def _no_game_commands(line):
+    return {"status": "error", "message": "Running map pin commands in the game isn't available here."}
 
 
 async def _no_sign_ups(url):
@@ -87,7 +101,7 @@ def create_tool_registry(
     kept_images: KeptImages | None = None, locate_person=_nowhere, show_map=lambda view: False,
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
     look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
-    place_map_pins=_no_game_pins,
+    place_map_pins=_no_game_pins, run_map_pins_command=_no_game_commands, consult_rocky=_no_rocky,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -169,10 +183,16 @@ def create_tool_registry(
     # Starting, continuing or stopping one (offered while Settings lets her run them); approved each time.
     run_tool = RunClaudeCodeTool(get_connection, is_closing, run_claude_code, write_debug)
     registry.register(RUN_CLAUDE_CODE_SCHEMA, validate_run_claude_code_arguments, run_tool.handle)
+    # Rocky, her consultant (offered while Settings > Local model lets her consult him).
+    rocky = ConsultRockyTool(get_connection, is_closing, consult_rocky, write_debug)
+    registry.register(CONSULT_ROCKY_SCHEMA, validate_consult_rocky_arguments, rocky.handle)
     # The person's own chats only: clients' chats and task work offer allowlists without it.
     note_detail = NoteDetailTool(get_connection, is_closing, write_debug)
     registry.register(NOTE_DETAIL_SCHEMA, validate_note_detail_arguments, note_detail.handle)
     # Pins on the person's WoW map, typed into the game through the push-to-talk keyboard bridge.
     wow_pins = PlaceWowMapPinsTool(get_connection, is_closing, place_map_pins, write_debug)
     registry.register(WOW_PINS_SCHEMA, validate_wow_pins_arguments, wow_pins.handle)
+    # The addon's other /cmp commands (clear, done, tracker...), one checked line, the same way.
+    wow_command = WowMapPinsCommandTool(get_connection, is_closing, run_map_pins_command, write_debug)
+    registry.register(WOW_COMMAND_SCHEMA, validate_wow_command_arguments, wow_command.handle)
     return registry

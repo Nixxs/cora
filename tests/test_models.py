@@ -11,7 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, configure_mappers
 
 from storage.database import build_engine
-from migrate import apply_migrations, database_settings
+from migrate import MIGRATIONS_DIR, apply_migrations, database_settings, read_migrations
 from storage.models import (
     Base, ConversationRecord, ConversationSummaryRecord, IdentityEventEvidenceRecord, IdentityEventRecord,
     IdentityEventTraitRecord, IdentityTraitRecord, IdentityWorkerStateRecord, InteractionAppraisalRecord,
@@ -202,7 +202,8 @@ class ModelDatabaseTests(unittest.TestCase):
         with psycopg.connect(**self.settings, autocommit=True) as connection:
             self.assertEqual(apply_migrations(connection), [])
             self.assertEqual(connection.execute("SELECT count(*) FROM public.messages").fetchone()[0], 1)
-            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0], 50)
+            self.assertEqual(connection.execute("SELECT count(*) FROM public.schema_migrations").fetchone()[0],
+                             len(read_migrations(MIGRATIONS_DIR)))
 
     def interest(self, **changes):
         values = {

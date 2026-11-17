@@ -223,3 +223,6 @@ __marimo__/
 
 # Backups of Cora (her whole database and Signal keys): private, never committed.
 backups/
+
+# Rocky 2 test reports (what was asked and said)
+examples/rocky_test/reports/
