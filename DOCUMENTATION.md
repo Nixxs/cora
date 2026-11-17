@@ -990,7 +990,8 @@ share), and a log of steps. The dashboard's tasks box shows them.
    you; she's told never to commit you herself.
 3. **Reporting back.** When their part is settled, or they need something from you first,
    she reports it with `pass_on`, naming the task. A **coordinator** turn in your own context
-   then decides what it means: goal met, she closes the task (`close_task`) and tells you;
+   then decides what it means (reading a call whole with `read_call` when its step was cut):
+   goal met, she closes the task (`close_task`) and tells you;
    someone declined or needs something, she says what happened, suggests a next step and asks
    what you'd like, and the task waits on you; others still to answer, she just tells you
    what came in. While Signal is linked, the coordinator can message or email someone new for
@@ -1718,6 +1719,12 @@ before anything else.
   offered only on calls she places) plays keypad tones down the line as a phone's keypad does
   (in-band DTMF, [phone/dtmf.py](phone/dtmf.py): 150 ms a key, 100 ms apart), and the keys
   go in the transcript as "[pressed 3]".
+- **Reading a call:** `read_call` ([tools/read_call.py](tools/read_call.py)) gives her a
+  task's calls (who, when, how long) and one whole transcript, the latest unless she asks for
+  another (up to 20,000 characters, keeping its start and as much of the end as fits), or
+  what's been said so far on a call that's on now. She has it wherever you talk to her, for
+  when you ask what was said; the coordinator has it too, since a call's step keeps only its
+  start and end. Contacts' chats and calls never get it.
 - **Following a call:** while she's placing a call for a task, while she's on it and for 15
   minutes after, it shows beside the chat (a call box in the side panel), at the top of the
   dashboard's tasks and on the web page (a call panel under her voice, `GET /api/call`): who,

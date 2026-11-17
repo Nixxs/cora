@@ -232,7 +232,8 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Lesson for Sarah", kwargs["sections"]["tasks"])
             route = kwargs["route"]
             self.assertEqual(frozenset(app.tools.names()) - route.excluded,
-                             {"search_memory", "close_task", "check_calendar", "send_signal_message", "send_email"})
+                             {"search_memory", "close_task", "check_calendar", "read_call", "send_signal_message",
+                              "send_email"})
             self.assertIsNotNone(route.ask_approval)
             self.assertEqual(route.approval_seconds, app_areas.tasks.APPROVAL_SECONDS)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
@@ -246,7 +247,8 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.linked(app)
             app.signal.status = SignalStatus("not_linked")
             route = app.coordinator_route([])
-            self.assertEqual(frozenset(app.tools.names()) - route.excluded, {"search_memory", "close_task", "check_calendar"})
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded,
+                             {"search_memory", "close_task", "check_calendar", "read_call"})
             self.assertIsNone(route.ask_approval)
 
     async def test_a_request_you_dont_answer_in_time_sends_nothing_and_the_task_waits_on_you(self):

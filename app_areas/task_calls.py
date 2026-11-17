@@ -29,6 +29,7 @@ from live import CoraLive
 from phone import dtmf, twilio
 from phone.routes import CallLink
 from session_config import TASK_CALL_LIVE_INSTRUCTIONS, contact_call_config, instruction_sections, phone_party_instructions
+from storage.models import TaskCallRecord
 from storage.task_store import CALL_TRANSCRIPT_MAX_CHARS, STEP_MAX_CHARS, PhoneParty
 from web.voice import Listener, VoiceRelay
 
@@ -60,6 +61,8 @@ CUT_MARK = "… (the middle of the call is cut here) …"
 # it ends, and shows at most this many of its latest lines.
 CALL_SHOWN_SECONDS = 15 * 60
 SHOWN_LINES_MAX = 300
+# read_call gives her this much of one call (its start and as much of the end as fits).
+READ_CALL_MAX_CHARS = 20_000
 # Twilio's word for a call that didn't connect, as she'd say it.
 NOT_CONNECTED = {
     "no-answer": "nobody answered", "busy": "the line was busy", "failed": "the call didn't go through",
@@ -180,6 +183,15 @@ def cut_middle(lines: list[str], limit: int, head_chars: int = STEP_HEAD_CHARS) 
     return "\n".join([*head, CUT_MARK, *tail])
 
 
+def call_summary(number: int, call: TaskCallRecord) -> dict:
+    """A saved call in read_call's list: its number, who, when (local time) and for how long."""
+    began = call.started_at.astimezone()
+    hour = began.hour % 12 or 12
+    return {"call": number, "who": call.who,
+            "when": f"{began:%a} {began.day} {began:%b}, {hour}:{began:%M} {'am' if began.hour < 12 else 'pm'}",
+            "minutes": round((call.ended_at - call.started_at).total_seconds() / 60)}
+
+
 def transcript_step(call: TaskCall, minutes: float) -> str:
     """The call's transcript as a task step: its start and end, cut to fit."""
     head = f"Call with {call.who} ({minutes:.0f} min), transcript:\n"
@@ -252,6 +264,32 @@ class TaskCallsMixin:
         if call is None or (call.done and now - (call.ended_at or now) > CALL_SHOWN_SECONDS):
             return None
         return call_view(call, now)
+
+    async def read_task_call(self, task_id: UUID, which: int | None) -> dict:
+        """For read_call: the task's calls and one of them whole (the latest by default), or what's
+        been said so far on one that's on now."""
+        live = getattr(self, "shown_task_call", None)
+        if live is not None and live.task_id == task_id and not live.done:
+            view = call_view(live, monotonic())
+            lines = [f"{'Them' if line['who'] == 'them' else 'Cora'}: {line['said']}" for line in view["lines"]]
+            return {"status": "ok", "on_now": {
+                "who": view["who"], "state": view["state"], "for": view["for"],
+                "transcript_so_far": cut_middle(lines, READ_CALL_MAX_CHARS) or "(nothing said yet)"}}
+        try:
+            calls = await self.conversation_persistence.call_database(self.persistence.task_calls, task_id)
+        except Exception as error:
+            self.activity.write(f"Reading a task's calls failed ({type(error).__name__}).", "Phone call")
+            return {"status": "error", "message": "The task's calls couldn't be read just now."}
+        if not calls:
+            return {"status": "none", "message": "No calls are saved for that task (check the task_id)."}
+        if which is not None and which > len(calls):
+            return {"status": "error",
+                    "message": f"That task has {len(calls)} saved call(s): call is 1 to {len(calls)}, or null."}
+        number = which or len(calls)
+        chosen = calls[number - 1]
+        return {"status": "ok", "calls": [call_summary(n, call) for n, call in enumerate(calls, 1)], "call": number,
+                "transcript": cut_middle(chosen.transcript.split("\n"), READ_CALL_MAX_CHARS) or "(nothing was said)",
+                **({"replies": chosen.replies} if chosen.replies else {})}
 
     def start_task_call_session(self, call: TaskCall) -> None:
         """Her session for the call, connecting while it rings (once)."""

@@ -604,6 +604,90 @@ class FollowingACallTests(unittest.IsolatedAsyncioTestCase):
                              {"call": None})
 
 
+class ReadCallTests(unittest.IsolatedAsyncioTestCase):
+    """read_call: a call she placed, read whole, for when the person asks what was said."""
+
+    def saved(self, who, started, minutes, transcript, replies=None):
+        from datetime import timedelta, timezone
+        began = datetime(2026, 11, 17, *started, tzinfo=timezone.utc)
+        return SimpleNamespace(who=who, started_at=began, ended_at=began + timedelta(minutes=minutes),
+                               transcript=transcript, replies=replies)
+
+    def test_only_a_task_and_a_calls_number_are_taken(self):
+        from tools.read_call import validate_arguments
+        validate_arguments({"task_id": str(uuid4()), "call": None})
+        validate_arguments({"task_id": str(uuid4()), "call": 2})
+        for bad in ({"task_id": "nope", "call": None}, {"task_id": str(uuid4()), "call": 0},
+                    {"task_id": str(uuid4()), "call": True}, {"task_id": str(uuid4())},
+                    {"task_id": str(uuid4()), "call": "1"}):
+            with self.assertRaises(ValueError):
+                validate_arguments(bad)
+
+    async def test_she_reads_the_latest_call_whole_or_the_one_asked_for(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            task_id = uuid4()
+            stacey = "\n".join(["Them: Good afternoon, Stacey speaking.",
+                                *["Them: Both in stock, $1,899 each installed."] * 600])
+            app.persistence.task_calls = MagicMock(return_value=[
+                self.saved("The Good Guys", (5, 23), 8, "Them: Press three.\n" + stacey, "Her replies began 0.9 s"),
+                self.saved("The Good Guys", (6, 5), 2, "Them: Thanks for calling back."),
+            ])
+            result = await app.read_task_call(task_id, None)
+            app.persistence.task_calls.assert_called_once_with(task_id)
+            self.assertEqual(result["call"], 2)
+            self.assertEqual(result["transcript"], "Them: Thanks for calling back.")
+            self.assertEqual([(call["call"], call["who"], call["minutes"]) for call in result["calls"]],
+                             [(1, "The Good Guys", 8), (2, "The Good Guys", 2)])
+            self.assertRegex(result["calls"][0]["when"], r"^[A-Z][a-z]{2} 1[78] Nov, \d{1,2}:\d\d [ap]m$")
+            first = await app.read_task_call(task_id, 1)
+            # Long calls keep their start and as much of the end as fits.
+            self.assertLessEqual(len(first["transcript"]), task_calls.READ_CALL_MAX_CHARS)
+            self.assertTrue(first["transcript"].startswith("Them: Press three.\nThem: Good afternoon, Stacey"))
+            self.assertIn(CUT_MARK, first["transcript"])
+            self.assertTrue(first["transcript"].endswith("Both in stock, $1,899 each installed."))
+            self.assertEqual(first["replies"], "Her replies began 0.9 s")
+            self.assertEqual((await app.read_task_call(task_id, 3))["status"], "error")
+            app.persistence.task_calls = MagicMock(return_value=[])
+            self.assertEqual((await app.read_task_call(task_id, None))["status"], "none")
+
+    async def test_a_call_thats_on_now_is_read_as_far_as_its_got(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.", connected=True)
+            call.turns = [("user", "Ace Plumbing, Dave speaking.")]
+            call.transcript.add("assistant", "Hi Dave, I'm Cora.")
+            app.shown_task_call = call
+            app.persistence.task_calls = MagicMock()
+            result = await app.read_task_call(call.task_id, None)
+            app.persistence.task_calls.assert_not_called()
+            self.assertEqual(result["on_now"]["state"], "on the call")
+            self.assertEqual(result["on_now"]["transcript_so_far"],
+                             "Them: Ace Plumbing, Dave speaking.\nCora: Hi Dave, I'm Cora.")
+
+    async def test_the_tool_answers_with_what_she_reads(self):
+        import json
+        from tools.read_call import ReadCallTool
+        task_id = uuid4()
+        read = AsyncMock(return_value={"status": "ok", "transcript": "Them: Tuesday's fine."})
+        connection = EndCallToolTests.connection(None)
+        await ReadCallTool(lambda: connection, lambda: False, MagicMock(), read).handle(
+            "c1", {"task_id": str(task_id), "call": None})
+        read.assert_awaited_once_with(task_id, None)
+        output = json.loads(connection.response.item.create.await_args.kwargs["item"]["output"])
+        self.assertEqual(output["transcript"], "Them: Tuesday's fine.")
+        connection.response.create.assert_awaited_once()
+
+    def test_she_and_the_coordinator_have_it_but_contacts_and_calls_dont(self):
+        from app_areas.contact_calls import CALL_TOOLS
+        from app_areas.signal_chats import CLIENT_CHAT_TOOLS
+        from app_areas.tasks import COORDINATOR_NOTE, COORDINATOR_TOOLS
+        from session_config import instruction_sections
+        self.assertIn("read_call", COORDINATOR_TOOLS)
+        self.assertIn("read_call", COORDINATOR_NOTE)
+        for allowed in (CALL_TOOLS, task_calls.TASK_CALL_TOOLS, CLIENT_CHAT_TOOLS):
+            self.assertNotIn("read_call", allowed)
+        self.assertIn("read_call", instruction_sections(tasks_context="[]")["tasks"])
+
+
 class EndCallToolTests(unittest.IsolatedAsyncioTestCase):
     @staticmethod
     def connection(end_call=None):

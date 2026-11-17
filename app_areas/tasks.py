@@ -29,7 +29,7 @@ NUDGE_NOTE = (
 # The coordinator: a background turn in the person's context when someone answers on a task. It may
 # search and close the task, and, while the person can be asked on Signal, message or email someone
 # for it: each one waits for their YES there (see coordinator_route).
-COORDINATOR_TOOLS = frozenset({"search_memory", "close_task", "check_calendar"})
+COORDINATOR_TOOLS = frozenset({"search_memory", "close_task", "check_calendar", "read_call"})
 
 COORDINATOR_SEND_TOOLS = frozenset({"send_signal_message", "send_email"})
 
@@ -40,7 +40,8 @@ COORDINATOR_NOTE = (
     "is met, close the task with close_task as done, the note saying what was settled, and tell them "
     "the outcome. If someone declined, the brief can't be met, or they need a detail or decision from "
     "the person, say plainly what happened, suggest a sensible next step (search the web if it helps, "
-    "such as for other options) and ask what they'd like. If others are still to answer, just pass on "
+    "such as for other options) and ask what they'd like. A call's step keeps only its start and "
+    "end: if what matters may be in the middle, read it whole with read_call. If others are still to answer, just pass on "
     "what came in. When asking someone new (or writing to someone again) is clearly the next step and "
     "you have everything it needs, you may send it for this task with send_signal_message or "
     "send_email (its task_id, goal null and a brief for them): the person is asked on Signal and "

@@ -117,8 +117,8 @@ was lost:
    `transcript_step` keeps the start: the menu and hold ads filled it, and the conversation
    with the person who answered was cut, so her report (written from it) said nothing was
    confirmed and she couldn't say in the chat what was said. *Done:* each call is kept whole
-   in `task_calls` with how quickly she replied, and the step keeps its start and end. Still
-   to come: a tool for her to read a whole call in the chat (you can follow it in 5).
+   in `task_calls` with how quickly she replied, and the step keeps its start and end; she
+   reads a whole call with `read_call` (the coordinator too), and you can follow one in 5.
 2. **Pressing phone keys.** She can't send keypad tones, so she spoke to the menu ("New
    purchase, please") until it routed her anyway. A tool to press keys (Twilio can play DTMF
    digits on a live call) gets her through "press 3" menus. *Done:* `press_keys` plays keypad

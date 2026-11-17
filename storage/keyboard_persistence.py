@@ -94,6 +94,9 @@ class KeyboardPersistence:
     def task_call_replies(self, call_id: UUID, replies: str) -> None:
         TaskStore(self._get_store().engine).call_replies(call_id, replies)
 
+    def task_calls(self, task_id: UUID) -> list:
+        return TaskStore(self._get_store().engine).calls(task_id)
+
     def add_task_party(self, task_id: UUID, who: UUID | EmailParty, brief: str, step: str,
                        deadline: datetime | None = None) -> None:
         TaskStore(self._get_store().engine).add_party(task_id, who, brief, step, deadline)

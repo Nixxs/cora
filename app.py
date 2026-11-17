@@ -347,6 +347,7 @@ class CoraApp(
             send_signal=self.send_to_signal_contact,
             signal_unreachable=self.signal_contact_unreachable,
             task_goal=self.task_goal, record_task=self.record_task, close_task=self.close_task,
+            read_call=self.read_task_call,
             get_mailbox=lambda: self.mailbox, record_email_task=self.record_email_task,
             relay_to_person=self.relay_to_person, relay_from_email=self.relay_from_email,
             find_email_thread=self.find_email_thread, email_signature=lambda: self.email_signature,
