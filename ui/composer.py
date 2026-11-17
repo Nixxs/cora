@@ -49,14 +49,17 @@ class ChatModeChip(Button):
         offered = getattr(self.app, "rocky_offered", lambda: False)()
         voice_on = not getattr(self.app, "standby", True)
         mode = getattr(self.app, "chat_mode", CHAT_MODES[0]) if offered and not voice_on else CHAT_MODES[0]
-        self.show(mode, offered, voice_on)
+        self.show(mode, offered, voice_on, getattr(self.app, "rocky_takes_images", lambda: True)())
 
-    def show(self, mode: str, offered: bool = True, voice_on: bool = False) -> None:
-        """mode, shown; hidden unless Rocky is offered; on Cora and dimmed while her voice is on."""
+    def show(self, mode: str, offered: bool = True, voice_on: bool = False, rocky_sees: bool = True) -> None:
+        """mode, shown; hidden unless Rocky is offered; on Cora and dimmed while her voice is on.
+        Its box's +img goes while it's on Rocky if his model is known not to take images."""
         self.display = offered
         self.label = f"{MODE_NAMES[mode]} ›"
         self.set_class(voice_on, "voice-on")
         self.tooltip = VOICE_ON_TOOLTIP if voice_on else MODE_TOOLTIPS[mode]
+        for button in self.parent.query(".image-button"):
+            button.display = rocky_sees or mode != "rocky"
         for each in CHAT_MODES:
             self.set_class(each == mode, f"mode-{each}")
         for composer in self.parent.query(ChatComposer):

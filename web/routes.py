@@ -129,6 +129,21 @@ async def read_json(request: Request, max_bytes: int = BODY_MAX_BYTES) -> dict |
     return value if isinstance(value, dict) else None
 
 
+def photo_of(body: dict) -> tuple[bytes | None, Response | None]:
+    """(the photo sent with a message, or None; or the answer refusing it, if it's no good)."""
+    if body.get("image") is None:
+        return None, None
+    try:
+        image = base64.b64decode(str(body["image"]), validate=True)
+    except ValueError:
+        image = b""
+    if not image:
+        return None, answer({"error": "That photo didn't come through. Try again."}, 400)
+    if len(image) > PHOTO_MAX_BYTES:
+        return None, answer({"error": "That photo is too large."}, 413)
+    return image, None
+
+
 def line(value: dict) -> bytes:
     return (json.dumps(value, ensure_ascii=False) + "\n").encode()
 
@@ -253,16 +268,9 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "Cora can't take messages here yet."}, 503)
         body = await read_json(request, PHOTO_BODY_MAX_BYTES)
         text = str(body.get("text", "")).strip() if body is not None else ""
-        image = None
-        if body is not None and body.get("image") is not None:
-            try:
-                image = base64.b64decode(str(body["image"]), validate=True)
-            except ValueError:
-                return answer({"error": "That photo didn't come through. Try again."}, 400)
-            if not image:
-                return answer({"error": "That photo didn't come through. Try again."}, 400)
-            if len(image) > PHOTO_MAX_BYTES:
-                return answer({"error": "That photo is too large."}, 413)
+        image, refused = photo_of(body) if body is not None else (None, None)
+        if refused is not None:
+            return refused
         if not text and image is None:
             return answer({"error": "Send the message as JSON, with some text or a photo."}, 400)
         if len(text) > MESSAGE_MAX_CHARS:
@@ -274,8 +282,9 @@ def api_routes(access: WebAccess) -> list[Route]:
         ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
 
-        # A group chat (the page's chip on Group): Rocky answers first, streamed the same way.
-        group = body.get("group") is True and image is None
+        # A group chat (the page's chip on Group): Rocky answers first, streamed the same way (a
+        # photo goes to him as well as her).
+        group = body.get("group") is True
 
         async def reply() -> None:
             try:
@@ -301,28 +310,34 @@ def api_routes(access: WebAccess) -> list[Route]:
         })
 
     async def rocky(request: Request) -> Response:
-        """@rocky from the page: {"question", "ref"} -> his answer streamed as he writes it, like
-        her replies (reply_lines), or {"error"} if it can't be asked."""
+        """@rocky from the page: {"question", "ref"[, "image"]} -> his answer streamed as he writes
+        it, like her replies (reply_lines), or {"error"} if it can't be asked. image: a photo, as
+        with a message to her, which he sees himself (never leaving Cora's PC)."""
         device = await device_of(request)
         if device is None:
             return answer({"error": "This device isn't paired."}, 401)
         if access.ask_rocky is None:
             return answer({"error": "Rocky can't be asked from here yet."}, 503)
-        body = await read_json(request, MESSAGE_BODY_MAX_BYTES)
+        body = await read_json(request, PHOTO_BODY_MAX_BYTES)
         if body is None or not isinstance(body.get("question"), str):
             return answer({"error": "Send the question as JSON."}, 400)
         question = body["question"].strip()
         if len(question) > QUESTION_MAX_CHARS:
             return answer({"error": f"That's too long for Rocky: at most {QUESTION_MAX_CHARS} characters."}, 413)
+        image, refused = photo_of(body)
+        if refused is not None:
+            return refused
         ref = body.get("ref")
         ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
 
         async def ask() -> None:
             try:
+                # The photo only when there is one, so askers without photos keep five arguments.
+                extra = {"image": image} if image is not None else {}
                 updates.put_nowait(("done", await access.ask_rocky(
                     device, question, ref, lambda so_far: updates.put_nowait(("text", so_far)),
-                    lambda doing: updates.put_nowait(("status", doing)),
+                    lambda doing: updates.put_nowait(("status", doing)), **extra,
                 )))
             except RockyUnavailable as error:
                 updates.put_nowait(("error", str(error)))

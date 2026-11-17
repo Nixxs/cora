@@ -1,6 +1,7 @@
 """Talking to Cora from the web page (WB2): the message endpoint, safe rendering, and the shared chat."""
 
 import asyncio
+import base64
 from datetime import datetime, timezone
 import json
 import unittest
@@ -164,13 +165,14 @@ class RockyRouteTests(unittest.IsolatedAsyncioTestCase):
     """@rocky from the page: straight to Rocky, his answer back as safe HTML."""
 
     def setUp(self):
-        self.asked = []
+        self.asked, self.images = [], []
 
         async def find_device(hashed):
             return IPHONE if hashed == token_hash(TOKEN) else None
 
-        async def ask_rocky(device, question, ref, on_text, on_status):
+        async def ask_rocky(device, question, ref, on_text, on_status, image=None):
             self.asked.append((device, question, ref))
+            self.images.append(image)
             if question == "down?":
                 raise RockyUnavailable("Rocky couldn't answer just now.")
             on_text("Let me check")
@@ -204,6 +206,12 @@ class RockyRouteTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(updates[-1], {"type": "done", "html": chat_html("**Mate,** <script>x</script> go easy.")})
         self.assertNotIn("<script>", updates[-1]["html"])
         self.assertEqual(self.asked, [(IPHONE, "How much is too much?", "r1")])
+
+    async def test_a_photo_goes_to_him_and_a_bad_one_is_refused(self):
+        await self.ask({"question": "what's this pill?", "image": base64.b64encode(b"jpeg bytes").decode()})
+        self.assertEqual(self.images, [b"jpeg bytes"])
+        self.assertEqual((await self.ask({"question": "x", "image": "not base64!"})).status_code, 400)
+        self.assertEqual(len(self.images), 1)
 
     async def test_refused_unpaired_malformed_or_when_he_cant_answer(self):
         self.assertEqual((await self.ask({"question": "x"}, paired=False)).status_code, 401)

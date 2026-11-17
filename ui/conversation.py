@@ -1,7 +1,10 @@
 """Conversation history, transcript grouping, and written-answer display."""
 
+import io
 import re
 from urllib.parse import urlsplit
+
+from PIL import Image
 
 from rich.text import Text
 from textual.widgets import RichLog
@@ -491,13 +494,22 @@ class Conversation:
         self.redraw_log()
         return DirectRockyDraft(self, len(self.log_entries) - 3, answer=GroupRockyAnswer)
 
-    def ask_rocky_directly(self, question: str, where: str = "") -> DirectRockyDraft:
+    def ask_rocky_directly(self, question: str, where: str = "", image: bytes | None = None) -> DirectRockyDraft:
         """The person's question to Rocky ("You · to Rocky: …", or "You · to Rocky · web · iPad: …"
-        from the web page), with "thinking…" below it for his answer. Neither is saved nor part of
-        her history: "You · to Rocky" isn't a line she's given."""
+        from the web page), with any image sent with it shown small under it, and "thinking…"
+        below for his answer. None of it is saved or part of her history: "You · to Rocky" isn't a
+        line she's given, and an image in the chat never is."""
         self.flush_transcript()
-        asked = f"{YOU_TO_ROCKY}{f' · {where}' if where else ''}: {question}"
-        self.log_entries.extend(["", asked, "", ROCKY_THINKING, "", ""])
+        asked = f"{YOU_TO_ROCKY}{f' · {where}' if where else ''}: {'[image] ' if image else ''}{question}"
+        shown = [asked]
+        if image is not None:
+            try:
+                picture = Image.open(io.BytesIO(image)).convert("RGB")
+                picture.thumbnail((1024, 1024))
+                shown.append(ChatImage(picture, question))
+            except Exception:
+                pass  # He's still sent it (or told it couldn't be read); only the thumbnail's missing.
+        self.log_entries.extend(["", *shown, "", ROCKY_THINKING, "", ""])
         self.redraw_log()
         return DirectRockyDraft(self, len(self.log_entries) - 3)
 

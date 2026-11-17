@@ -164,14 +164,21 @@ export function addMap({ caption, embed, link, when = new Date() }) {
 }
 
 /** A question to Rocky, as plain text (escaped here): Cora's, or yours (@rocky). via: where yours
- * was asked ("web · iPad"). */
-function rockyQuestion({ asker, question, via = "", when }) {
+ * was asked ("web · iPad"); photo: the photo sent with it from this page (a local address). */
+function rockyQuestion({ asker, question, via = "", when, photo = null }) {
   const asked = document.createElement("article");
   asked.className = `message ${asker === "you" ? "you" : "cora"} to-rocky`;
   const where = ` · to Rocky${via ? ` · ${via}` : ""}`;
   asked.innerHTML = `
     <div class="label"><span class="who">${asker === "you" ? "You" : "Cora"}</span><span class="via">${escapeText(where)}</span><span class="when">${time(when)}</span></div>
     <div class="body"><p>${escapeText(question).replace(/\n/g, "<br>")}</p></div>`;
+  if (photo) {
+    const image = document.createElement("img");
+    image.className = "photo";
+    image.src = photo;
+    image.alt = "Photo sent to Rocky";
+    asked.querySelector(".body").prepend(image);
+  }
   return asked;
 }
 
@@ -212,8 +219,8 @@ export function addRocky({ asker = "cora", question, html, via = "", when = new 
  * update(text) as it streams in, then finish(html), or fail(why) (why: shown in its place if
  * nothing had come yet; what had stays, marked incomplete). question null: his turn in a group
  * chat, under your message. */
-export function askingRocky(question, via) {
-  if (question !== null) append(rockyQuestion({ asker: "you", question, via, when: new Date() }));
+export function askingRocky(question, via, photo = null) {
+  if (question !== null) append(rockyQuestion({ asker: "you", question, via, when: new Date(), photo }));
   const answer = append(rockyAnswer("<p></p>", new Date(), " · thinking…"));
   answer.classList.add("writing");
   const body = answer.querySelector(".body");

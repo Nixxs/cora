@@ -1506,8 +1506,8 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   and his earlier answers are shown back to him without the line under them. His answer is part of her conversation (`GroupRockyAnswer`: her later turns are
   given it) and goes to every web page, but isn't saved, so your messages and his answers reach
   OpenAI as any chat with her does. He may browse first, and the line under his answer says
-  what he looked at. A message with an image is hers alone (he can't see images); if he can't
-  answer, a quiet line says so and she answers on her own. On the web page the reply stream
+  what he looked at. An image goes to both: he sees it himself, she has her own look at it. If
+  he can't answer, a quiet line says so and she answers on her own. On the web page the reply stream
   carries his turn first (`rocky_delta`, `rocky_status`, `rocky_done` or `rocky_none`), then
   hers; at the desk the box is free for your next message while he answers.
 - **With her voice on, the chat is hers alone:** while she isn't in standby, the chip stays on
@@ -1528,8 +1528,18 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   30 minutes), apart from his thread with her. The web page posts it to `/api/rocky` instead
   of to her, shows "thinking…" until he answers, and the `rocky` feed item (with `asker`
   "you") shows it on every other page. As a safeguard, `/api/messages` turns away an `@rocky`
-  message (from a page that hasn't reloaded) rather than send it to her. Images can't go to
-  him. If he can't answer, a quiet line says why where his answer would be.
+  message (from a page that hasn't reloaded) rather than send it to her. If he can't answer, a
+  quiet line says why where his answer would be.
+- **Images:** he sees them himself (Gemma 4 takes images; Ollama's `"images"` on a message).
+  An image pasted or chosen with +img at the desk, or a photo from the web page (`/api/rocky`
+  takes one as `/api/messages` does), goes to him as his own copy (`rocky_image`: JPEG, at most
+  1,024 pixels a side, never saved), shown small with your question; with no words he's asked
+  "What do you make of this?". On the direct line it never leaves this PC, so it suits what
+  you'd rather not send to OpenAI. His thread keeps each image with its question, so a
+  follow-up still has it until the thread goes quiet. Whether his model takes images is asked
+  of Ollama once per model (`can_see`, its "vision" capability): if it doesn't, he's told so
+  and says so rather than guessing, the line under his answer says he couldn't see it, and the
+  desk's +img goes while the chip's on Rocky.
 - **He browses** ([local_model/rocky_browsing.py](local_model/rocky_browsing.py), on the direct
   line for now): while the Browser service is connected and not busy with a sign-up or a job
   of her browser helper's, he gets the same read-only tools as her exploring (search, open a

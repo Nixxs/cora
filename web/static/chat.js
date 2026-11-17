@@ -297,18 +297,19 @@ function setupMode(rockyOffered) {
   });
 }
 
-/** Your question straight to Rocky: shown here as you asked, then his answer (or why not). */
-async function askRocky(question, ref) {
-  if (hasPhoto()) addNotice("Rocky can't see photos: yours is still attached for your next message to Cora.");
+/** Your question straight to Rocky, with a photo if one was chosen (he sees it himself, and it
+ * never leaves Cora's PC): shown here as you asked, then his answer (or why not). */
+async function askRocky(question, ref, photo = null) {
   markDay(new Date());
-  const pending = askingRocky(question, thisDevice ? `web · ${thisDevice}` : "web");
+  const pending = askingRocky(question || "What do you make of this?", thisDevice ? `web · ${thisDevice}` : "web",
+    photo?.url);
   let response;
   try {
     response = await fetch("/api/rocky", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, ref }),
+      body: JSON.stringify(photo ? { question, ref, image: photo.base64 } : { question, ref }),
     });
   } catch {
     pending.fail(UNREACHABLE);
@@ -337,11 +338,9 @@ async function send(text) {
   const direct = DIRECT_ROCKY.exec(text);
   if (direct || chatMode === "rocky") {
     const question = direct ? text.slice(direct[0].length).trim() : text;
-    if (!question && hasPhoto()) {
-      addNotice("Rocky can't see photos: type a question for him. Your photo is still attached.");
-      return;
-    }
-    await askRocky(question, ref);
+    const photo = hasPhoto() ? await takePhoto() : null;
+    if (!question && !photo && !direct) return;
+    await askRocky(question, ref, photo);
     return;
   }
   // A photo chosen with the camera button goes with this message; she sees it herself.
@@ -349,9 +348,9 @@ async function send(text) {
   if (!text && !photo) return;
   markDay(new Date());
   addMessage({ who: "You", via: thisDevice ? `web · ${thisDevice}` : "web", text, photo: photo?.url });
-  // A group chat: Rocky's turn first, under your message, then hers. He can't see photos, so a
-  // message with one is hers alone.
-  const group = chatMode === "group" && !photo && Boolean(text);
+  // A group chat: Rocky's turn first, under your message, then hers. A photo goes to both: he sees
+  // it himself, as she does.
+  const group = chatMode === "group";
   const rocky = group ? askingRocky(null) : null;
   const draft = startWriting("web");
   const body = photo ? { text, ref, image: photo.base64 } : { text, ref };

@@ -80,8 +80,9 @@ class WebInterfaceMixin:
                          on_listening=self.on_web_listening, on_talk=self.on_web_talk, photo=self.web_photo,
                          answer_location=lambda device, body: self.whereabouts.answer(device.name, body),
                          claude_sessions=self.web_claude_sessions, claude_session=self.web_claude_session,
-                         ask_rocky=lambda device, question, ref, on_text, on_status: self.ask_rocky_directly(
-                             question, device.name, ref, from_web=True, on_text=on_text, on_status=on_status),
+                         ask_rocky=lambda device, question, ref, on_text, on_status, image=None: self.ask_rocky_directly(
+                             question, device.name, ref, from_web=True, on_text=on_text, on_status=on_status,
+                             image=image),
                          rocky_offered=self.rocky_offered)
 
     def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
@@ -361,7 +362,7 @@ class WebInterfaceMixin:
                 try:
                     rocky_said = await self.ask_rocky_in_group(
                         text, device.name, ref, on_text=lambda so_far: on_rocky("text", so_far),
-                        on_status=lambda doing: on_rocky("status", doing))
+                        on_status=lambda doing: on_rocky("status", doing), image=image)
                 except Exception as error:
                     # Whatever went wrong with his turn, she still answers.
                     self.activity.write(f"Rocky's group turn failed ({type(error).__name__}).", "Rocky error")

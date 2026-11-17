@@ -110,6 +110,13 @@ class OllamaClient:
         return [Loaded(str(model.get("name", "")), int(model.get("size") or 0), int(model.get("size_vram") or 0))
                 for model in (await self.get("/api/ps")).get("models", [])]
 
+    async def can_see(self, model: str) -> bool:
+        """Whether a downloaded model takes images (Ollama lists "vision" among its capabilities)."""
+        async with self.client(CALL_SECONDS) as client:
+            response = await client.post(f"{self.base_url}/api/show", json={"model": model})
+            response.raise_for_status()
+            return "vision" in (response.json().get("capabilities") or [])
+
     async def pull(self, model: str, on_progress: Callable[[PullProgress], None]) -> None:
         """Download a model (or what's new in it), telling on_progress as it goes; OllamaError if
         Ollama can't (no such model, no space)."""

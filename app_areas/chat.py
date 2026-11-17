@@ -45,9 +45,10 @@ class ChatMixin:
         offered = self.rocky_offered()
         voice_on = not self.standby
         self.chat_mode = mode if offered and not voice_on else "cora"
+        rocky_sees = self.rocky_takes_images()
         for screen in self.screen_stack:
             for chip in screen.query(ChatModeChip):
-                chip.show(self.chat_mode, offered, voice_on)
+                chip.show(self.chat_mode, offered, voice_on, rocky_sees)
 
     def next_chat_mode(self) -> None:
         """The chip clicked: the next mode, or while her voice is on, why it stays on Cora."""

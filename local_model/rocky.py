@@ -7,9 +7,13 @@ web page: never given to Cora, so it never reaches OpenAI). In each, a follow-up
 new topic (or a long pause) starts afresh.
 """
 
+import base64
 from collections.abc import Callable
+import io
 import re
 from time import monotonic
+
+from PIL import Image
 
 # Who he is, whoever's asking.
 CHARACTER = (
@@ -74,7 +78,9 @@ class GroupThread:
     def __init__(self, transcript: Callable[[], list[tuple[str, str]]]) -> None:
         self.transcript = transcript
 
-    def messages(self, question: str, new_topic: bool, name: str = "") -> list[dict]:
+    def messages(self, question: str, new_topic: bool, name: str = "",
+                 images: list[str] | None = None) -> list[dict]:
+        """images: sent with the latest message (earlier ones show only as "[image]")."""
         person = speaker(True, name)
         messages = [{"role": "system", "content": group_persona(name)}]
         said = self.transcript() or [("person", question)]
@@ -89,10 +95,13 @@ class GroupThread:
                 messages.append({"role": "user", "content": line})
         if messages[-1]["role"] != "user":
             messages.append({"role": "user", "content": f"{person} {question}"})
+        messages[-1] = with_images(messages[-1], images)
         return messages
 
-    def add(self, question: str, answer: str) -> None:
+    def add(self, question: str, answer: str, images: list[str] | None = None) -> None:
         pass
+
+
 # "@rocky …" (or "@Rocky: …"): the person asking him directly. Not "@rockyroad".
 DIRECT = re.compile(r"^@rocky\b[\s:,]*", re.IGNORECASE)
 # A thread is forgotten after this long without a question, and keeps this many exchanges.
@@ -105,6 +114,25 @@ THINKING = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 class RockyUnavailable(Exception):
     """He can't answer this: the message says why, in words for the person."""
+
+
+# His model sees images at about this size anyway (Gemma 4: 896 pixels a side); smaller is quicker.
+IMAGE_SIDE = 1024
+# What's asked when an image comes with no words.
+IMAGE_QUESTION = "What do you make of this?"
+
+
+def rocky_image(data: bytes) -> str:
+    """An image (any format Pillow reads, such as a pasted PNG or a phone's JPEG) as his model takes
+    it: JPEG at most IMAGE_SIDE a side, base64. Raises if it isn't an image. Never saved."""
+    with Image.open(io.BytesIO(data)) as image:
+        if image.width * image.height > 60_000_000:
+            raise ValueError("Image has too many pixels")
+        picture = image.convert("RGB")
+    picture.thumbnail((IMAGE_SIDE, IMAGE_SIDE))
+    buffer = io.BytesIO()
+    picture.save(buffer, format="JPEG", quality=85)
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
 
 
 def direct_question(text: str) -> str | None:
@@ -170,20 +198,31 @@ class RockyThread:
         # Whose thread: the person's own (@rocky), or Cora's for them.
         self.direct = direct
         self.exchanges: list[tuple[str, str]] = []
+        # The images sent with each exchange's question (rocky_image's base64), in step with
+        # exchanges, so a follow-up about one still has it. Kept in memory only.
+        self.pictures: list[list[str]] = []
         self.last_asked = 0.0
 
-    def messages(self, question: str, new_topic: bool, name: str = "") -> list[dict]:
+    def messages(self, question: str, new_topic: bool, name: str = "",
+                 images: list[str] | None = None) -> list[dict]:
         """The conversation to send him: his persona, the thread so far (unless it's a new topic or
         has gone quiet too long), and the question, each labelled with who asked (name: the
-        person's, if known)."""
+        person's, if known), with any images sent alongside."""
         if new_topic or self.clock() - self.last_asked > THREAD_IDLE_SECONDS:
-            self.exchanges = []
+            self.exchanges, self.pictures = [], []
         label = speaker(self.direct, name)
         messages = [{"role": "system", "content": persona(self.direct, name)}]
-        for asked, said in self.exchanges:
-            messages += [{"role": "user", "content": f"{label} {asked}"}, {"role": "assistant", "content": said}]
-        return messages + [{"role": "user", "content": f"{label} {question}"}]
+        for (asked, said), pictures in zip(self.exchanges, self.pictures):
+            messages += [with_images({"role": "user", "content": f"{label} {asked}"}, pictures),
+                         {"role": "assistant", "content": said}]
+        return messages + [with_images({"role": "user", "content": f"{label} {question}"}, images)]
 
-    def add(self, question: str, answer: str) -> None:
+    def add(self, question: str, answer: str, images: list[str] | None = None) -> None:
         self.exchanges = (self.exchanges + [(question, answer)])[-THREAD_EXCHANGES:]
+        self.pictures = (self.pictures + [list(images or [])])[-THREAD_EXCHANGES:]
         self.last_asked = self.clock()
+
+
+def with_images(message: dict, images: list[str] | None) -> dict:
+    """A message to him with images (Ollama's "images", base64), if there are any."""
+    return {**message, "images": list(images)} if images else message

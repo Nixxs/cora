@@ -26,7 +26,7 @@ from local_model.rocky_browsing import (
 )
 from subconscious.interests.browse_exploration import BrowserAccess, Session
 from local_model.rocky import (
-    QUESTION_MAX_CHARS, GroupThread, stop_at, RockyThread, RockyUnavailable, answer_text, shown_so_far,
+    IMAGE_QUESTION, QUESTION_MAX_CHARS, GroupThread, rocky_image, stop_at, RockyThread, RockyUnavailable, answer_text, shown_so_far,
 )
 from tools.route import current_route
 
@@ -56,6 +56,9 @@ ROCKY_OFF = ("Rocky isn't switched on: the person can let you consult him in Set
              "a model is chosen and downloaded.")
 ROCKY_NOT_HERE = "Rocky is only for the person's own conversations, not this one."
 NO_ROCKY_MODEL = "Rocky isn't set up: choose and download a model in Settings › Local model."
+# An image came, but his model can't take images: he says so rather than guessing.
+BLIND_NOTE = ("\n\nAn image came with this message, but you can't see images: say so plainly, and don't "
+              "guess what's in it.")
 # How long he waits for her exploring to wrap up and free the browser, checking this often.
 BROWSER_WAIT_SECONDS = 90
 BROWSER_WAIT_POLL_SECONDS = 0.5
@@ -94,6 +97,8 @@ class LocalModelMixin:
         # And the group chat's: the conversation as shown is his thread there.
         self.rocky_group_thread = GroupThread(lambda: self.conversation.group_transcript())
         self.rocky_lock = asyncio.Lock()
+        # Whether each of his models takes images, once asked (rocky_sees).
+        self.rocky_vision: dict[str, bool] = {}
         # While he waits for her exploring to free the browser: it wraps up, and doesn't start again.
         self.rocky_wants_browser = False
         self.set_interval(IDLE_CHECK_SECONDS, self.check_local_model_idle)
@@ -130,17 +135,21 @@ class LocalModelMixin:
         return {"status": "ok", "rocky_says": answer, "how_it_reaches_them": REACHES_THEM[channel]}
 
     async def ask_rocky_directly(self, question: str, device: str | None = None, ref: str | None = None,
-                                 from_web: bool = False, on_text=None, on_status=None) -> str:
+                                 from_web: bool = False, on_text=None, on_status=None,
+                                 image: bytes | None = None) -> str:
         """@rocky …: the person's question straight to Rocky, in a thread of their own with him (his
         thread with Cora is apart). Shown at the desk and on every web page, and never given to her:
         not saved and not in her history, so neither the question nor his answer reaches OpenAI.
         Needs only a model chosen, not her switch. He may browse first when the browser is free;
         what he's doing ("searching for …") shows in place of his answer meanwhile. His answer
         streams into the desk's chat as he writes it, and both go to on_text and on_status (the
-        page that asked) if given. Returns his answer; raises RockyUnavailable with what to tell
-        the person (also shown at the desk)."""
+        page that asked) if given. image: one sent with it, which he sees himself (never leaving
+        this PC either); with no words, he's asked what he makes of it. Returns his answer;
+        raises RockyUnavailable with what to tell the person (also shown at the desk)."""
         where = (f"web · {device}" if device else "web") if from_web else ""
-        draft = self.conversation.ask_rocky_directly(question, where)
+        if image is not None and not question:
+            question = IMAGE_QUESTION
+        draft = self.conversation.ask_rocky_directly(question, where, image=image)
 
         def streamed(so_far: str) -> None:
             shown = shown_so_far(so_far, self.rocky_person_name())
@@ -162,7 +171,7 @@ class LocalModelMixin:
                 raise RockyUnavailable(NO_ROCKY_MODEL)
             reply = await self.rocky_answer(self.rocky_direct_thread, question, False,
                                             "Asking Rocky (directly, from you).", on_text=streamed,
-                                            on_status=looking)
+                                            on_status=looking, image=image)
         except RockyUnavailable as error:
             draft.fail(str(error))
             raise
@@ -170,18 +179,22 @@ class LocalModelMixin:
         # "source" he really read from one he made up.
         answer = f"{reply.answer}\n\n*{reply.looked}*"
         draft.finish(answer)
-        self.web_feed.publish_rocky(question, answer, asker="you", ref=ref, device=device)
+        self.web_feed.publish_rocky(f"[image] {question}" if image is not None else question, answer,
+                                    asker="you", ref=ref, device=device)
         return answer
 
     async def ask_rocky_in_group(self, question: str, device: str | None = None, ref: str | None = None,
-                                 on_text=None, on_status=None) -> str | None:
+                                 on_text=None, on_status=None, image: bytes | None = None) -> str | None:
         """Rocky's turn in a group chat, before Cora's: he sees the conversation as shown (theirs,
         hers and his own lines; the person's message, already shown, last), answers it, browsing
         first if he chooses, and his answer streams into the desk's chat under it (and to on_text
         and on_status: the page that asked, if any). Unlike @rocky it's part of her conversation,
         so it goes to every web page and her next turn is given it. Returns his answer with the
         line under it, for her turn; None (with why, shown) if he hasn't one. Typed only, and in
-        Standby or on the web page: while her voice is on, the chat is hers alone (set_chat_mode)."""
+        Standby or on the web page: while her voice is on, the chat is hers alone (set_chat_mode).
+        image: one sent with the message, which he sees himself (she has her own look at it)."""
+        if image is not None and not question:
+            question = IMAGE_QUESTION
         draft = self.conversation.rocky_in_group()
         name = self.rocky_person_name()
 
@@ -200,7 +213,7 @@ class LocalModelMixin:
             if not self.local_model_name:
                 raise RockyUnavailable(NO_ROCKY_MODEL)
             reply = await self.rocky_answer(self.rocky_group_thread, question, False, "Asking Rocky (group chat).",
-                                            on_text=streamed, on_status=looking)
+                                            on_text=streamed, on_status=looking, image=image)
         except RockyUnavailable as error:
             draft.fail(f"{error} Cora's answering on her own.")
             return None
@@ -210,19 +223,28 @@ class LocalModelMixin:
         return answer
 
     @work(group="rocky-direct", exit_on_error=False)
-    async def ask_rocky_at_desk(self, question: str) -> None:
-        """@rocky typed at the desk (see ask_rocky_directly)."""
+    async def ask_rocky_at_desk(self, question: str, image: bytes | None = None) -> None:
+        """@rocky typed at the desk, or the chat on Rocky (see ask_rocky_directly), with an image
+        pasted or chosen with +img, if any."""
         try:
-            await self.ask_rocky_directly(question)
+            await self.ask_rocky_directly(question, image=image)
         except RockyUnavailable:
             pass  # Why is shown in the chat.
 
     async def rocky_answer(self, thread: RockyThread, question: str, new_topic: bool, asking: str,
-                           on_text=None, on_status=None) -> RockyReply:
+                           on_text=None, on_status=None, image: bytes | None = None) -> RockyReply:
         """His answer in thread (and what he looked at for it), one question at a time; raises
         RockyUnavailable if there isn't one. The thread keeps the answer alone.
         on_text, if given, gets his answer so far as it streams in. With on_status he may browse
-        first, if the browser is free (see rocky_browser), and on_status hears what he's doing."""
+        first, if the browser is free (see rocky_browser), and on_status hears what he's doing.
+        image: one sent with the question, which he sees himself (his own copy, rocky_image), if
+        his model takes images; if it doesn't, he's told so and says so, rather than guessing."""
+        images = None
+        if image is not None:
+            try:
+                images = [await asyncio.to_thread(rocky_image, image)]
+            except Exception:
+                raise RockyUnavailable("That image couldn't be read for Rocky.") from None
         async with self.rocky_lock, AsyncExitStack() as holding:
             name = self.local_model_name
             began = monotonic()
@@ -236,10 +258,15 @@ class LocalModelMixin:
                 on_status(f"can't browse ({why})")
             self.activity.write(f"{asking} He can browse." if browser else f"{asking} No browser: {why}.", "Rocky")
             streaming = {} if on_text is None else {"on_text": on_text}
+            blind = False
             try:
                 async with self.local_model.use() as ollama:
+                    if images and not await self.rocky_sees(ollama, name):
+                        images, blind = None, True
                     # Named, so he knows who's who (he's local: the name stays on this PC).
-                    messages = thread.messages(question, new_topic, self.rocky_person_name())
+                    messages = thread.messages(question, new_topic, self.rocky_person_name(), images=images)
+                    if blind:
+                        messages[0] = {**messages[0], "content": messages[0]["content"] + BLIND_NOTE}
                     if browser is None:
                         messages[0] = {**messages[0], "content": messages[0]["content"] + no_browser_note(
                             date.today(), why)}
@@ -259,9 +286,31 @@ class LocalModelMixin:
             answer = answer_text(reply, self.rocky_person_name())
             if not answer:
                 raise RockyUnavailable("Rocky said nothing.")
-            thread.add(question, answer)
+            thread.add(question, answer, images)
         self.activity.write(f"Rocky answered ({monotonic() - began:.0f} s).", "Rocky")
+        if blind:
+            looked += " He couldn't see the image: his model doesn't take images."
         return RockyReply(answer, looked)
+
+    async def rocky_sees(self, ollama, model: str) -> bool:
+        """Whether his model takes images, asked of Ollama once per model (if it can't say, he's
+        given the image anyway). Remembered for the chat's +img (rocky_takes_images)."""
+        if model not in self.rocky_vision:
+            try:
+                self.rocky_vision[model] = await ollama.can_see(model)
+            except Exception as error:
+                self.activity.write(f"Couldn't ask whether Rocky's model takes images ({type(error).__name__}).",
+                                    "Rocky")
+                return True
+            if not self.rocky_vision[model]:
+                # The chip's Rocky mode stops offering +img.
+                self.set_chat_mode(self.chat_mode)
+        return self.rocky_vision[model]
+
+    def rocky_takes_images(self) -> bool:
+        """Whether +img is offered for him: unless his model is known not to take images (the
+        chat's chips ask as they're drawn, which can be before his settings load)."""
+        return getattr(self, "rocky_vision", {}).get(getattr(self, "local_model_name", "")) is not False
 
     def rocky_person_name(self) -> str:
         """The person's name as Cora knows it, or "" (then he's told "the person")."""

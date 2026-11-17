@@ -19,7 +19,7 @@ class ChatSubmission:
         # goes to Rocky alone, never to Cora (see ask_rocky_directly).
         self.ask_rocky = ask_rocky
         self.chat_mode = chat_mode
-        # await ask_group(message) -> Rocky's answer (or None) in a group chat, before hers.
+        # await ask_group(message[, image_png]) -> Rocky's answer (or None) in a group chat, before hers.
         self.ask_group = ask_group
         # In Standby, a typed message goes here instead: answered in writing without waking Live.
         self.send_without_live = send_without_live
@@ -56,12 +56,15 @@ class ChatSubmission:
         if rocky is None and self.ask_rocky is not None and self.chat_mode() == "rocky":
             rocky = message
         if rocky is not None:
-            # Straight to Rocky, in Live or Standby alike: not saved, and never sent to her.
-            if composer.image_png:
-                self.notify("Rocky can't see images. Remove it to ask him; your draft is kept.", severity="warning")
-                return
+            # Straight to Rocky, in Live or Standby alike: not saved, and never sent to her. An image
+            # goes with it, which he sees himself (it never leaves this PC either).
+            image_png = composer.image_png
             composer.clear()
-            self.ask_rocky(rocky)
+            composer.remove_image()
+            if image_png is None:
+                self.ask_rocky(rocky)
+            else:
+                self.ask_rocky(rocky, image_png)
             return
         if self.is_standby() and self.send_without_live is None:
             self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")
@@ -137,21 +140,22 @@ class ChatSubmission:
                 # Saved text remains pending; shutdown must not start a new send.
                 return
             # A group chat: one round, their message, then Rocky's turn, then hers with his answer
-            # (in writing). He can't see images, so one with an image is hers alone, and while her
-            # voice is on the chat is hers alone too (its chip says so: set_chat_mode).
+            # (in writing). An image goes to both: he sees it himself, she has her look at it. While
+            # her voice is on the chat is hers alone (its chip says so: set_chat_mode).
             without_live = self.is_standby() and self.send_without_live is not None
-            group = (self.ask_group is not None and self.chat_mode() == "group" and not image_png
-                     and without_live)
+            group = self.ask_group is not None and self.chat_mode() == "group" and without_live
             rocky_said = history = None
             if group:
                 # Taken before the message is shown, so it isn't given to her twice.
                 history = self.conversation.get_reconnect_history()
-                self.show_sent(shown)
+                self.show_sent(shown, image_png=image_png, image_seen=image_seen, caption=message)
                 sent = True
-                # Free to type the next one while he answers.
-                composer.clear()
+                # Free to type the next one while he answers. (With an image it was freed as it was
+                # sent, so what's in it now is the next message: kept.)
+                if not image_png:
+                    composer.clear()
                 composer.disabled = self.is_closing() or self.is_reconnecting()
-                rocky_said = await self.ask_group(message)
+                rocky_said = await (self.ask_group(message, image_png) if image_png else self.ask_group(message))
                 if self.is_closing():
                     return
             try:
@@ -184,16 +188,7 @@ class ChatSubmission:
                 # Shown before Rocky's turn.
                 return
             sent = True
-            self.show_sent(shown, end=False)
-            if image_png:
-                # Shown small in the chat (click for the pop-up), kept only in memory.
-                image = Image.open(io.BytesIO(image_png)).convert("RGB")
-                image.thumbnail((1024, 1024))
-                self.conversation.write_log(ChatImage(image, message or "Pasted image"))
-                if image_seen and image_seen.startswith("Photo img"):
-                    # Under the thumbnail: its description and id, for later turns.
-                    self.conversation.show_photo_note(image_seen)
-            self.conversation.write_log("")
+            self.show_sent(shown, image_png=image_png, image_seen=image_seen, caption=message)
             if not image_png:
                 composer.clear()
                 composer.remove_image()
@@ -209,13 +204,22 @@ class ChatSubmission:
             if not composer.disabled:
                 composer.focus()
 
-    def show_sent(self, shown: str, end: bool = True) -> None:
-        """Their message in the chat, and to the web page (it was saved before sending)."""
+    def show_sent(self, shown: str, image_png: bytes | None = None, image_seen: str | None = None,
+                  caption: str = "") -> None:
+        """Their message in the chat, and to the web page (it was saved before sending), with any
+        image under it."""
         self.conversation.flush_transcript()
         self.conversation.write_log(f"You: {shown}")
         self.conversation.announce("user", shown, "keyboard")
-        if end:
-            self.conversation.write_log("")
+        if image_png:
+            # Shown small in the chat (click for the pop-up), kept only in memory.
+            image = Image.open(io.BytesIO(image_png)).convert("RGB")
+            image.thumbnail((1024, 1024))
+            self.conversation.write_log(ChatImage(image, caption or "Pasted image"))
+            if image_seen and image_seen.startswith("Photo img"):
+                # Under the thumbnail: its description and id, for later turns.
+                self.conversation.show_photo_note(image_seen)
+        self.conversation.write_log("")
 
     @staticmethod
     def restore_draft(composer: ChatComposer, message: str, image_png: bytes) -> None:

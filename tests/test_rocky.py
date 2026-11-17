@@ -2,13 +2,16 @@
 the switch in Settings. The local model is a stand-in here."""
 
 import asyncio
+import base64
 from datetime import date
+import io
 import json
 from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+from PIL import Image
 from textual.widgets import Switch, TabbedContent
 
 from app_areas.local_model import (
@@ -28,13 +31,14 @@ from subconscious.interests.browse_exploration import BrowserAccess
 from live import typed_content
 from local_model.rocky import (
     DIRECT_PERSONA, PERSONA, GroupThread, stop_at, THREAD_EXCHANGES, THREAD_IDLE_SECONDS, RockyThread, RockyUnavailable, answer_text,
-    direct_question, shown_so_far,
+    IMAGE_QUESTION, direct_question, rocky_image, shown_so_far,
 )
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from tools.consult_rocky import NAME, ConsultRockyTool, validate_arguments
 from tools.route import current_route
 from ui.chat_submission import ChatSubmission
 from ui.composer import IMAGE_MARKER, VOICE_ON_NOTE, VOICE_ON_TOOLTIP, ChatComposer, ChatModeChip
+from ui.chat_widgets import ChatImage
 from ui.conversation import ROCKY_ASKED, YOU_TO_ROCKY, Conversation, DirectRockyAnswer, QuietNote, RockyAnswer
 from ui.model_settings import ModelSettingsScreen
 from web import routes
@@ -98,9 +102,13 @@ class StandInOllama:
     def __init__(self, reply="Straight up: serotonin syndrome is the risk."):
         self.reply = reply
         self.asked = []
+        self.sees = True
 
     async def version(self):
         return "0.40.16"
+
+    async def can_see(self, model):
+        return self.sees
 
     async def chat(self, model, messages, on_text=None, stop=None):
         self.asked.append((model, messages))
@@ -657,6 +665,71 @@ class GroupSubmissionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(order, [("live", ("and with booze?",), {}), "You: and with booze?"])
 
 
+def png(size=(1600, 900), colour="red") -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", size, colour).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+class ImageTests(unittest.IsolatedAsyncioTestCase):
+    """He sees images himself (his model takes them): his own small copy, never leaving this PC."""
+
+    def setUp(self):
+        ConsultTests.setUp(self)
+        self.app.conversation = Conversation(MagicMock(), MagicMock(), MagicMock(), record_message=MagicMock())
+        self.app.rocky_vision = {}
+        self.app.rocky_sees = lambda ollama, model: LocalModelMixin.rocky_sees(self.app, ollama, model)
+        self.app.set_chat_mode = MagicMock()
+        self.app.chat_mode = "rocky"
+
+    def test_his_copy_is_a_small_jpeg(self):
+        copy = base64.b64decode(rocky_image(png()))
+        with Image.open(io.BytesIO(copy)) as image:
+            self.assertEqual((image.format, max(image.size)), ("JPEG", 1024))
+        with self.assertRaises(Exception):
+            rocky_image(b"not an image")
+
+    def test_his_thread_keeps_each_image_with_its_question(self):
+        thread = RockyThread(direct=True)
+        first = thread.messages("what's this pill?", False, "Nick", images=["abc"])
+        self.assertEqual(first[-1], {"role": "user", "content": "Nick: what's this pill?", "images": ["abc"]})
+        thread.add("what's this pill?", "Looks like an E, mate.", ["abc"])
+        follow_up = thread.messages("is it strong?", False, "Nick")
+        self.assertEqual(follow_up[1]["images"], ["abc"])
+        self.assertNotIn("images", follow_up[-1])
+        group = GroupThread(lambda: [("person", "[image] this?")]).messages("this?", False, "Nick", images=["xyz"])
+        self.assertEqual(group[-1]["images"], ["xyz"])
+
+    async def test_asked_directly_he_sees_the_image_and_the_chat_shows_it(self):
+        answer = await LocalModelMixin.ask_rocky_directly(self.app, "", image=png())
+        _, messages = self.ollama.asked[0]
+        self.assertEqual(messages[-1]["content"], f"The person: {IMAGE_QUESTION}")
+        self.assertEqual(len(messages[-1]["images"]), 1)
+        entries = self.app.conversation.log_entries
+        self.assertIn(f"{YOU_TO_ROCKY}: [image] {IMAGE_QUESTION}", entries)
+        self.assertTrue(any(isinstance(entry, ChatImage) for entry in entries))
+        self.assertEqual(self.app.web_feed.items[-1].data["question"], f"[image] {IMAGE_QUESTION}")
+        self.assertNotIn("couldn't see", answer)
+        # Still nothing for her: an image in the chat is never part of her history.
+        self.assertEqual(self.app.conversation.get_reconnect_history(), [])
+
+    async def test_a_model_that_cant_see_says_so_rather_than_guessing(self):
+        self.ollama.sees = False
+        answer = await LocalModelMixin.ask_rocky_directly(self.app, "what's this pill?", image=png())
+        _, messages = self.ollama.asked[0]
+        self.assertNotIn("images", messages[-1])
+        self.assertIn("you can't see images", messages[0]["content"])
+        self.assertIn("He couldn't see the image", answer)
+        self.assertIs(self.app.rocky_vision["huihui_ai/gemma-4-abliterated:12b"], False)
+        self.app.set_chat_mode.assert_called_once_with("rocky")
+
+    async def test_in_a_group_chat_he_sees_it_too(self):
+        self.app.rocky_group_thread = GroupThread(self.app.conversation.group_transcript)
+        self.app.conversation.write_log("You: [image] what's this pill?")
+        await LocalModelMixin.ask_rocky_in_group(self.app, "what's this pill?", image=png())
+        self.assertEqual(len(self.ollama.asked[0][1][-1]["images"]), 1)
+
+
 class DeskSubmissionTests(unittest.TestCase):
     def setUp(self):
         self.asked, self.notify, self.schedule = MagicMock(), MagicMock(), MagicMock()
@@ -690,12 +763,12 @@ class DeskSubmissionTests(unittest.TestCase):
         self.submit("Hi Cora")
         self.schedule.assert_called_once()
 
-    def test_not_with_an_image(self):
+    def test_an_image_goes_to_him_too(self):
         composer = self.submit("@rocky what is this pill?", image=b"png")
-        self.asked.assert_not_called()
+        self.asked.assert_called_once_with("what is this pill?", b"png")
         self.schedule.assert_not_called()
-        composer.clear.assert_not_called()
-        self.assertIn("can't see images", self.notify.call_args.args[0])
+        composer.clear.assert_called_once()
+        composer.remove_image.assert_called_once()
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):
