@@ -94,7 +94,8 @@ To do on this branch:
 - [x] Rocky 2: test her first, with a stand-in Rocky
 - [x] Rocky 3a: consulting Rocky (the switch, his persona and thread, consult_rocky, the desk's chat)
 - [x] Rocky 3b: his answers on the web page
-- [ ] Rocky 4: a direct line (if the test shows it's needed)
+- [x] Rocky 4a: a direct line ("@rocky …" at the desk and on the web page, never through OpenAI)
+- [ ] Rocky 4b: he browses (read-only search and pages on the Playwright service)
 
 ### Claude Code
 
@@ -196,11 +197,20 @@ GPU, and larger ones more slowly with part of the model in system memory.
    refuse. The thread is shown word for word at the desk and on the web page as it happens,
    and her tool description says you see his answers yourself, so she gives her own view
    rather than retelling (or softening) his.
-4. **A direct line, if the test shows it's needed:** typing "@rocky …" at the desk or on
-   the web page sends your words straight to him, and his answer is shown to
-   you, so neither the question nor the answer reaches OpenAI. Talking to him by voice
-   without OpenAI would need local speech (faster-whisper, already used for the wake word,
-   plus a local voice), which belongs with [Local models, after 1.0](#local-models-after-10).
+4. **A direct line and browsing:**
+   - *4a built* (see [The local model](DOCUMENTATION.md#the-local-model-rocky)): typing
+     "@rocky …" at the desk or on the web page sends your words straight to him, in a thread
+     of your own, and his answer is shown to you, so neither reaches OpenAI. Checked with the
+     real Rocky: 2 to 4 seconds with the GPU free.
+   - *4b, he browses:* the same read-only tools as her exploring (search, open a page, go back,
+     with the address guard) on the Playwright service, driven by his own tool calls through
+     Ollama (Gemma 4 supports tools, with a 128k context). Tighter limits than hers (about 5
+     pages in 3 minutes, since he's slow), a larger context window while he's loaded (more
+     VRAM), a "Rocky is looking…" line meanwhile, and on both the direct line and her consults.
+     His searches go to Bing, never OpenAI.
+   - Talking to him by voice without OpenAI would need local speech (faster-whisper, already
+     used for the wake word, plus a local voice), which belongs with
+     [Local models, after 1.0](#local-models-after-10).
 
 ## Ideas for after the freeze
 

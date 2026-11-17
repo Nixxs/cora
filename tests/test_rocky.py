@@ -13,11 +13,15 @@ from app_areas.local_model import REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, Local
 from app_areas.web_interface import WebInterfaceMixin
 from backend_chat import BackendRoute
 from local_model.manager import LocalModel
-from local_model.rocky import PERSONA, THREAD_EXCHANGES, THREAD_IDLE_SECONDS, RockyThread, answer_text
+from local_model.rocky import (
+    DIRECT_PERSONA, PERSONA, THREAD_EXCHANGES, THREAD_IDLE_SECONDS, RockyThread, RockyUnavailable, answer_text,
+    direct_question, shown_so_far,
+)
 from session_config import BACKEND_MODEL, MODEL_AREAS
 from tools.consult_rocky import NAME, ConsultRockyTool, validate_arguments
 from tools.route import current_route
-from ui.conversation import ROCKY_ASKED, RockyAnswer
+from ui.chat_submission import ChatSubmission
+from ui.conversation import ROCKY_ASKED, YOU_TO_ROCKY, Conversation, DirectRockyAnswer, QuietNote, RockyAnswer
 from ui.model_settings import ModelSettingsScreen
 from web import routes
 from web.feed import ROCKY, MessageFeed
@@ -48,6 +52,10 @@ class ThreadTests(unittest.TestCase):
 
     def test_what_he_said_without_any_thinking(self):
         self.assertEqual(answer_text("<think>hmm, what do I know</think>\n Straight up: don't. "), "Straight up: don't.")
+        # As it streams in, thinking still being written isn't shown either.
+        self.assertEqual(shown_so_far("<think>hmm, what"), "")
+        self.assertEqual(shown_so_far("<think>hmm</think>\nStraight up"), "Straight up")
+        self.assertEqual(shown_so_far("Straight up"), "Straight up")
 
 
 class StandInOllama:
@@ -58,10 +66,16 @@ class StandInOllama:
     async def version(self):
         return "0.40.16"
 
-    async def chat(self, model, messages):
+    async def chat(self, model, messages, on_text=None):
         self.asked.append((model, messages))
         if isinstance(self.reply, Exception):
             raise self.reply
+        if on_text is not None:
+            # A word at a time, as Ollama streams.
+            words = self.reply.split(" ")
+            for count in range(1, len(words) + 1):
+                on_text(" ".join(words[:count]))
+            self.streamed = True
         return self.reply
 
 
@@ -74,8 +88,10 @@ class ConsultTests(unittest.IsolatedAsyncioTestCase):
                                    stop=AsyncMock(), poll_seconds=0),
             rocky_thread=RockyThread(), rocky_lock=asyncio.Lock(), activity=MagicMock(),
             conversation=MagicMock(), web_feed=MessageFeed(),
+            rocky_direct_thread=RockyThread(persona=DIRECT_PERSONA),
         )
         self.app.can_consult_rocky = lambda: LocalModelMixin.can_consult_rocky(self.app)
+        self.app.rocky_answer = lambda *args, **kwargs: LocalModelMixin.rocky_answer(self.app, *args, **kwargs)
 
     async def consult(self, route=None, question="I'm on sertraline: MDMA at a festival?", new_topic=False):
         token = current_route.set(route)
@@ -146,6 +162,112 @@ class ConsultTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn(NAME, WebInterfaceMixin.unavailable_tools(app))
         app.local_model_consult = True
         self.assertNotIn(NAME, WebInterfaceMixin.unavailable_tools(app))
+
+
+class DirectTests(unittest.IsolatedAsyncioTestCase):
+    """@rocky: the person asking him themselves, never through Cora."""
+
+    def setUp(self):
+        ConsultTests.setUp(self)
+        self.recorded = MagicMock()
+        self.app.conversation = Conversation(MagicMock(), MagicMock(), MagicMock(), record_message=self.recorded)
+        self.app.local_model_consult = False  # Her switch isn't needed for this.
+
+    async def ask(self, question="Is it safe to mix MDMA and sertraline?", **where):
+        return await LocalModelMixin.ask_rocky_directly(self.app, question, **where)
+
+    def test_what_counts_as_asking_him_directly(self):
+        self.assertEqual(direct_question("@rocky how strong is ket?"), "how strong is ket?")
+        self.assertEqual(direct_question("  @Rocky: hi\nthere "), "hi\nthere")
+        self.assertEqual(direct_question("@ROCKY"), "")
+        for other in ("@rockyroad recipe", "Ask @rocky", "rocky?", "@rock hi"):
+            self.assertIsNone(direct_question(other))
+
+    async def test_his_answer_is_shown_everywhere_and_never_reaches_her(self):
+        self.assertEqual(await self.ask(), "Straight up: serotonin syndrome is the risk.")
+        entries = self.app.conversation.log_entries
+        self.assertIn(f"{YOU_TO_ROCKY}: Is it safe to mix MDMA and sertraline?", entries)
+        self.assertIn("Rocky:", entries)
+        [answer] = [entry for entry in entries if isinstance(entry, DirectRockyAnswer)]
+        self.assertEqual(answer.markup, "Straight up: serotonin syndrome is the risk.")
+        self.assertEqual(self.app.conversation.get_reconnect_history(), [])
+        self.recorded.assert_not_called()
+        # His own thread with the person, apart from Cora's.
+        model, messages = self.ollama.asked[0]
+        self.assertEqual(messages[0]["content"], DIRECT_PERSONA)
+        self.assertEqual((len(self.app.rocky_direct_thread.exchanges), self.app.rocky_thread.exchanges), (1, []))
+        item = self.app.web_feed.items[-1]
+        self.assertEqual((item.kind, item.data["asker"], item.ref), (ROCKY, "you", None))
+
+    async def test_his_answer_streams_in_and_stays_out_of_her_history_meanwhile(self):
+        seen, histories = [], []
+
+        def on_text(so_far):
+            seen.append(so_far)
+            # Shown at the desk by now, word by word.
+            [shown] = [entry for entry in self.app.conversation.log_entries if isinstance(entry, DirectRockyAnswer)]
+            self.assertEqual(shown.markup, so_far)
+            histories.append(self.app.conversation.get_reconnect_history())
+
+        await self.ask(on_text=on_text)
+        self.assertEqual((seen[0], seen[-1]), ("Straight", "Straight up: serotonin syndrome is the risk."))
+        self.assertEqual(len(seen), 7)
+        self.assertEqual(histories, [[]] * 7)
+
+    async def test_from_the_web_page_its_device_and_mark_go_with_it(self):
+        await self.ask(device="iPad", ref="r1", from_web=True)
+        self.assertIn(f"{YOU_TO_ROCKY} · web · iPad: Is it safe to mix MDMA and sertraline?",
+                      self.app.conversation.log_entries)
+        self.assertEqual(self.app.conversation.get_reconnect_history(), [])
+        body = json.loads(routes.feed_event(self.app.web_feed, self.app.web_feed.items[-1]).split("data: ", 1)[1])
+        self.assertEqual((body["asker"], body["ref"], body["device"]), ("you", "r1", "iPad"))
+
+    async def test_when_he_cant_answer_the_chat_says_why(self):
+        self.app.local_model_name = ""
+        with self.assertRaises(RockyUnavailable) as raised:
+            await self.ask()
+        self.assertIn("choose and download a model", str(raised.exception))
+        self.app.local_model_name = "m"
+        self.ollama.reply = ConnectionError("down")
+        with self.assertRaises(RockyUnavailable):
+            await self.ask()
+        with self.assertRaises(RockyUnavailable):
+            await self.ask("")
+        notes = [entry for entry in self.app.conversation.log_entries if isinstance(entry, QuietNote)]
+        self.assertEqual(len(notes), 3)
+        self.assertNotIn("Rocky:", self.app.conversation.log_entries)
+        self.assertEqual(len(self.app.web_feed.items), 0)
+
+
+class DeskSubmissionTests(unittest.TestCase):
+    def setUp(self):
+        self.asked, self.notify, self.schedule = MagicMock(), MagicMock(), MagicMock()
+        self.submission = ChatSubmission(
+            persistence=MagicMock(), conversation=MagicMock(), live=MagicMock(), backend_work=MagicMock(),
+            is_closing=lambda: False, is_reconnecting=lambda: False, is_standby=lambda: False,
+            schedule=self.schedule, record_activity=MagicMock(), write_activity=MagicMock(),
+            notify=self.notify, trace=MagicMock(), ask_rocky=self.asked,
+        )
+
+    def submit(self, text, image=None):
+        composer = MagicMock(image_png=image, disabled=False)
+        self.submission.submitted(SimpleNamespace(text=text, composer=composer))
+        return composer
+
+    def test_at_rocky_goes_to_him_alone(self):
+        composer = self.submit("@Rocky: what's in a speedball?")
+        self.asked.assert_called_once_with("what's in a speedball?")
+        composer.clear.assert_called_once()
+        self.schedule.assert_not_called()
+        self.submit("Hi Cora")
+        self.schedule.assert_called_once()
+
+    def test_not_with_an_image(self):
+        composer = self.submit("@rocky what is this pill?", image=b"png")
+        self.asked.assert_not_called()
+        self.schedule.assert_not_called()
+        composer.clear.assert_not_called()
+        self.assertIn("can't see images", self.notify.call_args.args[0])
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):

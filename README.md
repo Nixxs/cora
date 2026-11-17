@@ -306,6 +306,9 @@ once it's been idle.
 4. Switch on **Let her consult Rocky**, then run `python migrate.py` if you haven't since
    updating. She uses him in writing straight away, and by voice from her next connect.
 
+To ask him yourself, start a message with `@rocky` at the desk or on the web page (reload the
+page after updating). That needs only steps 1 and 2.
+
 He shares the GPU with whatever else is on it: with a game running he answers more slowly.
 
 To free the space later: `docker compose --profile local-model down` and

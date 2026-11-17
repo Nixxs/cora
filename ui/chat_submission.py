@@ -3,6 +3,7 @@ import asyncio
 import io
 from uuid import UUID, uuid4
 from PIL import Image
+from local_model.rocky import direct_question
 from messaging.images import photo_described, scaled_jpeg
 from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION, look
 from ui.chat_widgets import ChatImage
@@ -12,7 +13,10 @@ from ui.composer import SENDING_IMAGE, ChatComposer
 class ChatSubmission:
     def __init__(self, *, persistence, conversation, live, backend_work,
                  is_closing, is_reconnecting, is_standby, schedule,
-                 record_activity, write_activity, notify, trace, send_without_live=None, keep_image=None):
+                 record_activity, write_activity, notify, trace, send_without_live=None, keep_image=None,
+                 ask_rocky=None):
+        # ask_rocky(question): "@rocky …" goes to Rocky alone, never to Cora (see ask_rocky_directly).
+        self.ask_rocky = ask_rocky
         # In Standby, a typed message goes here instead: answered in writing without waking Live.
         self.send_without_live = send_without_live
         # keep_image(jpeg) -> id: a pasted image is kept in memory for look_again (see tools/look_again.py).
@@ -43,6 +47,15 @@ class ChatSubmission:
             return
         if self.sending_image:
             self.notify("Your image is still being sent; this message is kept until it is done.")
+            return
+        rocky = direct_question(message) if self.ask_rocky is not None else None
+        if rocky is not None:
+            # Straight to Rocky, in Live or Standby alike: not saved, and never sent to her.
+            if composer.image_png:
+                self.notify("Rocky can't see images. Remove it to ask him; your draft is kept.", severity="warning")
+                return
+            composer.clear()
+            self.ask_rocky(rocky)
             return
         if self.is_standby() and self.send_without_live is None:
             self.notify("Live is in standby. Click Standby or press Ctrl+R to resume; your draft is kept.", severity="warning")

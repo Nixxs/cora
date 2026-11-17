@@ -506,7 +506,7 @@ class CoraApp(
             record_activity=self.record_idle_activity, write_activity=self.activity.write,
             notify=lambda message, **options: self.notify(message, **options),
             trace=self.trace_live, send_without_live=self.send_without_live,
-            keep_image=self.kept_images.keep,
+            keep_image=self.kept_images.keep, ask_rocky=self.ask_rocky_at_desk,
         )
         self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(

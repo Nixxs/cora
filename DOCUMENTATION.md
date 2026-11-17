@@ -1377,7 +1377,11 @@ allowing it, she starts, continues and stops sessions herself.
   only needs you or fails; or never): every 15 seconds Cora looks for sessions that have been
   that way for 3 minutes, so a quick back-and-forth at your desk never sets it off. Those are
   put in one message through `tell_person`: by voice while she's active (in her own words, the
-  text treated as information, never instructions), otherwise on Signal. Each state comes up
+  text treated as information, never instructions), otherwise on Signal. Each line gives the
+  clock time it stopped ("finished in cora at 2:41 pm", with the day if it wasn't today, since
+  "how long ago" would only ever be the wait) and Claude's last words as plain text (the first
+  300 characters, Markdown marks taken out); when they were cut short, it says the rest is under
+  Claude Code on the dashboard or the web page. Each state comes up
   once: a session past the wait has had its turn whether or not it was told, so changing the
   choice never brings up old ones. Activity says who she told you about, or why she couldn't.
 - **Asking her** ([tools/claude_code.py](tools/claude_code.py)): her `claude_code` tool gives
@@ -1473,6 +1477,19 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   words where she can. If he can't be reached she says so, and never answers as him.
   What she asks him stays on this PC, but his answer goes to OpenAI with your conversation,
   since her reply builds on it. Activity notes each question and how long he took.
+- **Asking him yourself (`@rocky …`):** a message starting `@rocky` at the desk or on the web
+  page goes to Rocky alone (`ask_rocky_directly`), in Live or Standby alike, and needs only a
+  model chosen, not her switch. Neither your question nor his answer reaches OpenAI: nothing
+  is saved, and the desk shows the exchange ("You · to Rocky: …", "Rocky · thinking…", then
+  "Rocky:") as lines her reconnect history skips (`DirectRockyAnswer`), so Cora never sees it.
+  His answer streams in word by word as he writes it (Ollama's streamed `/api/chat`), at the
+  desk and on the page that asked, like her replies; other pages get it when it's finished.
+  He talks with you in a thread of your own (`DIRECT_PERSONA`, up to 8 exchanges, fresh after
+  30 minutes), apart from his thread with her. The web page posts it to `/api/rocky` instead
+  of to her, shows "thinking…" until he answers, and the `rocky` feed item (with `asker`
+  "you") shows it on every other page. As a safeguard, `/api/messages` turns away an `@rocky`
+  message (from a page that hasn't reloaded) rather than send it to her. Images can't go to
+  him. If he can't answer, a quiet line says why where his answer would be.
 
 - **The container:** the `local-model` service in [compose.yaml](compose.yaml) (a pinned
   `ollama/ollama` image, about 8.5 GB with its GPU libraries), under its own profile so

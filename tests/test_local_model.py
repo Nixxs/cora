@@ -187,6 +187,33 @@ class OllamaClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await ollama.chat("old-model", [{"role": "user", "content": "hi"}]), "Hi.")
         self.assertNotIn("think", asked[-1])
 
+    async def test_a_streamed_answer_comes_piece_by_piece(self):
+        asked = []
+
+        def handle(request):
+            sent = json.loads(request.content)
+            asked.append(sent)
+            if sent.get("think") is False and sent["model"] == "old-model":
+                return httpx.Response(400, json={"error": "\"old-model\" does not support thinking"})
+            pieces = [{"message": {"content": "Hey "}}, {"message": {"content": "mate."}}, {"done": True}]
+            return httpx.Response(200, content="\n".join(json.dumps(piece) for piece in pieces).encode())
+
+        ollama = OllamaClient("http://ollama.test", transport=httpx.MockTransport(handle))
+        for model in ("gemma", "old-model"):
+            seen = []
+            self.assertEqual(await ollama.chat(model, [{"role": "user", "content": "hi"}], on_text=seen.append),
+                             "Hey mate.")
+            self.assertEqual(seen, ["Hey ", "Hey mate."])
+            self.assertIs(asked[-1]["stream"], True)
+        self.assertNotIn("think", asked[-1])
+
+        def broken(request):
+            return httpx.Response(200, content=b'{"message": {"content": "Hey"}}\n{"error": "out of memory"}\n')
+
+        ollama = OllamaClient("http://ollama.test", transport=httpx.MockTransport(broken))
+        with self.assertRaisesRegex(OllamaError, "out of memory"):
+            await ollama.chat("gemma", [], on_text=lambda so_far: None)
+
     def test_model_names(self):
         for name in ("gemma3", "huihui_ai/gemma-4-abliterated:12b", "hf.co/owner/repo:Q4_K_M", "x:31B-q4_K"):
             self.assertEqual(model_name(f"  {name} "), name)

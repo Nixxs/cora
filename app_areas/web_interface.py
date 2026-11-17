@@ -79,7 +79,9 @@ class WebInterfaceMixin:
                          answer_approval=self.answer_web_approval, voice=self.web_voice,
                          on_listening=self.on_web_listening, on_talk=self.on_web_talk, photo=self.web_photo,
                          answer_location=lambda device, body: self.whereabouts.answer(device.name, body),
-                         claude_sessions=self.web_claude_sessions, claude_session=self.web_claude_session)
+                         claude_sessions=self.web_claude_sessions, claude_session=self.web_claude_session,
+                         ask_rocky=lambda device, question, ref, on_text: self.ask_rocky_directly(
+                             question, device.name, ref, from_web=True, on_text=on_text))
 
     def on_web_talk(self, device: WebDevice, listener, talking: bool) -> None:
         """A page starts or stops talking to her (see voice_talk)."""

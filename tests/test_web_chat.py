@@ -10,6 +10,7 @@ from uuid import uuid4
 import httpx2 as httpx
 
 from backend_chat import WEB_EXCLUDED
+from local_model.rocky import QUESTION_MAX_CHARS, RockyUnavailable
 from server.listener import build_app
 from session_config import WEB_CHAT_INSTRUCTIONS
 from storage.web_device_store import WebDevice
@@ -124,6 +125,61 @@ class MessageRouteTests(unittest.IsolatedAsyncioTestCase):
     async def test_without_an_app_to_answer_it_says_so(self):
         self.access.send_message = None
         self.assertEqual((await self.post({"text": "Hi"})).status_code, 503)
+
+    async def test_a_message_for_rocky_alone_never_reaches_her(self):
+        answer = await self.post({"text": " @Rocky how strong is this?"})
+        self.assertEqual(answer.status_code, 409)
+        self.assertIn("wasn't sent to Cora", answer.json()["error"])
+        self.assertEqual(self.sent, [])
+
+
+class RockyRouteTests(unittest.IsolatedAsyncioTestCase):
+    """@rocky from the page: straight to Rocky, his answer back as safe HTML."""
+
+    def setUp(self):
+        self.asked = []
+
+        async def find_device(hashed):
+            return IPHONE if hashed == token_hash(TOKEN) else None
+
+        async def ask_rocky(device, question, ref, on_text):
+            self.asked.append((device, question, ref))
+            if question == "down?":
+                raise RockyUnavailable("Rocky couldn't answer just now.")
+            for piece in ("**Mate,**", "**Mate,** <script>x</script>", "**Mate,** <script>x</script> go easy."):
+                on_text(piece)
+                await asyncio.sleep(0)
+            return "**Mate,** <script>x</script> go easy."
+
+        self.access = WebAccess(Pairing(), AsyncMock(), find_device, ask_rocky=ask_rocky)
+        self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=build_app(web_routes(self.access))),
+                                        base_url="http://test")
+
+    async def asyncTearDown(self):
+        await self.client.aclose()
+
+    async def ask(self, body, paired=True):
+        headers = {"Cookie": f"{COOKIE}={TOKEN}"} if paired else {}
+        return await self.client.post("/api/rocky", headers=headers, json=body)
+
+    async def test_his_answer_streams_in_then_arrives_as_safe_html(self):
+        answer = await self.ask({"question": "  How much is too much?  ", "ref": "r1"})
+        self.assertEqual((answer.status_code, answer.headers["content-type"]), (200, "application/x-ndjson"))
+        updates = lines(answer)
+        deltas = [update["text"] for update in updates if update["type"] == "delta"]
+        self.assertEqual("".join(deltas), "**Mate,** <script>x</script> go easy.")
+        self.assertEqual(updates[-1], {"type": "done", "html": chat_html("**Mate,** <script>x</script> go easy.")})
+        self.assertNotIn("<script>", updates[-1]["html"])
+        self.assertEqual(self.asked, [(IPHONE, "How much is too much?", "r1")])
+
+    async def test_refused_unpaired_malformed_or_when_he_cant_answer(self):
+        self.assertEqual((await self.ask({"question": "x"}, paired=False)).status_code, 401)
+        self.assertEqual((await self.ask({"nothing": 1})).status_code, 400)
+        self.assertEqual((await self.ask({"question": "x" * (QUESTION_MAX_CHARS + 1)})).status_code, 413)
+        down = await self.ask({"question": "down?"})
+        self.assertEqual(lines(down), [{"type": "error", "message": "Rocky couldn't answer just now."}])
+        self.access.ask_rocky = None
+        self.assertEqual((await self.ask({"question": "x"})).status_code, 503)
 
 
 class WebChatAppTests(unittest.IsolatedAsyncioTestCase):

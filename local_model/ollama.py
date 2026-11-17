@@ -1,7 +1,7 @@
 """Ollama's own API, on 127.0.0.1 only (compose.yaml's local-model service).
 
-Its chat replies come back whole (no streaming); they can take a while, since a model is loaded
-onto the GPU on first use.
+Its chat replies come back whole, or streamed piece by piece for someone watching; the first can
+take a while, since a model is loaded onto the GPU on first use.
 """
 
 from collections.abc import Callable
@@ -118,10 +118,14 @@ class OllamaClient:
                     on_progress(PullProgress(str(step.get("status", "")), int(step.get("completed") or 0),
                                              int(step.get("total") or 0)))
 
-    async def chat(self, model: str, messages: list[dict]) -> str:
+    async def chat(self, model: str, messages: list[dict],
+                   on_text: Callable[[str], None] | None = None) -> str:
         """The model's reply to a conversation ([{"role", "content"}, ...]), straight away: a model
         that can think first (Gemma 4, Qwen 3, DeepSeek R1) is asked not to, which takes it from
-        minutes to seconds. One that can't is asked again without saying so."""
+        minutes to seconds. One that can't is asked again without saying so. on_text, if given,
+        gets the reply so far as it streams in."""
+        if on_text is not None:
+            return await self.streamed_chat(model, messages, on_text)
         request = {"model": model, "messages": messages, "stream": False, "think": False}
         async with self.client(CHAT_SECONDS) as client:
             response = await client.post(f"{self.base_url}/api/chat", json=request)
@@ -131,6 +135,34 @@ class OllamaClient:
             if response.status_code >= 400:
                 raise OllamaError(error_text(response.text) or f"HTTP {response.status_code}")
             return str(response.json().get("message", {}).get("content", ""))
+
+    async def streamed_chat(self, model: str, messages: list[dict], on_text: Callable[[str], None]) -> str:
+        """chat, with the reply streamed: one JSON object a line, each with the next piece."""
+        request = {"model": model, "messages": messages, "stream": True, "think": False}
+        # However long the whole reply takes, as long as the pieces keep coming.
+        timeout = httpx2.Timeout(CHAT_SECONDS, connect=CALL_SECONDS)
+        async with self.client(timeout) as client:
+            for _ in range(2):
+                async with client.stream("POST", f"{self.base_url}/api/chat", json=request) as response:
+                    if response.status_code >= 400:
+                        await response.aread()
+                        error = error_text(response.text)
+                        if "thinking" in error and "think" in request:
+                            del request["think"]
+                            continue
+                        raise OllamaError(error or f"HTTP {response.status_code}")
+                    said = ""
+                    async for line in response.aiter_lines():
+                        if not line.strip():
+                            continue
+                        piece = json.loads(line)
+                        if piece.get("error"):
+                            raise OllamaError(str(piece["error"])[:200])
+                        if text := str((piece.get("message") or {}).get("content") or ""):
+                            said += text
+                            on_text(said)
+                    return said
+        raise OllamaError("the model wouldn't answer")
 
 
 def error_text(body: str) -> str:

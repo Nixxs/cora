@@ -18,8 +18,8 @@ from claude_code import hooks, transcripts
 from tools.claude_code import ClaudeCodeTool, validate_arguments as validate_tool_arguments
 from claude_code.routes import BODY_MAX_BYTES, EVENT_PATH, PERMISSION_PATH, claude_code_routes, permission_decision
 from claude_code.sessions import (
-    ENDED, FAILED, FINISHED, NEEDS_YOU, SESSIONS_MAX, STARTED, TELL_AFTER, TELL_CHOICES, WORKING, SessionTracker,
-    project_name, tell_text,
+    ENDED, FAILED, FINISHED, NEEDS_YOU, SESSIONS_MAX, STARTED, TELL_AFTER, TELL_CHOICES, THE_REST, WORKING,
+    SessionTracker, clock_time, project_name, tell_text,
 )
 from server.listener import build_app
 from ui.claude_code_view import claude_code_lines, follow_parts
@@ -135,13 +135,26 @@ class TellingYouTests(unittest.TestCase):
         self.now += TELL_AFTER
         self.assertEqual(self.tracker.due(TELL_CHOICES["off"]), [])
 
-    def test_what_she_says_names_the_project_the_wait_and_the_detail(self):
+    def test_what_she_says_names_the_project_the_time_and_the_detail(self):
+        stopped = self.now
         self.tracker.update(event("Notification", notification_type="permission_prompt", message="Allow Bash?"))
         self.tracker.update(event("Stop", session_id="s2", cwd="/home/me/site"))
+        self.tracker.update(event("Stop", session_id="s3", cwd="/home/me/docs",
+                                  last_assistant_message="**Built:** the `docs` page. " + "More. " * 80))
         self.now += timedelta(minutes=4)
-        text = tell_text(self.tracker.due(TELL_CHOICES["all"]), self.now)
-        self.assertEqual(text, "Claude Code in cora has been waiting on you for 4 minutes: Allow Bash?\n"
-                               "Claude Code finished in site 4 minutes ago.")
+        at = clock_time(stopped, self.now)
+        lines = tell_text(self.tracker.due(TELL_CHOICES["all"]), self.now).splitlines()
+        self.assertEqual(lines[:2], [f"Claude Code in cora has been waiting on you since {at}: Allow Bash?",
+                                     f"Claude Code finished in site at {at}."])
+        # Plain text, cut short with where to find the rest.
+        self.assertTrue(lines[2].startswith(f"Claude Code finished in docs at {at}: Built: the docs page. More."))
+        self.assertTrue(lines[2].endswith(f"…{THE_REST}"))
+
+    def test_the_time_is_the_clock_time_and_the_day_if_it_wasnt_today(self):
+        now = datetime(2026, 11, 13, 15, 0).astimezone()
+        self.assertEqual(clock_time(now.replace(hour=14, minute=41), now), "2:41 pm")
+        self.assertEqual(clock_time(now.replace(hour=9, minute=5), now), "9:05 am")
+        self.assertEqual(clock_time(now - timedelta(days=1), now), f"{now - timedelta(days=1):%a} 3:00 pm")
 
     def test_the_dashboard_lists_what_needs_you_first_and_drops_old_ended_sessions(self):
         self.tracker.update(event("SessionEnd", session_id="gone", cwd="/old", reason="other"))

@@ -3,7 +3,8 @@
 Settings chooses the model and how long its container stays up after use, downloads the model and
 tests it, and lets her consult Rocky (her consult_rocky tool): he answers in a thread of his own
 (local_model/rocky.py), and his answer is shown word for word at the desk and on the web page, or she
-reads it out or passes it on where it can't be shown. The container is looked after here: stopped once idle, and
+reads it out or passes it on where it can't be shown. "@rocky …" is the person asking him
+themselves, never through her (ask_rocky_directly). The container is looked after here: stopped once idle, and
 when she quits (see local_model/manager.py).
 """
 
@@ -15,7 +16,9 @@ from textual import work
 
 from local_model.manager import IDLE_CHOICES, OFF, READY, STARTING, LocalModel
 from local_model.ollama import OllamaClient, PullProgress, local_model_port, model_name, same_model
-from local_model.rocky import RockyThread, answer_text
+from local_model.rocky import (
+    DIRECT_PERSONA, QUESTION_MAX_CHARS, RockyThread, RockyUnavailable, answer_text, shown_so_far,
+)
 from tools.route import current_route
 
 # How often she looks for it left idle long enough to stop.
@@ -43,6 +46,7 @@ REACHES_THEM = {
 ROCKY_OFF = ("Rocky isn't switched on: the person can let you consult him in Settings > Local model, once "
              "a model is chosen and downloaded.")
 ROCKY_NOT_HERE = "Rocky is only for the person's own conversations, not this one."
+NO_ROCKY_MODEL = "Rocky isn't set up: choose and download a model in Settings › Local model."
 
 
 def gigabytes(size: int) -> str:
@@ -65,6 +69,8 @@ class LocalModelMixin:
         # Whether she may consult Rocky, and what she's asked him lately (one question at a time).
         self.local_model_consult = False
         self.rocky_thread = RockyThread()
+        # And what the person has asked him directly (@rocky), apart from her.
+        self.rocky_direct_thread = RockyThread(persona=DIRECT_PERSONA)
         self.rocky_lock = asyncio.Lock()
         self.set_interval(IDLE_CHECK_SECONDS, self.check_local_model_idle)
 
@@ -88,28 +94,79 @@ class LocalModelMixin:
             return {"status": "error", "message": ROCKY_NOT_HERE}
         if not self.can_consult_rocky():
             return {"status": "error", "message": ROCKY_OFF}
-        async with self.rocky_lock:
-            name = self.local_model_name
-            self.activity.write("Asking Rocky.", "Rocky")
-            began = monotonic()
-            try:
-                async with self.local_model.use() as ollama:
-                    reply = await ollama.chat(name, self.rocky_thread.messages(question, new_topic))
-            except Exception as error:
-                self.activity.write(f"Rocky couldn't answer ({str(error)[:200] or type(error).__name__}).",
-                                    "Rocky error")
-                return {"status": "error", "message": (
-                    "Rocky couldn't answer just now (the local model didn't start or answer). Say so; "
-                    "don't answer as him.")}
-            answer = answer_text(reply)
-            if not answer:
-                return {"status": "error", "message": "Rocky said nothing. Say so; don't answer as him."}
-            self.rocky_thread.add(question, answer)
-        self.activity.write(f"Rocky answered ({monotonic() - began:.0f} s).", "Rocky")
+        try:
+            answer = await self.rocky_answer(self.rocky_thread, question, new_topic, "Asking Rocky.")
+        except RockyUnavailable as error:
+            return {"status": "error", "message": f"{error} Say so; don't answer as him."}
         # Wherever she asked him: the desk and the web page each show the whole conversation.
         self.conversation.show_rocky(question, answer)
         self.web_feed.publish_rocky(question, answer)
         return {"status": "ok", "rocky_says": answer, "how_it_reaches_them": REACHES_THEM[channel]}
+
+    async def ask_rocky_directly(self, question: str, device: str | None = None, ref: str | None = None,
+                                 from_web: bool = False, on_text=None) -> str:
+        """@rocky …: the person's question straight to Rocky, in a thread of their own with him (his
+        thread with Cora is apart). Shown at the desk and on every web page, and never given to her:
+        not saved and not in her history, so neither the question nor his answer reaches OpenAI.
+        Needs only a model chosen, not her switch. His answer streams into the desk's chat as he
+        writes it, and to on_text (the page that asked) if given. Returns his answer; raises
+        RockyUnavailable with what to tell the person (also shown at the desk)."""
+        where = (f"web · {device}" if device else "web") if from_web else ""
+        draft = self.conversation.ask_rocky_directly(question, where)
+
+        def streamed(so_far: str) -> None:
+            shown = shown_so_far(so_far)
+            draft.update(shown)
+            if on_text is not None:
+                on_text(shown)
+
+        try:
+            if not question:
+                raise RockyUnavailable("Ask Rocky something after @rocky.")
+            if len(question) > QUESTION_MAX_CHARS:
+                raise RockyUnavailable(f"That's too long for Rocky: at most {QUESTION_MAX_CHARS} characters.")
+            if not self.local_model_name:
+                raise RockyUnavailable(NO_ROCKY_MODEL)
+            answer = await self.rocky_answer(self.rocky_direct_thread, question, False,
+                                             "Asking Rocky (directly, from you).", on_text=streamed)
+        except RockyUnavailable as error:
+            draft.fail(str(error))
+            raise
+        draft.finish(answer)
+        self.web_feed.publish_rocky(question, answer, asker="you", ref=ref, device=device)
+        return answer
+
+    @work(group="rocky-direct", exit_on_error=False)
+    async def ask_rocky_at_desk(self, question: str) -> None:
+        """@rocky typed at the desk (see ask_rocky_directly)."""
+        try:
+            await self.ask_rocky_directly(question)
+        except RockyUnavailable:
+            pass  # Why is shown in the chat.
+
+    async def rocky_answer(self, thread: RockyThread, question: str, new_topic: bool, asking: str,
+                           on_text=None) -> str:
+        """His answer in thread, one question at a time; raises RockyUnavailable if there isn't one.
+        on_text, if given, gets his answer so far as it streams in."""
+        async with self.rocky_lock:
+            name = self.local_model_name
+            self.activity.write(asking, "Rocky")
+            began = monotonic()
+            streaming = {} if on_text is None else {"on_text": on_text}
+            try:
+                async with self.local_model.use() as ollama:
+                    reply = await ollama.chat(name, thread.messages(question, new_topic), **streaming)
+            except Exception as error:
+                self.activity.write(f"Rocky couldn't answer ({str(error)[:200] or type(error).__name__}).",
+                                    "Rocky error")
+                raise RockyUnavailable(
+                    "Rocky couldn't answer just now (the local model didn't start or answer).") from None
+            answer = answer_text(reply)
+            if not answer:
+                raise RockyUnavailable("Rocky said nothing.")
+            thread.add(question, answer)
+        self.activity.write(f"Rocky answered ({monotonic() - began:.0f} s).", "Rocky")
+        return answer
 
     @work(group="model-settings-save")
     async def save_local_model_consult(self, on: bool) -> None:

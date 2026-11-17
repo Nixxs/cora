@@ -21,6 +21,7 @@ from starlette.websockets import WebSocket, WebSocketDisconnect
 from starlette.staticfiles import StaticFiles
 
 from storage.web_device_store import WebDevice
+from local_model.rocky import QUESTION_MAX_CHARS, RockyUnavailable, direct_question
 from .feed import MESSAGE, ROCKY, FeedMessage, Locate, MessageFeed, Status
 from .pairing import NO_CODE, PAIRED, Pairing, new_token, token_hash
 from .rendering import chat_html
@@ -97,6 +98,10 @@ class WebAccess:
     # one session followed in its pop-up (with its latest exchanges), or None when it isn't listed.
     claude_sessions: Callable[[], list[dict] | None] = lambda: None
     claude_session: Callable[[str], Awaitable[dict | None]] | None = None
+    # ask_rocky(device, question, ref, on_text) -> Rocky's answer to the person directly (@rocky),
+    # never given to Cora; on_text gets it so far as it streams. Raises RockyUnavailable with what
+    # to tell them.
+    ask_rocky: Callable[[WebDevice, str, str | None, Callable[[str], None]], Awaitable[str]] | None = None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -125,11 +130,15 @@ def line(value: dict) -> bytes:
 
 
 async def reply_lines(updates: asyncio.Queue):
-    """Her reply as it streams, one JSON object a line: {"type": "delta", "text"} for each new
-    piece, then {"type": "done", "html"} or {"type": "error", "message"}."""
+    """Her reply (or Rocky's answer) as it streams, one JSON object a line: {"type": "delta", "text"}
+    for each new piece, then {"type": "done", "html"} or {"type": "error", "message"}. A ("done",
+    None) update is the usual failure; ("error", message) says why."""
     sent = 0
     while True:
         kind, value = await updates.get()
+        if kind == "error":
+            yield line({"type": "error", "message": value})
+            return
         # Anything that queued up meanwhile goes as one piece.
         while kind == "text" and not updates.empty():
             kind, value = updates.get_nowait()
@@ -146,10 +155,11 @@ async def reply_lines(updates: asyncio.Queue):
 def feed_event(feed: MessageFeed, message: FeedMessage) -> str:
     """One feed item as a server-sent event. A message: hers as safe HTML, the person's as plain
     text. An approval or its end: its details, shown by the page as text, never as markup. Rocky's
-    answer: as safe HTML, like hers, with her question as plain text."""
+    answer: as safe HTML, like hers, with the question (hers, or the person's own) as plain text."""
     if message.kind == ROCKY:
         data = message.data or {}
         body = {"question": data.get("question", ""), "html": chat_html(data.get("answer", "")),
+                "asker": data.get("asker", "cora"), "ref": message.ref, "device": message.device,
                 "at": message.at.isoformat()}
         return f"id: {feed.event_id(message)}\nevent: {ROCKY}\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
     if message.kind != MESSAGE:
@@ -230,6 +240,9 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"error": "Send the message as JSON, with some text or a photo."}, 400)
         if len(text) > MESSAGE_MAX_CHARS:
             return answer({"error": f"That's too long: at most {MESSAGE_MAX_CHARS} characters."}, 413)
+        if direct_question(text) is not None:
+            # Meant for Rocky alone, from a page older than the direct line: never sent to her.
+            return answer({"error": "Reload the page to ask Rocky directly; this wasn't sent to Cora."}, 409)
         ref = body.get("ref")
         ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
@@ -253,6 +266,42 @@ def api_routes(access: WebAccess) -> list[Route]:
             "Cache-Control": "no-store",
             # Ask proxies to pass each piece on at once rather than holding the stream.
             "X-Accel-Buffering": "no",
+        })
+
+    async def rocky(request: Request) -> Response:
+        """@rocky from the page: {"question", "ref"} -> his answer streamed as he writes it, like
+        her replies (reply_lines), or {"error"} if it can't be asked."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        if access.ask_rocky is None:
+            return answer({"error": "Rocky can't be asked from here yet."}, 503)
+        body = await read_json(request, MESSAGE_BODY_MAX_BYTES)
+        if body is None or not isinstance(body.get("question"), str):
+            return answer({"error": "Send the question as JSON."}, 400)
+        question = body["question"].strip()
+        if len(question) > QUESTION_MAX_CHARS:
+            return answer({"error": f"That's too long for Rocky: at most {QUESTION_MAX_CHARS} characters."}, 413)
+        ref = body.get("ref")
+        ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
+        updates: asyncio.Queue = asyncio.Queue()
+
+        async def ask() -> None:
+            try:
+                updates.put_nowait(("done", await access.ask_rocky(
+                    device, question, ref, lambda so_far: updates.put_nowait(("text", so_far)),
+                )))
+            except RockyUnavailable as error:
+                updates.put_nowait(("error", str(error)))
+            except Exception:
+                updates.put_nowait(("error", "Rocky couldn't answer. Check Activity on Cora's PC."))
+
+        # Its own task, like her replies: if the page goes away, he still answers at the desk.
+        task = asyncio.ensure_future(ask())
+        replying.add(task)
+        task.add_done_callback(replying.discard)
+        return StreamingResponse(reply_lines(updates), media_type="application/x-ndjson", headers={
+            "Cache-Control": "no-store", "X-Accel-Buffering": "no",
         })
 
     async def events(request: Request) -> Response:
@@ -445,6 +494,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         Route("/api/session", session, methods=["GET"]),
         Route("/api/pair", pair, methods=["POST"]),
         Route("/api/messages", messages, methods=["POST"]),
+        Route("/api/rocky", rocky, methods=["POST"]),
         Route("/api/events", events, methods=["GET"]),
         Route("/api/approvals", approvals, methods=["POST"]),
         Route("/api/location", location, methods=["POST"]),
