@@ -187,8 +187,11 @@ keeps the full width; narrower than 50 columns the screen is cut off rather than
 (text boxes squeezed under their own padding can't lay out their text).
 
 - **Send a message:** Enter. Shift+Enter or Ctrl+J adds a new line.
-- **Paste an image:** copy a screenshot (Win+Shift+S), then press Ctrl+Alt+V in the message
-  box (Windows Terminal keeps Ctrl+V for itself and sends nothing for an image). The border
+- **Send an image:** click **+img** beside the message box to choose a file in Windows' own
+  file picker (`pick_image_file` in [ui/composer.py](ui/composer.py), through tkinter; the
+  web page has the same button), or copy a screenshot (Win+Shift+S) and press Ctrl+Alt+V in
+  the message box (Windows Terminal keeps Ctrl+V for itself and sends nothing for an image).
+  A chosen file goes the same way as a pasted image from here on. The border
   shows "image attached · Esc removes"; type a question if you like and press Enter. A
   separate one-off model request reads the image, with your message as the question, and
   only its short description enters her session, shown as a quiet line under your message
@@ -1489,7 +1492,24 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   box's prompt changes with it ("Type to Rocky (private…)"). The desk's two boxes share one
   mode, back to Cora each launch; each web page keeps its own, in that browser. With it on
   Rocky every message goes to him as if it began `@rocky`. Voice, Signal and email are always
-  Cora. A message starting `@rocky` at the desk or on the web
+  Cora.
+- **Group chat (the chip on Group):** each typed message gets one round, so the two can never
+  set each other off: your message is shown, then Rocky answers it (`ask_rocky_in_group`),
+  streamed under it, then Cora replies, live by voice, in writing on standby or on the web
+  page, given his answer (`group_note` in [live.py](live.py): build on him or correct him,
+  don't repeat him; her `consult_rocky` isn't offered for that turn). His "thread" there is
+  the conversation as shown (`GroupThread`, from `group_transcript`: your lines, hers and his,
+  labelled "Nick:" and "Cora:", without notes or his private answers), so he sees what she
+  said too. A labelled conversation invites a small model to write everyone's lines, so he's
+  stopped where a new line starts someone's turn (Ollama's `stop`, `stop_at`), anything after
+  one is cut (`own_turn`, bold labels too) along with any "From memory…" line he writes himself,
+  and his earlier answers are shown back to him without the line under them. His answer is part of her conversation (`GroupRockyAnswer`: her later turns are
+  given it) and goes to every web page, but isn't saved, so your messages and his answers reach
+  OpenAI as any chat with her does. He may browse first, and the line under his answer says
+  what he looked at. A message with an image is hers alone (he can't see images); if he can't
+  answer, a quiet line says so and she answers on her own. On the web page the reply stream
+  carries his turn first (`rocky_delta`, `rocky_status`, `rocky_done` or `rocky_none`), then
+  hers; at the desk the box is free for your next message while he answers. A message starting `@rocky` at the desk or on the web
   page goes to Rocky alone (`ask_rocky_directly`), in Live or Standby alike, and needs only a
   model chosen, not her switch. Neither your question nor his answer reaches OpenAI: nothing
   is saved, and the desk shows the exchange ("You · to Rocky: …", "Rocky · thinking…", then

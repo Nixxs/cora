@@ -98,8 +98,8 @@ To do on this branch:
 - [x] Rocky 4b-i: he browses on the direct line (read-only search and pages on the Playwright service)
 - [ ] Rocky 4b-ii: he browses when she consults him too, and his limits in Settings (parked: see how much he's used)
 - [x] Chat modes 1: the mode chip by each message box (Cora or Rocky), at the desk and on the web page
-- [ ] Chat modes 2: +img at the desk (the system's file picker; pasting stays)
-- [ ] Chat modes 3: group mode for typed messages (Rocky answers, then Cora; one round per message)
+- [x] Chat modes 2: +img at the desk (the system's file picker; pasting stays)
+- [x] Chat modes 3: group mode for typed messages (Rocky answers, then Cora; one round per message)
 - [ ] Chat modes 4: Rocky listening in on voice (he chimes in in the chat; she can pick it up)
 
 ### Claude Code

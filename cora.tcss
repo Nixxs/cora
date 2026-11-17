@@ -196,9 +196,34 @@ Screen > .screen--selection {
     color: #d7a06a;
 }
 
+/* Both of them. */
+.chat-mode.mode-group {
+    color: #e0e6ef;
+}
+
 .chat-mode:hover, .chat-mode:focus {
     background: #202838;
     text-style: bold;
+}
+
+/* +img: the system's file picker, for an image to send. Like the web page's. */
+.image-button {
+    width: auto;
+    min-width: 0;
+    height: 1;
+    min-height: 1;
+    margin: 0;
+    padding: 0 1 0 0;
+    border: none;
+    background: transparent;
+    text-style: none;
+    color: #7799cc;
+}
+
+.image-button:hover, .image-button:focus {
+    background: #202838;
+    color: #e0e6ef;
+    text-style: none;
 }
 
 #chat-input, #dashboard-input {

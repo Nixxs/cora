@@ -25,6 +25,12 @@ PULL_QUIET_SECONDS = 300
 # nothing over Ollama's 4096 (7.8 GB on the GPU either way).
 CONTEXT_TOKENS = 16384
 OPTIONS = {"num_ctx": CONTEXT_TOKENS}
+
+
+def options(stop: list[str] | None = None) -> dict:
+    """Ollama's options for a call: the context size, and where to stop if given (sampling only, so
+    it never reloads the model)."""
+    return {**OPTIONS, "stop": stop} if stop else OPTIONS
 # An Ollama model: a library name (gemma3), a publisher's (huihui_ai/gemma-4-abliterated) or one
 # from Hugging Face (hf.co/owner/repo), with a tag after a colon (12b, 31B-q4_K).
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){0,2}(:[A-Za-z0-9][A-Za-z0-9._-]*)?")
@@ -124,14 +130,15 @@ class OllamaClient:
                                              int(step.get("total") or 0)))
 
     async def chat(self, model: str, messages: list[dict],
-                   on_text: Callable[[str], None] | None = None) -> str:
+                   on_text: Callable[[str], None] | None = None, stop: list[str] | None = None) -> str:
         """The model's reply to a conversation ([{"role", "content"}, ...]), straight away: a model
         that can think first (Gemma 4, Qwen 3, DeepSeek R1) is asked not to, which takes it from
         minutes to seconds. One that can't is asked again without saying so. on_text, if given,
-        gets the reply so far as it streams in."""
+        gets the reply so far as it streams in; stop: where it stops writing (such as "\\nCora:")."""
         if on_text is not None:
-            return (await self.turn(model, messages, on_text=on_text)).content
-        request = {"model": model, "messages": messages, "stream": False, "think": False, "options": OPTIONS}
+            return (await self.turn(model, messages, on_text=on_text, stop=stop)).content
+        request = {"model": model, "messages": messages, "stream": False, "think": False,
+                   "options": options(stop)}
         async with self.client(CHAT_SECONDS) as client:
             response = await client.post(f"{self.base_url}/api/chat", json=request)
             if response.status_code >= 400 and "thinking" in error_text(response.text):
@@ -142,10 +149,10 @@ class OllamaClient:
             return str(response.json().get("message", {}).get("content", ""))
 
     async def turn(self, model: str, messages: list[dict], tools: list[dict] | None = None,
-                   on_text: Callable[[str], None] | None = None) -> "Turn":
+                   on_text: Callable[[str], None] | None = None, stop: list[str] | None = None) -> "Turn":
         """One reply, streamed (one JSON object a line, each with the next piece): what it said,
         told to on_text as it comes, and any tools (in Ollama's form) it called."""
-        request = {"model": model, "messages": messages, "stream": True, "think": False, "options": OPTIONS}
+        request = {"model": model, "messages": messages, "stream": True, "think": False, "options": options(stop)}
         if tools:
             request["tools"] = tools
         # However long the whole reply takes, as long as the pieces keep coming.

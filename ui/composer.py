@@ -15,17 +15,19 @@ IMAGE_MARKER = "image attached · Esc removes"
 SENDING_IMAGE = "sending image…"
 NO_IMAGE_TOOL = "To paste images, install wl-clipboard (Wayland) or xclip (X11)."
 
-# Who typed messages go to, in the order the chip moves through them: Cora (as always), or Rocky
-# alone (like "@rocky", never through OpenAI). Group comes later.
-CHAT_MODES = ("cora", "rocky")
-MODE_NAMES = {"cora": "Cora", "rocky": "Rocky"}
+# Who typed messages go to, in the order the chip moves through them: Cora (as always), Rocky
+# alone (like "@rocky", never through OpenAI), or both as a group chat (Rocky answers, then Cora).
+CHAT_MODES = ("cora", "rocky", "group")
+MODE_NAMES = {"cora": "Cora", "rocky": "Rocky", "group": "Group"}
 MODE_PLACEHOLDERS = {
     "cora": "Type a message to Cora...",
     "rocky": "Type to Rocky (private: Cora doesn't see it)...",
+    "group": "Type to Cora and Rocky (Cora sees it all)...",
 }
 MODE_TOOLTIPS = {
     "cora": "Your messages go to Cora. Click to talk to Rocky privately instead.",
-    "rocky": "Your messages go to Rocky alone; Cora doesn't see them. Click to talk to Cora.",
+    "rocky": "Your messages go to Rocky alone; Cora doesn't see them. Click for a group chat.",
+    "group": "A group chat: Rocky answers each message first, then Cora (she sees his answers). Click for Cora.",
 }
 
 
@@ -52,6 +54,16 @@ class ChatModeChip(Button):
             composer.placeholder = MODE_PLACEHOLDERS[mode]
 
 
+def png_of(image: Image.Image) -> bytes:
+    """An image as the chat sends it: at most IMAGE_MAX_SIDE a side, as PNG."""
+    image.thumbnail((IMAGE_MAX_SIDE, IMAGE_MAX_SIDE))
+    if image.mode not in ("RGB", "RGBA"):
+        image = image.convert("RGBA")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def clipboard_png() -> bytes | None:
     """The clipboard's image as PNG, or None when it holds no image or cannot be read.
 
@@ -67,12 +79,36 @@ def clipboard_png() -> bytes | None:
         return None
     if not isinstance(image, Image.Image):
         return None
-    image.thumbnail((IMAGE_MAX_SIDE, IMAGE_MAX_SIDE))
-    if image.mode not in ("RGB", "RGBA"):
-        image = image.convert("RGBA")
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()
+    return png_of(image)
+
+
+# What +img offers in the picker.
+IMAGE_FILES = [("Images", "*.png *.jpg *.jpeg *.gif *.webp *.bmp *.tif *.tiff"), ("All files", "*.*")]
+
+
+def pick_image_file() -> str | None:
+    """The image file chosen in the system's own file picker (+img), or None if it was cancelled.
+    It waits for the picker, so it runs in a thread; raises if no picker can open (no display, or
+    Python without tkinter)."""
+    import tkinter
+    from tkinter import filedialog
+
+    root = tkinter.Tk()
+    root.withdraw()
+    # In front of the terminal, not behind it.
+    root.attributes("-topmost", True)
+    try:
+        path = filedialog.askopenfilename(parent=root, title="An image for Cora", filetypes=IMAGE_FILES)
+    finally:
+        root.destroy()
+    return path or None
+
+
+def file_png(path: str) -> bytes:
+    """An image file as the chat sends it; raises if it isn't an image Pillow can read."""
+    with Image.open(path) as image:
+        image.load()
+        return png_of(image)
 
 
 class ChatComposer(TextArea):

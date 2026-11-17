@@ -14,11 +14,13 @@ class ChatSubmission:
     def __init__(self, *, persistence, conversation, live, backend_work,
                  is_closing, is_reconnecting, is_standby, schedule,
                  record_activity, write_activity, notify, trace, send_without_live=None, keep_image=None,
-                 ask_rocky=None, chat_mode=lambda: "cora"):
+                 ask_rocky=None, chat_mode=lambda: "cora", ask_group=None):
         # ask_rocky(question): "@rocky …", or anything with the chat's mode on Rocky (chat_mode()),
         # goes to Rocky alone, never to Cora (see ask_rocky_directly).
         self.ask_rocky = ask_rocky
         self.chat_mode = chat_mode
+        # await ask_group(message) -> Rocky's answer (or None) in a group chat, before hers.
+        self.ask_group = ask_group
         # In Standby, a typed message goes here instead: answered in writing without waking Live.
         self.send_without_live = send_without_live
         # keep_image(jpeg) -> id: a pasted image is kept in memory for look_again (see tools/look_again.py).
@@ -134,15 +136,34 @@ class ChatSubmission:
             if self.is_closing():
                 # Saved text remains pending; shutdown must not start a new send.
                 return
+            # A group chat: one round, their message, then Rocky's turn, then hers with his answer.
+            # He can't see images, so one with an image is hers alone.
+            group = self.ask_group is not None and self.chat_mode() == "group" and not image_png
+            rocky_said = history = None
+            if group:
+                # Taken before the message is shown, so it isn't given to her twice.
+                history = self.conversation.get_reconnect_history()
+                self.show_sent(shown)
+                sent = True
+                # Free to type the next one while he answers.
+                composer.clear()
+                composer.disabled = self.is_closing() or self.is_reconnecting()
+                rocky_said = await self.ask_group(message)
+                if self.is_closing():
+                    return
             without_live = self.is_standby() and self.send_without_live is not None
             try:
-                if without_live:
+                if without_live and group:
+                    self.send_without_live(message, image_seen, group=True, rocky_said=rocky_said, history=history)
+                elif without_live:
                     # The written reply arrives later; Live stays closed.
                     self.send_without_live(message, image_seen)
                 else:
                     self.backend_work.start_typed_request()
                     self.trace("typed.submit", message_id=str(message_id))
-                    if image_seen:
+                    if group:
+                        await self.live.send_text(message, group=True, rocky_said=rocky_said)
+                    elif image_seen:
                         await self.live.send_text(message, image_seen=image_seen)
                     else:
                         await self.live.send_text(message)
@@ -159,11 +180,11 @@ class ChatSubmission:
 
             self.pending_message = None
             await self.record_keyboard_delivery(message_id, "sent")
+            if group:
+                # Shown before Rocky's turn.
+                return
             sent = True
-            self.conversation.flush_transcript()
-            self.conversation.write_log(f"You: {shown}")
-            # Saved above; the web page hears of it here.
-            self.conversation.announce("user", shown, "keyboard")
+            self.show_sent(shown, end=False)
             if image_png:
                 # Shown small in the chat (click for the pop-up), kept only in memory.
                 image = Image.open(io.BytesIO(image_png)).convert("RGB")
@@ -187,6 +208,14 @@ class ChatSubmission:
             composer.disabled = self.is_closing() or self.is_reconnecting()
             if not composer.disabled:
                 composer.focus()
+
+    def show_sent(self, shown: str, end: bool = True) -> None:
+        """Their message in the chat, and to the web page (it was saved before sending)."""
+        self.conversation.flush_transcript()
+        self.conversation.write_log(f"You: {shown}")
+        self.conversation.announce("user", shown, "keyboard")
+        if end:
+            self.conversation.write_log("")
 
     @staticmethod
     def restore_draft(composer: ChatComposer, message: str, image_png: bytes) -> None:

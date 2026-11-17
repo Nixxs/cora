@@ -206,6 +206,9 @@ class OllamaClientTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(seen, ["Hey ", "Hey mate."])
             self.assertIs(asked[-1]["stream"], True)
         self.assertNotIn("think", asked[-1])
+        # Where to stop goes with the options, beside the context size (which must never change).
+        await ollama.chat("gemma", [], on_text=seen.append, stop=["\nCora:"])
+        self.assertEqual(asked[-1]["options"], {"num_ctx": 16384, "stop": ["\nCora:"]})
 
         def broken(request):
             return httpx.Response(200, content=b'{"message": {"content": "Hey"}}\n{"error": "out of memory"}\n')

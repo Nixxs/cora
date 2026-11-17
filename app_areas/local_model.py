@@ -26,7 +26,7 @@ from local_model.rocky_browsing import (
 )
 from subconscious.interests.browse_exploration import BrowserAccess, Session
 from local_model.rocky import (
-    QUESTION_MAX_CHARS, RockyThread, RockyUnavailable, answer_text, shown_so_far,
+    QUESTION_MAX_CHARS, GroupThread, stop_at, RockyThread, RockyUnavailable, answer_text, shown_so_far,
 )
 from tools.route import current_route
 
@@ -91,6 +91,8 @@ class LocalModelMixin:
         self.rocky_thread = RockyThread()
         # And what the person has asked him directly (@rocky), apart from her.
         self.rocky_direct_thread = RockyThread(direct=True)
+        # And the group chat's: the conversation as shown is his thread there.
+        self.rocky_group_thread = GroupThread(lambda: self.conversation.group_transcript())
         self.rocky_lock = asyncio.Lock()
         # While he waits for her exploring to free the browser: it wraps up, and doesn't start again.
         self.rocky_wants_browser = False
@@ -171,6 +173,41 @@ class LocalModelMixin:
         self.web_feed.publish_rocky(question, answer, asker="you", ref=ref, device=device)
         return answer
 
+    async def ask_rocky_in_group(self, question: str, device: str | None = None, ref: str | None = None,
+                                 on_text=None, on_status=None) -> str | None:
+        """Rocky's turn in a group chat, before Cora's: he sees the conversation as shown (theirs,
+        hers and his own lines; the person's message, already shown, last), answers it, browsing
+        first if he chooses, and his answer streams into the desk's chat under it (and to on_text
+        and on_status: the page that asked, if any). Unlike @rocky it's part of her conversation,
+        so it goes to every web page and her next turn is given it. Returns his answer with the
+        line under it, for her turn; None (with why, shown) if he hasn't one."""
+        draft = self.conversation.rocky_in_group()
+        name = self.rocky_person_name()
+
+        def streamed(so_far: str) -> None:
+            shown = shown_so_far(so_far, name)
+            draft.update(shown)
+            if on_text is not None:
+                on_text(shown)
+
+        def looking(what: str) -> None:
+            draft.looking(what)
+            if on_status is not None:
+                on_status(what)
+
+        try:
+            if not self.local_model_name:
+                raise RockyUnavailable(NO_ROCKY_MODEL)
+            reply = await self.rocky_answer(self.rocky_group_thread, question, False, "Asking Rocky (group chat).",
+                                            on_text=streamed, on_status=looking)
+        except RockyUnavailable as error:
+            draft.fail(f"{error} Cora's answering on her own.")
+            return None
+        answer = f"{reply.answer}\n\n*{reply.looked}*"
+        draft.finish(answer)
+        self.web_feed.publish_rocky(question, answer, asker="group", ref=ref, device=device)
+        return answer
+
     @work(group="rocky-direct", exit_on_error=False)
     async def ask_rocky_at_desk(self, question: str) -> None:
         """@rocky typed at the desk (see ask_rocky_directly)."""
@@ -205,7 +242,9 @@ class LocalModelMixin:
                     if browser is None:
                         messages[0] = {**messages[0], "content": messages[0]["content"] + no_browser_note(
                             date.today(), why)}
-                        reply = await ollama.chat(name, messages, **streaming)
+                        # Stopped as he starts anyone else's turn ("\nCora:"), as a group chat invites.
+                        reply = await ollama.chat(name, messages, stop=stop_at(self.rocky_person_name()),
+                                                  **streaming)
                         looked = looked_line([], [], why)
                     else:
                         reply, looked = await self.rocky_browses(ollama, name, messages, browser, on_text,
@@ -273,8 +312,10 @@ class LocalModelMixin:
                 self.activity.write(f"Rocky's browser didn't respond ({type(error).__name__}).", "Rocky")
                 return "The browser didn't respond. Answer with what you know, and say you couldn't check."
 
+        stop = stop_at(self.rocky_person_name())
+
         async def turn(sent: list[dict], tools, streamed) -> Turn:
-            return await ollama.turn(name, sent, tools, streamed)
+            return await ollama.turn(name, sent, tools, streamed, stop=stop)
 
         def close_tab() -> None:
             try:

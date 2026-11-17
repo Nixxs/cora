@@ -53,6 +53,46 @@ def speaker(direct: bool, name: str = "") -> str:
 # The personas without a name, as most tests and the Rocky test runner see them.
 PERSONA = persona(False)
 DIRECT_PERSONA = persona(True)
+
+
+def group_persona(name: str = "") -> str:
+    """His system prompt in a group chat with the person and Cora: he answers first, she after."""
+    who = name or "the person"
+    return (f"You are Rocky, in a group chat with {who} and Cora, an AI assistant who works for "
+            f"{name or 'them'}; you're her consultant and friend. {who[0].upper()}{who[1:]}'s messages start "
+            f"\"{speaker(True, name)}\" and Cora's start \"Cora:\". You answer {who}'s latest message first and "
+            "Cora replies after you, so answer it yourself rather than leaving it to her. Write only your own "
+            "message, then stop: never write Cora's reply or anyone else's lines, and don't start yours with "
+            f"any name. {CHARACTER} Talk to them both as friends.")
+
+
+class GroupThread:
+    """His side of a group chat: what he's sent is the conversation as shown (transcript() gives
+    (who, said) oldest first, who being "person", "cora" or "rocky", ending with the question), so
+    he sees Cora's replies too. Nothing of its own to keep (add does nothing)."""
+
+    def __init__(self, transcript: Callable[[], list[tuple[str, str]]]) -> None:
+        self.transcript = transcript
+
+    def messages(self, question: str, new_topic: bool, name: str = "") -> list[dict]:
+        person = speaker(True, name)
+        messages = [{"role": "system", "content": group_persona(name)}]
+        said = self.transcript() or [("person", question)]
+        for who, text in said:
+            if who == "rocky":
+                messages.append({"role": "assistant", "content": text})
+                continue
+            line = f"{person if who == 'person' else 'Cora:'} {text}"
+            if messages[-1]["role"] == "user":
+                messages[-1]["content"] += f"\n\n{line}"
+            else:
+                messages.append({"role": "user", "content": line})
+        if messages[-1]["role"] != "user":
+            messages.append({"role": "user", "content": f"{person} {question}"})
+        return messages
+
+    def add(self, question: str, answer: str) -> None:
+        pass
 # "@rocky …" (or "@Rocky: …"): the person asking him directly. Not "@rockyroad".
 DIRECT = re.compile(r"^@rocky\b[\s:,]*", re.IGNORECASE)
 # A thread is forgotten after this long without a question, and keeps this many exchanges.
@@ -82,16 +122,42 @@ def without_label(text: str, name: str = "") -> str:
     return label.sub("", text, count=1)
 
 
+def speakers(name: str = "") -> list[str]:
+    """The names whose turns he must never write: everyone in his messages, himself included."""
+    return ["Cora", "Rocky", "The person"] + ([name] if name else [])
+
+
+def stop_at(name: str = "") -> list[str]:
+    """Where Ollama stops him: a new line starting someone's turn, as in a group chat's messages."""
+    return [f"\n{who}:" for who in speakers(name)] + [f"\n**{who}:" for who in speakers(name)]
+
+
+# The line Cora adds under his answers (rocky_browsing.looked_line), which he isn't to write himself.
+LOOKED_LINE = re.compile(r"(?m)^[ \t]*[*_]*(?:From memory:|He searched|He read)[^\n]*\n?")
+
+
+def own_turn(text: str, name: str = "") -> str:
+    """His reply alone: cut where he starts writing someone else's turn ("Cora: …" on a line of its
+    own, bold or not), without any line of Cora's about what he looked up."""
+    names = "|".join(re.escape(who) for who in speakers(name))
+    other = re.compile(rf"(?m)^[ \t]*[*_]*(?:{names})[*_]*(?: \([^)\n]*\))?[ \t]*[*_]*:", re.IGNORECASE)
+    found = other.search(text, 1)
+    if found:
+        text = text[:found.start()]
+    return LOOKED_LINE.sub("", text)
+
+
 def shown_so_far(reply: str, name: str = "") -> str:
-    """His answer as it streams in, without any thinking (finished blocks, or one still open) or a
-    copied speaker label."""
+    """His answer as it streams in, without any thinking (finished blocks, or one still open), a
+    copied speaker label, or anyone else's turn."""
     shown = THINKING.sub("", reply)
-    return without_label(shown.split("<think>", 1)[0], name).lstrip()
+    return own_turn(without_label(shown.split("<think>", 1)[0], name), name).lstrip()
 
 
 def answer_text(reply: str, name: str = "") -> str:
-    """What he said, without any thinking a reasoning model wrote first, or a copied speaker label."""
-    answer = without_label(THINKING.sub("", reply), name).strip()
+    """What he said, without any thinking a reasoning model wrote first, a copied speaker label, or
+    anyone else's turn."""
+    answer = own_turn(without_label(THINKING.sub("", reply), name), name).strip()
     return answer if len(answer) <= ANSWER_MAX_CHARS else answer[:ANSWER_MAX_CHARS - 1].rstrip() + "…"
 
 

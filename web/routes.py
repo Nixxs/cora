@@ -78,7 +78,9 @@ class WebAccess:
     # send_message(device, text, on_text, ref) -> her reply, or None if it failed. on_text gets
     # her text so far as it streams in. It carries on if the page goes away, so the reply is still
     # shown at the desk and saved. ref is the page's own mark for the message, carried into the
-    # feed so that page doesn't show it twice.
+    # feed so that page doesn't show it twice. In a group chat it's also given on_rocky(kind, value)
+    # for Rocky's turn first: ("text", so far), ("status", what he's doing), then ("done", his
+    # answer) or ("none", why not).
     send_message: Callable[[WebDevice, str, Callable[[str], None], str | None], Awaitable[str | None]] | None = None
     # The conversation as the page sees it, and waiting until its earlier messages are loaded.
     feed: MessageFeed | None = None
@@ -136,11 +138,11 @@ async def reply_lines(updates: asyncio.Queue):
     for each new piece, then {"type": "done", "html"} or {"type": "error", "message"}. A ("done",
     None) update is the usual failure; ("error", message) says why. ("status", text) is what Rocky
     is doing on the web ({"type": "status", "text"}); the text starts again from nothing after it."""
-    sent = 0
+    sent = rocky_sent = 0
     while True:
         kind, value = await updates.get()
         # Text that queued up meanwhile goes as one piece, up to whatever came after it.
-        while kind == "text" and not updates.empty():
+        while kind in ("text", "rocky_text") and not updates.empty():
             kind, value = updates.get_nowait()
         if kind == "error":
             yield line({"type": "error", "message": value})
@@ -148,6 +150,24 @@ async def reply_lines(updates: asyncio.Queue):
         if kind == "status":
             sent = 0
             yield line({"type": "status", "text": value})
+            continue
+        # In a group chat, Rocky's turn comes first, the same way: {"type": "rocky_delta", "text"},
+        # "rocky_status", then "rocky_done" (his answer as safe HTML) or "rocky_none" (why not).
+        if kind == "rocky_text":
+            delta = value[rocky_sent:]
+            rocky_sent = len(value)
+            if delta:
+                yield line({"type": "rocky_delta", "text": delta})
+            continue
+        if kind == "rocky_status":
+            rocky_sent = 0
+            yield line({"type": "rocky_status", "text": value})
+            continue
+        if kind == "rocky_done":
+            yield line({"type": "rocky_done", "html": chat_html(value)})
+            continue
+        if kind == "rocky_none":
+            yield line({"type": "rocky_none", "message": value})
             continue
         if kind == "text":
             delta = value[sent:] if value.startswith(value[:sent]) else value
@@ -254,10 +274,15 @@ def api_routes(access: WebAccess) -> list[Route]:
         ref = ref if isinstance(ref, str) and 0 < len(ref) <= REF_MAX_CHARS else None
         updates: asyncio.Queue = asyncio.Queue()
 
+        # A group chat (the page's chip on Group): Rocky answers first, streamed the same way.
+        group = body.get("group") is True and image is None
+
         async def reply() -> None:
             try:
                 # The photo only when there is one, so senders without photos keep four arguments.
                 extra = {"image": image} if image is not None else {}
+                if group:
+                    extra["on_rocky"] = lambda kind, value: updates.put_nowait((f"rocky_{kind}", value))
                 updates.put_nowait(("done", await access.send_message(
                     device, text, lambda so_far: updates.put_nowait(("text", so_far)), ref, **extra,
                 )))

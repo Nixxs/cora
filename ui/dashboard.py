@@ -240,6 +240,8 @@ class DashboardScreen(Screen):
                     # its mode chip is the app's too (CoraApp.set_chat_mode).
                     with HorizontalGroup(classes="composer-row"):
                         yield ChatModeChip("Cora ›", id="dashboard-chat-mode", classes="chat-mode")
+                        yield Button("+img", id="dashboard-chat-image", classes="image-button",
+                                     tooltip="Choose an image to send (or paste one with Ctrl+Alt+V)")
                         yield ChatComposer(
                             placeholder="Type a message to Cora...",
                             id="dashboard-input",

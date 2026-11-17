@@ -126,6 +126,33 @@ class MessageRouteTests(unittest.IsolatedAsyncioTestCase):
         self.access.send_message = None
         self.assertEqual((await self.post({"text": "Hi"})).status_code, 503)
 
+    async def test_in_a_group_chat_rockys_turn_streams_first(self):
+        turns = []
+
+        async def send_message(device, text, on_text, ref=None, on_rocky=None):
+            turns.append(on_rocky is not None)
+            if on_rocky is not None:
+                on_rocky("status", 'searching for "booze and ket"')
+                on_rocky("text", "Don't")
+                await asyncio.sleep(0)
+                on_rocky("text", "Don't, mate.")
+                await asyncio.sleep(0)
+                on_rocky("done", "Don't, **mate**.")
+            on_text("Agreed.")
+            await asyncio.sleep(0)
+            return "Agreed."
+
+        self.access.send_message = send_message
+        updates = lines(await self.post({"text": "and with booze?", "group": True}))
+        self.assertEqual(updates, [
+            {"type": "rocky_status", "text": 'searching for "booze and ket"'},
+            {"type": "rocky_delta", "text": "Don't"}, {"type": "rocky_delta", "text": ", mate."},
+            {"type": "rocky_done", "html": chat_html("Don't, **mate**.")},
+            {"type": "delta", "text": "Agreed."}, {"type": "done", "html": chat_html("Agreed.")}])
+        # Without the flag (or with a photo, which he can't see) it's hers alone, as before.
+        await self.post({"text": "hi"})
+        self.assertEqual(turns, [True, False])
+
     async def test_a_message_for_rocky_alone_never_reaches_her(self):
         answer = await self.post({"text": " @Rocky how strong is this?"})
         self.assertEqual(answer.status_code, 409)

@@ -9,7 +9,7 @@ from textual.actions import SkipAction
 from textual.widgets import TextArea
 from textual import events, work
 
-from ui.composer import ChatComposer, ChatModeChip
+from ui.composer import ChatComposer, ChatModeChip, file_png, pick_image_file
 from live import typed_content
 from backend_chat import STANDBY_EXCLUDED, BackendRoute
 from session_config import instruction_sections
@@ -45,6 +45,35 @@ class ChatMixin:
             for chip in screen.query(ChatModeChip):
                 chip.show(self.chat_mode, offered)
 
+    @work(group="choose-image", exit_on_error=False)
+    async def choose_chat_image(self, composer: ChatComposer) -> None:
+        """+img: an image file chosen in the system's own picker, attached to composer as a pasted
+        one is (read when the message is sent, kept for look_again). One picker at a time."""
+        if getattr(self, "picking_image", False) or composer.disabled or self.closing:
+            return
+        self.picking_image = True
+        try:
+            try:
+                path = await asyncio.to_thread(pick_image_file)
+            except Exception as error:
+                self.activity.write(f"The file picker didn't open ({type(error).__name__}).", "Image")
+                self.notify("The file picker couldn't open here. Paste an image with Ctrl+Alt+V instead.",
+                            severity="warning")
+                return
+            if path is None or self.closing:
+                return
+            try:
+                png = await asyncio.to_thread(file_png, path)
+            except Exception:
+                self.notify("That file isn't an image Cora can read.", severity="warning")
+                return
+            # One image per message: it replaces one already attached.
+            composer.attach_image(png)
+        finally:
+            self.picking_image = False
+            if not composer.disabled:
+                composer.focus()
+
     # Textual owns worker scheduling and cancellation; coordinators own the work.
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:
         self.submission.submitted(event)
@@ -69,12 +98,14 @@ class ChatMixin:
         else:
             await self.conversation_persistence.save_chat_message(message_id, role, text, channel, device)
 
-    def send_without_live(self, message: str, image_seen: str | None = None) -> None:
-        """In Standby, answer a typed message in writing without waking Live."""
+    def send_without_live(self, message: str, image_seen: str | None = None, group: bool = False,
+                          rocky_said: str | None = None, history: list[dict] | None = None) -> None:
+        """In Standby, answer a typed message in writing without waking Live. In a group chat
+        (group), with Rocky's answer to it; history then comes from before the message was shown."""
         # Taken now, before the message itself joins the chat, so it isn't sent twice.
-        history = self.conversation.get_reconnect_history()
+        history = self.conversation.get_reconnect_history() if history is None else history
         self.keep_conversation_open()
-        self.answer_without_live(typed_content(message, image_seen), history)
+        self.answer_without_live(typed_content(message, image_seen, group, rocky_said), history, group)
 
     def keep_conversation_open(self) -> None:
         """Talking in writing keeps the conversation going: in Standby it ends only after a long quiet."""
@@ -149,13 +180,15 @@ class ChatMixin:
         )
 
     @work(group="text-chat")
-    async def answer_without_live(self, content: list[dict], history: list[dict]) -> None:
+    async def answer_without_live(self, content: list[dict], history: list[dict], group: bool = False) -> None:
         self.activity.write("Answering in writing without waking Live.", "Writing a reply")
         # Shown as it streams in, then replaced by the finished reply.
         draft = self.conversation.start_written_reply()
+        # In a group chat Rocky has already answered: she doesn't consult him as well.
+        excluded = STANDBY_EXCLUDED | self.unavailable_tools() | ({"consult_rocky"} if group else set())
         try:
             text = await self.reply_in_writing(
-                content, history, BackendRoute(excluded=STANDBY_EXCLUDED | self.unavailable_tools(), channel="desk"),
+                content, history, BackendRoute(excluded=excluded, channel="desk"),
                 on_text=draft.update,
             )
         except Exception as error:

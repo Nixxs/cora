@@ -149,12 +149,19 @@ function showApproval(request) {
   }));
 }
 
-/** Her reply arrives one JSON object a line: pieces as she writes, then the finished reply. */
-async function readReply(response, draft) {
+/** Her reply arrives one JSON object a line: pieces as she writes, then the finished reply. In a
+ * group chat Rocky's turn comes first the same way (rocky_* pieces, into rocky's bubble). */
+async function readReply(response, draft, rocky = null) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
   let written = "";
+  let rockyWritten = "";
+  let rockyDone = rocky === null;
+  const endRocky = () => {
+    if (!rockyDone) rocky.fail();
+    rockyDone = true;
+  };
   for (;;) {
     const { value, done } = await reader.read();
     if (done) break;
@@ -164,7 +171,24 @@ async function readReply(response, draft) {
     for (const text of lines) {
       if (!text.trim()) continue;
       const update = JSON.parse(text);
+      if (rocky && update.type.startsWith("rocky_")) {
+        if (update.type === "rocky_delta") {
+          rockyWritten += update.text;
+          rocky.update(rockyWritten);
+        } else if (update.type === "rocky_status") {
+          rockyWritten = "";
+          rocky.status(update.text);
+        } else if (update.type === "rocky_done") {
+          rocky.finish(update.html);
+          rockyDone = true;
+        } else if (update.type === "rocky_none") {
+          rockyDone = true;
+          rocky.fail(update.message);
+        }
+        continue;
+      }
       if (update.type === "delta") {
+        endRocky();
         written += update.text;
         draft.update(written);
       } else if (update.type === "status") {
@@ -172,9 +196,11 @@ async function readReply(response, draft) {
         written = "";
         draft.status?.(update.text);
       } else if (update.type === "done") {
+        endRocky();
         draft.finish(update.html);
         return;
       } else if (update.type === "error") {
+        endRocky();
         draft.fail();
         addNotice(update.message);
         return;
@@ -182,6 +208,7 @@ async function readReply(response, draft) {
     }
   }
   // The stream ended without a finished reply: the connection dropped part way.
+  endRocky();
   draft.fail();
   addNotice(DROPPED);
 }
@@ -193,14 +220,18 @@ function newRef() {
 // "@rocky …": to Rocky alone, never to Cora (as the desk's chat_submission and Cora's PC check too).
 const DIRECT_ROCKY = /^@rocky\b[\s:,]*/i;
 
-// Who your messages go to from this page: Cora, or Rocky alone (as if each began "@rocky"). Each
-// device keeps its own, in this browser only; Cora unless changed.
-const MODES = ["cora", "rocky"];
-const MODE_NAMES = { cora: "Cora", rocky: "Rocky" };
-const MODE_PLACEHOLDERS = { cora: "Type to Cora…", rocky: "Type to Rocky (private)…" };
+// Who your messages go to from this page: Cora, Rocky alone (as if each began "@rocky"), or both
+// as a group chat (Rocky answers first, then Cora, who sees his answer). Each device keeps its
+// own, in this browser only; Cora unless changed.
+const MODES = ["cora", "rocky", "group"];
+const MODE_NAMES = { cora: "Cora", rocky: "Rocky", group: "Group" };
+const MODE_PLACEHOLDERS = {
+  cora: "Type to Cora…", rocky: "Type to Rocky (private)…", group: "Type to Cora and Rocky…",
+};
 const MODE_LABELS = {
   cora: "Messages go to Cora: tap for Rocky",
-  rocky: "Messages go to Rocky alone, Cora doesn't see them: tap for Cora",
+  rocky: "Messages go to Rocky alone, Cora doesn't see them: tap for a group chat",
+  group: "A group chat: Rocky answers first, then Cora, who sees his answer: tap for Cora",
 };
 const MODE_KEY = "cora-chat-mode";
 let chatMode = "cora";
@@ -290,16 +321,23 @@ async function send(text) {
   if (!text && !photo) return;
   markDay(new Date());
   addMessage({ who: "You", via: thisDevice ? `web · ${thisDevice}` : "web", text, photo: photo?.url });
+  // A group chat: Rocky's turn first, under your message, then hers. He can't see photos, so a
+  // message with one is hers alone.
+  const group = chatMode === "group" && !photo && Boolean(text);
+  const rocky = group ? askingRocky(null) : null;
   const draft = startWriting("web");
+  const body = photo ? { text, ref, image: photo.base64 } : { text, ref };
+  if (group) body.group = true;
   let response;
   try {
     response = await fetch("/api/messages", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(photo ? { text, ref, image: photo.base64 } : { text, ref }),
+      body: JSON.stringify(body),
     });
   } catch {
+    rocky?.fail();
     draft.fail();
     addNotice(UNREACHABLE);
     return;
@@ -310,14 +348,16 @@ async function send(text) {
     return;
   }
   if (!response.ok || !response.body) {
-    const body = await response.json().catch(() => ({}));
+    const answer = await response.json().catch(() => ({}));
+    rocky?.fail();
     draft.fail();
-    addNotice(body.error || UNREACHABLE);
+    addNotice(answer.error || UNREACHABLE);
     return;
   }
   try {
-    await readReply(response, draft);
+    await readReply(response, draft, rocky);
   } catch {
+    rocky?.fail();
     draft.fail();
     addNotice(DROPPED);
   }

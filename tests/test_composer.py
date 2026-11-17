@@ -1,5 +1,7 @@
 import io
+from pathlib import Path
 import subprocess
+import tempfile
 import threading
 import unittest
 from messaging.images import photo_described
@@ -14,7 +16,9 @@ import ui.composer
 from app import CoraApp
 from tools.look_at_screen import PASTE_INSTRUCTIONS, PASTE_QUESTION
 from ui.chat_widgets import ChatImage
-from ui.composer import IMAGE_MARKER, NO_IMAGE_TOOL, SENDING_IMAGE, ChatComposer, clipboard_png
+from ui.composer import (
+    IMAGE_MARKER, IMAGE_MAX_SIDE, NO_IMAGE_TOOL, SENDING_IMAGE, ChatComposer, clipboard_png, file_png,
+)
 
 
 class LinuxClipboardTests(unittest.TestCase):
@@ -303,6 +307,62 @@ class ComposerTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("escape")
                 self.assertIsNone(composer.image_png)
                 self.assertEqual(app.query_one("#input-frame").border_subtitle, "")
+
+
+class ChooseImageTests(unittest.IsolatedAsyncioTestCase):
+    """+img: an image file from the system's picker, attached as a pasted one is."""
+
+    def image_file(self, size=(3000, 1000)):
+        path = Path(self.enterContext(tempfile.TemporaryDirectory())) / "photo.jpg"
+        Image.new("RGB", size, "blue").save(path)
+        return str(path)
+
+    def test_a_file_becomes_the_chats_png_at_most_2048_a_side(self):
+        png = file_png(self.image_file())
+        with Image.open(io.BytesIO(png)) as image:
+            self.assertEqual((image.format, max(image.size)), ("PNG", IMAGE_MAX_SIDE))
+        not_an_image = Path(self.image_file()).with_name("notes.txt")
+        not_an_image.write_text("hello")
+        with self.assertRaises(Exception):
+            file_png(str(not_an_image))
+
+    async def run_picker(self, picked):
+        with patch.object(CoraApp, "connect_to_cora", return_value=None), \
+                patch("app_areas.chat.pick_image_file", side_effect=picked if isinstance(picked, Exception) else None,
+                      return_value=picked):
+            app = CoraApp()
+            async with app.run_test(size=(90, 35)) as pilot:
+                await pilot.pause()
+                composer = app.query_one("#chat-input", ChatComposer)
+                app.notify = MagicMock()
+                await pilot.click("#chat-image")
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                # Read while the app still runs.
+                self.marker = app.query_one("#input-frame").border_subtitle
+                self.focused = app.focused is composer
+                return app, composer
+
+    async def test_the_chosen_image_is_attached_and_marked(self):
+        app, composer = await self.run_picker(self.image_file((10, 10)))
+        self.assertIsNotNone(composer.image_png)
+        self.assertEqual(self.marker, IMAGE_MARKER)
+        self.assertTrue(self.focused)
+
+    async def test_cancelled_or_no_picker_attaches_nothing(self):
+        app, composer = await self.run_picker(None)
+        self.assertIsNone(composer.image_png)
+        app.notify.assert_not_called()
+        app, composer = await self.run_picker(RuntimeError("no display"))
+        self.assertIsNone(composer.image_png)
+        self.assertIn("Paste an image with Ctrl+Alt+V", app.notify.call_args.args[0])
+
+    async def test_a_file_that_isnt_an_image_says_so(self):
+        path = Path(self.image_file()).with_name("notes.txt")
+        path.write_text("hello")
+        app, composer = await self.run_picker(str(path))
+        self.assertIsNone(composer.image_png)
+        self.assertIn("isn't an image", app.notify.call_args.args[0])
 
 
 if __name__ == "__main__":

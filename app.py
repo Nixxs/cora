@@ -194,6 +194,8 @@ class CoraApp(
                         # Who your messages go to, then the message.
                         with HorizontalGroup(classes="composer-row"):
                             yield ChatModeChip("Cora ›", id="chat-mode", classes="chat-mode")
+                            yield Button("+img", id="chat-image", classes="image-button",
+                                         tooltip="Choose an image to send (or paste one with Ctrl+Alt+V)")
                             yield ChatComposer(
                                 placeholder="Type a message to Cora...",
                                 id="chat-input",
@@ -513,7 +515,7 @@ class CoraApp(
             notify=lambda message, **options: self.notify(message, **options),
             trace=self.trace_live, send_without_live=self.send_without_live,
             keep_image=self.kept_images.keep, ask_rocky=self.ask_rocky_at_desk,
-            chat_mode=lambda: self.chat_mode,
+            chat_mode=lambda: self.chat_mode, ask_group=lambda message: self.ask_rocky_in_group(message),
         )
         self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(
@@ -679,6 +681,10 @@ class CoraApp(
                     self.live.context, load_spend=self.load_spend,
                     claude_sessions=self.claude_sessions_shown,
                 ))
+        elif event.button.id in ("chat-image", "dashboard-chat-image"):
+            # The system's file picker, for the box beside it.
+            for composer in event.button.parent.query(ChatComposer):
+                self.choose_chat_image(composer)
         elif event.button.id in ("chat-mode", "dashboard-chat-mode"):
             self.set_chat_mode(next_mode(self.chat_mode))
             # Straight back to typing, in the box beside it.

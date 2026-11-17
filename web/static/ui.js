@@ -191,8 +191,10 @@ function rockyAnswer(html, when, via = " · local model") {
  * one she's still writing on this page, if any.
  */
 export function addRocky({ asker = "cora", question, html, via = "", when = new Date() }) {
-  const asked = rockyQuestion({ asker, question, via, when });
   const answer = rockyAnswer(html, when);
+  // In a group chat he answers your message, shown just above: no question of his own.
+  if (asker === "group") return append(answer);
+  const asked = rockyQuestion({ asker, question, via, when });
   const draft = asker === "cora" ? output.querySelector(".message.cora.writing") : null;
   if (!draft) {
     append(asked);
@@ -208,9 +210,10 @@ export function addRocky({ asker = "cora", question, html, via = "", when = new 
 
 /** Your question to Rocky from this page (@rocky), and his answer to come, like startWriting's:
  * update(text) as it streams in, then finish(html), or fail(why) (why: shown in its place if
- * nothing had come yet; what had stays, marked incomplete). */
+ * nothing had come yet; what had stays, marked incomplete). question null: his turn in a group
+ * chat, under your message. */
 export function askingRocky(question, via) {
-  append(rockyQuestion({ asker: "you", question, via, when: new Date() }));
+  if (question !== null) append(rockyQuestion({ asker: "you", question, via, when: new Date() }));
   const answer = append(rockyAnswer("<p></p>", new Date(), " · thinking…"));
   answer.classList.add("writing");
   const body = answer.querySelector(".body");
