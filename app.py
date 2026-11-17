@@ -203,7 +203,8 @@ class CoraApp(
                                 show_line_numbers=False,
                                 highlight_cursor_line=False,
                             )
-                yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(), id="side-panel")
+                yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(),
+                                task_call=lambda: self.task_call_view(), id="side-panel")
 
     def on_mount(self) -> None:
         if self.freeze_memory:
@@ -483,6 +484,8 @@ class CoraApp(
         self.contact_calls_today: dict = {}
         # A call she placed for a task, from placing it until it's over (one at a time).
         self.task_call = None
+        # The call shown beside the chat and on the web page: the latest, for a while after it ends.
+        self.shown_task_call = None
         self.web_devices = []
         self.web_controls = None
         self.signal_listener: SignalReceiver | None = None
@@ -680,7 +683,7 @@ class CoraApp(
                     self.voice_bands, self.conversation, self.audio_status,
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context, load_spend=self.load_spend,
-                    claude_sessions=self.claude_sessions_shown,
+                    claude_sessions=self.claude_sessions_shown, task_call=self.task_call_view,
                 ))
         elif event.button.id in ("chat-image", "dashboard-chat-image"):
             # The system's file picker, for the box beside it.

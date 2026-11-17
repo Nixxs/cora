@@ -14,7 +14,7 @@ import httpx2 as httpx
 
 from app_areas import task_calls
 from app_areas.contact_calls import CallRoute
-from app_areas.task_calls import CUT_MARK, TaskCall, cut_middle, said_lines, transcript_step
+from app_areas.task_calls import CUT_MARK, TaskCall, call_view, clock_length, cut_middle, said_lines, transcript_step
 from phone import twilio
 from phone.routes import PhoneAccess, phone_routes
 from server.listener import build_app
@@ -138,6 +138,15 @@ def ready_for_calls(app):
     app.signal_settings = replace(app.signal_settings, allowed_number=YOU)
 
 
+async def until(condition, seconds=3.0):
+    """Waits for condition() to come true (failing the test if it doesn't in time)."""
+    for _ in range(int(seconds / 0.02)):
+        if condition():
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("it didn't happen in time")
+
+
 class TaskCallAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_calls_go_out_only_when_set_up_in_hours_and_one_at_a_time(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -165,8 +174,11 @@ class TaskCallAppTests(unittest.IsolatedAsyncioTestCase):
             app.save_task_party = AsyncMock(return_value=task_id)
             app.task_goal = AsyncMock(return_value="Find a plumber for Tuesday")
             app.persistence.task_party_id.return_value = party_id
-            with patch.object(twilio, "place_call", AsyncMock(return_value="CA42")) as place:
+            with patch.object(twilio, "place_call", AsyncMock(return_value="CA42")) as place, \
+                    patch.object(app, "start_task_call_session") as start:
                 self.assertEqual(await app.place_task_call(SHOP, "Ace Plumbing", "Find a plumber", None, "Ask."), task_id)
+            # Her session connects while it rings, so she's there when they answer.
+            start.assert_called_once_with(app.task_call)
             party = app.save_task_party.await_args.args[0]
             self.assertEqual(party, PhoneParty(SHOP, "Ace Plumbing"))
             sid, token, from_number, to_number, twiml, status_url, limit = place.await_args.args
@@ -218,6 +230,7 @@ class TaskCallAppTests(unittest.IsolatedAsyncioTestCase):
         listener = call.relay.listen("phone")
         app.task_call = call
         app.persistence.load_session_context = MagicMock()
+        app.task_call_link(call)  # answered: its stream claimed the call's token
         app.on_task_call_stream(call, listener, True)
         await pilot.pause()
         await asyncio.wait_for(app.workers.wait_for_complete(), 3)
@@ -225,6 +238,101 @@ class TaskCallAppTests(unittest.IsolatedAsyncioTestCase):
 
     def said(self, kind, text):
         return SimpleNamespace(type=kind, delta=text)
+
+    def ringing(self, app, call):
+        """Her session connects while the call rings, and stays on until it's closed."""
+        events = asyncio.Queue()
+        closed = asyncio.Event()
+
+        async def run(on_event, on_mic_status, on_audio_status=None):
+            call.live.connection = MagicMock()
+            call.live.connection.session.commentary.append = AsyncMock()
+            sent = call.live.connection.session.commentary.append
+            run.sent = sent
+            waiting = asyncio.ensure_future(closed.wait())
+            while True:
+                getting = asyncio.ensure_future(events.get())
+                await asyncio.wait({getting, waiting}, return_when=asyncio.FIRST_COMPLETED)
+                if waiting.done():
+                    getting.cancel()
+                    break
+                on_event(getting.result())
+            call.live.connection = None
+
+        async def close():
+            closed.set()
+
+        call.live.run = run
+        call.live.close = close
+        call.live.append_commentary = AsyncMock()
+        app.task_call = call
+        app.persistence.load_session_context = MagicMock()
+        return events
+
+    async def test_she_is_ready_while_it_rings_and_answers_their_hello_herself(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.")
+            events = self.ringing(app, call)
+            with patch.object(task_calls, "ANSWER_WAIT_SECONDS", 0.05), patch.object(app, "coordinate_task"):
+                app.start_task_call_session(call)
+                events.put_nowait(SimpleNamespace(type="session.started"))
+                await until(lambda: call.session_ready)
+                call.live.append_commentary.assert_not_awaited()  # nobody's there yet
+                # They answer: the call's audio goes to the session that was waiting.
+                self.assertIsNotNone(app.task_call_link(call))
+                listener = call.relay.listen("phone")
+                app.on_task_call_stream(call, listener, True)
+                self.assertIs(listener.mic, call.mic)
+                call.relay.hear(listener, b"hello?")
+                self.assertEqual(call.mic.get_nowait(), b"hello?")
+                events.put_nowait(self.said("session.input_transcript.delta", "Hello?"))
+                await asyncio.sleep(0.15)
+                # They spoke, so she answers them herself: no prompt.
+                call.live.append_commentary.assert_not_awaited()
+                app.on_task_call_stream(call, None, False)
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.persistence.add_task_step.assert_called()
+
+    async def test_answered_in_silence_she_is_prompted_to_start(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.")
+            events = self.ringing(app, call)
+            with patch.object(task_calls, "ANSWER_WAIT_SECONDS", 0.05), patch.object(app, "coordinate_task"):
+                app.start_task_call_session(call)
+                app.task_call_link(call)
+                app.on_task_call_stream(call, call.relay.listen("phone"), True)  # answered before she's ready
+                await asyncio.sleep(0.1)
+                call.live.append_commentary.assert_not_awaited()
+                events.put_nowait(SimpleNamespace(type="session.started"))
+                await until(lambda: call.live.append_commentary.await_count)
+                call.live.append_commentary.assert_awaited_once()
+                self.assertIn("hasn't spoken", call.live.append_commentary.await_args.args[2])
+                app.on_task_call_stream(call, None, False)
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+
+    async def test_a_call_nobody_answers_closes_her_waiting_session(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.", call_sid="CA42")
+            self.ringing(app, call)
+            with patch.object(app, "coordinate_task") as coordinate:
+                app.start_task_call_session(call)
+                await asyncio.sleep(0.05)
+                app.on_twilio_status("CA42", "no-answer")
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            self.assertIsNone(app.task_call)
+            coordinate.assert_called_once()
+            self.assertIn("nobody answered", coordinate.call_args.args[2])
+            app.persistence.save_task_call.assert_not_called()
+
+    async def test_if_nothing_says_how_it_went_her_session_gives_up_after_ringing(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.")
+            self.ringing(app, call)
+            with patch.object(task_calls, "RING_SECONDS", 0.05), patch.object(app, "coordinate_task") as coordinate:
+                app.start_task_call_session(call)
+                await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            self.assertIsNone(app.task_call)
+            self.assertIn("nobody answered", coordinate.call_args.args[2])
 
     async def test_her_report_comes_back_by_pass_on_and_the_transcript_is_kept(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -327,8 +435,178 @@ class TaskCallAppTests(unittest.IsolatedAsyncioTestCase):
                 record_id, "Her replies began 0.9 s after you stopped talking, typically")
 
 
+def tone_strength(samples, frequency, rate=24000):
+    """How much of one frequency a stretch of audio holds (Goertzel), relative to its size."""
+    import numpy as np
+    t = np.arange(len(samples)) / rate
+    return abs(np.sum(samples * np.exp(-2j * np.pi * frequency * t))) / len(samples)
+
+
+class PressKeysTests(unittest.IsolatedAsyncioTestCase):
+    def test_each_key_is_its_row_and_column_tones_with_quiet_between(self):
+        import numpy as np
+        from phone import dtmf
+        audio = np.frombuffer(dtmf.tones("3#"), dtype="<i2").astype(float)
+        tone, gap, lead = (int(seconds * dtmf.RATE) for seconds in (dtmf.TONE_SECONDS, dtmf.GAP_SECONDS,
+                                                                        dtmf.LEAD_SECONDS))
+        self.assertEqual(len(audio), lead + 2 * (tone + gap))
+        three = audio[lead:lead + tone]
+        hash_key = audio[lead + tone + gap:lead + 2 * tone + gap]
+        for samples, (low, high), others in ((three, (697, 1477), (941, 1209)), (hash_key, (941, 1477), (697, 1336))):
+            for frequency in (low, high):
+                self.assertGreater(tone_strength(samples, frequency), 5000)
+            for frequency in others:
+                self.assertLess(tone_strength(samples, frequency), 500)
+        self.assertEqual(np.abs(audio[:lead]).max(), 0)
+        self.assertLess(np.abs(audio).max(), 32767)
+        with self.assertRaises(KeyError):
+            dtmf.tones("x")
+
+    def test_only_keypad_keys_are_accepted(self):
+        from tools.press_keys import validate_arguments
+        validate_arguments({"keys": "3"})
+        validate_arguments({"keys": "0412345678#"})
+        for bad in ({"keys": ""}, {"keys": "three"}, {"keys": "3 4"}, {}, {"keys": "3", "more": 1}, {"keys": 3}):
+            with self.assertRaises(ValueError):
+                validate_arguments(bad)
+
+    async def test_keys_are_pressed_only_on_a_call_and_she_waits_silently(self):
+        import json
+        from tools.press_keys import PressKeysTool
+        pressed = MagicMock()
+        on_call = EndCallToolTests.connection(None)
+        on_call.press_keys = pressed
+        await PressKeysTool(lambda: on_call, lambda: False, MagicMock()).handle("c1", {"keys": "3"})
+        pressed.assert_called_once_with("3")
+        output = json.loads(on_call.response.item.create.await_args.kwargs["item"]["output"])
+        self.assertIn("wait silently", output["message"])
+        elsewhere = EndCallToolTests.connection(None)
+        await PressKeysTool(lambda: elsewhere, lambda: False, MagicMock()).handle("c2", {"keys": "3"})
+        self.assertIn("no phone call", elsewhere.response.item.create.await_args.kwargs["item"]["output"])
+
+    async def test_on_her_call_the_tones_go_down_the_line_and_into_the_transcript(self):
+        from phone import dtmf
+        from tools.end_call import CALL_ONLY
+        self.assertIn("press_keys", CALL_ONLY)
+        self.assertIn("press_keys", task_calls.TASK_CALL_TOOLS)
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "The Good Guys", uuid4(), "Air conditioners", "Ask.")
+            listener = call.relay.listen("phone")
+            call.transcript.add("user", "To make a new purchase, press three.")
+            app.press_call_keys(call, "3")
+            frames = []
+            while not listener.audio.empty():
+                frames.append(listener.audio.get_nowait())
+            self.assertEqual(b"".join(frames), dtmf.tones("3"))
+            self.assertTrue(all(len(frame) <= 960 for frame in frames))  # 20 ms, like the rest of the call
+            self.assertEqual(call.turns, [("user", "To make a new purchase, press three."), ("assistant", "[pressed 3]")])
+            self.assertTrue(call.relay.is_playback_busy())  # a goodbye waits for the tones too
+
+    def test_she_stays_silent_for_recordings_and_menus_and_greets_only_a_person(self):
+        from session_config import TASK_CALL_LIVE_INSTRUCTIONS, phone_party_instructions
+        rules = phone_party_instructions("The Good Guys", SHOP, "Nick")
+        self.assertIn("As soon as a person answers", rules)
+        for said in ("phone menu, hold music", "never fill their pauses", "press_keys", "On hold, stay silent",
+                     "voicemail is the exception"):
+            self.assertIn(said, rules)
+        self.assertIn("press_keys", TASK_CALL_LIVE_INSTRUCTIONS)
+        self.assertIn("stay completely silent", TASK_CALL_LIVE_INSTRUCTIONS)
+
+
+class FollowingACallTests(unittest.IsolatedAsyncioTestCase):
+    """A call she placed, followed as it happens beside the chat, in the dashboard and on the web page."""
+
+    def test_it_shows_how_it_stands_for_how_long_and_whats_said_so_far(self):
+        call = TaskCall(SHOP, "The Good Guys", uuid4(), "Air conditioners", "Ask.", started=100.0)
+        view = call_view(call, 112.0)
+        self.assertEqual((view["who"], view["number"], view["goal"], view["state"], view["for"], view["lines"]),
+                         ("The Good Guys", SHOP, "Air conditioners", "ringing", "0:12", []))
+        call.connected, call.answered_at = True, 120.0
+        call.turns = [("user", "Thank you for calling."), ("assistant", ".")]
+        call.transcript.add("assistant", "Hi, I'm Cora, ")
+        call.transcript.add("assistant", "calling for Nick.")
+        view = call_view(call, 185.0)
+        self.assertEqual((view["state"], view["for"]), ("on the call", "1:05"))
+        # The turn going on now is shown as it comes; wordless ones aren't.
+        self.assertEqual(view["lines"], [{"who": "them", "said": "Thank you for calling."},
+                                         {"who": "cora", "said": "Hi, I'm Cora, calling for Nick."}])
+        call.done, call.ended_at = True, 300.0
+        self.assertEqual((call_view(call, 900.0)["state"], call_view(call, 900.0)["for"]), ("ended", "3:00"))
+        unanswered = TaskCall(SHOP, None, uuid4(), "Goal", "Ask.", started=0.0, done=True, ended_at=30.0)
+        self.assertEqual((call_view(unanswered, 40.0)["state"], call_view(unanswered, 40.0)["who"]),
+                         ("didn't connect", SHOP))
+        self.assertEqual(clock_length(3725), "1:02:05")
+
+    async def test_the_latest_call_is_shown_until_a_while_after_it_ends(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.assertIsNone(app.task_call_view())
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.")
+            app.shown_task_call = call
+            self.assertEqual(app.task_call_view()["state"], "ringing")
+            call.done, call.connected = True, True
+            call.ended_at = task_calls.monotonic() - 60
+            self.assertEqual(app.task_call_view()["state"], "ended")
+            call.ended_at = task_calls.monotonic() - task_calls.CALL_SHOWN_SECONDS - 1
+            self.assertIsNone(app.task_call_view())
+
+    async def test_beside_the_chat_it_shows_while_theres_a_call_and_a_click_follows_it(self):
+        from ui.call_view import CallEntry, CallScreen
+        from ui.context_view import MarkdownView
+        async with keyboard_tests.running_app() as (app, pilot):
+            await pilot.resize_terminal(150, 40)
+            await pilot.pause()
+            panel = app.query_one("#side-panel")
+            panel.show_claude_code()
+            await pilot.pause()
+            self.assertFalse(app.query_one("#side-call").display)
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.", connected=True)
+            call.turns = [("user", "Ace Plumbing, Dave speaking.")]
+            app.shown_task_call = call
+            panel.show_claude_code()
+            await pilot.pause()
+            self.assertTrue(app.query_one("#side-call").display)
+            entry = app.query_one("#side-call-entry", CallEntry)
+            self.assertIn("call with Ace Plumbing", str(entry.render()))
+            self.assertIn("Them: Ace Plumbing, Dave speaking.", str(entry.render()))
+            await pilot.click(entry)
+            await pilot.pause()
+            self.assertIsInstance(app.screen, CallScreen)
+            self.assertIn("Them: Ace Plumbing, Dave speaking.", app.screen.query_one("#context-view-text", MarkdownView).text)
+            # It keeps up as the call goes on.
+            call.transcript.add("assistant", "Hi Dave, I'm Cora.")
+            for _ in range(30):
+                if "Hi Dave" in app.screen.query_one("#context-view-text", MarkdownView).text:
+                    break
+                await pilot.pause(0.1)
+            self.assertIn("Cora: Hi Dave, I'm Cora.", app.screen.query_one("#context-view-text", MarkdownView).text)
+            await pilot.press("escape")
+            await pilot.pause()
+
+    async def test_the_web_page_gets_it_only_on_a_paired_device(self):
+        from storage.web_device_store import WebDevice
+        from web.pairing import Pairing, token_hash
+        from web.routes import COOKIE, WebAccess, web_routes
+        device = WebDevice(uuid4(), "iPhone", datetime(2026, 11, 17), datetime(2026, 11, 17))
+
+        async def find_device(hashed):
+            return device if hashed == token_hash("token") else None
+
+        shown = {"who": "Ace Plumbing", "state": "on the call", "for": "0:42", "lines": []}
+        access = WebAccess(Pairing(), AsyncMock(), find_device, task_call=lambda: shown)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=build_app(web_routes(access))),
+                                     base_url="http://test") as client:
+            self.assertEqual((await client.get("/api/call")).status_code, 401)
+            found = await client.get("/api/call", headers={"Cookie": f"{COOKIE}=token"})
+            self.assertEqual(found.json(), {"call": shown})
+            shown = None
+            access.task_call = lambda: shown
+            self.assertEqual((await client.get("/api/call", headers={"Cookie": f"{COOKIE}=token"})).json(),
+                             {"call": None})
+
+
 class EndCallToolTests(unittest.IsolatedAsyncioTestCase):
-    def connection(self, end_call=None):
+    @staticmethod
+    def connection(end_call=None):
         connection = SimpleNamespace(response=SimpleNamespace(item=SimpleNamespace(create=AsyncMock()),
                                                               create=AsyncMock()))
         if end_call is not None:

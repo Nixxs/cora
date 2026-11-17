@@ -8,8 +8,9 @@ playing down the line.
 
 import json
 
-# Offered only on those calls: never in the person's own sessions and chats.
-CALL_ONLY = frozenset({"end_call"})
+# Offered only on those calls (press_keys only on calls she placed): never in the person's own
+# sessions and chats.
+CALL_ONLY = frozenset({"end_call", "press_keys"})
 
 SCHEMA = {
     "type": "function",

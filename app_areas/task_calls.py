@@ -1,9 +1,10 @@
 """Calls she places for the person's tasks (P3): part of CoraApp (see app.py).
 
 call_someone (approved first) records the person called as a task party and asks Twilio to ring
-them from her number. When they answer, Twilio streams the call to her listener, which connects it
-to a voice session of its own, as with a contact's call: her own self and the task's brief, never
-the person's context. She says she's an AI assistant calling for someone she works for and that she
+them from her number. Her voice session for the call (her own self and the task's brief, never the
+person's context, as with a contact's call) connects while it rings, so she's there the moment
+they answer: a slow "Hello?" gets her hung up on. When they answer, Twilio streams the call to her
+listener and its audio goes to that session. She says she's an AI assistant calling for someone she works for and that she
 keeps a transcript, keeps to the brief, and reports what she learns with pass_on, as in a task's
 email thread, so the task's coordinator brings the person their word. The transcript is kept as a
 step on the task (its start and end, as a step holds only 4,000 characters) and whole in
@@ -25,7 +26,7 @@ from uuid import UUID, uuid4
 from textual import work
 
 from live import CoraLive
-from phone import twilio
+from phone import dtmf, twilio
 from phone.routes import CallLink
 from session_config import TASK_CALL_LIVE_INSTRUCTIONS, contact_call_config, instruction_sections, phone_party_instructions
 from storage.task_store import CALL_TRANSCRIPT_MAX_CHARS, STEP_MAX_CHARS, PhoneParty
@@ -39,17 +40,26 @@ from .contact_calls import CALL_MINUTES, CallRoute, Transcript, note_for_goodbye
 CALL_HOURS = range(8, 20)
 # How long a placed call's token waits for it to be answered and its stream to open.
 TOKEN_SECONDS = 120
-# The tools on a call she placed: as in a task's email thread.
-TASK_CALL_TOOLS = frozenset({"pass_on", "end_call"})
+# How long her session, ready while it rings, waits for an answer before giving up on the call.
+RING_SECONDS = TOKEN_SECONDS + 10
+# After they answer: how long she lets them say "Hello?" (which she answers by herself) before
+# she's prompted to start anyway.
+ANSWER_WAIT_SECONDS = 1.2
+# The tools on a call she placed: as in a task's email thread, and the phone's keypad for menus.
+TASK_CALL_TOOLS = frozenset({"pass_on", "end_call", "press_keys"})
 
 ANSWERED_NOTE = (
-    "Call note, not something they said. {who} has just answered your call: introduce yourself as your "
-    "instructions say and say why you're calling. Do not mention this note."
+    "Call note, not something they said. {who} has just answered your call but hasn't spoken: introduce "
+    "yourself as your instructions say and say why you're calling. Do not mention this note."
 )
 # How much of a call's start its task step keeps (who answered, the menu she went through); the
 # rest of the step is the end of the call, where what was agreed is.
 STEP_HEAD_CHARS = 800
 CUT_MARK = "… (the middle of the call is cut here) …"
+# A call stays shown (beside the chat, in the dashboard's tasks, on the web page) this long after
+# it ends, and shows at most this many of its latest lines.
+CALL_SHOWN_SECONDS = 15 * 60
+SHOWN_LINES_MAX = 300
 # Twilio's word for a call that didn't connect, as she'd say it.
 NOT_CONNECTED = {
     "no-answer": "nobody answered", "busy": "the line was busy", "failed": "the call didn't go through",
@@ -71,9 +81,20 @@ class TaskCall:
     listener: Listener | None = None
     # Whether it was answered (its stream opened), whether she reported on it, and whether it's over.
     connected: bool = False
+    # Her session: started (while it rings), ready (Live's session began), and the call's audio for it.
+    running: bool = False
+    session_ready: bool = False
+    answered: asyncio.Event = field(default_factory=asyncio.Event)
+    mic: asyncio.Queue = field(default_factory=asyncio.Queue)
+    # Whether they've said anything yet (before that, she may be prompted to start).
+    heard_them: bool = False
+    # Why it never connected, if her session ends before it's answered.
+    unanswered_why: str = "nobody answered"
     reported: bool = False
     done: bool = False
     started: float = field(default_factory=monotonic)
+    answered_at: float | None = None
+    ended_at: float | None = None
     began_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     transcript: Transcript = field(default_factory=Transcript)
     turns: list = field(default_factory=list)
@@ -87,9 +108,9 @@ class TaskCall:
         return self.name or self.number
 
 
-def said_lines(turns: list[tuple[str, str]]) -> list[str]:
-    """A call's turns as "Them:"/"Cora:" lines. A turn with no words (the transcriber's stray "."
-    while the other one talks) is dropped, and the words either side of it joined up again."""
+def tidy_turns(turns: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """A call's turns without wordless ones (the transcriber's stray "." while the other one
+    talks), the words either side of one joined up again."""
     kept: list[tuple[str, str]] = []
     for role, text in turns:
         if not any(character.isalnum() for character in text):
@@ -98,7 +119,37 @@ def said_lines(turns: list[tuple[str, str]]) -> list[str]:
             kept[-1] = (role, f"{kept[-1][1]} {text}")
         else:
             kept.append((role, text))
-    return [f"{'Them' if role == 'user' else 'Cora'}: {text}" for role, text in kept]
+    return kept
+
+
+def said_lines(turns: list[tuple[str, str]]) -> list[str]:
+    """A call's turns as "Them:"/"Cora:" lines, tidied."""
+    return [f"{'Them' if role == 'user' else 'Cora'}: {text}" for role, text in tidy_turns(turns)]
+
+
+def clock_length(seconds: float) -> str:
+    """2:05, or 1:02:05 for an hour or more."""
+    minutes, seconds = divmod(int(max(seconds, 0)), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}:{minutes:02}:{seconds:02}" if hours else f"{minutes}:{seconds:02}"
+
+
+def call_view(call: TaskCall, now: float) -> dict:
+    """The call as it's shown while it happens: who, how it stands, for how long (ringing, or
+    since it was answered), and what's been said so far, the turn going on now included."""
+    if not call.connected:
+        state = "didn't connect" if call.done else "ringing"
+        length = (call.ended_at or now) - call.started
+    else:
+        state = "ended" if call.done else "on the call"
+        length = (call.ended_at or now) - (call.answered_at or call.started)
+    turns = list(call.turns)
+    if call.transcript.role and call.transcript.text.strip():
+        turns.append((call.transcript.role, " ".join(call.transcript.text.split())))
+    lines = [{"who": "them" if role == "user" else "cora", "said": text}
+             for role, text in tidy_turns(turns)[-SHOWN_LINES_MAX:]]
+    return {"who": call.who, "number": call.number, "goal": call.goal, "state": state,
+            "for": clock_length(length), "lines": lines}
 
 
 def cut_middle(lines: list[str], limit: int, head_chars: int = STEP_HEAD_CHARS) -> str:
@@ -174,6 +225,7 @@ class TaskCallsMixin:
         party_id = await self.conversation_persistence.call_database(self.persistence.task_party_id, task_id, number)
         call = TaskCall(number, name, task_id, goal, brief, party_id)
         self.task_call = call
+        self.shown_task_call = call
         settings = self.webhook_settings
         token = self.give_phone_token(call, TOKEN_SECONDS)
         try:
@@ -190,7 +242,23 @@ class TaskCallsMixin:
             await self.note_task_step(task_id, f"Calling {who} failed: Twilio couldn't place the call ({detail}).")
             raise ValueError(f"Twilio couldn't place the call ({detail}); nothing was said to them.") from None
         self.activity.write(f"Calling {who} for a task.", "Phone call")
+        self.start_task_call_session(call)
         return task_id
+
+    def task_call_view(self) -> dict | None:
+        """The call to show (ringing, on, or ended in the last CALL_SHOWN_SECONDS), or None."""
+        call = getattr(self, "shown_task_call", None)
+        now = monotonic()
+        if call is None or (call.done and now - (call.ended_at or now) > CALL_SHOWN_SECONDS):
+            return None
+        return call_view(call, now)
+
+    def start_task_call_session(self, call: TaskCall) -> None:
+        """Her session for the call, connecting while it rings (once)."""
+        if call.running or call.done:
+            return
+        call.running = True
+        self.run_worker(self.run_task_call(call), group="task-call", exit_on_error=False)
 
     def task_call_link(self, call: TaskCall) -> CallLink | None:
         """Her call has been answered: its own relay and session."""
@@ -213,10 +281,35 @@ class TaskCallsMixin:
         if connected:
             call.listener = listener
             call.relay.start_talking(listener)
-            self.run_worker(self.run_task_call(call), group="task-call", exit_on_error=False)
+            # The call's audio goes to her session's queue, which was waiting while it rang.
+            listener.mic = call.mic
+            call.answered_at = monotonic()
+            call.answered.set()
+            self.activity.write(f"{call.who} answered; Cora is on the call.", "Phone call")
+            self.start_task_call_session(call)
+            if call.session_ready:
+                self.run_worker(self.answered_note(call), group="task-call-notes", exit_on_error=False)
             return
         call.listener = None
         self.run_worker(call.live.close(), group="task-call-close", exit_on_error=False)
+
+    def press_call_keys(self, call: TaskCall, keys: str) -> None:
+        """Keypad tones down the call's line, for its phone menu."""
+        call.relay.play_tones(dtmf.tones(keys))
+        if (finished := call.transcript.finish()) is not None:
+            call.turns.append(finished)
+        call.turns.append(("assistant", f"[pressed {keys}]"))
+        self.activity.write(f"On the call with {call.who}, Cora pressed {keys}.", "Phone call")
+
+    async def ring_then_cap(self, call: TaskCall) -> None:
+        """Waits for the call to be answered (the session gives up after RING_SECONDS), then keeps it
+        to CALL_MINUTES from then, as Twilio does."""
+        try:
+            await asyncio.wait_for(call.answered.wait(), RING_SECONDS)
+        except TimeoutError:
+            await call.live.close()
+            return
+        await self.call_cap(call.live, call.who)
 
     async def run_task_call(self, call: TaskCall) -> None:
         try:
@@ -227,7 +320,8 @@ class TaskCallsMixin:
             )
             route = CallRoute(call.live, frozenset(self.tools.names()) - TASK_CALL_TOOLS,
                               email_party=(call.party_id, call.task_id, call.who),
-                              end_call=lambda: self.hang_up(call.live, call.relay, call.who))
+                              end_call=lambda: self.hang_up(call.live, call.relay, call.who),
+                              press_keys=lambda keys: self.press_call_keys(call, keys))
             rules = phone_party_instructions(call.who, call.number, self.live.person_name, self.live.own_name)
             live = call.live
             live.tool_schemas = lambda: self.tools.schemas(excluding=route.excluded)
@@ -235,19 +329,20 @@ class TaskCallsMixin:
             live.config_override = lambda schemas: (contact_call_config(
                 schemas, sections, [], model, rules,
                 live_instructions=TASK_CALL_LIVE_INSTRUCTIONS, voice=self.live.voice), sections)
-            # The call's audio only: never the desk's mic or speaker.
+            # The call's audio only: never the desk's mic or speaker. Nothing comes in while it rings.
             live.voice_relay = call.relay
-            live.web_microphone = call.listener.mic if call.listener is not None else None
+            live.web_microphone = call.mic
             live.speaker_muted = True
-            if call.listener is None:
-                return  # they hung up while it was getting ready
-            self.activity.write(f"{call.who} answered; Cora is on the call.", "Phone call")
-            cap = asyncio.ensure_future(self.call_cap(live, call.who))
+            if call.done:
+                return  # it didn't connect while this was getting ready
+            cap = asyncio.ensure_future(self.ring_then_cap(call))
             goodbye = asyncio.ensure_future(self.watch_goodbye(live, call.relay, call.goodbye, call.who))
             try:
                 await live.run(lambda event: self.on_task_call_event(call, route, event), lambda *status: None)
             except Exception as error:
                 self.activity.write(f"The call with {call.who} failed ({type(error).__name__}).", "Phone call")
+                if not call.connected:
+                    call.unanswered_why = "her voice session for it failed before they answered"
             finally:
                 cap.cancel()
                 goodbye.cancel()
@@ -257,9 +352,13 @@ class TaskCallsMixin:
     def on_task_call_event(self, call: TaskCall, route: CallRoute, event) -> None:
         note_for_goodbye(call.goodbye, event)
         if event.type == "session.started":
-            self.run_worker(self.answered_note(call), group="task-call-notes", exit_on_error=False)
+            call.session_ready = True
+            if call.answered.is_set():
+                self.run_worker(self.answered_note(call), group="task-call-notes", exit_on_error=False)
         elif event.type in ("session.input_transcript.delta", "session.output_transcript.delta"):
             role = "user" if event.type == "session.input_transcript.delta" else "assistant"
+            if role == "user" and event.delta.strip():
+                call.heard_them = True
             if (finished := call.transcript.add(role, event.delta)) is not None:
                 call.turns.append(finished)
         elif event.type == "response.event":
@@ -272,8 +371,11 @@ class TaskCallsMixin:
             self.activity.write(f"The call with {call.who}: {event.error.message}", "Phone call")
 
     async def answered_note(self, call: TaskCall) -> None:
+        """Once they've answered and her session is ready: if they don't say "Hello?" (which she
+        answers by herself), she's prompted to start."""
+        await asyncio.sleep(ANSWER_WAIT_SECONDS)
         connection = call.live.connection
-        if connection is not None:
+        if connection is not None and not call.heard_them and not call.done:
             await call.live.append_commentary(connection, f"answered_{uuid4().hex}", ANSWERED_NOTE.format(who=call.who))
 
     async def finish_task_call(self, call: TaskCall) -> None:
@@ -281,8 +383,13 @@ class TaskCallsMixin:
         if call.done:
             return
         call.done = True
+        call.ended_at = monotonic()
         if self.task_call is call:
             self.task_call = None
+        if not call.connected:
+            # Her session was ready, but nobody answered in time (or it failed while ringing).
+            self.call_not_connected(call, call.unanswered_why)
+            return
         if call.listener is not None:
             call.relay.tell(call.listener, {"type": "talk_ended", "reason": "ended"})
         if (finished := call.transcript.finish()) is not None:
@@ -309,7 +416,12 @@ class TaskCallsMixin:
             return
         call.done = True
         self.task_call = None
-        why = NOT_CONNECTED[status]
+        self.call_not_connected(call, NOT_CONNECTED[status])
+
+    def call_not_connected(self, call: TaskCall, why: str) -> None:
+        """A call that was never answered: her waiting session closed, and the person told why."""
+        call.ended_at = call.ended_at or monotonic()
+        self.run_worker(call.live.close(), group="task-call-close", exit_on_error=False)
         self.activity.write(f"Calling {call.who}: {why}.", "Phone call")
         self.run_worker(self.note_task_step(call.task_id, f"Called {call.who}: {why}."),
                         group="task-call-save", exit_on_error=False)

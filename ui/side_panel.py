@@ -1,5 +1,5 @@
-"""Beside the chat's box: Cora's voice, and below it Claude Code's sessions while she listens for
-them. The same graph and lines as the dashboard's voice and claude code boxes, so the chat shows
+"""Beside the chat's box: Cora's voice, a call she's placed for a task while it's on (and for a
+while after), and below them Claude Code's sessions while she listens for them. The same graph and lines as the dashboard's voice and claude code boxes, so the chat shows
 what's going on without leaving the history. Hidden when the window is too narrow to spare it."""
 
 from collections.abc import Callable
@@ -12,6 +12,7 @@ from textual.events import Resize
 from claude_code.sessions import NEEDS_YOU
 from devices.audio_bands import BAND_COUNT
 from ui.braille import BrailleGraph
+from ui.call_view import CallEntry
 from ui.chat_widgets import BorderLine
 from ui.claude_code_view import ClaudeSessionList
 from ui.dashboard import FALL_PER_TICK
@@ -26,10 +27,12 @@ class SidePanel(Vertical):
     """voice_bands() -> (Cora's, the person's) loudness bands; claude_sessions() -> the sessions,
     newest first, or None while Cora isn't listening for Claude Code."""
 
-    def __init__(self, voice_bands: Callable, claude_sessions: Callable, **options) -> None:
+    def __init__(self, voice_bands: Callable, claude_sessions: Callable,
+                 task_call: Callable[[], dict | None] = lambda: None, **options) -> None:
         super().__init__(**options)
         self.voice_bands = voice_bands
         self.claude_sessions = claude_sessions
+        self.task_call = task_call
 
     def compose(self) -> ComposeResult:
         # Cora's voice rises above the line and the person's hangs below it.
@@ -37,6 +40,8 @@ class SidePanel(Vertical):
             yield BrailleGraph(id="side-speaker-graph", bars=True)
             yield BorderLine(id="side-voice-axis")
             yield BrailleGraph(id="side-mic-graph", downward=True, bars=True)
+        with Vertical(id="side-call", classes="dashboard-box"):
+            yield CallEntry(self.task_call, id="side-call-entry")
         with Vertical(id="side-claude", classes="dashboard-box"):
             # One entry per session; a click follows it in a pop-up.
             yield ClaudeSessionList(self.claude_sessions, id="side-claude-scroll")
@@ -44,6 +49,7 @@ class SidePanel(Vertical):
     def on_mount(self) -> None:
         self.query_one("#side-voice").border_title = "voice"
         self.query_one("#side-claude").border_title = "claude code"
+        self.query_one("#side-call").border_title = "call"
         self.timers = [self.set_interval(VOICE_SECONDS, self.sample_voice),
                        self.set_interval(SESSIONS_SECONDS, self.show_claude_code)]
         if not self.display:
@@ -82,6 +88,7 @@ class SidePanel(Vertical):
     def show_claude_code(self) -> None:
         if not self.showing():
             return
+        self.set_class(self.query_one("#side-call-entry", CallEntry).refresh_view(), "with-call")
         sessions = self.claude_sessions()
         self.set_class(sessions is not None, "with-claude-code")
         if sessions is None:

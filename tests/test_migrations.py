@@ -148,6 +148,10 @@ class MigrationDatabaseTests(unittest.TestCase):
             "0066_add_game_watch.sql",
             "0067_add_game_chattiness.sql",
             "0068_add_claude_code_settings.sql",
+            "0069_create_claude_code_sessions.sql",
+            "0070_add_local_model_settings.sql",
+            "0071_add_local_model_consult.sql",
+            "0072_create_task_calls.sql",
         ]
         self.assertEqual(apply_migrations(self.connection), expected)
         self.assertEqual(apply_migrations(self.connection), [])

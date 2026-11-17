@@ -41,6 +41,7 @@ from .message_person_on_signal import (
     MessagePersonOnSignalTool, SCHEMA as MESSAGE_PERSON_SCHEMA, validate_arguments as validate_message_person_arguments,
 )
 from .end_call import SCHEMA as END_CALL_SCHEMA, EndCallTool, validate_arguments as validate_end_call_arguments
+from .press_keys import SCHEMA as PRESS_KEYS_SCHEMA, PressKeysTool, validate_arguments as validate_press_keys_arguments
 from .call_someone import SCHEMA as CALL_SOMEONE_SCHEMA, CallSomeoneTool, validate_arguments as validate_call_arguments
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
@@ -165,6 +166,8 @@ def create_tool_registry(
     registry.register(CALL_SOMEONE_SCHEMA, validate_call_arguments, call_someone.handle)
     end_call = EndCallTool(get_connection, is_closing, write_debug)
     registry.register(END_CALL_SCHEMA, validate_end_call_arguments, end_call.handle)
+    press_keys = PressKeysTool(get_connection, is_closing, write_debug)
+    registry.register(PRESS_KEYS_SCHEMA, validate_press_keys_arguments, press_keys.handle)
     check_calendar = CheckCalendarTool(get_connection, is_closing, write_debug, get_calendar)
     registry.register(CHECK_CALENDAR_SCHEMA, validate_check_calendar_arguments, check_calendar.handle)
     for schema, validate, tool_type in (

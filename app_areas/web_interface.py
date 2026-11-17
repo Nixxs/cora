@@ -80,6 +80,7 @@ class WebInterfaceMixin:
                          on_listening=self.on_web_listening, on_talk=self.on_web_talk, photo=self.web_photo,
                          answer_location=lambda device, body: self.whereabouts.answer(device.name, body),
                          claude_sessions=self.web_claude_sessions, claude_session=self.web_claude_session,
+                         task_call=self.task_call_view,
                          ask_rocky=lambda device, question, ref, on_text, on_status, image=None: self.ask_rocky_directly(
                              question, device.name, ref, from_web=True, on_text=on_text, on_status=on_status,
                              image=image),

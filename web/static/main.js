@@ -88,6 +88,8 @@ async function showApp(deviceName, rocky = false) {
   setupVoice();
   const { setupClaudeCode } = await import("./claude.js");
   setupClaudeCode();
+  const { setupCall } = await import("./call.js");
+  setupCall();
 }
 
 // The code from the QR link is read, then taken out of the address so it isn't left in history.

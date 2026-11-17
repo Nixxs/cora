@@ -17,6 +17,7 @@ from subconscious.emotions.feeling_rules import FEELING_WORDS, FEELINGS, band
 from subconscious.identity.identity_rules import is_held
 from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
+from ui.call_view import CallEntry
 from ui.claude_code_view import ClaudeSessionList
 from ui.when import ago, whole_unit
 from ui.composer import ChatComposer, ChatModeChip
@@ -178,10 +179,12 @@ class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
     def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
-                 load_spend=None, claude_sessions=None) -> None:
+                 load_spend=None, claude_sessions=None, task_call=None) -> None:
         super().__init__()
         # Returns Claude Code's sessions (newest first), or None while Cora isn't listening for them.
         self.claude_sessions = claude_sessions
+        # task_call() -> the call she's placed for a task, as shown while it happens, or None.
+        self.task_call = task_call or (lambda: None)
         # Reads (Spend or None, message, hint) for the spend chart off the UI thread; None leaves it out.
         self.load_spend = load_spend
         # Returns (Cora's playback bands, the person's microphone bands), each 0.0 to 1.0,
@@ -304,6 +307,8 @@ class DashboardScreen(Screen):
                 with Vertical(id="tasks-box", classes="dashboard-box"):
                     # Scrolls, so every open task can be read.
                     with VerticalScroll(id="tasks-scroll"):
+                        # A call she's placed for a task, while it's on: a click follows it.
+                        yield CallEntry(lambda: self.task_call(), id="dashboard-call")
                         # One Openable per task, so a click opens that task in full.
                         yield Vertical(id="task-list")
                         yield Static("sign-ups", id="sign-up-label", classes="dashboard-label")
@@ -459,6 +464,7 @@ class DashboardScreen(Screen):
             item.show(task_text(task, now), task_detail(task, now))
 
     def show_claude_code(self) -> None:
+        self.query_one("#dashboard-call", CallEntry).refresh_view()
         sessions = self.claude_sessions() if self.claude_sessions is not None else None
         self.query_one("#dashboard-top").set_class(sessions is not None, "with-claude-code")
         if sessions is None:

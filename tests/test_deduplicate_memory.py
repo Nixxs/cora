@@ -407,7 +407,7 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
             connection.execute("ALTER TABLE public.identity_event_evidence DROP COLUMN desire_event_id")
             connection.execute("DROP TABLE public.feeling_events")
             connection.execute("DROP TABLE public.desire_opportunities, public.desire_worker_state, public.desire_sources, public.desire_events, public.desires")
-            connection.execute("DROP TABLE public.task_steps, public.task_parties, public.tasks, "
+            connection.execute("DROP TABLE public.task_calls, public.task_steps, public.task_parties, public.tasks, "
                                "public.impression_updates, public.impressions")
             connection.execute("ALTER TABLE public.conversations DROP COLUMN person_id")
             connection.execute("DROP TABLE public.sign_ups, public.webhook_settings, public.self_image,public.signal_settings, public.service_tools, public.service_settings, "

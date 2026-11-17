@@ -1688,22 +1688,43 @@ before anything else.
     call ends, with no model call.
 - **Audio:** Twilio's 8 kHz μ-law becomes Live's 24 kHz PCM16 and back
   ([phone/audio.py](phone/audio.py), well under a millisecond of delay). Live paces her speech
-  and stops when you talk, so barge-in just works. When a call ends, Activity says how quickly
-  her replies began, typically and for her first reply.
+  and stops when you talk, so barge-in just works. A call's audio queues for Live as it
+  arrives and goes on at once; only a backlog is paced (`Pacer` in [live.py](live.py): a 4 s
+  burst, then 1.1x real time, inside Live's 5 s and 1.2x, as the wake buffer is), and what
+  queued before her session was ready keeps only its last 2 seconds (a "Hello?" she answers;
+  older audio would be a conversation she's behind on). When a call ends, Activity says how
+  quickly her replies began, typically and for her first reply.
 - **On a call:** approvals go to your Signal chat, never by voice; `where_is_person` refuses.
 - **Calling out for tasks:** `call_someone` (offered once calling out is set up) asks you
   first, showing who, the number, the task and the brief. Calls go out only between 8am and
   8pm, one at a time, never to her number or yours, with a 10-minute limit. The person called
-  becomes a task party ([app_areas/task_calls.py](app_areas/task_calls.py)). When they answer,
-  the call gets its own Live session with only her self and the brief
-  (`phone_party_instructions`): she says she's an AI assistant calling for someone she works
+  becomes a task party ([app_areas/task_calls.py](app_areas/task_calls.py)). The call gets
+  its own Live session with only her self and the brief (`phone_party_instructions`), which
+  connects while it rings, so she's there the moment they answer (a slow "Hello?" gets her
+  hung up on); nothing goes to it until they do, and it closes if nobody answers (Twilio's
+  status, or after 130 seconds). Once they've answered, a "Hello?" is answered by her as
+  any speech is; if they say nothing for 1.2 seconds, a note prompts her to start. She says she's an AI assistant calling for someone she works
   for and that she keeps a transcript, keeps to the brief, never commits you, leaves a short
   message on voicemail, and reports with `pass_on`. The whole call is kept in `task_calls`
   (its transcript, when it began and ended, and how quickly she replied, including her first
   reply), and its start and end go on the task as a step: a step holds 4,000 characters, which
   a phone menu and hold messages can fill before anyone answers, so the step keeps about 800
   characters of the start and as much of the end as fits, with the middle marked as cut. Lines
-  with no words (the transcriber's stray "." while the other one talks) are dropped. A call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
+  with no words (the transcriber's stray "." while the other one talks) are dropped.
+  Businesses often answer with a recording: she stays silent through recorded greetings,
+  menus, hold music and adverts (no greeting, thanks or "mhm"), chooses a menu's option with
+  `press_keys`, and introduces herself only once a person speaks (voicemail is the exception:
+  she leaves her message after the beep). `press_keys` ([tools/press_keys.py](tools/press_keys.py),
+  offered only on calls she places) plays keypad tones down the line as a phone's keypad does
+  (in-band DTMF, [phone/dtmf.py](phone/dtmf.py): 150 ms a key, 100 ms apart), and the keys
+  go in the transcript as "[pressed 3]".
+- **Following a call:** while she's placing a call for a task, while she's on it and for 15
+  minutes after, it shows beside the chat (a call box in the side panel), at the top of the
+  dashboard's tasks and on the web page (a call panel under her voice, `GET /api/call`): who,
+  ringing, on the call, ended or didn't connect, for how long, and the latest thing said. A
+  click or tap opens its transcript, which keeps up as it's said ([ui/call_view.py](ui/call_view.py),
+  [web/static/call.js](web/static/call.js)).
+- **Calls nobody answers:** a call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
   without her reporting, goes to the coordinator too, so you always hear how it went. Calls
   go through the REST API of the Twilio region chosen under Phone calls (Sydney AU1 by
   default; saved as `twilio_region` in `app_settings`, applied at launch, or `.env`'s

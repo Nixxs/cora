@@ -419,6 +419,24 @@ Screen > .screen--selection {
     height: 10;
 }
 
+/* A call she's placed for a task: shown while it's on, and for a while after. */
+#side-call {
+    display: none;
+    height: auto;
+}
+
+#side-panel.with-call #side-call {
+    display: block;
+}
+
+.call-entry {
+    height: auto;
+}
+
+#dashboard-call {
+    margin: 0 0 1 0;
+}
+
 #side-claude-scroll {
     height: 1fr;
     scrollbar-size: 1 0;
