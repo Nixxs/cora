@@ -167,6 +167,10 @@ async function readReply(response, draft) {
       if (update.type === "delta") {
         written += update.text;
         draft.update(written);
+      } else if (update.type === "status") {
+        // What Rocky is doing on the web; what he writes after starts afresh.
+        written = "";
+        draft.status?.(update.text);
       } else if (update.type === "done") {
         draft.finish(update.html);
         return;

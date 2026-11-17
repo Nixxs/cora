@@ -142,10 +142,12 @@ class RockyRouteTests(unittest.IsolatedAsyncioTestCase):
         async def find_device(hashed):
             return IPHONE if hashed == token_hash(TOKEN) else None
 
-        async def ask_rocky(device, question, ref, on_text):
+        async def ask_rocky(device, question, ref, on_text, on_status):
             self.asked.append((device, question, ref))
             if question == "down?":
                 raise RockyUnavailable("Rocky couldn't answer just now.")
+            on_text("Let me check")
+            on_status('searching for "too much"')
             for piece in ("**Mate,**", "**Mate,** <script>x</script>", "**Mate,** <script>x</script> go easy."):
                 on_text(piece)
                 await asyncio.sleep(0)
@@ -166,7 +168,11 @@ class RockyRouteTests(unittest.IsolatedAsyncioTestCase):
         answer = await self.ask({"question": "  How much is too much?  ", "ref": "r1"})
         self.assertEqual((answer.status_code, answer.headers["content-type"]), (200, "application/x-ndjson"))
         updates = lines(answer)
-        deltas = [update["text"] for update in updates if update["type"] == "delta"]
+        # What he's doing (in place of what he wrote before he browsed), then his answer from the start.
+        kinds = [update["type"] for update in updates]
+        after = kinds.index("status") + 1
+        self.assertEqual(updates[after - 1], {"type": "status", "text": 'searching for "too much"'})
+        deltas = [update["text"] for update in updates[after:] if update["type"] == "delta"]
         self.assertEqual("".join(deltas), "**Mate,** <script>x</script> go easy.")
         self.assertEqual(updates[-1], {"type": "done", "html": chat_html("**Mate,** <script>x</script> go easy.")})
         self.assertNotIn("<script>", updates[-1]["html"])

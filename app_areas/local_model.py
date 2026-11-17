@@ -9,15 +9,24 @@ when she quits (see local_model/manager.py).
 """
 
 import asyncio
+from contextlib import AsyncExitStack
+from datetime import date
+import json
 import re
 from time import monotonic
+from typing import NamedTuple
 
 from textual import work
 
 from local_model.manager import IDLE_CHOICES, OFF, READY, STARTING, LocalModel
-from local_model.ollama import OllamaClient, PullProgress, local_model_port, model_name, same_model
+from local_model.ollama import OllamaClient, PullProgress, Turn, local_model_port, model_name, same_model
+from local_model.rocky_browsing import (
+    MAX_PAGES as ROCKY_MAX_PAGES, OUT_OF_ROOM as ROCKY_OUT_OF_ROOM, browse_and_answer, browsing_note,
+    looked_line, no_browser_note,
+)
+from subconscious.interests.browse_exploration import BrowserAccess, Session
 from local_model.rocky import (
-    DIRECT_PERSONA, QUESTION_MAX_CHARS, RockyThread, RockyUnavailable, answer_text, shown_so_far,
+    QUESTION_MAX_CHARS, RockyThread, RockyUnavailable, answer_text, shown_so_far,
 )
 from tools.route import current_route
 
@@ -47,6 +56,17 @@ ROCKY_OFF = ("Rocky isn't switched on: the person can let you consult him in Set
              "a model is chosen and downloaded.")
 ROCKY_NOT_HERE = "Rocky is only for the person's own conversations, not this one."
 NO_ROCKY_MODEL = "Rocky isn't set up: choose and download a model in Settings › Local model."
+# How long he waits for her exploring to wrap up and free the browser, checking this often.
+BROWSER_WAIT_SECONDS = 90
+BROWSER_WAIT_POLL_SECONDS = 0.5
+# Why he can't look things up when she consults him (Rocky 4b-ii).
+NOT_ON_CONSULTS = "you can only look things up when the person asks you themselves"
+
+
+class RockyReply(NamedTuple):
+    """His answer, and what he actually did for it (rocky_browsing.looked_line)."""
+    answer: str
+    looked: str
 
 
 def gigabytes(size: int) -> str:
@@ -70,8 +90,10 @@ class LocalModelMixin:
         self.local_model_consult = False
         self.rocky_thread = RockyThread()
         # And what the person has asked him directly (@rocky), apart from her.
-        self.rocky_direct_thread = RockyThread(persona=DIRECT_PERSONA)
+        self.rocky_direct_thread = RockyThread(direct=True)
         self.rocky_lock = asyncio.Lock()
+        # While he waits for her exploring to free the browser: it wraps up, and doesn't start again.
+        self.rocky_wants_browser = False
         self.set_interval(IDLE_CHECK_SECONDS, self.check_local_model_idle)
 
     def apply_local_model_settings(self, saved: dict) -> None:
@@ -95,7 +117,7 @@ class LocalModelMixin:
         if not self.can_consult_rocky():
             return {"status": "error", "message": ROCKY_OFF}
         try:
-            answer = await self.rocky_answer(self.rocky_thread, question, new_topic, "Asking Rocky.")
+            answer = (await self.rocky_answer(self.rocky_thread, question, new_topic, "Asking Rocky.")).answer
         except RockyUnavailable as error:
             return {"status": "error", "message": f"{error} Say so; don't answer as him."}
         # Wherever she asked him: the desk and the web page each show the whole conversation.
@@ -104,13 +126,15 @@ class LocalModelMixin:
         return {"status": "ok", "rocky_says": answer, "how_it_reaches_them": REACHES_THEM[channel]}
 
     async def ask_rocky_directly(self, question: str, device: str | None = None, ref: str | None = None,
-                                 from_web: bool = False, on_text=None) -> str:
+                                 from_web: bool = False, on_text=None, on_status=None) -> str:
         """@rocky …: the person's question straight to Rocky, in a thread of their own with him (his
         thread with Cora is apart). Shown at the desk and on every web page, and never given to her:
         not saved and not in her history, so neither the question nor his answer reaches OpenAI.
-        Needs only a model chosen, not her switch. His answer streams into the desk's chat as he
-        writes it, and to on_text (the page that asked) if given. Returns his answer; raises
-        RockyUnavailable with what to tell the person (also shown at the desk)."""
+        Needs only a model chosen, not her switch. He may browse first when the browser is free;
+        what he's doing ("searching for …") shows in place of his answer meanwhile. His answer
+        streams into the desk's chat as he writes it, and both go to on_text and on_status (the
+        page that asked) if given. Returns his answer; raises RockyUnavailable with what to tell
+        the person (also shown at the desk)."""
         where = (f"web · {device}" if device else "web") if from_web else ""
         draft = self.conversation.ask_rocky_directly(question, where)
 
@@ -120,6 +144,11 @@ class LocalModelMixin:
             if on_text is not None:
                 on_text(shown)
 
+        def looking(what: str) -> None:
+            draft.looking(what)
+            if on_status is not None:
+                on_status(what)
+
         try:
             if not question:
                 raise RockyUnavailable("Ask Rocky something after @rocky.")
@@ -127,11 +156,15 @@ class LocalModelMixin:
                 raise RockyUnavailable(f"That's too long for Rocky: at most {QUESTION_MAX_CHARS} characters.")
             if not self.local_model_name:
                 raise RockyUnavailable(NO_ROCKY_MODEL)
-            answer = await self.rocky_answer(self.rocky_direct_thread, question, False,
-                                             "Asking Rocky (directly, from you).", on_text=streamed)
+            reply = await self.rocky_answer(self.rocky_direct_thread, question, False,
+                                            "Asking Rocky (directly, from you).", on_text=streamed,
+                                            on_status=looking)
         except RockyUnavailable as error:
             draft.fail(str(error))
             raise
+        # Under it, what he actually did (from what was run, not what he says), so you can tell a
+        # "source" he really read from one he made up.
+        answer = f"{reply.answer}\n\n*{reply.looked}*"
         draft.finish(answer)
         self.web_feed.publish_rocky(question, answer, asker="you", ref=ref, device=device)
         return answer
@@ -145,17 +178,36 @@ class LocalModelMixin:
             pass  # Why is shown in the chat.
 
     async def rocky_answer(self, thread: RockyThread, question: str, new_topic: bool, asking: str,
-                           on_text=None) -> str:
-        """His answer in thread, one question at a time; raises RockyUnavailable if there isn't one.
-        on_text, if given, gets his answer so far as it streams in."""
-        async with self.rocky_lock:
+                           on_text=None, on_status=None) -> RockyReply:
+        """His answer in thread (and what he looked at for it), one question at a time; raises
+        RockyUnavailable if there isn't one. The thread keeps the answer alone.
+        on_text, if given, gets his answer so far as it streams in. With on_status he may browse
+        first, if the browser is free (see rocky_browser), and on_status hears what he's doing."""
+        async with self.rocky_lock, AsyncExitStack() as holding:
             name = self.local_model_name
-            self.activity.write(asking, "Rocky")
             began = monotonic()
+            browser, why = (None, NOT_ON_CONSULTS) if on_status is None else await self.rocky_browser(on_status)
+            if browser is not None:
+                # Held from now (it's free, so this doesn't wait): her browser jobs wait their turn
+                # and exploring doesn't start again.
+                await holding.enter_async_context(self.browser_helper.lock)
+            elif on_status is not None:
+                # In place of his answer until he writes, so you know he hasn't looked.
+                on_status(f"can't browse ({why})")
+            self.activity.write(f"{asking} He can browse." if browser else f"{asking} No browser: {why}.", "Rocky")
             streaming = {} if on_text is None else {"on_text": on_text}
             try:
                 async with self.local_model.use() as ollama:
-                    reply = await ollama.chat(name, thread.messages(question, new_topic), **streaming)
+                    # Named, so he knows who's who (he's local: the name stays on this PC).
+                    messages = thread.messages(question, new_topic, self.rocky_person_name())
+                    if browser is None:
+                        messages[0] = {**messages[0], "content": messages[0]["content"] + no_browser_note(
+                            date.today(), why)}
+                        reply = await ollama.chat(name, messages, **streaming)
+                        looked = looked_line([], [], why)
+                    else:
+                        reply, looked = await self.rocky_browses(ollama, name, messages, browser, on_text,
+                                                                 on_status, question)
             except Exception as error:
                 self.activity.write(f"Rocky couldn't answer ({str(error)[:200] or type(error).__name__}).",
                                     "Rocky error")
@@ -166,7 +218,73 @@ class LocalModelMixin:
                 raise RockyUnavailable("Rocky said nothing.")
             thread.add(question, answer)
         self.activity.write(f"Rocky answered ({monotonic() - began:.0f} s).", "Rocky")
-        return answer
+        return RockyReply(answer, looked)
+
+    def rocky_person_name(self) -> str:
+        """The person's name as Cora knows it, or "" (then he's told "the person")."""
+        name = getattr(getattr(self, "live", None), "person_name", "")
+        return " ".join(name.split())[:60] if isinstance(name, str) else ""
+
+    def exploring(self) -> bool:
+        return self.exploration_worker is not None and not self.exploration_worker.is_finished
+
+    async def rocky_browser(self, on_status) -> tuple[BrowserAccess | None, str]:
+        """(the browser, "") for Rocky, or (None, why not). His when the Browser service is connected
+        and nothing else is using it. Her exploring makes way: asked to wrap up, it's waited for
+        (up to BROWSER_WAIT_SECONDS, "waiting for the browser" meanwhile). A sign-up or a job of
+        her browser helper's isn't: he goes without."""
+        if self.closing:
+            return None, "Cora is closing"
+        if self.signing_up() or self.browser_helper.lock.locked():
+            return None, "Cora is using the browser for a job of hers"
+        if self.exploring():
+            on_status("waiting for the browser")
+            self.rocky_wants_browser = True
+            try:
+                deadline = monotonic() + BROWSER_WAIT_SECONDS
+                while self.exploring() and monotonic() < deadline and not self.closing:
+                    await asyncio.sleep(BROWSER_WAIT_POLL_SECONDS)
+            finally:
+                self.rocky_wants_browser = False
+            if self.exploring():
+                return None, "Cora is still using the browser"
+        browser = self.exploration_browser(asyncio.get_running_loop(), keep_going=lambda: not self.closing,
+                                           title="Rocky")
+        return (browser, "") if browser is not None else (None, "the browser is switched off")
+
+    async def rocky_browses(self, ollama, name: str, messages: list[dict], browser: BrowserAccess,
+                            on_text, on_status, question: str) -> tuple[str, str]:
+        """(his reply, what he actually looked at), browsing first as he chooses
+        (local_model/rocky_browsing.py), with the browser his (rocky_answer holds it). Its tab, and
+        anything the pages stored, go when he's done."""
+        messages[0] = {**messages[0], "content": messages[0]["content"] + browsing_note(date.today())}
+        session = Session(browser, max_pages=ROCKY_MAX_PAGES, out_of_room_text=ROCKY_OUT_OF_ROOM)
+        queries: list[str] = []
+
+        async def run_tool(tool: str, arguments: str) -> str:
+            if tool == "search":
+                queries.append(" ".join(str(json.loads(arguments).get("query", "")).split()))
+            try:
+                return await asyncio.to_thread(session.run, tool, arguments)
+            except Exception as error:
+                self.activity.write(f"Rocky's browser didn't respond ({type(error).__name__}).", "Rocky")
+                return "The browser didn't respond. Answer with what you know, and say you couldn't check."
+
+        async def turn(sent: list[dict], tools, streamed) -> Turn:
+            return await ollama.turn(name, sent, tools, streamed)
+
+        def close_tab() -> None:
+            try:
+                browser.call("browser_close", {})
+            except Exception:
+                pass
+
+        try:
+            reply = await browse_and_answer(turn, messages, run_tool, lambda: session.out_of_room,
+                                            on_text or (lambda so_far: None), on_status, question=question)
+        finally:
+            await asyncio.to_thread(close_tab)
+        return reply, looked_line(queries, session.opened)
 
     @work(group="model-settings-save")
     async def save_local_model_consult(self, on: bool) -> None:

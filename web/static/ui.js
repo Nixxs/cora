@@ -225,6 +225,12 @@ export function askingRocky(question, via) {
       body.innerHTML = `<p>${escapeText(text).replace(/\n/g, "<br>")}</p>`;
       if (follow) output.scrollTop = output.scrollHeight;
     },
+    // What he's doing on the web ('searching for "…"'), in place of anything he'd written.
+    status(text) {
+      started = false;
+      label.textContent = ` · ${text}…`;
+      body.innerHTML = "<p></p>";
+    },
     finish(html) {
       answer.classList.remove("writing");
       label.textContent = " · local model";

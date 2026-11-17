@@ -65,6 +65,14 @@ class DirectRockyDraft:
         entries[self.index + 1] = DirectRockyAnswer(so_far, code_theme="monokai")
         self.conversation.schedule_redraw()
 
+    def looking(self, what: str) -> None:
+        """What he's doing on the web ('searching for "…"') in place of his answer, which starts
+        again from nothing when he writes."""
+        entries = self.conversation.log_entries
+        entries[self.index] = f"Rocky · {what.replace(':', '')}…:"
+        entries[self.index + 1] = ""
+        self.conversation.schedule_redraw()
+
     def finish(self, answer: str) -> None:
         entries = self.conversation.log_entries
         entries[self.index] = "Rocky:"

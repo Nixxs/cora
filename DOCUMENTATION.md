@@ -1460,7 +1460,12 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   she asks him when you ask her to, and when she'd otherwise refuse or water down a question an
   adult may reasonably ask; she passes your question on in full; she never takes him anything
   that would hurt someone. Rocky's persona is his system prompt: a bit slow, very friendly,
-  streetwise, frank and practical, no lectures, short answers, honest when unsure. He keeps a
+  streetwise, frank and practical, no lectures, short answers, honest when unsure; he keeps
+  what he knows, what he's guessing and what he doesn't know apart ("I reckon…"), and pushes
+  back on a premise he's no reason to believe rather than making up details to fit (Cora's
+  suggestions). It names you (your name as Cora knows it; he's local, so it stays on this PC),
+  and each message to him is labelled with who's speaking: "Cora (for Nick):" when she
+  consults him, "Nick:" on the direct line, which she doesn't see. He keeps a
   thread (up to 8 exchanges), so she can follow up or push back; `new_topic`, or 30 minutes
   without a question, starts afresh. One question at a time. He's asked not to think first
   (`"think": false`, retried without it for a model that can't), which took Gemma 4 from minutes
@@ -1490,6 +1495,31 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   "you") shows it on every other page. As a safeguard, `/api/messages` turns away an `@rocky`
   message (from a page that hasn't reloaded) rather than send it to her. Images can't go to
   him. If he can't answer, a quiet line says why where his answer would be.
+- **He browses** ([local_model/rocky_browsing.py](local_model/rocky_browsing.py), on the direct
+  line for now): while the Browser service is connected and not busy with a sign-up or a job
+  of her browser helper's, he gets the same read-only tools as her exploring (search, open a
+  page, go back, through the address guard: never a click, form, login or download) as Ollama
+  tool calls. Her exploring makes way: asked to wrap up (`rocky_wants_browser`), it's waited
+  for up to 90 seconds ("waiting for the browser…"), and doesn't start again meanwhile. His
+  persona is told today's date, that his own knowledge stops long before it, and to search
+  first for news, "the latest", people in the news, prices, or when asked to look something
+  up, and never to name a source he didn't open. A 12B model doesn't follow that reliably, so
+  two checks are in code: a question plainly about something recent or about who someone is
+  (`needs_looking`: latest, news, price, who is, is it true, look it up…) that he answers without searching is set aside once and he's told
+  to search first ("looking it up first…"); and under every answer a line written from what
+  was actually run says what he did (*He searched "…" · read theguardian.com.*, or *From
+  memory: he didn't look anything up.*), so a "source" he names can be checked. Without the
+  browser he's told he can't look anything up and why, "can't browse (…)" shows until he
+  writes, and the line says so. At most 5 pages, 8 tool calls and 3 minutes, then he answers
+  with what he found; only his newest 2 pages stay in full. He holds the browser helper's lock
+  meanwhile, so her browser jobs wait and exploring doesn't start, and closes his tab after.
+  What he's doing shows in place of his answer ("Rocky · searching for "…"…", "reading
+  drugsand.me…"), at the desk and on the page that asked, and Activity lists each page. His
+  searches go to Bing; nothing goes to OpenAI. His thread keeps only the question and his
+  answer, not the pages or the line under it. When she consults him he can't browse yet
+  (4b-ii), and is told so. Every call
+  to him asks for a 16,384-token context (`CONTEXT_TOKENS`), always the same so the model is
+  never reloaded for a different size; on Gemma 4 12B that costs nothing over Ollama's 4,096.
 
 - **The container:** the `local-model` service in [compose.yaml](compose.yaml) (a pinned
   `ollama/ollama` image, about 8.5 GB with its GPU libraries), under its own profile so

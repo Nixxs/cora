@@ -2,17 +2,26 @@
 the switch in Settings. The local model is a stand-in here."""
 
 import asyncio
+from datetime import date
 import json
 from types import SimpleNamespace
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from textual.widgets import Switch, TabbedContent
 
-from app_areas.local_model import REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, LocalModelMixin
+from app_areas.local_model import NOT_ON_CONSULTS, REACHES_THEM, ROCKY_NOT_HERE, ROCKY_OFF, LocalModelMixin
 from app_areas.web_interface import WebInterfaceMixin
 from backend_chat import BackendRoute
 from local_model.manager import LocalModel
+from local_model.ollama import Turn
+from local_model.rocky_browsing import (
+    BROWSE_SECONDS as ROCKY_BROWSE_SECONDS, MAX_CALLS as ROCKY_MAX_CALLS, MAX_PAGES as ROCKY_MAX_PAGES,
+    OUT_OF_ROOM as ROCKY_OUT_OF_ROOM, PAGE_DROPPED as ROCKY_PAGE_DROPPED, TOOLS as BROWSER_TOOLS,
+    LOOK_FIRST as ROCKY_LOOK_FIRST, browse_and_answer, browsing_note, doing as rocky_doing, looked_line,
+    needs_looking, no_browser_note,
+)
+from subconscious.interests.browse_exploration import BrowserAccess
 from local_model.rocky import (
     DIRECT_PERSONA, PERSONA, THREAD_EXCHANGES, THREAD_IDLE_SECONDS, RockyThread, RockyUnavailable, answer_text,
     direct_question, shown_so_far,
@@ -36,12 +45,24 @@ class ThreadTests(unittest.TestCase):
     def test_a_follow_up_carries_the_thread_and_a_new_topic_starts_afresh(self):
         first = self.thread.messages("sertraline and MDMA?", new_topic=False)
         self.assertEqual(first, [{"role": "system", "content": PERSONA},
-                                 {"role": "user", "content": "sertraline and MDMA?"}])
+                                 {"role": "user", "content": "Cora (for the person): sertraline and MDMA?"}])
         self.thread.add("sertraline and MDMA?", "Serotonin syndrome is the risk.")
-        follow_up = self.thread.messages("why does it blunt it?", new_topic=False)
+        follow_up = self.thread.messages("why does it blunt it?", new_topic=False, name="Nick")
         self.assertEqual([message["content"] for message in follow_up[1:]],
-                         ["sertraline and MDMA?", "Serotonin syndrome is the risk.", "why does it blunt it?"])
+                         ["Cora (for Nick): sertraline and MDMA?", "Serotonin syndrome is the risk.",
+                          "Cora (for Nick): why does it blunt it?"])
+        self.assertIn('questions from Nick, the person she works for', follow_up[0]["content"])
         self.assertEqual(len(self.thread.messages("a funeral joke", new_topic=True)), 2)
+
+    def test_who_is_speaking_is_labelled(self):
+        direct = RockyThread(direct=True).messages("how strong is ket?", False, name="Nick")
+        self.assertEqual(direct[-1]["content"], "Nick: how strong is ket?")
+        self.assertIn('Nick, the person she works for, an adult, is talking to you directly', direct[0]["content"])
+        self.assertIn('Their messages start "Nick:"', direct[0]["content"])
+        self.assertEqual(RockyThread(direct=True).messages("hi", False)[-1]["content"], "The person: hi")
+        # And what he's told about telling facts from guesses, and doubtful premises.
+        self.assertIn("Keep apart what you know, what you're guessing and what you don't know", PERSONA)
+        self.assertIn("say so and ask, rather than going along with it", DIRECT_PERSONA)
 
     def test_a_long_pause_starts_afresh_and_only_the_latest_are_kept(self):
         for number in range(THREAD_EXCHANGES + 3):
@@ -88,10 +109,13 @@ class ConsultTests(unittest.IsolatedAsyncioTestCase):
                                    stop=AsyncMock(), poll_seconds=0),
             rocky_thread=RockyThread(), rocky_lock=asyncio.Lock(), activity=MagicMock(),
             conversation=MagicMock(), web_feed=MessageFeed(),
-            rocky_direct_thread=RockyThread(persona=DIRECT_PERSONA),
+            rocky_direct_thread=RockyThread(direct=True),
+            # The browser isn't connected (BrowsingTests connects one).
+            rocky_browser=AsyncMock(return_value=(None, "the browser is switched off")),
         )
         self.app.can_consult_rocky = lambda: LocalModelMixin.can_consult_rocky(self.app)
         self.app.rocky_answer = lambda *args, **kwargs: LocalModelMixin.rocky_answer(self.app, *args, **kwargs)
+        self.app.rocky_person_name = lambda: LocalModelMixin.rocky_person_name(self.app)
 
     async def consult(self, route=None, question="I'm on sertraline: MDMA at a festival?", new_topic=False):
         token = current_route.set(route)
@@ -107,8 +131,11 @@ class ConsultTests(unittest.IsolatedAsyncioTestCase):
         self.app.conversation.show_rocky.assert_called_once_with(
             "I'm on sertraline: MDMA at a festival?", "Straight up: serotonin syndrome is the risk.")
         model, messages = self.ollama.asked[0]
-        self.assertEqual((model, messages[0]["content"], messages[-1]["content"]),
-                         ("huihui_ai/gemma-4-abliterated:12b", PERSONA, "I'm on sertraline: MDMA at a festival?"))
+        self.assertEqual((model, messages[-1]["content"]),
+                         ("huihui_ai/gemma-4-abliterated:12b",
+                          "Cora (for the person): I'm on sertraline: MDMA at a festival?"))
+        # No browser for her consults yet, so he's told he can't look anything up, and never to pretend.
+        self.assertEqual(messages[0]["content"], PERSONA + no_browser_note(date.today(), NOT_ON_CONSULTS))
         for channel in ("desk", "signal", "web", "email"):
             result = await self.consult(BackendRoute(channel=channel), new_topic=True)
             self.assertEqual(result["how_it_reaches_them"], REACHES_THEM[channel])
@@ -129,6 +156,13 @@ class ConsultTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("<strong>Straight up:</strong>", body["html"])
         self.assertNotIn("<script>", body["html"])
         self.assertNotIn("answer", body)
+
+    async def test_he_is_told_the_persons_name_when_she_knows_it(self):
+        self.app.live = SimpleNamespace(person_name="  Nick  ")
+        await self.consult()
+        messages = self.ollama.asked[-1][1]
+        self.assertEqual(messages[-1]["content"], "Cora (for Nick): I'm on sertraline: MDMA at a festival?")
+        self.assertIn("questions from Nick, the person she works for", messages[0]["content"])
 
     async def test_a_follow_up_goes_in_the_same_thread(self):
         await self.consult()
@@ -184,17 +218,24 @@ class DirectTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(direct_question(other))
 
     async def test_his_answer_is_shown_everywhere_and_never_reaches_her(self):
-        self.assertEqual(await self.ask(), "Straight up: serotonin syndrome is the risk.")
+        shown = ("Straight up: serotonin syndrome is the risk.\n\n"
+                 "*From memory: he couldn't look anything up (the browser is switched off).*")
+        self.assertEqual(await self.ask(), shown)
         entries = self.app.conversation.log_entries
         self.assertIn(f"{YOU_TO_ROCKY}: Is it safe to mix MDMA and sertraline?", entries)
         self.assertIn("Rocky:", entries)
         [answer] = [entry for entry in entries if isinstance(entry, DirectRockyAnswer)]
-        self.assertEqual(answer.markup, "Straight up: serotonin syndrome is the risk.")
+        self.assertEqual(answer.markup, shown)
+        # His thread keeps what he said, without the line under it.
+        self.assertEqual(self.app.rocky_direct_thread.exchanges[0][1], "Straight up: serotonin syndrome is the risk.")
         self.assertEqual(self.app.conversation.get_reconnect_history(), [])
         self.recorded.assert_not_called()
         # His own thread with the person, apart from Cora's.
         model, messages = self.ollama.asked[0]
-        self.assertEqual(messages[0]["content"], DIRECT_PERSONA)
+        # No browser here: he's told why, so he says he can't check rather than make something up.
+        self.assertEqual(messages[0]["content"],
+                         DIRECT_PERSONA + no_browser_note(date.today(), "the browser is switched off"))
+        self.assertIn("Never say you looked something up", messages[0]["content"])
         self.assertEqual((len(self.app.rocky_direct_thread.exchanges), self.app.rocky_thread.exchanges), (1, []))
         item = self.app.web_feed.items[-1]
         self.assertEqual((item.kind, item.data["asker"], item.ref), (ROCKY, "you", None))
@@ -237,6 +278,222 @@ class DirectTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(notes), 3)
         self.assertNotIn("Rocky:", self.app.conversation.log_entries)
         self.assertEqual(len(self.app.web_feed.items), 0)
+
+
+def searched(query="mdma sertraline"):
+    return Turn("", [{"function": {"name": "search", "arguments": {"query": query}}}])
+
+
+class BrowsingLoopTests(unittest.IsolatedAsyncioTestCase):
+    """His browsing on the way to an answer, with a stand-in model and browser."""
+
+    def setUp(self):
+        self.turns, self.offered, self.ran, self.status, self.shown = [], [], [], [], []
+        self.pages = 0
+
+    async def turn(self, messages, tools, on_text):
+        self.offered.append(tools)
+        reply = self.turns.pop(0)
+        if reply.content:
+            on_text(reply.content)
+        return reply
+
+    async def run_tool(self, name, arguments):
+        self.ran.append((name, json.loads(arguments)))
+        self.pages += 1
+        return f"Page {self.pages}"
+
+    async def browse(self, messages=None, clock=lambda: 0.0):
+        messages = messages if messages is not None else [{"role": "system", "content": "Rocky"}]
+        answer = await browse_and_answer(self.turn, messages, self.run_tool, lambda: self.pages >= ROCKY_MAX_PAGES,
+                                         self.shown.append, self.status.append, clock=clock)
+        return answer, messages
+
+    async def test_he_searches_reads_then_answers(self):
+        self.turns = [searched(), Turn("", [{"function": {"name": "open_page",
+                                                          "arguments": '{"url": "https://www.drugsand.me/x"}'}}]),
+                      Turn("Mate, it's risky. (drugsand.me)", [])]
+        answer, messages = await self.browse()
+        self.assertEqual(answer, "Mate, it's risky. (drugsand.me)")
+        self.assertEqual(self.ran, [("search", {"query": "mdma sertraline"}),
+                                    ("open_page", {"url": "https://www.drugsand.me/x"})])
+        self.assertEqual(self.status, ['searching for "mdma sertraline"', "reading drugsand.me"])
+        self.assertEqual(self.offered, [BROWSER_TOOLS] * 3)
+        self.assertEqual([(m["role"], m.get("content")) for m in messages if m["role"] == "tool"],
+                         [("tool", "Page 1"), ("tool", "Page 2")])
+
+    async def test_his_limits_then_he_must_answer(self):
+        self.turns = [searched(str(n)) for n in range(ROCKY_MAX_CALLS)] + [Turn("What I found.", [])]
+        # Pages never run out here: only the call limit stops him.
+        messages = [{"role": "system", "content": "Rocky"}]
+        answer = await browse_and_answer(self.turn, messages, self.run_tool, lambda: False,
+                                         self.shown.append, self.status.append)
+        self.assertEqual(answer, "What I found.")
+        self.assertIsNone(self.offered[-1])
+        self.assertEqual(len(self.ran), ROCKY_MAX_CALLS)
+        self.assertEqual(messages[-1], {"role": "user", "content": ROCKY_OUT_OF_ROOM})
+        # Only the newest pages stay in full.
+        kept = [m["content"] for m in messages if m["role"] == "tool"]
+        self.assertEqual(kept[-2:], [f"Page {ROCKY_MAX_CALLS - 1}", f"Page {ROCKY_MAX_CALLS}"])
+        self.assertTrue(all(text == ROCKY_PAGE_DROPPED for text in kept[:-2]))
+
+    async def test_out_of_time_or_pages_ends_browsing(self):
+        times = iter((0.0, 1.0, ROCKY_BROWSE_SECONDS + 1))
+        self.turns = [searched(), Turn("Quick answer.", [])]
+        answer, _ = await self.browse(clock=lambda: next(times))
+        self.assertEqual((answer, self.offered[-1]), ("Quick answer.", None))
+
+    async def test_news_answered_from_memory_is_set_aside_once_for_a_search(self):
+        self.turns = [Turn("Jensen's big news is Blackwell.", []), searched("jensen huang news"),
+                      Turn("Here's what's out there.", [])]
+        messages = [{"role": "system", "content": "Rocky"}, {"role": "user", "content": "latest on Jensen?"}]
+        answer = await browse_and_answer(self.turn, messages, self.run_tool, lambda: False, self.shown.append,
+                                         self.status.append, question="What's the latest news on Jensen?")
+        self.assertEqual(answer, "Here's what's out there.")
+        self.assertEqual(self.status, ["looking it up first", 'searching for "jensen huang news"'])
+        # His answer from memory isn't kept; the nudge is.
+        self.assertEqual(messages[2], {"role": "user", "content": ROCKY_LOOK_FIRST})
+
+    async def test_no_nudge_for_what_he_knows_nor_twice(self):
+        self.turns = [Turn("Water and sleep.", [])]
+        self.assertEqual((await self.browse())[0], "Water and sleep.")
+        self.turns = [Turn("From memory.", []), Turn("Still from memory.", [])]
+        answer = await browse_and_answer(self.turn, [{"role": "system", "content": "Rocky"}], self.run_tool,
+                                         lambda: False, self.shown.append, self.status.append,
+                                         question="any news today?")
+        self.assertEqual(answer, "Still from memory.")
+        self.assertTrue(needs_looking("How much is a PS5 right now?"))
+        self.assertTrue(needs_looking("can you look it up"))
+        self.assertTrue(needs_looking("who is alice huang to jensen anyway?"))
+        self.assertTrue(needs_looking("Is it true he's stepping down?"))
+        self.assertFalse(needs_looking("a good hangover cure?"))
+
+    def test_the_line_under_his_answer_says_what_he_really_did(self):
+        self.assertEqual(looked_line([], [], "the browser is switched off"),
+                         "From memory: he couldn't look anything up (the browser is switched off).")
+        self.assertEqual(looked_line([], []), "From memory: he didn't look anything up.")
+        self.assertEqual(looked_line(["jensen news"], ["https://www.theguardian.com/a", "https://www.theguardian.com/b",
+                                                       "https://cnn.com/x"]),
+                         'He searched "jensen news" · read theguardian.com, cnn.com.')
+
+    def test_what_he_is_doing_reads_plainly(self):
+        self.assertEqual(rocky_doing("search", {"query": "x " * 60}), f'searching for "{("x " * 30).strip()[:59]}…"')
+        self.assertEqual(rocky_doing("open_page", {"url": "/relative"}), "opening a page")
+        self.assertEqual(rocky_doing("go_back", {}), "going back")
+
+
+class BrowsingTests(unittest.IsolatedAsyncioTestCase):
+    """The app's side: he browses on the direct line only while the browser is free, holding it."""
+
+    def setUp(self):
+        ConsultTests.setUp(self)
+        self.app.conversation = Conversation(MagicMock(), MagicMock(), MagicMock(), record_message=MagicMock())
+        self.app.browser_helper = SimpleNamespace(lock=asyncio.Lock())
+        self.calls, self.locked = [], []
+
+        def call(tool, arguments):
+            self.calls.append(tool)
+            # Checked after: whether her browser jobs would wait meanwhile.
+            self.locked.append(self.app.browser_helper.lock.locked())
+            if tool == "browser_snapshot":
+                return "Page URL: https://www.drugsand.me/x\n- paragraph: Serotonin syndrome is the risk.", False
+            return "", False
+
+        self.browser = BrowserAccess(call, refuse=lambda url: None)
+        self.app.rocky_browser = AsyncMock(return_value=(self.browser, ""))
+        self.app.rocky_browses = lambda *args: LocalModelMixin.rocky_browses(self.app, *args)
+        self.ollama.turns = [searched(), Turn("It's risky, mate (drugsand.me).", [])]
+
+        async def turn(model, messages, tools=None, on_text=None):
+            self.ollama.asked.append((model, [dict(message) for message in messages]))
+            reply = self.ollama.turns.pop(0)
+            if on_text and reply.content:
+                on_text(reply.content)
+            return reply
+
+        self.ollama.turn = turn
+
+    async def test_on_the_direct_line_he_browses_then_answers(self):
+        statuses = []
+        answer = await LocalModelMixin.ask_rocky_directly(self.app, "MDMA on sertraline?", on_status=statuses.append)
+        # What he really did goes under his answer.
+        self.assertEqual(answer, "It's risky, mate (drugsand.me).\n\n*He searched \"mdma sertraline\".*")
+        self.assertEqual(statuses, ['searching for "mdma sertraline"'])
+        self.assertEqual(self.calls[0], "browser_navigate")
+        self.assertEqual(self.calls[-1], "browser_close")
+        self.assertIn("browser_snapshot", self.calls)
+        self.assertTrue(all(self.locked))
+        self.assertFalse(self.app.browser_helper.lock.locked())
+        system = self.ollama.asked[0][1][0]["content"]
+        self.assertEqual(system, DIRECT_PERSONA + browsing_note(date.today()))
+        self.assertIn(f"Today is {date.today():%A}", system)
+        self.assertIn("Always search first", system)
+        # His thread keeps the question and answer only, not the pages.
+        self.assertEqual(self.app.rocky_direct_thread.exchanges,
+                         [("MDMA on sertraline?", "It's risky, mate (drugsand.me).")])
+        self.assertEqual(self.app.conversation.get_reconnect_history(), [])
+
+    async def test_her_consults_dont_browse_yet(self):
+        await self.consult(BackendRoute(channel="desk"))
+        self.assertEqual(self.calls, [])
+
+    async def consult(self, route):
+        return await ConsultTests.consult(self, route)
+
+    async def test_without_the_browser_you_see_why_where_his_answer_goes(self):
+        self.app.rocky_browser = AsyncMock(return_value=(None, "the browser is switched off"))
+        statuses = []
+        await LocalModelMixin.ask_rocky_directly(self.app, "Latest on Jensen Huang?", on_status=statuses.append)
+        self.assertEqual(statuses, ["can't browse (the browser is switched off)"])
+        self.assertEqual(self.calls, [])
+
+
+class BrowserSharingTests(unittest.IsolatedAsyncioTestCase):
+    """Whether the browser is his: free, busy with a job of hers, or her exploring making way."""
+
+    def setUp(self):
+        self.statuses = []
+        self.app = SimpleNamespace(closing=False, exploration_worker=None, signing_up=lambda: False,
+                                   browser_helper=SimpleNamespace(lock=asyncio.Lock()), rocky_wants_browser=False,
+                                   exploration_browser=lambda loop, **options: options)
+        self.app.exploring = lambda: LocalModelMixin.exploring(self.app)
+
+    async def browser(self):
+        return await LocalModelMixin.rocky_browser(self.app, self.statuses.append)
+
+    async def test_his_when_free_and_not_while_she_has_a_job_or_its_off(self):
+        browser, why = await self.browser()
+        self.assertEqual((browser["title"], why), ("Rocky", ""))
+        self.app.signing_up = lambda: True
+        self.assertEqual(await self.browser(), (None, "Cora is using the browser for a job of hers"))
+        self.app.signing_up = lambda: False
+        async with self.app.browser_helper.lock:
+            self.assertEqual((await self.browser())[0], None)
+        self.app.exploration_browser = lambda loop, **options: None
+        self.assertEqual(await self.browser(), (None, "the browser is switched off"))
+
+    async def test_her_exploring_wraps_up_for_him(self):
+        worker = SimpleNamespace(is_finished=False)
+        self.app.exploration_worker = worker
+        wanted = []
+
+        async def she_wraps_up():
+            await asyncio.sleep(0.05)
+            wanted.append(self.app.rocky_wants_browser)
+            worker.is_finished = True
+
+        with patch("app_areas.local_model.BROWSER_WAIT_POLL_SECONDS", 0.01):
+            _, (browser, why) = await asyncio.gather(she_wraps_up(), self.browser())
+        self.assertEqual((browser["title"], why), ("Rocky", ""))
+        self.assertEqual((wanted, self.app.rocky_wants_browser), ([True], False))
+        self.assertEqual(self.statuses, ["waiting for the browser"])
+
+    async def test_if_she_takes_too_long_he_goes_without(self):
+        self.app.exploration_worker = SimpleNamespace(is_finished=False)
+        with patch("app_areas.local_model.BROWSER_WAIT_SECONDS", 0.05), \
+                patch("app_areas.local_model.BROWSER_WAIT_POLL_SECONDS", 0.01):
+            self.assertEqual(await self.browser(), (None, "Cora is still using the browser"))
+        self.assertFalse(self.app.rocky_wants_browser)
 
 
 class DeskSubmissionTests(unittest.TestCase):

@@ -95,7 +95,8 @@ To do on this branch:
 - [x] Rocky 3a: consulting Rocky (the switch, his persona and thread, consult_rocky, the desk's chat)
 - [x] Rocky 3b: his answers on the web page
 - [x] Rocky 4a: a direct line ("@rocky …" at the desk and on the web page, never through OpenAI)
-- [ ] Rocky 4b: he browses (read-only search and pages on the Playwright service)
+- [x] Rocky 4b-i: he browses on the direct line (read-only search and pages on the Playwright service)
+- [ ] Rocky 4b-ii: he browses when she consults him too, and his limits in Settings (parked: see how much he's used)
 
 ### Claude Code
 
@@ -202,12 +203,17 @@ GPU, and larger ones more slowly with part of the model in system memory.
      "@rocky …" at the desk or on the web page sends your words straight to him, in a thread
      of your own, and his answer is shown to you, so neither reaches OpenAI. Checked with the
      real Rocky: 2 to 4 seconds with the GPU free.
-   - *4b, he browses:* the same read-only tools as her exploring (search, open a page, go back,
-     with the address guard) on the Playwright service, driven by his own tool calls through
-     Ollama (Gemma 4 supports tools, with a 128k context). Tighter limits than hers (about 5
-     pages in 3 minutes, since he's slow), a larger context window while he's loaded (more
-     VRAM), a "Rocky is looking…" line meanwhile, and on both the direct line and her consults.
-     His searches go to Bing, never OpenAI.
+   - *4b-i built, he browses on the direct line:* the same read-only tools as her exploring
+     (search, open a page, go back, with the address guard) on the Playwright service, driven
+     by his own tool calls through Ollama. 5 pages, 8 calls, 3 minutes; what he's doing shows
+     in place of his answer meanwhile. A 16k context costs nothing extra on Gemma 4 12B. In
+     use he answered news from memory and named sources he never opened, so: today's date and
+     plain rules in his persona, a nudge to search first when a question is plainly about
+     something recent, a line under each answer from what was actually run (searched / read /
+     from memory), and her exploring makes way for him. His searches go to Bing, never OpenAI.
+   - *4b-ii, parked:* browsing when she consults him too (her tool waits for it), and his
+     limits in Settings. He's there for frank answers, not news (Cora already looks things up
+     with a bigger model), so this waits to see how much he's used.
    - Talking to him by voice without OpenAI would need local speech (faster-whisper, already
      used for the wake word, plus a local voice), which belongs with
      [Local models, after 1.0](#local-models-after-10).

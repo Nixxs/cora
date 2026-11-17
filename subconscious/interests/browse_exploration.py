@@ -222,18 +222,22 @@ class Session:
     pages: int = 0
     current: str | None = None
     opened: list[str] = field(default_factory=list)  # pages she read, in order: her possible sources
+    # Pages it may read, and what it says once they're used up: MAX_PAGES and OUT_OF_ROOM unless
+    # given (Rocky's browsing reads fewer).
+    max_pages: int | None = None
+    out_of_room_text: str | None = None
 
     @property
     def out_of_room(self) -> bool:
-        return self.pages >= MAX_PAGES
+        return self.pages >= (MAX_PAGES if self.max_pages is None else self.max_pages)
 
     def run(self, name: str, arguments: str) -> str:
         try:
             arguments = json.loads(arguments)
         except json.JSONDecodeError:
             return "Those arguments weren't valid JSON."
-        if self.pages >= MAX_PAGES:
-            return OUT_OF_ROOM
+        if self.out_of_room:
+            return self.out_of_room_text or OUT_OF_ROOM
         if name == "search" and isinstance(arguments.get("query"), str) and arguments["query"].strip():
             return self.visit(SEARCH_URL + quote_plus(arguments["query"].strip()), source=False, settle=True)
         if name == "open_page" and isinstance(arguments.get("url"), str):

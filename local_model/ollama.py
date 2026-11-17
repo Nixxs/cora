@@ -20,6 +20,11 @@ CHAT_SECONDS = 300
 CALL_SECONDS = 10
 # A download goes quiet between its parts while Ollama checks them.
 PULL_QUIET_SECONDS = 300
+# His working memory, the same on every call (a different size reloads the model): room for a
+# conversation and the couple of pages he reads when he browses. On Gemma 4 12B it costs about
+# nothing over Ollama's 4096 (7.8 GB on the GPU either way).
+CONTEXT_TOKENS = 16384
+OPTIONS = {"num_ctx": CONTEXT_TOKENS}
 # An Ollama model: a library name (gemma3), a publisher's (huihui_ai/gemma-4-abliterated) or one
 # from Hugging Face (hf.co/owner/repo), with a tag after a colon (12b, 31B-q4_K).
 MODEL_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*){0,2}(:[A-Za-z0-9][A-Za-z0-9._-]*)?")
@@ -125,8 +130,8 @@ class OllamaClient:
         minutes to seconds. One that can't is asked again without saying so. on_text, if given,
         gets the reply so far as it streams in."""
         if on_text is not None:
-            return await self.streamed_chat(model, messages, on_text)
-        request = {"model": model, "messages": messages, "stream": False, "think": False}
+            return (await self.turn(model, messages, on_text=on_text)).content
+        request = {"model": model, "messages": messages, "stream": False, "think": False, "options": OPTIONS}
         async with self.client(CHAT_SECONDS) as client:
             response = await client.post(f"{self.base_url}/api/chat", json=request)
             if response.status_code >= 400 and "thinking" in error_text(response.text):
@@ -136,9 +141,13 @@ class OllamaClient:
                 raise OllamaError(error_text(response.text) or f"HTTP {response.status_code}")
             return str(response.json().get("message", {}).get("content", ""))
 
-    async def streamed_chat(self, model: str, messages: list[dict], on_text: Callable[[str], None]) -> str:
-        """chat, with the reply streamed: one JSON object a line, each with the next piece."""
-        request = {"model": model, "messages": messages, "stream": True, "think": False}
+    async def turn(self, model: str, messages: list[dict], tools: list[dict] | None = None,
+                   on_text: Callable[[str], None] | None = None) -> "Turn":
+        """One reply, streamed (one JSON object a line, each with the next piece): what it said,
+        told to on_text as it comes, and any tools (in Ollama's form) it called."""
+        request = {"model": model, "messages": messages, "stream": True, "think": False, "options": OPTIONS}
+        if tools:
+            request["tools"] = tools
         # However long the whole reply takes, as long as the pieces keep coming.
         timeout = httpx2.Timeout(CHAT_SECONDS, connect=CALL_SECONDS)
         async with self.client(timeout) as client:
@@ -151,18 +160,28 @@ class OllamaClient:
                             del request["think"]
                             continue
                         raise OllamaError(error or f"HTTP {response.status_code}")
-                    said = ""
+                    said, calls = "", []
                     async for line in response.aiter_lines():
                         if not line.strip():
                             continue
                         piece = json.loads(line)
                         if piece.get("error"):
                             raise OllamaError(str(piece["error"])[:200])
-                        if text := str((piece.get("message") or {}).get("content") or ""):
+                        message = piece.get("message") or {}
+                        if text := str(message.get("content") or ""):
                             said += text
-                            on_text(said)
-                    return said
+                            if on_text is not None:
+                                on_text(said)
+                        calls += [call for call in message.get("tool_calls") or [] if isinstance(call, dict)]
+                    return Turn(said, calls)
         raise OllamaError("the model wouldn't answer")
+
+
+@dataclass(frozen=True)
+class Turn:
+    """A reply: what it said, and the tools it called ([{"function": {"name", "arguments"}}])."""
+    content: str
+    tool_calls: list[dict]
 
 
 def error_text(body: str) -> str:

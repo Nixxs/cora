@@ -200,7 +200,9 @@ class BackgroundMixin:
         self.check_sign_up_wish()
         if not self.can_explore() or (
             self.exploration_worker is not None and not self.exploration_worker.is_finished
-        ) or self.signing_up():
+        ) or self.signing_up() or self.browser_helper.lock.locked() or getattr(self, "rocky_wants_browser", False):
+            # The browser is busy with a job of hers or Rocky's browsing (or he's waiting for it):
+            # exploring waits.
             return
         self.exploration_worker = self.explore_interest(self.exploration_browser(asyncio.get_running_loop()))
 
@@ -209,8 +211,9 @@ class BackgroundMixin:
         """Her own browser for exploring, while the Browser service is connected with the tools it needs.
 
         Its calls come from the exploration thread and run here on the app's loop. She stops
-        browsing (and writes up) as soon as you're back, a sign-up needs the browser or the app
-        closes. A sign-up borrows it with its own tools, keep_going and Activity title.
+        browsing (and writes up) as soon as you're back, a sign-up or Rocky needs the browser or
+        the app closes. A sign-up (and Rocky) borrows it with its own tools, keep_going and
+        Activity title.
         """
         status = self.services.status("playwright")
         if status.state != CONNECTED or not needs <= {tool.name for tool in status.tools}:
@@ -229,7 +232,8 @@ class BackgroundMixin:
 
         return BrowserAccess(
             call, refuse=lambda url: on_loop(refused_address(url), 30), on_page=on_page,
-            keep_going=keep_going or (lambda: self.can_explore() and not self.signing_up()),
+            keep_going=keep_going or (lambda: self.can_explore() and not self.signing_up()
+                                      and not getattr(self, "rocky_wants_browser", False)),
         )
 
     def check_reach_out(self) -> None:

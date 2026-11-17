@@ -98,10 +98,10 @@ class WebAccess:
     # one session followed in its pop-up (with its latest exchanges), or None when it isn't listed.
     claude_sessions: Callable[[], list[dict] | None] = lambda: None
     claude_session: Callable[[str], Awaitable[dict | None]] | None = None
-    # ask_rocky(device, question, ref, on_text) -> Rocky's answer to the person directly (@rocky),
-    # never given to Cora; on_text gets it so far as it streams. Raises RockyUnavailable with what
-    # to tell them.
-    ask_rocky: Callable[[WebDevice, str, str | None, Callable[[str], None]], Awaitable[str]] | None = None
+    # ask_rocky(device, question, ref, on_text, on_status) -> Rocky's answer to the person directly
+    # (@rocky), never given to Cora; on_text gets it so far as it streams, on_status what he's doing
+    # when he browses. Raises RockyUnavailable with what to tell them.
+    ask_rocky: Callable[..., Awaitable[str]] | None = None
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -132,16 +132,21 @@ def line(value: dict) -> bytes:
 async def reply_lines(updates: asyncio.Queue):
     """Her reply (or Rocky's answer) as it streams, one JSON object a line: {"type": "delta", "text"}
     for each new piece, then {"type": "done", "html"} or {"type": "error", "message"}. A ("done",
-    None) update is the usual failure; ("error", message) says why."""
+    None) update is the usual failure; ("error", message) says why. ("status", text) is what Rocky
+    is doing on the web ({"type": "status", "text"}); the text starts again from nothing after it."""
     sent = 0
     while True:
         kind, value = await updates.get()
+        # Text that queued up meanwhile goes as one piece, up to whatever came after it.
+        while kind == "text" and not updates.empty():
+            kind, value = updates.get_nowait()
         if kind == "error":
             yield line({"type": "error", "message": value})
             return
-        # Anything that queued up meanwhile goes as one piece.
-        while kind == "text" and not updates.empty():
-            kind, value = updates.get_nowait()
+        if kind == "status":
+            sent = 0
+            yield line({"type": "status", "text": value})
+            continue
         if kind == "text":
             delta = value[sent:] if value.startswith(value[:sent]) else value
             sent = len(value)
@@ -290,6 +295,7 @@ def api_routes(access: WebAccess) -> list[Route]:
             try:
                 updates.put_nowait(("done", await access.ask_rocky(
                     device, question, ref, lambda so_far: updates.put_nowait(("text", so_far)),
+                    lambda doing: updates.put_nowait(("status", doing)),
                 )))
             except RockyUnavailable as error:
                 updates.put_nowait(("error", str(error)))
