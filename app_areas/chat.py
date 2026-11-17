@@ -9,7 +9,7 @@ from textual.actions import SkipAction
 from textual.widgets import TextArea
 from textual import events, work
 
-from ui.composer import ChatComposer
+from ui.composer import ChatComposer, ChatModeChip
 from live import typed_content
 from backend_chat import STANDBY_EXCLUDED, BackendRoute
 from session_config import instruction_sections
@@ -30,6 +30,20 @@ class ChatMixin:
     def on_text_area_selection_changed(self, event: TextArea.SelectionChanged) -> None:
         if isinstance(event.text_area, ChatComposer):
             self.record_idle_activity(user_activity=True)
+
+    def rocky_offered(self) -> bool:
+        """Whether you can talk to Rocky (the chip by each chat box): once a model is chosen."""
+        return bool(getattr(self, "local_model_name", ""))
+
+    def set_chat_mode(self, mode: str) -> None:
+        """Who typed messages at the desk go to (Cora, or Rocky alone), shown by the chip beside
+        every chat box open (the dashboard's shows it as it opens). Cora, with the chip hidden,
+        until Rocky has a model."""
+        offered = self.rocky_offered()
+        self.chat_mode = mode if offered else "cora"
+        for screen in self.screen_stack:
+            for chip in screen.query(ChatModeChip):
+                chip.show(self.chat_mode, offered)
 
     # Textual owns worker scheduling and cancellation; coordinators own the work.
     def on_chat_composer_submitted(self, event: ChatComposer.Submitted) -> None:

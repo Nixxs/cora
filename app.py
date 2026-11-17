@@ -17,7 +17,7 @@ from openai_key import apply_api_key, has_key
 from ui.activity import Activity
 from ui.audio_status import AudioStatus
 from ui.chat_widgets import SelectableRichLog, TitleBar
-from ui.composer import ChatComposer
+from ui.composer import ChatComposer, ChatModeChip, next_mode
 from ui.conversation import Conversation
 from ui.dashboard import DashboardScreen
 from ui.side_panel import ChatRow, SidePanel
@@ -191,13 +191,16 @@ class CoraApp(
                         yield Button("Wake off", id="wake-status",
                                      tooltip="Enable local Hey Cora listening in standby")
                     with Vertical(id="input-frame"):
-                        yield ChatComposer(
-                            placeholder="Type a message to Cora...",
-                            id="chat-input",
-                            soft_wrap=True,
-                            show_line_numbers=False,
-                            highlight_cursor_line=False,
-                        )
+                        # Who your messages go to, then the message.
+                        with HorizontalGroup(classes="composer-row"):
+                            yield ChatModeChip("Cora ›", id="chat-mode", classes="chat-mode")
+                            yield ChatComposer(
+                                placeholder="Type a message to Cora...",
+                                id="chat-input",
+                                soft_wrap=True,
+                                show_line_numbers=False,
+                                highlight_cursor_line=False,
+                            )
                 yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(), id="side-panel")
 
     def on_mount(self) -> None:
@@ -244,6 +247,9 @@ class CoraApp(
         self.desire_worker = None
         self.desire_outcome = None
         self.exploration_worker = None
+        # Who typed messages at the desk go to (the chip by both chat boxes): Cora, or Rocky alone.
+        # Back to Cora each launch.
+        self.chat_mode = "cora"
         # Signing up to a site (one at a time); explorations leave the browser to it.
         self.sign_up_worker = None
         # Taking a sign-up she'd like, from her exploring, to the person.
@@ -507,6 +513,7 @@ class CoraApp(
             notify=lambda message, **options: self.notify(message, **options),
             trace=self.trace_live, send_without_live=self.send_without_live,
             keep_image=self.kept_images.keep, ask_rocky=self.ask_rocky_at_desk,
+            chat_mode=lambda: self.chat_mode,
         )
         self.backend_chat = BackendChat(self.tools, self.activity.write)
         self.wake = WakeController(
@@ -672,6 +679,11 @@ class CoraApp(
                     self.live.context, load_spend=self.load_spend,
                     claude_sessions=self.claude_sessions_shown,
                 ))
+        elif event.button.id in ("chat-mode", "dashboard-chat-mode"):
+            self.set_chat_mode(next_mode(self.chat_mode))
+            # Straight back to typing, in the box beside it.
+            for composer in event.button.parent.query(ChatComposer):
+                composer.focus()
         elif event.button.id == "chat-status":
             if self.standby:
                 self.action_reconnect()

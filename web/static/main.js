@@ -49,7 +49,7 @@ async function pair(code) {
     });
     const body = await response.json().catch(() => ({}));
     if (response.ok) {
-      await showApp(body.device);
+      await showApp(body.device, body.rocky === true);
       return;
     }
     pairError.textContent = body.error || "That didn't work. Try again.";
@@ -78,11 +78,12 @@ function showPairing(offline) {
   });
 }
 
-async function showApp(deviceName) {
+/** The chat, voice and Claude Code. rocky: whether Rocky is offered (a model is chosen for him). */
+async function showApp(deviceName, rocky = false) {
   pairScreen.hidden = true;
   app.hidden = false;
   const { startChat } = await import("./chat.js");
-  startChat(deviceName);
+  startChat(deviceName, rocky);
   const { setupVoice } = await import("./voice.js");
   setupVoice();
   const { setupClaudeCode } = await import("./claude.js");
@@ -97,7 +98,7 @@ fitToViewport();
 setupLayoutReport(document.getElementById("link-status"));
 const state = await session();
 if (state.paired) {
-  await showApp(state.device);
+  await showApp(state.device, state.rocky === true);
 } else {
   showPairing(state.offline);
   if (linked) {

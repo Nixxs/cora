@@ -30,6 +30,7 @@ from session_config import BACKEND_MODEL, MODEL_AREAS
 from tools.consult_rocky import NAME, ConsultRockyTool, validate_arguments
 from tools.route import current_route
 from ui.chat_submission import ChatSubmission
+from ui.composer import IMAGE_MARKER, ChatComposer, ChatModeChip
 from ui.conversation import ROCKY_ASKED, YOU_TO_ROCKY, Conversation, DirectRockyAnswer, QuietNote, RockyAnswer
 from ui.model_settings import ModelSettingsScreen
 from web import routes
@@ -77,6 +78,16 @@ class ThreadTests(unittest.TestCase):
         self.assertEqual(shown_so_far("<think>hmm, what"), "")
         self.assertEqual(shown_so_far("<think>hmm</think>\nStraight up"), "Straight up")
         self.assertEqual(shown_so_far("Straight up"), "Straight up")
+
+    def test_a_speaker_label_he_copies_is_taken_off(self):
+        self.assertEqual(answer_text("Nick: I hear ya loud and clear, mate!", "Nick"), "I hear ya loud and clear, mate!")
+        self.assertEqual(answer_text("Rocky: Sure thing."), "Sure thing.")
+        self.assertEqual(answer_text("Cora (for Nick): Sure."), "Sure.")
+        self.assertEqual(shown_so_far("  nick:  It sure does", "Nick"), "It sure does")
+        # Only labels: anything else before a colon stays.
+        self.assertEqual(answer_text("Short answer: no."), "Short answer: no.")
+        self.assertEqual(answer_text("Nickel: it's a metal.", "Nick"), "Nickel: it's a metal.")
+        self.assertIn("don't start yours with any name", RockyThread(direct=True).messages("hi", False, "Nick")[0]["content"])
 
 
 class StandInOllama:
@@ -519,6 +530,16 @@ class DeskSubmissionTests(unittest.TestCase):
         self.submit("Hi Cora")
         self.schedule.assert_called_once()
 
+    def test_with_the_chat_on_rocky_every_message_goes_to_him(self):
+        mode = ["rocky"]
+        self.submission.chat_mode = lambda: mode[0]
+        self.submit("how strong is ket?")
+        self.asked.assert_called_once_with("how strong is ket?")
+        self.schedule.assert_not_called()
+        mode[0] = "cora"
+        self.submit("Hi Cora")
+        self.schedule.assert_called_once()
+
     def test_not_with_an_image(self):
         composer = self.submit("@rocky what is this pill?", image=b"png")
         self.asked.assert_not_called()
@@ -562,6 +583,37 @@ class DeskTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(history[-1]["role"], "assistant")
             self.assertIn("I asked Rocky, my consultant: A dark funeral joke?", said)
             self.assertIn("He said: My grandad's last words", said)
+
+    async def test_the_chip_switches_who_messages_go_to_on_both_chat_boxes(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            chip, composer = app.query_one("#chat-mode", ChatModeChip), app.query_one("#chat-input", ChatComposer)
+            # No model for Rocky: no chip, and messages go to Cora whatever was chosen.
+            self.assertFalse(chip.display)
+            app.set_chat_mode("rocky")
+            self.assertEqual(app.chat_mode, "cora")
+            app.local_model_name = "huihui_ai/gemma-4-abliterated:12b"
+            app.set_chat_mode("cora")
+            await pilot.pause()
+            self.assertTrue(chip.display)
+            self.assertEqual((app.chat_mode, str(chip.label)), ("cora", "Cora ›"))
+            await pilot.click("#chat-mode")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(chip.label)), ("rocky", "Rocky ›"))
+            self.assertTrue(chip.has_class("mode-rocky"))
+            self.assertIn("Rocky (private", composer.placeholder)
+            self.assertIs(app.focused, composer)
+            # The dashboard's chip shows the same, and moves both on.
+            await pilot.click("#view-button")
+            await pilot.pause()
+            dashboard_chip = app.screen.query_one("#dashboard-chat-mode", ChatModeChip)
+            self.assertEqual(str(dashboard_chip.label), "Rocky ›")
+            self.assertIn("Rocky (private", app.screen.query_one("#dashboard-input", ChatComposer).placeholder)
+            await pilot.click("#dashboard-chat-mode")
+            await pilot.pause()
+            self.assertEqual((app.chat_mode, str(dashboard_chip.label), str(chip.label)), ("cora", "Cora ›", "Cora ›"))
+            # A pasted image still marks the box's border, past the row it shares with the chip.
+            composer.attach_image(b"png")
+            self.assertEqual(app.query_one("#input-frame").border_subtitle, IMAGE_MARKER)
 
     async def test_the_switch_in_settings(self):
         async with keyboard_tests.running_app() as (app, pilot):

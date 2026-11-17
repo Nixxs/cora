@@ -7,13 +7,49 @@ from textual import events
 from textual.actions import SkipAction
 from textual.binding import Binding
 from textual.message import Message
-from textual.widgets import TextArea
+from textual.widgets import Button, TextArea
 
 # The backend scales high-detail images to fit 2048x2048, so larger only costs upload time.
 IMAGE_MAX_SIDE = 2048
 IMAGE_MARKER = "image attached · Esc removes"
 SENDING_IMAGE = "sending image…"
 NO_IMAGE_TOOL = "To paste images, install wl-clipboard (Wayland) or xclip (X11)."
+
+# Who typed messages go to, in the order the chip moves through them: Cora (as always), or Rocky
+# alone (like "@rocky", never through OpenAI). Group comes later.
+CHAT_MODES = ("cora", "rocky")
+MODE_NAMES = {"cora": "Cora", "rocky": "Rocky"}
+MODE_PLACEHOLDERS = {
+    "cora": "Type a message to Cora...",
+    "rocky": "Type to Rocky (private: Cora doesn't see it)...",
+}
+MODE_TOOLTIPS = {
+    "cora": "Your messages go to Cora. Click to talk to Rocky privately instead.",
+    "rocky": "Your messages go to Rocky alone; Cora doesn't see them. Click to talk to Cora.",
+}
+
+
+def next_mode(mode: str) -> str:
+    return CHAT_MODES[(CHAT_MODES.index(mode) + 1) % len(CHAT_MODES)] if mode in CHAT_MODES else CHAT_MODES[0]
+
+
+class ChatModeChip(Button):
+    """Beside a chat box: who your typed messages go to. The app moves it on when clicked
+    (CoraApp.set_chat_mode), and it shows the app's mode wherever it's drawn. Hidden while
+    there's nobody but Cora to talk to (no model chosen for Rocky)."""
+
+    def on_mount(self) -> None:
+        offered = getattr(self.app, "rocky_offered", lambda: False)()
+        self.show(getattr(self.app, "chat_mode", CHAT_MODES[0]) if offered else CHAT_MODES[0], offered)
+
+    def show(self, mode: str, offered: bool = True) -> None:
+        self.display = offered
+        self.label = f"{MODE_NAMES[mode]} ›"
+        self.tooltip = MODE_TOOLTIPS[mode]
+        for each in CHAT_MODES:
+            self.set_class(each == mode, f"mode-{each}")
+        for composer in self.parent.query(ChatComposer):
+            composer.placeholder = MODE_PLACEHOLDERS[mode]
 
 
 def clipboard_png() -> bytes | None:
@@ -98,15 +134,22 @@ class ChatComposer(TextArea):
         result = self.replace(text, *self.selection)
         self.move_cursor(result.end_location)
 
+    @property
+    def frame(self):
+        """The bordered box it sits in (past the row it shares with its mode chip), where the
+        image marker shows."""
+        parent = self.parent
+        return parent.parent if parent.has_class("composer-row") else parent
+
     def attach_image(self, image_png: bytes) -> None:
         # One image per message: a new paste replaces the last.
         self.image_png = image_png
         # Both composers sit in a bordered box, so the marker shows on its edge.
-        self.parent.border_subtitle = IMAGE_MARKER
+        self.frame.border_subtitle = IMAGE_MARKER
 
     def remove_image(self) -> None:
         self.image_png = None
-        self.parent.border_subtitle = ""
+        self.frame.border_subtitle = ""
 
     def action_remove_image(self) -> None:
         if self.image_png is None:

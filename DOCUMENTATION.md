@@ -1482,7 +1482,14 @@ Local model (and a model chosen), she asks him through her `consult_rocky` tool.
   words where she can. If he can't be reached she says so, and never answers as him.
   What she asks him stays on this PC, but his answer goes to OpenAI with your conversation,
   since her reply builds on it. Activity notes each question and how long he took.
-- **Asking him yourself (`@rocky …`):** a message starting `@rocky` at the desk or on the web
+- **Asking him yourself (`@rocky …`, or the chat on Rocky):** the chip at the left of each
+  message box (**Cora ›** / **Rocky ›**, in their colours; [ui/composer.py](ui/composer.py)
+  `ChatModeChip`, shown once Rocky has a model: before that there's only Cora, and the page
+  learns which from `/api/session`'s `rocky`) says who your typed messages go to, and a click or tap moves it on; the
+  box's prompt changes with it ("Type to Rocky (private…)"). The desk's two boxes share one
+  mode, back to Cora each launch; each web page keeps its own, in that browser. With it on
+  Rocky every message goes to him as if it began `@rocky`. Voice, Signal and email are always
+  Cora. A message starting `@rocky` at the desk or on the web
   page goes to Rocky alone (`ask_rocky_directly`), in Live or Standby alike, and needs only a
   model chosen, not her switch. Neither your question nor his answer reaches OpenAI: nothing
   is saved, and the desk shows the exchange ("You · to Rocky: …", "Rocky · thinking…", then

@@ -193,6 +193,51 @@ function newRef() {
 // "@rocky …": to Rocky alone, never to Cora (as the desk's chat_submission and Cora's PC check too).
 const DIRECT_ROCKY = /^@rocky\b[\s:,]*/i;
 
+// Who your messages go to from this page: Cora, or Rocky alone (as if each began "@rocky"). Each
+// device keeps its own, in this browser only; Cora unless changed.
+const MODES = ["cora", "rocky"];
+const MODE_NAMES = { cora: "Cora", rocky: "Rocky" };
+const MODE_PLACEHOLDERS = { cora: "Type to Cora…", rocky: "Type to Rocky (private)…" };
+const MODE_LABELS = {
+  cora: "Messages go to Cora: tap for Rocky",
+  rocky: "Messages go to Rocky alone, Cora doesn't see them: tap for Cora",
+};
+const MODE_KEY = "cora-chat-mode";
+let chatMode = "cora";
+
+function showMode() {
+  const button = document.getElementById("mode-button");
+  button.textContent = `${MODE_NAMES[chatMode]} ›`;
+  button.className = `mode-${chatMode}`;
+  button.setAttribute("aria-label", MODE_LABELS[chatMode]);
+  document.getElementById("chat-input").placeholder = MODE_PLACEHOLDERS[chatMode];
+}
+
+/** The mode chip, shown only when there's somebody besides Cora to talk to. */
+function setupMode(rockyOffered) {
+  if (!rockyOffered) {
+    // No model for Rocky yet: Cora only (what was chosen before is kept for when he's back).
+    document.getElementById("mode-button").hidden = true;
+    return;
+  }
+  try {
+    const saved = localStorage.getItem(MODE_KEY);
+    if (MODES.includes(saved)) chatMode = saved;
+  } catch {
+    // No storage here (a private window): Cora each time.
+  }
+  showMode();
+  document.getElementById("mode-button").addEventListener("click", () => {
+    chatMode = MODES[(MODES.indexOf(chatMode) + 1) % MODES.length];
+    try {
+      localStorage.setItem(MODE_KEY, chatMode);
+    } catch {
+      // Still switched for now; just not remembered.
+    }
+    showMode();
+  });
+}
+
 /** Your question straight to Rocky: shown here as you asked, then his answer (or why not). */
 async function askRocky(question, ref) {
   if (hasPhoto()) addNotice("Rocky can't see photos: yours is still attached for your next message to Cora.");
@@ -231,8 +276,13 @@ async function send(text) {
   const ref = newRef();
   sentHere.add(ref);
   const direct = DIRECT_ROCKY.exec(text);
-  if (direct) {
-    await askRocky(text.slice(direct[0].length).trim(), ref);
+  if (direct || chatMode === "rocky") {
+    const question = direct ? text.slice(direct[0].length).trim() : text;
+    if (!question && hasPhoto()) {
+      addNotice("Rocky can't see photos: type a question for him. Your photo is still attached.");
+      return;
+    }
+    await askRocky(question, ref);
     return;
   }
   // A photo chosen with the camera button goes with this message; she sees it herself.
@@ -273,7 +323,8 @@ async function send(text) {
   }
 }
 
-export function startChat(deviceName) {
+export function startChat(deviceName, rockyOffered = false) {
+  setupMode(rockyOffered);
   setupComposer(send, hasPhoto);
   setupPhotos(addNotice);
   setupLocation(addNotice);

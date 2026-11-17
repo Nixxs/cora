@@ -102,6 +102,8 @@ class WebAccess:
     # (@rocky), never given to Cora; on_text gets it so far as it streams, on_status what he's doing
     # when he browses. Raises RockyUnavailable with what to tell them.
     ask_rocky: Callable[..., Awaitable[str]] | None = None
+    # Whether the page offers Rocky (its mode chip): once a model is chosen for him.
+    rocky_offered: Callable[[], bool] = lambda: False
 
 
 def answer(body: dict, status: int = 200) -> JSONResponse:
@@ -203,7 +205,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         device = await device_of(request)
         if device is None:
             return answer({"paired": False}, 401)
-        return answer({"paired": True, "device": device.name})
+        return answer({"paired": True, "device": device.name, "rocky": access.rocky_offered()})
 
     async def pair(request: Request) -> Response:
         body = await read_json(request)
@@ -218,7 +220,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         token = new_token()
         device = await access.add_device(str(body.get("name", "")), token_hash(token))
         access.on_paired(device)
-        response = answer({"paired": True, "device": device.name})
+        response = answer({"paired": True, "device": device.name, "rocky": access.rocky_offered()})
         response.set_cookie(COOKIE, token, max_age=COOKIE_SECONDS, path="/", secure=True, httponly=True,
                             samesite="strict")
         return response

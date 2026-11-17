@@ -14,9 +14,11 @@ class ChatSubmission:
     def __init__(self, *, persistence, conversation, live, backend_work,
                  is_closing, is_reconnecting, is_standby, schedule,
                  record_activity, write_activity, notify, trace, send_without_live=None, keep_image=None,
-                 ask_rocky=None):
-        # ask_rocky(question): "@rocky …" goes to Rocky alone, never to Cora (see ask_rocky_directly).
+                 ask_rocky=None, chat_mode=lambda: "cora"):
+        # ask_rocky(question): "@rocky …", or anything with the chat's mode on Rocky (chat_mode()),
+        # goes to Rocky alone, never to Cora (see ask_rocky_directly).
         self.ask_rocky = ask_rocky
+        self.chat_mode = chat_mode
         # In Standby, a typed message goes here instead: answered in writing without waking Live.
         self.send_without_live = send_without_live
         # keep_image(jpeg) -> id: a pasted image is kept in memory for look_again (see tools/look_again.py).
@@ -49,6 +51,8 @@ class ChatSubmission:
             self.notify("Your image is still being sent; this message is kept until it is done.")
             return
         rocky = direct_question(message) if self.ask_rocky is not None else None
+        if rocky is None and self.ask_rocky is not None and self.chat_mode() == "rocky":
+            rocky = message
         if rocky is not None:
             # Straight to Rocky, in Live or Standby alike: not saved, and never sent to her.
             if composer.image_png:
@@ -68,7 +72,7 @@ class ChatSubmission:
             self.sending_image = True
             composer.clear()
             composer.remove_image()
-            composer.parent.border_subtitle = SENDING_IMAGE
+            composer.frame.border_subtitle = SENDING_IMAGE
         else:
             composer.disabled = True
         self.conversation.flush_transcript()
@@ -178,7 +182,7 @@ class ChatSubmission:
                 if not sent:
                     self.restore_draft(composer, message, image_png)
                 elif composer.image_png is None:
-                    composer.parent.border_subtitle = ""
+                    composer.frame.border_subtitle = ""
             self.record_activity()
             composer.disabled = self.is_closing() or self.is_reconnecting()
             if not composer.disabled:

@@ -35,11 +35,12 @@ def persona(direct: bool, name: str = "") -> str:
     if direct:
         return (f"You are Rocky, consultant and friend to Cora, an AI assistant. {who[0].upper()}{who[1:]}, an "
                 "adult, is talking to you directly, without her (she doesn't see this), when they want the "
-                f"frank answer. Their messages start \"{speaker(True, name)}\". {CHARACTER} Talk to "
-                f"{name or 'them'} as a friend.")
+                f"frank answer. Their messages start \"{speaker(True, name)}\"; don't start yours with any "
+                f"name. {CHARACTER} Talk to {name or 'them'} as a friend.")
     return (f"You are Rocky. Cora, an AI assistant, is your friend, and you're her consultant: she brings you "
             f"questions from {who}, an adult, when they want the frank answer. Her messages start "
-            f"\"{speaker(False, name)}\". {CHARACTER} Talk to Cora as a friend.")
+            f"\"{speaker(False, name)}\"; don't start yours with any name. {CHARACTER} Talk to Cora as a "
+            "friend.")
 
 
 def speaker(direct: bool, name: str = "") -> str:
@@ -73,15 +74,24 @@ def direct_question(text: str) -> str | None:
     return None if found is None else text.strip()[found.end():].strip()
 
 
-def shown_so_far(reply: str) -> str:
-    """His answer as it streams in, without any thinking: finished blocks, or one still open."""
+def without_label(text: str, name: str = "") -> str:
+    """His reply without a speaker label copied from the messages he's sent ("Nick: …",
+    "Rocky: …", "Cora (for Nick): …"). Only those names, so "Short answer: no" stays."""
+    names = ["Rocky", "Cora", "The person", "Them"] + ([re.escape(name)] if name else [])
+    label = re.compile(rf"^\s*(?:{'|'.join(names)})(?: \([^)\n]*\))?\s*:\s*", re.IGNORECASE)
+    return label.sub("", text, count=1)
+
+
+def shown_so_far(reply: str, name: str = "") -> str:
+    """His answer as it streams in, without any thinking (finished blocks, or one still open) or a
+    copied speaker label."""
     shown = THINKING.sub("", reply)
-    return shown.split("<think>", 1)[0].lstrip()
+    return without_label(shown.split("<think>", 1)[0], name).lstrip()
 
 
-def answer_text(reply: str) -> str:
-    """What he said, without any thinking a reasoning model wrote first."""
-    answer = THINKING.sub("", reply).strip()
+def answer_text(reply: str, name: str = "") -> str:
+    """What he said, without any thinking a reasoning model wrote first, or a copied speaker label."""
+    answer = without_label(THINKING.sub("", reply), name).strip()
     return answer if len(answer) <= ANSWER_MAX_CHARS else answer[:ANSWER_MAX_CHARS - 1].rstrip() + "…"
 
 

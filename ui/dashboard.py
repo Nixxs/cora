@@ -19,7 +19,7 @@ from ui.braille import BrailleGraph
 from ui.chat_widgets import BorderLine, SelectableRichLog, TitleBar
 from ui.claude_code_view import ClaudeSessionList
 from ui.when import ago, whole_unit
-from ui.composer import ChatComposer
+from ui.composer import ChatComposer, ChatModeChip
 from ui.context_view import ContextScreen, DetailScreen
 from ui.meters import (
     LABEL_STYLE, TRACK_STYLE, CalendarHeatmap, ContextMeters, Meters, Openable, ReadableMeters, SpendChart, ToneRibbon,
@@ -236,14 +236,17 @@ class DashboardScreen(Screen):
                 with Vertical(id="chat-box", classes="dashboard-box"):
                     yield SelectableRichLog(id="dashboard-chat", wrap=True, min_width=1)
                     yield BorderLine(id="dashboard-input-line")
-                    # Posts the same Submitted message as the chat's composer, which the app sends.
-                    yield ChatComposer(
-                        placeholder="Type a message to Cora...",
-                        id="dashboard-input",
-                        soft_wrap=True,
-                        show_line_numbers=False,
-                        highlight_cursor_line=False,
-                    )
+                    # Posts the same Submitted message as the chat's composer, which the app sends;
+                    # its mode chip is the app's too (CoraApp.set_chat_mode).
+                    with HorizontalGroup(classes="composer-row"):
+                        yield ChatModeChip("Cora ›", id="dashboard-chat-mode", classes="chat-mode")
+                        yield ChatComposer(
+                            placeholder="Type a message to Cora...",
+                            id="dashboard-input",
+                            soft_wrap=True,
+                            show_line_numbers=False,
+                            highlight_cursor_line=False,
+                        )
             # Pans sideways when the boxes don't fit; unfocusable so clicks leave typing alone.
             with HorizontalScroll(id="dashboard-middle", can_focus=False):
                 with Vertical(id="feelings-box", classes="dashboard-box"):

@@ -95,7 +95,7 @@ class WebRoutesTests(unittest.IsolatedAsyncioTestCase):
         async def find_device(hashed):
             return self.devices.get(hashed)
 
-        access = WebAccess(self.pairing, add_device, find_device, self.on_paired)
+        self.access = access = WebAccess(self.pairing, add_device, find_device, self.on_paired)
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=build_app(web_routes(access))),
                                         base_url="http://test")
 
@@ -129,7 +129,8 @@ class WebRoutesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.devices, {})
         self.on_paired.assert_not_called()
         answer = await self.pair(shown_code(code))
-        self.assertEqual((answer.status_code, answer.json()), (200, {"paired": True, "device": "iPhone"}))
+        self.assertEqual((answer.status_code, answer.json()),
+                         (200, {"paired": True, "device": "iPhone", "rocky": False}))
         self.on_paired.assert_called_once()
         # Used up.
         self.assertEqual((await self.pair(code)).status_code, 403)
@@ -145,7 +146,12 @@ class WebRoutesTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(self.devices), [token_hash(token)])
         self.assertNotIn(token, json.dumps([str(device) for device in self.devices.values()]))
         session = await self.client.get("/api/session", headers={"Cookie": f"{COOKIE}={token}"})
-        self.assertEqual((session.status_code, session.json()), (200, {"paired": True, "device": "iPhone"}))
+        self.assertEqual((session.status_code, session.json()),
+                         (200, {"paired": True, "device": "iPhone", "rocky": False}))
+        # Once Rocky has a model, the page offers him (its mode chip).
+        self.access.rocky_offered = lambda: True
+        session = await self.client.get("/api/session", headers={"Cookie": f"{COOKIE}={token}"})
+        self.assertIs(session.json()["rocky"], True)
         # Unpaired in Settings: the same cookie no longer works.
         self.devices.clear()
         self.assertEqual((await self.client.get("/api/session", headers={"Cookie": f"{COOKIE}={token}"})).status_code, 401)

@@ -103,6 +103,8 @@ class LocalModelMixin:
         idle = saved.get("idle")
         self.local_model.idle_minutes = idle if idle in IDLE_CHOICES else self.local_model.idle_minutes
         self.local_model_consult = saved.get("consult") is True
+        # The chat's chip appears once he has a model.
+        self.set_chat_mode(self.chat_mode)
 
     def can_consult_rocky(self) -> bool:
         """Whether her consult_rocky tool is offered: switched on, with a model chosen."""
@@ -139,7 +141,7 @@ class LocalModelMixin:
         draft = self.conversation.ask_rocky_directly(question, where)
 
         def streamed(so_far: str) -> None:
-            shown = shown_so_far(so_far)
+            shown = shown_so_far(so_far, self.rocky_person_name())
             draft.update(shown)
             if on_text is not None:
                 on_text(shown)
@@ -213,7 +215,8 @@ class LocalModelMixin:
                                     "Rocky error")
                 raise RockyUnavailable(
                     "Rocky couldn't answer just now (the local model didn't start or answer).") from None
-            answer = answer_text(reply)
+            # Without a speaker label he copied, so his thread doesn't teach him the habit.
+            answer = answer_text(reply, self.rocky_person_name())
             if not answer:
                 raise RockyUnavailable("Rocky said nothing.")
             thread.add(question, answer)
@@ -325,6 +328,7 @@ class LocalModelMixin:
             self.notify(str(error), severity="warning")
             return
         self.local_model_name = name
+        self.set_chat_mode(self.chat_mode)
         try:
             await self.conversation_persistence.call_database(self.persistence.save_local_model_name, name)
         except Exception as error:
