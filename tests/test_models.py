@@ -43,7 +43,7 @@ class ModelDefinitionTests(unittest.TestCase):
         "public.service_settings", "public.service_tools", "public.signal_settings", "public.webhook_settings",
         "public.self_image", "public.key_details", "public.app_settings",
         "public.impressions", "public.impression_updates", "public.tasks", "public.task_parties",
-        "public.task_steps", "public.sign_ups", "public.desires", "public.desire_events", "public.desire_sources",
+        "public.task_steps", "public.task_calls", "public.sign_ups", "public.desires", "public.desire_events", "public.desire_sources",
         "public.desire_worker_state", "public.desire_opportunities", "public.feeling_events", "public.web_devices",
             "public.claude_code_sessions",
             })

@@ -1689,7 +1689,7 @@ before anything else.
 - **Audio:** Twilio's 8 kHz μ-law becomes Live's 24 kHz PCM16 and back
   ([phone/audio.py](phone/audio.py), well under a millisecond of delay). Live paces her speech
   and stops when you talk, so barge-in just works. When a call ends, Activity says how quickly
-  her replies began.
+  her replies began, typically and for her first reply.
 - **On a call:** approvals go to your Signal chat, never by voice; `where_is_person` refuses.
 - **Calling out for tasks:** `call_someone` (offered once calling out is set up) asks you
   first, showing who, the number, the task and the brief. Calls go out only between 8am and
@@ -1698,8 +1698,12 @@ before anything else.
   the call gets its own Live session with only her self and the brief
   (`phone_party_instructions`): she says she's an AI assistant calling for someone she works
   for and that she keeps a transcript, keeps to the brief, never commits you, leaves a short
-  message on voicemail, and reports with `pass_on`. The transcript is kept as a step on the
-  task. A call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
+  message on voicemail, and reports with `pass_on`. The whole call is kept in `task_calls`
+  (its transcript, when it began and ended, and how quickly she replied, including her first
+  reply), and its start and end go on the task as a step: a step holds 4,000 characters, which
+  a phone menu and hold messages can fill before anyone answers, so the step keeps about 800
+  characters of the start and as much of the end as fits, with the middle marked as cut. Lines
+  with no words (the transcriber's stray "." while the other one talks) are dropped. A call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
   without her reporting, goes to the coordinator too, so you always hear how it went. Calls
   go through the REST API of the Twilio region chosen under Phone calls (Sydney AU1 by
   default; saved as `twilio_region` in `app_settings`, applied at launch, or `.env`'s

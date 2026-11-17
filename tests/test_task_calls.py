@@ -14,7 +14,7 @@ import httpx2 as httpx
 
 from app_areas import task_calls
 from app_areas.contact_calls import CallRoute
-from app_areas.task_calls import TaskCall, transcript_step
+from app_areas.task_calls import CUT_MARK, TaskCall, cut_middle, said_lines, transcript_step
 from phone import twilio
 from phone.routes import PhoneAccess, phone_routes
 from server.listener import build_app
@@ -271,6 +271,60 @@ class TaskCallAppTests(unittest.IsolatedAsyncioTestCase):
     def test_a_long_transcript_fits_a_task_step(self):
         call = TaskCall(SHOP, None, uuid4(), "Goal", "Brief", turns=[("user", "word " * 2000)])
         self.assertLessEqual(len(transcript_step(call, 3)), STEP_MAX_CHARS)
+
+    def test_a_step_keeps_the_start_and_the_end_of_a_call_that_waited_through_a_menu_and_hold(self):
+        # Her first real call: the menu and hold ads filled the step, and the person who answered was cut.
+        menu = "To hear our trading hours, press one. To make a new purchase, press three. " * 6
+        hold = "You could earn 90-day store cash on qualifying products. Please hold. " * 60
+        turns = [("user", "Thank you for calling The Good Guys."), ("assistant", "."),
+                 *[turn for _ in range(4) for turn in (("user", menu), ("assistant", "New purchase, please."))],
+                 ("user", hold + "Good afternoon, Stacey, how can we help?"),
+                 ("assistant", "Hi Stacey, I'm Cora, calling for Nick about two split systems."),
+                 ("user", "We've got both in stock, $1,899 each installed."),
+                 ("assistant", "Thanks, I'll pass that on.")]
+        call = TaskCall(SHOP, "The Good Guys", uuid4(), "Goal", "Brief", turns=turns)
+        step = transcript_step(call, 8)
+        self.assertLessEqual(len(step), STEP_MAX_CHARS)
+        self.assertTrue(step.startswith("Call with The Good Guys (8 min), transcript:\nThem: Thank you for calling"))
+        self.assertIn(CUT_MARK, step)
+        self.assertIn("Them: We've got both in stock, $1,899 each installed.\nCora: Thanks, I'll pass that on.", step)
+        self.assertNotIn("Cora: .", step)
+
+    def test_wordless_turns_are_dropped_and_the_words_either_side_joined(self):
+        self.assertEqual(said_lines([("user", "Thank you for calling The Good"), ("assistant", "."),
+                                     ("user", "Guys."), ("assistant", "Hi there."), ("assistant", "")]),
+                         ["Them: Thank you for calling The Good Guys.", "Cora: Hi there."])
+
+    def test_cutting_the_middle_fits_even_one_long_line(self):
+        self.assertEqual(cut_middle(["Them: short"], 100), "Them: short")
+        text = cut_middle(["Them: " + "a" * 5000, "Cora: " + "b" * 5000], 1000, head_chars=200)
+        self.assertLessEqual(len(text), 1000)
+        self.assertTrue(text.startswith("Them: aaa"))
+        self.assertTrue(text.endswith("bbb"))
+        self.assertIn(CUT_MARK, text)
+
+    async def test_the_whole_call_is_kept_with_how_fast_she_replied(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            call = TaskCall(SHOP, "Ace Plumbing", uuid4(), "Find a plumber", "Ask.")
+            record_id = uuid4()
+            app.persistence.save_task_call = MagicMock(return_value=record_id)
+            app.persistence.task_call_replies = MagicMock()
+            long_answer = "Tuesday is fine. " * 400
+            with patch.object(app, "coordinate_task"):
+                await self.run_call(app, pilot, call, [
+                    self.said("session.output_transcript.delta", "Hi, it's Cora."),
+                    self.said("session.input_transcript.delta", long_answer)])
+            task_id, who, number, began_at, transcript, replies = app.persistence.save_task_call.call_args.args
+            self.assertEqual((task_id, who, number, replies), (call.task_id, "Ace Plumbing", SHOP, None))
+            self.assertEqual(transcript, "Cora: Hi, it's Cora.\nThem: " + long_answer.strip())
+            self.assertIsNotNone(began_at.tzinfo)
+            self.assertEqual(call.record_id, record_id)
+            # Her reply times come once the call's stream has closed.
+            app.on_task_call_gaps(call, "")
+            app.on_task_call_gaps(call, "Her replies began 0.9 s after you stopped talking, typically")
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.persistence.task_call_replies.assert_called_once_with(
+                record_id, "Her replies began 0.9 s after you stopped talking, typically")
 
 
 class EndCallToolTests(unittest.IsolatedAsyncioTestCase):

@@ -6,7 +6,8 @@ to a voice session of its own, as with a contact's call: her own self and the ta
 the person's context. She says she's an AI assistant calling for someone she works for and that she
 keeps a transcript, keeps to the brief, and reports what she learns with pass_on, as in a task's
 email thread, so the task's coordinator brings the person their word. The transcript is kept as a
-step on the task. A call nobody answers, or one that ends without her reporting, goes to the
+step on the task (its start and end, as a step holds only 4,000 characters) and whole in
+task_calls, with how quickly she replied. A call nobody answers, or one that ends without her reporting, goes to the
 coordinator too, so the person always hears how it went.
 
 Calls go out only when calling out is set up (Settings › Phone calls: the Twilio account and her
@@ -16,7 +17,7 @@ then too).
 
 import asyncio
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from time import monotonic
 from uuid import UUID, uuid4
@@ -27,7 +28,7 @@ from live import CoraLive
 from phone import twilio
 from phone.routes import CallLink
 from session_config import TASK_CALL_LIVE_INSTRUCTIONS, contact_call_config, instruction_sections, phone_party_instructions
-from storage.task_store import STEP_MAX_CHARS, PhoneParty
+from storage.task_store import CALL_TRANSCRIPT_MAX_CHARS, STEP_MAX_CHARS, PhoneParty
 from web.voice import Listener, VoiceRelay
 
 from phone.goodbye import GoodbyeWatch
@@ -45,6 +46,10 @@ ANSWERED_NOTE = (
     "Call note, not something they said. {who} has just answered your call: introduce yourself as your "
     "instructions say and say why you're calling. Do not mention this note."
 )
+# How much of a call's start its task step keeps (who answered, the menu she went through); the
+# rest of the step is the end of the call, where what was agreed is.
+STEP_HEAD_CHARS = 800
+CUT_MARK = "… (the middle of the call is cut here) …"
 # Twilio's word for a call that didn't connect, as she'd say it.
 NOT_CONNECTED = {
     "no-answer": "nobody answered", "busy": "the line was busy", "failed": "the call didn't go through",
@@ -69,21 +74,65 @@ class TaskCall:
     reported: bool = False
     done: bool = False
     started: float = field(default_factory=monotonic)
+    began_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     transcript: Transcript = field(default_factory=Transcript)
     turns: list = field(default_factory=list)
     goodbye: GoodbyeWatch = field(default_factory=GoodbyeWatch)
+    # How quickly she replied (from the call's stream, once it closes), and the call's saved row.
+    replies: str = ""
+    record_id: UUID | None = None
 
     @property
     def who(self) -> str:
         return self.name or self.number
 
 
+def said_lines(turns: list[tuple[str, str]]) -> list[str]:
+    """A call's turns as "Them:"/"Cora:" lines. A turn with no words (the transcriber's stray "."
+    while the other one talks) is dropped, and the words either side of it joined up again."""
+    kept: list[tuple[str, str]] = []
+    for role, text in turns:
+        if not any(character.isalnum() for character in text):
+            continue
+        if kept and kept[-1][0] == role:
+            kept[-1] = (role, f"{kept[-1][1]} {text}")
+        else:
+            kept.append((role, text))
+    return [f"{'Them' if role == 'user' else 'Cora'}: {text}" for role, text in kept]
+
+
+def cut_middle(lines: list[str], limit: int, head_chars: int = STEP_HEAD_CHARS) -> str:
+    """Lines fitted to limit by cutting the middle: about head_chars of the start, and as much of
+    the end as fits. A call's start is the menu and hold; its end is what was agreed."""
+    text = "\n".join(lines)
+    if len(text) <= limit:
+        return text
+    head: list[str] = []
+    used = 0
+    for line in lines:
+        if used + len(line) + 1 > head_chars:
+            if not head:
+                head.append(line[:head_chars - 1] + "…")
+                used = head_chars + 1
+            break
+        head.append(line)
+        used += len(line) + 1
+    room = limit - used - len(CUT_MARK) - 1
+    tail: list[str] = []
+    for line in reversed(lines[len(head):]):
+        if len(line) + 1 > room:
+            if not tail and room > 2:
+                tail.append("…" + line[len(line) - room + 2:])
+            break
+        tail.insert(0, line)
+        room -= len(line) + 1
+    return "\n".join([*head, CUT_MARK, *tail])
+
+
 def transcript_step(call: TaskCall, minutes: float) -> str:
-    """The call's transcript as a task step, cut to fit."""
+    """The call's transcript as a task step: its start and end, cut to fit."""
     head = f"Call with {call.who} ({minutes:.0f} min), transcript:\n"
-    lines = "\n".join(f"{'Them' if role == 'user' else 'Cora'}: {text}" for role, text in call.turns)
-    text = head + (lines or "(nothing was said)")
-    return text if len(text) <= STEP_MAX_CHARS else text[:STEP_MAX_CHARS - 1] + "…"
+    return head + (cut_middle(said_lines(call.turns), STEP_MAX_CHARS - len(head)) or "(nothing was said)")
 
 
 class TaskCallsMixin:
@@ -149,8 +198,16 @@ class TaskCallsMixin:
             return None
         call.connected = True
         return CallLink(call.relay, lambda listener, connected: self.on_task_call_stream(call, listener, connected),
-                        on_gaps=lambda summary: summary and self.activity.write(f"The call with {call.who}: {summary}",
-                                                                                "Phone call"))
+                        on_gaps=lambda summary: self.on_task_call_gaps(call, summary))
+
+    def on_task_call_gaps(self, call: TaskCall, summary: str) -> None:
+        """How quickly she replied, once the call's stream has closed: in Activity, and kept with the call."""
+        if not summary:
+            return
+        self.activity.write(f"The call with {call.who}: {summary}", "Phone call")
+        call.replies = summary
+        if call.record_id is not None:
+            self.run_worker(self.save_task_call_replies(call), group="task-call-save", exit_on_error=False)
 
     def on_task_call_stream(self, call: TaskCall, listener: Listener, connected: bool) -> None:
         if connected:
@@ -231,10 +288,11 @@ class TaskCallsMixin:
         if (finished := call.transcript.finish()) is not None:
             call.turns.append(finished)
         minutes = (monotonic() - call.started) / 60
+        await self.save_task_call(call)
         await self.note_task_step(call.task_id, transcript_step(call, minutes))
         self.activity.write(f"The call with {call.who} ended after {minutes:.0f} min.", "Phone call")
         if not call.reported:
-            said = "\n".join(f"{'Them' if role == 'user' else 'Cora'}: {text}" for role, text in call.turns[-8:])
+            said = "\n".join(said_lines(call.turns)[-8:])
             self.tasks_coordinating.add(call.task_id)
             self.coordinate_task(
                 call.task_id, f"Your call with {call.who} ended without you passing anything on; its transcript "
@@ -258,6 +316,28 @@ class TaskCallsMixin:
         self.tasks_coordinating.add(call.task_id)
         self.coordinate_task(call.task_id, f"Your call to {call.who} didn't connect: {why}.",
                              f"I tried calling {call.who} for your task \"{call.goal}\", but {why}.", settled=False)
+
+    async def save_task_call(self, call: TaskCall) -> None:
+        """The whole call, kept with its task."""
+        replies = call.replies
+        try:
+            call.record_id = await self.conversation_persistence.call_database(
+                self.persistence.save_task_call, call.task_id, call.who, call.number, call.began_at,
+                cut_middle(said_lines(call.turns), CALL_TRANSCRIPT_MAX_CHARS), replies or None)
+        except Exception as error:
+            self.activity.write(f"Saving the call with {call.who} failed ({type(error).__name__}).", "Phone call")
+            return
+        if call.replies != replies:
+            # Her reply times came in while it was being saved.
+            await self.save_task_call_replies(call)
+
+    async def save_task_call_replies(self, call: TaskCall) -> None:
+        try:
+            await self.conversation_persistence.call_database(self.persistence.task_call_replies, call.record_id,
+                                                              call.replies)
+        except Exception as error:
+            self.activity.write(f"Saving how fast she replied on the call failed ({type(error).__name__}).",
+                                "Phone call")
 
     async def note_task_step(self, task_id, text: str) -> None:
         try:
