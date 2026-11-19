@@ -154,5 +154,7 @@ class ReplyGaps:
             return ""
         gaps = sorted(self.gaps)
         middle = gaps[len(gaps) // 2]
+        # The first is answering the call's "Hello?", when a slow reply gets her hung up on.
         return (f"Her replies began {middle:.1f} s after you stopped talking, typically "
-                f"({len(gaps)} replies, {gaps[0]:.1f}–{gaps[-1]:.1f} s; the line adds a little each way).")
+                f"({len(gaps)} replies, {gaps[0]:.1f}–{gaps[-1]:.1f} s, the first {self.gaps[0]:.1f} s; "
+                "the line adds a little each way).")

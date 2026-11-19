@@ -95,6 +95,8 @@ class CallRoute:
     email_party: tuple | None = None
     # end_call(): hang up once her goodbye has been heard.
     end_call: object = None
+    # press_keys(keys): keypad tones down the line (a call she placed, for its phone menu).
+    press_keys: object = None
     ask_approval = None
     approval_seconds = 0
     tool_seconds = None

@@ -958,6 +958,30 @@ class TaskStepRecord(Base):
     text: Mapped[str] = mapped_column(Text)
 
 
+class TaskCallRecord(Base):
+    """A call she placed for a task, its transcript kept whole (a step holds only part of it)."""
+
+    __tablename__ = "task_calls"
+    __table_args__ = (
+        CheckConstraint("btrim(who) <> '' AND char_length(who) <= 320", name="task_calls_who_check"),
+        CheckConstraint("btrim(number) <> '' AND char_length(number) <= 320", name="task_calls_number_check"),
+        CheckConstraint("char_length(transcript) <= 100000", name="task_calls_transcript_check"),
+        CheckConstraint("replies IS NULL OR char_length(replies) <= 500", name="task_calls_replies_check"),
+        Index("task_calls_task_id_idx", "task_id", "started_at"),
+        {"schema": "public"},
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4, server_default=sql_text("gen_random_uuid()"))
+    task_id: Mapped[UUID] = mapped_column(ForeignKey("public.tasks.id", ondelete="CASCADE"))
+    who: Mapped[str] = mapped_column(Text)
+    number: Mapped[str] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=sql_text("CURRENT_TIMESTAMP"))
+    transcript: Mapped[str] = mapped_column(Text)
+    # How quickly she replied on the call (ReplyGaps), once the call's stream has closed.
+    replies: Mapped[str | None] = mapped_column(Text)
+
+
 class ServiceToolRecord(Base):
     """One service tool Cora may use; tools without a row are off."""
 

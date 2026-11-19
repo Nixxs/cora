@@ -100,6 +100,8 @@ class WebAccess:
     # one session followed in its pop-up (with its latest exchanges), or None when it isn't listed.
     claude_sessions: Callable[[], list[dict] | None] = lambda: None
     claude_session: Callable[[str], Awaitable[dict | None]] | None = None
+    # task_call() -> the call she's placed for a task as it happens (who, state, for, lines), or None.
+    task_call: Callable[[], dict | None] = lambda: None
     # ask_rocky(device, question, ref, on_text, on_status) -> Rocky's answer to the person directly
     # (@rocky), never given to Cora; on_text gets it so far as it streams, on_status what he's doing
     # when he browses. Raises RockyUnavailable with what to tell them.
@@ -442,6 +444,13 @@ def api_routes(access: WebAccess) -> list[Route]:
             return answer({"listening": False})
         return answer({"listening": True, "sessions": sessions})
 
+    async def task_call(request: Request) -> Response:
+        """The call she's placed for a task, as it happens: {"call": null} while there's none."""
+        device = await device_of(request)
+        if device is None:
+            return answer({"error": "This device isn't paired."}, 401)
+        return answer({"call": access.task_call()})
+
     async def claude_code_session(request: Request) -> Response:
         """One session, as its pop-up follows it: each exchange also as "html", its Markdown
         rendered as her replies are (raw HTML escaped, only web and mail links)."""
@@ -548,6 +557,7 @@ def api_routes(access: WebAccess) -> list[Route]:
         Route("/api/location", location, methods=["POST"]),
         Route("/api/photos/{image_id:str}", photo, methods=["GET"]),
         Route("/api/claude-code", claude_code, methods=["GET"]),
+        Route("/api/call", task_call, methods=["GET"]),
         Route("/api/claude-code/{session_id:str}", claude_code_session, methods=["GET"]),
         WebSocketRoute("/api/voice", voice),
     ]

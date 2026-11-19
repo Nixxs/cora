@@ -22,6 +22,7 @@ from .run_claude_code import (
     RunClaudeCodeTool, SCHEMA as RUN_CLAUDE_CODE_SCHEMA, validate_arguments as validate_run_claude_code_arguments,
 )
 from .close_task import CloseTaskTool, SCHEMA as CLOSE_TASK_SCHEMA, validate_arguments as validate_close_task_arguments
+from .read_call import ReadCallTool, SCHEMA as READ_CALL_SCHEMA, validate_arguments as validate_read_call_arguments
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .look_again import KeptImages, LookAgainTool, SCHEMA as LOOK_AGAIN_SCHEMA, validate_arguments as validate_look_again_arguments
@@ -41,6 +42,7 @@ from .message_person_on_signal import (
     MessagePersonOnSignalTool, SCHEMA as MESSAGE_PERSON_SCHEMA, validate_arguments as validate_message_person_arguments,
 )
 from .end_call import SCHEMA as END_CALL_SCHEMA, EndCallTool, validate_arguments as validate_end_call_arguments
+from .press_keys import SCHEMA as PRESS_KEYS_SCHEMA, PressKeysTool, validate_arguments as validate_press_keys_arguments
 from .call_someone import SCHEMA as CALL_SOMEONE_SCHEMA, CallSomeoneTool, validate_arguments as validate_call_arguments
 from .send_email import SendEmailTool, SCHEMA as SEND_EMAIL_SCHEMA, validate_arguments as validate_send_email_arguments
 from .pass_on import PassOnTool, SCHEMA as PASS_ON_SCHEMA, validate_arguments as validate_pass_on_arguments
@@ -94,7 +96,7 @@ def create_tool_registry(
     screen_looking=lambda: True, show_image=lambda image, caption, page_url: None,
     find_signal_contact=lambda name: (None, "Signal isn't set up."), confirm=_not_set_up, send_signal=_not_set_up,
     signal_unreachable=None, relay_to_person=_not_set_up, raise_concern=_not_set_up, stop_replying=_not_set_up,
-    task_goal=None, record_task=None, close_task=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
+    task_goal=None, record_task=None, close_task=_not_set_up, read_call=_not_set_up, get_mailbox=lambda: None, record_email_task=None,
     relay_from_email=None, find_email_thread=None, email_signature=lambda: "", get_calendar=lambda: None,
     calendar_changed=lambda: None, check_sign_up=_no_sign_ups, begin_sign_up=_not_set_up,
     signal_reaches_person=lambda: False, message_person=_not_set_up, note_feeling=_not_set_up,
@@ -153,6 +155,8 @@ def create_tool_registry(
     registry.register(STOP_REPLYING_SCHEMA, validate_stop_arguments, stop.handle)
     close_task_tool = CloseTaskTool(get_connection, is_closing, write_debug, close_task)
     registry.register(CLOSE_TASK_SCHEMA, validate_close_task_arguments, close_task_tool.handle)
+    read_call_tool = ReadCallTool(get_connection, is_closing, write_debug, read_call)
+    registry.register(READ_CALL_SCHEMA, validate_read_call_arguments, read_call_tool.handle)
     check_email = CheckEmailTool(get_connection, is_closing, write_debug, get_mailbox)
     registry.register(CHECK_EMAIL_SCHEMA, validate_check_email_arguments, check_email.handle)
     send_email = SendEmailTool(
@@ -165,6 +169,8 @@ def create_tool_registry(
     registry.register(CALL_SOMEONE_SCHEMA, validate_call_arguments, call_someone.handle)
     end_call = EndCallTool(get_connection, is_closing, write_debug)
     registry.register(END_CALL_SCHEMA, validate_end_call_arguments, end_call.handle)
+    press_keys = PressKeysTool(get_connection, is_closing, write_debug)
+    registry.register(PRESS_KEYS_SCHEMA, validate_press_keys_arguments, press_keys.handle)
     check_calendar = CheckCalendarTool(get_connection, is_closing, write_debug, get_calendar)
     registry.register(CHECK_CALENDAR_SCHEMA, validate_check_calendar_arguments, check_calendar.handle)
     for schema, validate, tool_type in (

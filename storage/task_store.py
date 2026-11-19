@@ -14,7 +14,9 @@ from sqlalchemy import Engine, func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from .models import ConversationRecord, MessageRecord, PersonRecord, TaskPartyRecord, TaskRecord, TaskStepRecord
+from .models import (
+    ConversationRecord, MessageRecord, PersonRecord, TaskCallRecord, TaskPartyRecord, TaskRecord, TaskStepRecord,
+)
 
 GOAL_MAX_CHARS = 1000
 NAME_MAX_CHARS = 100
@@ -22,6 +24,9 @@ ADDRESS_MAX_CHARS = 320
 BRIEF_MAX_CHARS = 2000
 OUTCOME_MAX_CHARS = 3000
 STEP_MAX_CHARS = 4000
+# A call she placed, kept whole (15 minutes of talk is well under this), and how fast she replied on it.
+CALL_TRANSCRIPT_MAX_CHARS = 100_000
+REPLIES_MAX_CHARS = 500
 RESULT_MAX_CHARS = 4000
 TASKS_CONTEXT_MAX_CHARS = 6000
 OPEN = ("open", "waiting", "needs_person")
@@ -229,6 +234,31 @@ class TaskStore:
             self._step(session, task_id, text)
             session.execute(update(TaskRecord).where(TaskRecord.id == task_id).values(
                 updated_at=func.current_timestamp()))
+
+    def save_call(self, task_id: UUID, who: str, number: str, started_at: datetime, transcript: str,
+                  replies: str | None = None) -> UUID:
+        """A call she placed for the task, its whole transcript kept (its step holds only part)."""
+        with Session(self.engine) as session, session.begin():
+            call = TaskCallRecord(
+                task_id=task_id, who=clean(who, ADDRESS_MAX_CHARS, "Who was called"),
+                number=clean(number, ADDRESS_MAX_CHARS, "A number"), started_at=started_at,
+                transcript=transcript[:CALL_TRANSCRIPT_MAX_CHARS], replies=(replies or None) and replies[:REPLIES_MAX_CHARS],
+            )
+            session.add(call)
+            session.flush()
+            return call.id
+
+    def call_replies(self, call_id: UUID, replies: str) -> None:
+        """How quickly she replied on a saved call, known once its stream has closed."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(TaskCallRecord).where(TaskCallRecord.id == call_id).values(
+                replies=replies[:REPLIES_MAX_CHARS] or None))
+
+    def calls(self, task_id: UUID) -> list[TaskCallRecord]:
+        """A task's calls, oldest first."""
+        with Session(self.engine, expire_on_commit=False) as session:
+            return list(session.scalars(select(TaskCallRecord).where(TaskCallRecord.task_id == task_id)
+                                        .order_by(TaskCallRecord.started_at)))
 
     def goal(self, task_id: UUID) -> str | None:
         """An open task's goal, or None."""

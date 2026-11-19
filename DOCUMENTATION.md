@@ -990,7 +990,8 @@ share), and a log of steps. The dashboard's tasks box shows them.
    you; she's told never to commit you herself.
 3. **Reporting back.** When their part is settled, or they need something from you first,
    she reports it with `pass_on`, naming the task. A **coordinator** turn in your own context
-   then decides what it means: goal met, she closes the task (`close_task`) and tells you;
+   then decides what it means (reading a call whole with `read_call` when its step was cut):
+   goal met, she closes the task (`close_task`) and tells you;
    someone declined or needs something, she says what happened, suggests a next step and asks
    what you'd like, and the task waits on you; others still to answer, she just tells you
    what came in. While Signal is linked, the coordinator can message or email someone new for
@@ -1688,18 +1689,49 @@ before anything else.
     call ends, with no model call.
 - **Audio:** Twilio's 8 kHz μ-law becomes Live's 24 kHz PCM16 and back
   ([phone/audio.py](phone/audio.py), well under a millisecond of delay). Live paces her speech
-  and stops when you talk, so barge-in just works. When a call ends, Activity says how quickly
-  her replies began.
+  and stops when you talk, so barge-in just works. A call's audio queues for Live as it
+  arrives and goes on at once; only a backlog is paced (`Pacer` in [live.py](live.py): a 4 s
+  burst, then 1.1x real time, inside Live's 5 s and 1.2x, as the wake buffer is), and what
+  queued before her session was ready keeps only its last 2 seconds (a "Hello?" she answers;
+  older audio would be a conversation she's behind on). When a call ends, Activity says how
+  quickly her replies began, typically and for her first reply.
 - **On a call:** approvals go to your Signal chat, never by voice; `where_is_person` refuses.
 - **Calling out for tasks:** `call_someone` (offered once calling out is set up) asks you
   first, showing who, the number, the task and the brief. Calls go out only between 8am and
   8pm, one at a time, never to her number or yours, with a 10-minute limit. The person called
-  becomes a task party ([app_areas/task_calls.py](app_areas/task_calls.py)). When they answer,
-  the call gets its own Live session with only her self and the brief
-  (`phone_party_instructions`): she says she's an AI assistant calling for someone she works
+  becomes a task party ([app_areas/task_calls.py](app_areas/task_calls.py)). The call gets
+  its own Live session with only her self and the brief (`phone_party_instructions`), which
+  connects while it rings, so she's there the moment they answer (a slow "Hello?" gets her
+  hung up on); nothing goes to it until they do, and it closes if nobody answers (Twilio's
+  status, or after 130 seconds). Once they've answered, a "Hello?" is answered by her as
+  any speech is; if they say nothing for 1.2 seconds, a note prompts her to start. She says she's an AI assistant calling for someone she works
   for and that she keeps a transcript, keeps to the brief, never commits you, leaves a short
-  message on voicemail, and reports with `pass_on`. The transcript is kept as a step on the
-  task. A call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
+  message on voicemail, and reports with `pass_on`. The whole call is kept in `task_calls`
+  (its transcript, when it began and ended, and how quickly she replied, including her first
+  reply), and its start and end go on the task as a step: a step holds 4,000 characters, which
+  a phone menu and hold messages can fill before anyone answers, so the step keeps about 800
+  characters of the start and as much of the end as fits, with the middle marked as cut. Lines
+  with no words (the transcriber's stray "." while the other one talks) are dropped.
+  Businesses often answer with a recording: she stays silent through recorded greetings,
+  menus, hold music and adverts (no greeting, thanks or "mhm"), chooses a menu's option with
+  `press_keys`, and introduces herself only once a person speaks (voicemail is the exception:
+  she leaves her message after the beep). `press_keys` ([tools/press_keys.py](tools/press_keys.py),
+  offered only on calls she places) plays keypad tones down the line as a phone's keypad does
+  (in-band DTMF, [phone/dtmf.py](phone/dtmf.py): 150 ms a key, 100 ms apart), and the keys
+  go in the transcript as "[pressed 3]".
+- **Reading a call:** `read_call` ([tools/read_call.py](tools/read_call.py)) gives her a
+  task's calls (who, when, how long) and one whole transcript, the latest unless she asks for
+  another (up to 20,000 characters, keeping its start and as much of the end as fits), or
+  what's been said so far on a call that's on now. She has it wherever you talk to her, for
+  when you ask what was said; the coordinator has it too, since a call's step keeps only its
+  start and end. Contacts' chats and calls never get it.
+- **Following a call:** while she's placing a call for a task, while she's on it and for 15
+  minutes after, it shows beside the chat (a call box in the side panel), at the top of the
+  dashboard's tasks and on the web page (a call panel under her voice, `GET /api/call`): who,
+  ringing, on the call, ended or didn't connect, for how long, and the latest thing said. A
+  click or tap opens its transcript, which keeps up as it's said ([ui/call_view.py](ui/call_view.py),
+  [web/static/call.js](web/static/call.js)).
+- **Calls nobody answers:** a call nobody answers (Twilio's status callback, `/phone/status`), or one that ends
   without her reporting, goes to the coordinator too, so you always hear how it went. Calls
   go through the REST API of the Twilio region chosen under Phone calls (Sydney AU1 by
   default; saved as `twilio_region` in `app_settings`, applied at launch, or `.env`'s
@@ -1765,10 +1797,12 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 
 Database tests use disposable databases, never Cora's own, and need permission to create
 databases. Model calls and audio are mocked; real hardware, voice timing and memory quality
-still need checking by hand. Two timing-sensitive tests sometimes fail on a busy machine and
-pass on their own: `test_completed_summary_still_retries_embedding_then_no_candidate_check_and_second_pass_is_cached`
-and `test_explores_only_in_standby_or_after_a_quiet_spell`. Rerun the file before suspecting a
-change.
+still need checking by hand. Waits on real work are hang guards, not timings: give them room
+(`HANG_GUARD_SECONDS` in the memory tests), because timing out a Textual worker's `wait()`
+cancels the worker itself and shows only as `WorkerCancelled`. `running_app` raises a crash
+inside the app in place of the error it caused in the test (a crashed app cancels its
+workers too). To check a test holds up on a busy machine, run a dozen copies of its file at
+once.
 
 **Migrations:** never edit, rename or remove an applied migration; add a new higher-numbered
 SQL file. `python migrate.py` checks the history and applies pending ones in transactions,

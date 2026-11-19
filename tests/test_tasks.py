@@ -232,7 +232,8 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("Lesson for Sarah", kwargs["sections"]["tasks"])
             route = kwargs["route"]
             self.assertEqual(frozenset(app.tools.names()) - route.excluded,
-                             {"search_memory", "close_task", "check_calendar", "send_signal_message", "send_email"})
+                             {"search_memory", "close_task", "check_calendar", "read_call", "send_signal_message",
+                              "send_email"})
             self.assertIsNotNone(route.ask_approval)
             self.assertEqual(route.approval_seconds, app_areas.tasks.APPROVAL_SECONDS)
             app.signal.client.send.assert_awaited_once_with(CORA, NICK, "Sarah can do Tuesdays after 4, so that's sorted.")
@@ -246,7 +247,8 @@ class CoordinatorAppTests(unittest.IsolatedAsyncioTestCase):
             self.linked(app)
             app.signal.status = SignalStatus("not_linked")
             route = app.coordinator_route([])
-            self.assertEqual(frozenset(app.tools.names()) - route.excluded, {"search_memory", "close_task", "check_calendar"})
+            self.assertEqual(frozenset(app.tools.names()) - route.excluded,
+                             {"search_memory", "close_task", "check_calendar", "read_call"})
             self.assertIsNone(route.ask_approval)
 
     async def test_a_request_you_dont_answer_in_time_sends_nothing_and_the_task_waits_on_you(self):
@@ -363,7 +365,7 @@ class TaskStoreDatabaseTests(unittest.TestCase):
 
     def setUp(self):
         with self.engine.begin() as connection:
-            for table in ("task_steps", "task_parties", "tasks", "messages", "conversations", "people"):
+            for table in ("task_calls", "task_steps", "task_parties", "tasks", "messages", "conversations", "people"):
                 connection.execute(text(f"DELETE FROM public.{table}"))
         self.tasks = TaskStore(self.engine)
         clients = ClientStore(self.engine)
@@ -386,6 +388,19 @@ class TaskStoreDatabaseTests(unittest.TestCase):
         self.assertIn("Ace Plumbing reported: Tuesday 9am, $120", self.steps(task_id))
         # Nobody called is nudged.
         self.assertIsNone(self.tasks.open_tasks()[0].parties[0].due_at)
+
+    def test_a_call_is_kept_whole_with_how_fast_she_replied(self):
+        from storage.task_store import PhoneParty
+        task_id = self.tasks.start("Find a plumber", PhoneParty("+61299999999", "Ace Plumbing"), "Ask.", "Calling.")
+        transcript = "Them: " + "Tuesday's fine. " * 1000
+        began = datetime(2026, 11, 17, 5, 23, tzinfo=timezone.utc)
+        call_id = self.tasks.save_call(task_id, "Ace Plumbing", "+61299999999", began, transcript)
+        self.tasks.call_replies(call_id, "Her replies began 0.9 s after you stopped talking")
+        [call] = self.tasks.calls(task_id)
+        self.assertEqual((call.who, call.number, call.started_at, call.transcript, call.replies),
+                         ("Ace Plumbing", "+61299999999", began, transcript,
+                          "Her replies began 0.9 s after you stopped talking"))
+        self.assertGreater(len(call.transcript), 4000)
 
     def test_a_task_runs_from_first_contact_to_done_at_the_coordinators_word(self):
         task_id = self.tasks.start("Lesson for Sarah", self.sarah.id, "When suits her", "Asked Sarah: when?")

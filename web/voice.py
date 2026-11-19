@@ -108,6 +108,17 @@ class VoiceRelay:
             listener.queued_bytes += len(chunk)
             listener.audio.put_nowait(chunk)
 
+    def play_tones(self, pcm: bytes, frame_bytes: int = 960) -> None:
+        """Keypad tones for a call's line, as they are: their quiet gaps included (they keep the keys
+        apart), in 20 ms frames like the rest of the call's audio."""
+        now = self.clock()
+        self.playing_until = max(self.playing_until, now) + len(pcm) / BYTES_PER_SECOND
+        for listener in list(self.listeners):
+            for start in range(0, len(pcm), frame_bytes):
+                frame = pcm[start:start + frame_bytes]
+                listener.queued_bytes += len(frame)
+                listener.audio.put_nowait(frame)
+
     async def next_chunk(self, listener: Listener, timeout: float) -> bytes | dict | None:
         """The next audio chunk or message for this listener; None if it was dropped.
         TimeoutError if nothing came."""

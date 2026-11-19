@@ -69,8 +69,6 @@ Nothing is broken; these keep things healthy as she grows.
     none), run against the real model before and after, so changes show whether her choices
     got better or worse.
   - About 30 tools down to about 20, with per-chat exclusions working as now.
-- **Flaky tests:** two timing-sensitive tests sometimes fail on a busy machine (see
-  [Tests](DOCUMENTATION.md#tests)); make them wait on events rather than time.
 - **Checks still to do on real devices:** the automatic hang-up after goodbye on a real
   call; wake-word microphone accuracy and opening-speech continuity; the standby heads-up's
   timing; the playback bars' alignment with real audio; image display in the VS Code
@@ -101,11 +99,11 @@ To do on this branch:
 - [x] Chat modes 2: +img at the desk (the system's file picker; pasting stays)
 - [x] Chat modes 3: group mode for typed messages (Rocky answers, then Cora; one round per message)
 - [x] Chat modes 4: voice is Cora's alone (the chip stays on Cora while her voice is on; Rocky listening in on voice was tried and taken out)
-- [ ] Calls 1: keep the whole conversation in a call's transcript (see [Calls from real use](#calls-from-real-use))
-- [ ] Calls 2: pressing phone keys for menus ("press 3 for a new purchase")
-- [ ] Calls 3: staying quiet for recorded menus and hold messages
-- [ ] Calls 4: pacing a call's audio within Live's limits
-- [ ] Calls 5: following a call live, at the desk and on the web page
+- [x] Calls 1: keep the whole conversation in a call's transcript (see [Calls from real use](#calls-from-real-use))
+- [x] Calls 2: pressing phone keys for menus ("press 3 for a new purchase")
+- [x] Calls 3: staying quiet for recorded menus and hold messages
+- [x] Calls 4: pacing a call's audio within Live's limits, and her session ready while it rings
+- [x] Calls 5: following a call live, at the desk and on the web page
 
 ### Calls from real use
 
@@ -116,21 +114,28 @@ was lost:
 1. **The whole conversation in the transcript.** A task step holds 4,000 characters and
    `transcript_step` keeps the start: the menu and hold ads filled it, and the conversation
    with the person who answered was cut, so her report (written from it) said nothing was
-   confirmed and she couldn't say in the chat what was said. Keep the end rather than the
-   start, shorten recorded menus and hold messages in the saved copy, or keep calls in full
-   somewhere larger.
+   confirmed and she couldn't say in the chat what was said. *Done:* each call is kept whole
+   in `task_calls` with how quickly she replied, and the step keeps its start and end; she
+   reads a whole call with `read_call` (the coordinator too), and you can follow one in 5.
 2. **Pressing phone keys.** She can't send keypad tones, so she spoke to the menu ("New
    purchase, please") until it routed her anyway. A tool to press keys (Twilio can play DTMF
-   digits on a live call) gets her through "press 3" menus.
+   digits on a live call) gets her through "press 3" menus. *Done:* `press_keys` plays keypad
+   tones down the line (in-band, as a phone does).
 3. **Quiet for recordings.** She greeted the recorded menu as if it were a person: she should
-   tell a recording from a person and wait out menus and hold messages.
+   tell a recording from a person and wait out menus and hold messages. *Done, by her
+   instructions:* silent through recordings, menus and hold, a person greeted only once one
+   speaks. Watch the next call: if she still fills pauses, muting her line until a person
+   answers is the next lever.
 4. **Pacing the call's audio.** Live dropped audio once ("Input audio is arriving too quickly"):
    a call's queued audio is sent as fast as it comes, so a backlog (a busy moment, or audio
    before her session was ready) goes out in a burst past 1.2x real time. Pace it as the wake
-   buffer already is, or drop a stale backlog when her session connects.
+   buffer already is, or drop a stale backlog when her session connects. *Done:* both, and
+   her session now connects while it rings, so she's ready the moment they answer (on the first
+   call, a person said "Hello… Hi… Hi" over her while she caught up).
 5. **Following a call live.** Nothing shows a task call while it's on; Activity only notes
    events. Show it on the dashboard and the web page like a Claude Code session, with its
-   transcript as it happens.
+   transcript as it happens. *Done:* beside the chat, in the dashboard's tasks and on the web
+   page, for 15 minutes after it ends.
 
 ### Claude Code
 

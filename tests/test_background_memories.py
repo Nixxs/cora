@@ -26,6 +26,9 @@ import test_embed_memory as embedding_tests
 import test_keyboard_persistence as keyboard_tests
 import test_memory_store as memory_tests
 
+# Only a guard against a hang, never a timing: a busy machine's real database pass can take
+# well over 5 s, and timing out a worker's wait() cancels the worker itself (WorkerCancelled).
+HANG_GUARD_SECONDS = 60
 
 # running_app replaces decorated methods: capture these before entering it.
 SUMMARY_WORKER = CoraApp.summarize_previous_conversations
@@ -48,7 +51,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
             order = MagicMock()
             order.attach_mock(app.persistence.load_startup_memory_context, "startup")
             app.startup_worker = STARTUP_WORKER(app)
-            await asyncio.wait_for(app.startup_worker.wait(), 5)
+            await asyncio.wait_for(app.startup_worker.wait(), HANG_GUARD_SECONDS)
             async with background_tests.mocked_pass(app, [oldest, newer]) as context:
                 engine, store, summary, started, disposed, threads, build, construct = context
                 order.attach_mock(summary.extraction, "extract")
@@ -62,8 +65,8 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                 with patch("memory.extract_memories.OpenAI") as extraction_api, \
                     patch("memory.summarize.OpenAI") as summary_api:
                     app.summary_worker = SUMMARY_WORKER(app)
-                    await asyncio.wait_for(app.summary_worker.wait(), 5)
-                    await asyncio.wait_for(disposed.wait(), 5)
+                    await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                    await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                     extraction_api.assert_not_called()
                     summary_api.assert_not_called()
                 memory = "memory-model"
@@ -103,8 +106,8 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                 engine, store, summary, started, disposed, threads, build, construct = context
                 summary.extraction.side_effect = RuntimeError(secret)
                 app.summary_worker = SUMMARY_WORKER(app)
-                await asyncio.wait_for(app.summary_worker.wait(), 5)
-                await asyncio.wait_for(disposed.wait(), 5)
+                await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                 summary.extraction.assert_called_once_with(store, first, model="memory-model")
                 summary.assert_not_called()
                 self.assertEqual(threads, [])
@@ -140,7 +143,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                 summary.extraction.side_effect = extract
                 try:
                     app.summary_worker = SUMMARY_WORKER(app)
-                    await asyncio.wait_for(extraction_started.wait(), 5)
+                    await asyncio.wait_for(extraction_started.wait(), HANG_GUARD_SECONDS)
                     self.assertIsNot(engine, app.persistence.store.engine)
                     with patch.object(app, "exit") as exit_app:
                         await asyncio.wait_for(app.action_disconnect_and_quit(), 3)
@@ -158,7 +161,7 @@ class BackgroundMemoryTests(unittest.IsolatedAsyncioTestCase):
                     # Cancelled Worker.wait() does not join the executor thread.
                     release.set()
                     if app.summary_worker is not None:
-                        await asyncio.wait_for(disposed.wait(), 5)
+                        await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                 self.assertEqual(saved, [(first, private)])
                 summary.extraction.assert_called_once_with(store, first, model="memory-model")
                 summary.assert_not_called()
@@ -251,7 +254,7 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 async with keyboard_tests.running_app() as (app, pilot):
                     app.persistence.mark_interrupted_conversations.return_value = 0
                     app.startup_worker = STARTUP_WORKER(app)
-                    await asyncio.wait_for(app.startup_worker.wait(), 5)
+                    await asyncio.wait_for(app.startup_worker.wait(), HANG_GUARD_SECONDS)
                     build.assert_not_called()
                     self.assertEqual(app.live.memory_context, "")
                     self.assertIsNone(self.store.get_conversation(app.persistence.conversation_id))
@@ -260,8 +263,8 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIsNot(background_engine, self.engine)
                     try:
                         app.summary_worker = SUMMARY_WORKER(app)
-                        await asyncio.wait_for(app.summary_worker.wait(), 5)
-                        await asyncio.wait_for(disposed.wait(), 5)
+                        await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                        await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                         self.assertEqual(request_order, ["extract", "summary"])
                         self.assertTrue(all(thread != get_ident() for thread in request_threads))
                         memories = self.memories.get_memories(previous)
@@ -286,8 +289,8 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
 
                         disposed.clear()
                         app.summary_worker = SUMMARY_WORKER(app)
-                        await asyncio.wait_for(app.summary_worker.wait(), 5)
-                        await asyncio.wait_for(disposed.wait(), 5)
+                        await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                        await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                         self.assertEqual(build.call_args_list, [call(), call()])
                         self.assertEqual(disposal.call_count, 2)
                         extraction_client.responses.create.assert_called_once()
@@ -306,7 +309,7 @@ class BackgroundMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
                                          (source.id, source_text, "incomplete"))
                     finally:
                         if app.summary_worker is not None:
-                            await asyncio.wait_for(disposed.wait(), 5)
+                            await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
         finally:
             real_dispose()
 
@@ -380,8 +383,8 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                         fade_date = datetime(2026, 10, 24, tzinfo=timezone.utc)
                         fade.side_effect = lambda *_, **__: threads.append(get_ident()) or fade_date
                         app.summary_worker = SUMMARY_WORKER(app)
-                        await asyncio.wait_for(app.summary_worker.wait(), 5)
-                        await asyncio.wait_for(disposed.wait(), 5)
+                        await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                        await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                         expected = [call.queue(app.persistence.conversation_id)]
                         if with_conversation:
                             expected += [call.extract(store, previous, model="memory-model"),
@@ -431,8 +434,8 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                                       "dedup": dedup, "correct": correct, "fade": fade}
                         operations[stage].side_effect = RuntimeError(secret)
                         app.summary_worker = SUMMARY_WORKER(app)
-                        await asyncio.wait_for(app.summary_worker.wait(), 5)
-                        await asyncio.wait_for(disposed.wait(), 5)
+                        await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                        await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                         operations[stage].assert_called_once()
                         if stage in ("extract", "summary"):
                             memory_factory.assert_not_called()
@@ -481,7 +484,7 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                 embed.side_effect = blocked_embedding
                 try:
                     app.summary_worker = SUMMARY_WORKER(app)
-                    await asyncio.wait_for(started.wait(), 5)
+                    await asyncio.wait_for(started.wait(), HANG_GUARD_SECONDS)
                     with patch.object(app, "exit") as exit_app:
                         await asyncio.wait_for(app.action_disconnect_and_quit(), 3)
                         exit_app.assert_called_once_with()
@@ -496,7 +499,7 @@ class MemoryMaintenanceTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     release.set()
                     if app.summary_worker is not None:
-                        await asyncio.wait_for(disposed.wait(), 5)
+                        await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                 self.assertEqual(completed, [first])
                 embed.assert_called_once_with(memories, first)
                 memories.get_pending_deduplication_ids.assert_not_called()
@@ -569,8 +572,8 @@ class MemoryMaintenanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(self.store.get_unsummarized_conversation_ids(
                         app.persistence.conversation_id), [])
                     app.summary_worker = SUMMARY_WORKER(app)
-                    await asyncio.wait_for(app.summary_worker.wait(), 5)
-                    await asyncio.wait_for(disposed.wait(), 5)
+                    await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                    await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                     self.assertIsNot(engine, app.persistence.store.engine)
                     saved = self.memories.get_memory(memory.id)
                     self.assertIsNotNone(saved.embedding)
@@ -601,8 +604,8 @@ class MemoryMaintenanceDatabaseTests(unittest.IsolatedAsyncioTestCase):
                     embedding_api.return_value.__exit__.assert_called_once_with(None, None, None)
                     disposed.clear()
                     app.summary_worker = SUMMARY_WORKER(app)
-                    await asyncio.wait_for(app.summary_worker.wait(), 5)
-                    await asyncio.wait_for(disposed.wait(), 5)
+                    await asyncio.wait_for(app.summary_worker.wait(), HANG_GUARD_SECONDS)
+                    await asyncio.wait_for(disposed.wait(), HANG_GUARD_SECONDS)
                     self.assertEqual(build.call_args_list, [call(), call()])
                     self.assertEqual(memory_factory.call_args_list, [call(engine), call(engine)])
                     self.assertEqual(disposal.call_count, 2)

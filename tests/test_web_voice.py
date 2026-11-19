@@ -11,7 +11,7 @@ from uuid import uuid4
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from live import CoraLive
+from live import PCM_BYTES_PER_SECOND, CoraLive, Pacer, fresh_backlog, queued_chunks
 from server.listener import build_app
 from storage.web_device_store import WebDevice
 from web.pairing import Pairing, token_hash
@@ -218,6 +218,39 @@ class TalkSocketTests(unittest.TestCase):
         self.assertIsNone(self.relay.talker)
         self.assertEqual(self.talk, [True, False, True, False])
         self.assertEqual(self.heard, [SPEECH])
+
+
+class MicrophonePacingTests(unittest.IsolatedAsyncioTestCase):
+    def test_audio_as_its_spoken_is_never_held_back(self):
+        now = [0.0]
+        pacer = Pacer(lambda: now[0])
+        chunk = bytes(960)  # 20 ms
+        for step in range(500):
+            now[0] = step * 0.02
+            self.assertEqual(pacer.wait_before(chunk), 0.0)
+
+    def test_a_backlog_goes_in_a_burst_within_lives_limits_then_at_a_steady_pace(self):
+        now = [0.0]
+        pacer = Pacer(lambda: now[0])
+        second = bytes(PCM_BYTES_PER_SECOND)
+        waits = [pacer.wait_before(second) for _ in range(6)]  # 6 s queued, all at once
+        self.assertEqual(waits[:5], [0.0] * 5)  # a 4 s burst (Live allows 5)
+        self.assertAlmostEqual(waits[5], 1 / 1.1)  # then no faster than 1.1x (Live allows 1.2x)
+
+    async def test_only_the_last_moment_of_what_queued_before_she_was_ready_is_kept(self):
+        audio = asyncio.Queue()
+        old, recent = bytes(PCM_BYTES_PER_SECOND), b"hello?" * 100
+        for chunk in (old, old, old, recent):
+            audio.put_nowait(chunk)
+        kept, ended = fresh_backlog(audio)
+        self.assertEqual((kept, ended), ([old, recent], False))
+        audio.put_nowait(b"later")
+        audio.put_nowait(None)
+        self.assertEqual([chunk async for chunk in queued_chunks(audio)], [b"later"])
+        # A queue told to end while waiting ends straight away.
+        audio.put_nowait(recent)
+        audio.put_nowait(None)
+        self.assertEqual([chunk async for chunk in queued_chunks(audio)], [recent])
 
 
 class LiveWebMicrophoneTests(unittest.IsolatedAsyncioTestCase):

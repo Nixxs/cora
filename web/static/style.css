@@ -636,7 +636,7 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 
 /* ── Claude Code: its sessions under her voice, and the pop-up that follows one ── */
 
-#claude-panel {
+#claude-panel, #call-panel {
   margin-top: 6px;
   display: flex;
   flex-direction: column;
@@ -646,6 +646,15 @@ body:has(.layout-report) .screen { outline: 2px solid #e07a7a; outline-offset: -
 }
 .title-count { background: var(--bg); padding: 0 6px; color: var(--waiting); font-size: 12px; }
 .title-count:empty { display: none; }
+#call-list { padding: 14px 10px 8px; }
+.call-dot.state-ringing { color: var(--you); }
+.call-dot.state-on-the-call { color: var(--you); }
+.call-dot.state-ended { color: var(--active); }
+.call-dot.state-didn-t-connect { color: var(--error); }
+.call-line { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.call-line .who { font-weight: 600; }
+.call-line.them .who { color: var(--you); }
+.call-line.cora .who { color: var(--cora); }
 #claude-list {
   flex: 1;
   min-height: 0;

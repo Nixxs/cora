@@ -61,8 +61,61 @@ GAME_COMPANY = (
 )
 
 
+# Live drops input beyond a 5 s burst or 1.2x real time. Audio that has queued up (the wake
+# buffer, or a call's audio from before her session was ready) is paced within that: a 4 s burst,
+# then 1.1x. Audio arriving as it's spoken is never ahead, so it's never held back.
+PACE_BURST_SECONDS = 4.0
+PACE_RATE = 1.1
+PCM_BYTES_PER_SECOND = 48000  # PCM16 mono at 24 kHz
+# What a device's microphone queue keeps from before her session was ready: the last moment (a
+# "Hello?" just said, which she answers); anything older is stale, and played late it'd be a
+# conversation she's behind on.
+FRESH_BACKLOG_SECONDS = 2.0
+
+
+class Pacer:
+    """How long to wait before sending the next chunk to stay within Live's input limits."""
+
+    def __init__(self, clock=None) -> None:
+        # Looked up when used, so a stand-in clock (patched in) is the one followed.
+        self.clock = clock or (lambda: monotonic())
+        self.began: float | None = None
+        self.sent_seconds = 0.0
+
+    def wait_before(self, chunk: bytes) -> float:
+        now = self.clock()
+        if self.began is None:
+            self.began = now
+        ahead = self.sent_seconds - PACE_BURST_SECONDS - (now - self.began) * PACE_RATE
+        self.sent_seconds += len(chunk) / PCM_BYTES_PER_SECOND
+        return ahead / PACE_RATE if ahead > 0 else 0.0
+
+
+def fresh_backlog(audio: asyncio.Queue, keep_seconds: float = FRESH_BACKLOG_SECONDS) -> tuple[list, bool]:
+    """Empties what has queued up, returning the last keep_seconds of it, and whether it ended (None)."""
+    waiting = []
+    while not audio.empty():
+        chunk = audio.get_nowait()
+        if chunk is None:
+            return waiting, True
+        waiting.append(chunk)
+    kept, size = [], 0
+    for chunk in reversed(waiting):
+        size += len(chunk)
+        if size > keep_seconds * PCM_BYTES_PER_SECOND:
+            break
+        kept.insert(0, chunk)
+    return kept, False
+
+
 async def queued_chunks(audio: asyncio.Queue):
-    """A device's microphone on the web page: its PCM16 chunks as they arrive, until None."""
+    """A device's microphone on the web page (or a phone call's audio): its PCM16 chunks as they
+    arrive, until None. What queued up before the first is asked for keeps only its last moment."""
+    backlog, ended = fresh_backlog(audio)
+    for chunk in backlog:
+        yield chunk
+    if ended:
+        return
     while (chunk := await audio.get()) is not None:
         yield chunk
 
@@ -888,19 +941,15 @@ class CoraLive:
                     source = queued_chunks(self.web_microphone)
                 else:
                     source = microphone_chunks()
-                began = monotonic()
-                sent_seconds = 0.0
+                # The wake buffer and a device's (or a call's) queued audio can run ahead of
+                # real time; the desk's own microphone can't.
+                pacer = Pacer() if opening is not None or self.web_microphone is not None else None
                 async with aclosing(source) as chunks:
                     async for chunk in chunks:
                         if self.microphone_muted and self.web_microphone is None:
                             break
-                        if opening is not None:
-                            # Live drops audio beyond a 5 s burst or 1.2x real time; pace the
-                            # wake buffer within that (4 s burst, then 1.1x).
-                            ahead = sent_seconds - 4.0 - (monotonic() - began) * 1.1
-                            if ahead > 0:
-                                await asyncio.sleep(ahead / 1.1)
-                            sent_seconds += len(chunk) / 48000  # PCM16 mono at 24 kHz
+                        if pacer is not None and (wait := pacer.wait_before(chunk)) > 0:
+                            await asyncio.sleep(wait)
                         chunk_count += 1
                         audio = base64.b64encode(chunk).decode("ascii")
                         await connection.session.input_audio.append(audio=audio)

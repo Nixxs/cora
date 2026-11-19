@@ -112,7 +112,7 @@ def background_models_stubbed():
 
 
 @asynccontextmanager
-async def running_app(persistence=None, has_key=True):
+async def started_app(persistence=None, has_key=True):
     # Tests opt into the real startup/summary workers explicitly, with mocked APIs.
     with patch.object(CoraApp, "connect_to_cora", return_value=None), \
             patch.object(CoraApp, "summarize_previous_conversations", return_value=None), \
@@ -184,6 +184,20 @@ async def running_app(persistence=None, has_key=True):
             app.live.send_text = AsyncMock()
             app.live.close = AsyncMock()
             yield app, pilot
+
+
+@asynccontextmanager
+async def running_app(persistence=None, has_key=True):
+    async with started_app(persistence, has_key) as (app, pilot):
+        try:
+            yield app, pilot
+        except BaseException as error:
+            # A crash inside the app cancels its workers, so a test waiting on one fails with
+            # WorkerCancelled and run_test never raises the crash itself: show the crash.
+            crash = getattr(app, "_exception", None)
+            if crash is not None and crash is not error:
+                raise crash from error
+            raise
 
 
 async def submit(app, pilot, message):
