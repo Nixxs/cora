@@ -421,6 +421,14 @@ watching the game, with her reacting to what happens.
   private but often gets names wrong. OpenAI falls back to this PC when it can't be reached.
   Both are given a prompt of WoW words (places, classes, slang) and your own **names and words**
   (your character, friends, guild; up to 200 characters), so names are spelled right.
+- **Speed:** only the speech is sent: the silence before and after it is trimmed (keeping a
+  quarter of a second either side, so soft first and last sounds stay). With OpenAI, pressing the
+  button opens the connection while you talk, and an idle connection is kept for 30 seconds rather
+  than the library's 5, so letting go doesn't wait for a new one (a fresh connection from Perth
+  costs about 0.8 seconds). Activity shows each line's timing ("2.1s of speech heard in 0.84s
+  (OpenAI 0.80s, connection ready 0.70s into the press), typed 0.01s later"): from letting go to
+  the text, which engine transcribed it and how long it took, whether the connection was ready,
+  and then the typing.
 - **Cora knows:** the chat shows a quiet line ("You in WoW (/s): …", not saved) and she gets a
   silent note of what you said and that it was for the other players, not her. It works in
   Standby too, but she isn't told then (there's no voice session to tell).

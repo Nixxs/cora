@@ -19,7 +19,8 @@ from game.map_pins import is_addon_line
 from game.moments import CHATTINESS, DEFAULT_CHATTINESS
 from game.mouse_button import MiddleButtonWatcher
 from game.speech import (
-    DEFAULT_TRANSCRIPTION, GAME_WORDS, MAX_VOCABULARY_CHARS, TRANSCRIPTION_CHOICES, CloudTranscriber, Recorder, Transcriber,
+    DEFAULT_TRANSCRIPTION, GAME_WORDS, MAX_VOCABULARY_CHARS, SAMPLE_RATE, TRANSCRIPTION_CHOICES, CloudTranscriber, Recorder,
+    Transcriber, trimmed,
 )
 
 # How long map pins wait for WoW to come to the front, how often that's checked, and the pause
@@ -76,6 +77,12 @@ class GameMixin:
         # Held down now, and whether holding it muted Live's microphone (so letting go unmutes it).
         self.game_talking = False
         self.game_muted_live = False
+        # For each line's timing in Activity: when the button went down, how far into the press
+        # OpenAI's connection was ready (None while opening, False if it failed), and what
+        # transcribed it in how long.
+        self.game_pressed_at = 0.0
+        self.game_warmed: float | bool | None = None
+        self.game_heard_by = ""
         self.game_lock = asyncio.Lock()
         # Held while typing into the game, so a push-to-talk line never lands inside a batch of map pins.
         self.game_typing_lock = asyncio.Lock()
@@ -166,6 +173,19 @@ class GameMixin:
                 self.game_talking = False
                 await self.restore_live_microphone()
                 self.activity.write(f"Push-to-talk couldn't record ({type(error).__name__}).", "Push-to-talk")
+                return
+            self.game_pressed_at = monotonic()
+            self.game_warmed = None
+            if self.game_transcription == "openai":
+                self.warm_game_transcription(self.game_pressed_at)
+
+    @work(group="game-warm", thread=True)
+    def warm_game_transcription(self, pressed: float) -> None:
+        # OpenAI's connection opened while the button is held, so letting go doesn't wait for one.
+        # How long it took into the press (False if it failed) goes in the line's timing.
+        warmed = self.game_cloud_transcriber.warm()
+        if self.game_pressed_at == pressed:
+            self.game_warmed = monotonic() - pressed if warmed else False
 
     async def restore_live_microphone(self) -> None:
         if not self.game_muted_live:
@@ -181,13 +201,17 @@ class GameMixin:
 
     @work(group="game-talk")
     async def finish_game_talk(self) -> None:
+        released = monotonic()
         async with self.game_lock:
             if not self.game_talking:
                 return
             self.game_talking = False
             audio = await asyncio.to_thread(self.game_recorder.stop)
             await self.restore_live_microphone()
+        # Only the speech itself is sent: less to upload and transcribe.
+        audio = trimmed(audio)
         spoken = await self.transcribe_game_speech(audio)
+        heard = monotonic()
         if spoken is None:
             return
         # Typed the way players type: names keep their capitals.
@@ -208,6 +232,9 @@ class GameMixin:
             self.conversation.show_note(f"Not sent to WoW: {text}")
             self.activity.write(f"Push-to-talk couldn't type into WoW: {error}", "Push-to-talk")
             return
+        typed = monotonic()
+        self.activity.write(f"Push-to-talk: {audio.size / SAMPLE_RATE:.1f}s of speech heard in {heard - released:.2f}s "
+                            f"({self.game_heard_by}), typed {typed - heard:.2f}s later.", "Push-to-talk")
         self.record_idle_activity()
         self.conversation.show_note(f"You in WoW ({command}): {text}")
         try:
@@ -219,13 +246,26 @@ class GameMixin:
         """What was said ("" for nothing), with OpenAI unless the person chose this PC, falling back to
         this PC when OpenAI fails; None when neither worked."""
         if self.game_transcription == "openai":
+            started = monotonic()
             try:
-                return await asyncio.to_thread(self.game_cloud_transcriber.transcribe, audio, self.game_vocabulary)
+                spoken = await asyncio.to_thread(self.game_cloud_transcriber.transcribe, audio, self.game_vocabulary)
             except Exception as error:
                 self.activity.write(f"Push-to-talk: OpenAI's transcription failed ({type(error).__name__}); "
                                     "using the model on this PC.", "Push-to-talk")
+            else:
+                if self.game_warmed is None:
+                    connection = "its connection still opening"
+                elif self.game_warmed is False:
+                    connection = "opening its connection failed"
+                else:
+                    connection = f"connection ready {self.game_warmed:.2f}s into the press"
+                self.game_heard_by = f"OpenAI {monotonic() - started:.2f}s, {connection}"
+                return spoken
+        started = monotonic()
         try:
-            return await asyncio.to_thread(self.game_transcriber.transcribe, audio, self.game_vocabulary)
+            spoken = await asyncio.to_thread(self.game_transcriber.transcribe, audio, self.game_vocabulary)
+            self.game_heard_by = f"this PC {monotonic() - started:.2f}s"
+            return spoken
         except Exception as error:
             self.activity.write(f"Push-to-talk couldn't transcribe ({type(error).__name__}).", "Push-to-talk")
             return None
