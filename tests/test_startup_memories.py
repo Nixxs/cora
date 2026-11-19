@@ -10,6 +10,7 @@ from threading import Event
 from types import SimpleNamespace
 import unittest
 
+from tools.end_call import CALL_ONLY
 from tools.pass_on import CLIENT_ONLY
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
@@ -438,7 +439,7 @@ class StartupMemoryDatabaseTests(unittest.IsolatedAsyncioTestCase):
                 start.assert_awaited_once()
                 payload = start.call_args.kwargs["session"]
                 self.assertEqual(app.live.memory_context, context)
-                self.assertEqual(payload, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY), context))
+                self.assertEqual(payload, build_session_config(app.tools.schemas(excluding=CLIENT_ONLY | CALL_ONLY | app.unavailable_tools()), context))
                 self.assertTrue(payload["instructions"].endswith(context))
                 self.assertTrue(payload["delegation"]["responses"]["instructions"].endswith(context))
                 chunks.assert_not_called()

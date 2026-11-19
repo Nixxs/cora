@@ -1797,10 +1797,12 @@ finally { Remove-Item Env:CORA_RUN_DB_TESTS }
 
 Database tests use disposable databases, never Cora's own, and need permission to create
 databases. Model calls and audio are mocked; real hardware, voice timing and memory quality
-still need checking by hand. Two timing-sensitive tests sometimes fail on a busy machine and
-pass on their own: `test_completed_summary_still_retries_embedding_then_no_candidate_check_and_second_pass_is_cached`
-and `test_explores_only_in_standby_or_after_a_quiet_spell`. Rerun the file before suspecting a
-change.
+still need checking by hand. Waits on real work are hang guards, not timings: give them room
+(`HANG_GUARD_SECONDS` in the memory tests), because timing out a Textual worker's `wait()`
+cancels the worker itself and shows only as `WorkerCancelled`. `running_app` raises a crash
+inside the app in place of the error it caused in the test (a crashed app cancels its
+workers too). To check a test holds up on a busy machine, run a dozen copies of its file at
+once.
 
 **Migrations:** never edit, rename or remove an applied migration; add a new higher-numbered
 SQL file. `python migrate.py` checks the history and applies pending ones in transactions,

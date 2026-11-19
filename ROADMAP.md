@@ -69,8 +69,6 @@ Nothing is broken; these keep things healthy as she grows.
     none), run against the real model before and after, so changes show whether her choices
     got better or worse.
   - About 30 tools down to about 20, with per-chat exclusions working as now.
-- **Flaky tests:** two timing-sensitive tests sometimes fail on a busy machine (see
-  [Tests](DOCUMENTATION.md#tests)); make them wait on events rather than time.
 - **Checks still to do on real devices:** the automatic hang-up after goodbye on a real
   call; wake-word microphone accuracy and opening-speech continuity; the standby heads-up's
   timing; the playback bars' alignment with real audio; image display in the VS Code

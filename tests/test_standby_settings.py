@@ -86,6 +86,11 @@ class SettingsTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertIsInstance(app.screen, ModelSettingsScreen)
             idle = app.screen.query_one("#idle-minutes", Select)
+            # A Select takes its starting value as it mounts, which a busy machine can leave till later.
+            for _ in range(100):
+                if idle.value is not Select.NULL:
+                    break
+                await pilot.pause(0.05)
             self.assertEqual(idle.value, 5)
             idle.value = 15
             app.screen.query_one("#standby-farewell", Switch).value = True

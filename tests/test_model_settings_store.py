@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from migrate import apply_migrations, database_settings
-from session_config import BACKEND_MODEL
+from session_config import BACKEND_MODEL, MODEL_AREAS
 from storage.database import build_engine
 from storage.model_settings_store import ModelSettingsStore
 
@@ -50,10 +50,8 @@ class ModelSettingsStoreDatabaseTests(unittest.TestCase):
         self.store = ModelSettingsStore(self.engine)
 
     def test_every_area_uses_the_default_until_chosen(self):
-        self.assertEqual(self.store.models(), {
-            "delegation": BACKEND_MODEL, "memory": BACKEND_MODEL,
-            "subconscious": BACKEND_MODEL, "utility": BACKEND_MODEL,
-        })
+        self.assertEqual(self.store.models(), dict.fromkeys(MODEL_AREAS, BACKEND_MODEL))
+        self.assertLessEqual({"delegation", "memory", "subconscious", "utility", "contacts"}, set(MODEL_AREAS))
 
     def test_choice_is_saved_per_area_and_can_be_replaced(self):
         self.store.set_model("memory", "gpt-6-luna")

@@ -4,6 +4,7 @@ import asyncio
 from messaging.images import photo_described
 from datetime import date, datetime, timedelta, timezone
 from time import monotonic
+from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, PropertyMock, patch
 from uuid import uuid4
@@ -304,6 +305,11 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
                 screen.sample_voice()
                 self.assertEqual(speaker.values, (1.0 - FALL_PER_TICK,) * BAND_COUNT)
                 self.assertEqual(mic.values, (0.5 - FALL_PER_TICK,) * BAND_COUNT)
+
+    def test_voice_bands_are_silent_before_her_session_is_made(self):
+        # The side panel's timer can tick before the app's on_mount creates live: no crash.
+        from app_areas.voice import VoiceMixin
+        self.assertEqual(VoiceMixin.voice_bands(SimpleNamespace()), ((), ()))
 
     async def test_chat_box_mirrors_the_conversation_while_open(self):
         async with keyboard_tests.running_app() as (app, pilot):

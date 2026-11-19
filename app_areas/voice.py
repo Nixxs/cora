@@ -64,6 +64,9 @@ class VoiceMixin:
 
     def voice_bands(self) -> tuple[tuple[float, ...], tuple[float, ...]]:
         """Cora's playback and the person's microphone loudness bands, for the dashboard."""
+        # The side panel's timer can tick before on_mount has made her session: silence till then.
+        if getattr(self, "live", None) is None:
+            return (), ()
         speaker = self.live.speaker
         playing = speaker.get_playback_bands() if speaker is not None and not self.live.speaker_muted else ()
         return playing, self.live.get_microphone_bands()

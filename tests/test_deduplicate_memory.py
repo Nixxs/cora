@@ -7,19 +7,24 @@ from dataclasses import FrozenInstanceError, fields
 from datetime import datetime, timedelta, timezone
 import json
 import os
+from pathlib import Path
+import shutil
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 from uuid import UUID, uuid4
 
 import psycopg
+from psycopg import sql
 from sqlalchemy import inspect, text
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import memory.deduplicate_memory as dedup
-from migrate import apply_migrations
+from migrate import MIGRATIONS_DIR, apply_migrations
+from storage.database import build_engine
 from session_config import BACKEND_MODEL
 from memory.store import DuplicateCandidate, MemoryCandidate, MemoryStore
 from storage.models import MEMORY_EMBEDDING_MODEL, MemoryRecord
@@ -53,6 +58,39 @@ def response_fixture(value=None, **changes):
 
 def snapshot(row):
     return tuple(getattr(row, field) for field in ORIGINAL_FIELDS)
+
+
+# Each table's columns as of migration 0005, in foreign-key order.
+PRE_DEDUP_COLUMNS = {
+    "conversations": ("id", "started_at", "ended_at", "status"),
+    "messages": ("id", "conversation_id", "sequence_number", "role", "text", "channel",
+                 "created_at", "status", "delivery_status"),
+    "conversation_summaries": ("conversation_id", "text", "created_at"),
+    "memories": ORIGINAL_FIELDS,
+}
+
+
+def column_list(columns):
+    return sql.SQL(", ").join(map(sql.Identifier, columns))
+
+
+def copy_rows(source, target, table, columns):
+    """Copy a table's rows between databases on the given columns, as Postgres text."""
+    columns = column_list(columns)
+    with source.cursor().copy(sql.SQL("COPY public.{} ({}) TO STDOUT").format(sql.Identifier(table), columns)) as out, \
+            target.cursor().copy(sql.SQL("COPY public.{} ({}) FROM STDIN").format(sql.Identifier(table), columns)) as into:
+        for data in out:
+            into.write(data)
+
+
+def original_rows(connection, table):
+    columns = column_list(PRE_DEDUP_COLUMNS[table])
+    return connection.execute(sql.SQL("SELECT {} FROM public.{}").format(columns, sql.Identifier(table))).fetchall()
+
+
+def drop_database(settings, name):
+    with psycopg.connect(**settings, autocommit=True) as admin:
+        admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(name)))
 
 
 class DeduplicateMemoryTests(unittest.TestCase):
@@ -367,69 +405,32 @@ class DeduplicateMemoryDatabaseTests(unittest.TestCase):
                           self.embedded(id=alias, text="The user lives in Perth")])
         self.store.save_summary(self.conversation_id, "An independent completed summary.")
         tables = ("conversations", "messages", "conversation_summaries")
-        with self.engine.connect() as connection:
-            prior_rows = {table: connection.execute(text(f"SELECT * FROM public.{table}")).all()
-                          for table in tables}
         before = {row.id: snapshot(row) for row in self.memories.get_memories(self.conversation_id)}
-        # Roll back migrations 0006 and the later 0007-0029 (history must stay a prefix of the
-        # files) in this uniquely named fixture, then apply the actual live migrations
-        # to populated pre-0006 rows (no synthetic SQL).
-        later = ["0006_mark_duplicate_memories.sql", "0007_create_interests.sql",
-                 "0008_create_interest_explorations.sql", "0009_add_finding_mentions.sql",
-                 "0010_create_people.sql", "0011_add_exploration_reactions.sql", "0012_create_identity.sql",
-                 "0013_create_interaction_appraisals.sql", "0014_create_relationships.sql",
-                 "0015_create_model_settings.sql", "0016_mark_memory_corrections.sql",
-                 "0017_add_memory_fading.sql", "0018_create_service_settings.sql",
-                 "0019_create_service_tools.sql", "0020_create_signal_settings.sql",
-                 "0021_add_signal_channel.sql",
-                 "0022_add_signal_clients.sql",
-                 "0023_save_signal_ids.sql",
-                 "0024_add_memory_sharing.sql",
-                 "0025_create_self_image.sql",
-                 "0026_create_impressions.sql",
-                 "0027_add_conduct.sql",
-                 "0028_create_tasks.sql",
-                 "0029_add_task_nudges.sql", "0030_add_email_parties.sql",
-                 "0031_create_webhook_settings.sql", "0032_add_email_channel.sql",
-                 "0033_add_deadline_notes.sql", "0034_interest_tangents_and_origin.sql",
-                 "0035_wandering_and_reach_outs.sql", "0036_add_browsed_explorations.sql",
-                 "0037_create_sign_ups.sql", "0038_sign_up_mail_and_wishes.sql",
-                 "0039_create_desires.sql", "0040_create_desire_worker_state.sql",
-                 "0041_desire_pursuits.sql", "0042_desire_adapted_from.sql",
-                 "0043_desire_events_as_evidence.sql", "0044_finding_embeddings.sql",
-                 "0045_create_desire_opportunities.sql", "0046_interest_embeddings.sql",
-                 "0047_create_feeling_events.sql", "0048_create_web_devices.sql",
-                 "0049_add_web_channel.sql", "0050_add_message_device.sql"]
-        with psycopg.connect(**self.settings, autocommit=True) as connection:
-            connection.execute("DROP TABLE public.web_devices")
-            connection.execute("ALTER TABLE public.messages DROP COLUMN device")
-            connection.execute("ALTER TABLE public.interest_explorations DROP COLUMN desire_id")
-            connection.execute("ALTER TABLE public.identity_event_evidence DROP COLUMN desire_event_id")
-            connection.execute("DROP TABLE public.feeling_events")
-            connection.execute("DROP TABLE public.desire_opportunities, public.desire_worker_state, public.desire_sources, public.desire_events, public.desires")
-            connection.execute("DROP TABLE public.task_calls, public.task_steps, public.task_parties, public.tasks, "
-                               "public.impression_updates, public.impressions")
-            connection.execute("ALTER TABLE public.conversations DROP COLUMN person_id")
-            connection.execute("DROP TABLE public.sign_ups, public.webhook_settings, public.self_image,public.signal_settings, public.service_tools, public.service_settings, "
-                               "public.model_settings, public.relationship_events, public.relationships, "
-                               "public.interaction_appraisals, "
-                               "public.identity_event_evidence, public.identity_event_traits, "
-                               "public.identity_events, public.identity_traits, public.identity_worker_state, "
-                               "public.people, "
-                               "public.interest_explorations, public.interest_event_memories, "
-                               "public.interest_events, public.interest_worker_state, public.interests")
-            connection.execute("ALTER TABLE public.memories DROP COLUMN duplicate_of, "
-                               "DROP COLUMN dedup_checked_at, DROP COLUMN corrects, "
-                               "DROP COLUMN correction_checked_at, DROP COLUMN fades_at, "
-                               "DROP COLUMN fade_checked_at, DROP COLUMN share_checked_at, "
-                               "DROP COLUMN share_audience, DROP COLUMN shared_with_name")
-            connection.execute("DELETE FROM public.schema_migrations WHERE name = ANY(%s)", (later,))
-            self.assertEqual(apply_migrations(connection), later)
+        # A second disposable database stops at 0005, takes these rows on their original
+        # columns, then gets every real migration from 0006 on (no synthetic SQL, and no
+        # hand-kept list of what later migrations added).
+        paths = sorted(MIGRATIONS_DIR.glob("*.sql"))
+        self.assertTrue(paths[5].name.startswith("0006_"))
+        upgraded = {**self.settings, "dbname": "cora_test_dedup_upgrade_" + uuid4().hex}
+        with psycopg.connect(**self.settings, autocommit=True) as admin:
+            admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(upgraded["dbname"])))
+        self.addCleanup(drop_database, self.settings, upgraded["dbname"])
+        with tempfile.TemporaryDirectory() as early, psycopg.connect(**upgraded, autocommit=True) as connection:
+            for path in paths[:5]:
+                shutil.copy(path, early)
+            self.assertEqual(apply_migrations(connection, Path(early)), [path.name for path in paths[:5]])
+            with psycopg.connect(**self.settings) as source:
+                for table, columns in PRE_DEDUP_COLUMNS.items():
+                    copy_rows(source, connection, table, columns)
+            self.assertEqual(apply_migrations(connection), [path.name for path in paths[5:]])
             self.assertEqual(apply_migrations(connection), [])
-        with self.engine.connect() as connection:
-            for table in tables:
-                self.assertCountEqual(connection.execute(text(f"SELECT * FROM public.{table}")).all(),
-                                      prior_rows[table])
+            with psycopg.connect(**self.settings) as source:
+                for table in tables:
+                    self.assertCountEqual(original_rows(connection, table), original_rows(source, table))
+        with patch("storage.database.database_settings", return_value=upgraded):
+            engine = build_engine()
+        self.addCleanup(engine.dispose)
+        self.memories = MemoryStore(engine)
         for row in self.memories.get_memories(self.conversation_id):
             self.assertEqual(snapshot(row), before[row.id])
             self.assertIsNone(row.duplicate_of)
