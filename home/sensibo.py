@@ -14,8 +14,8 @@ Blocking calls (the credential store): run them off the UI thread.
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 import json
 import re
 from time import monotonic
@@ -223,6 +223,38 @@ def describe(state: dict, unit: str = "C") -> str:
     if state.get("fanLevel"):
         parts.append(f"fan {state['fanLevel']}")
     return ", ".join(parts)
+
+
+def with_measurements(room: Room, measurements) -> Room | None:
+    """A room with newer readings from the stream's `measurements` event; None if they're unusable."""
+    if not isinstance(measurements, dict):
+        return None
+    temperature, humidity = _number(measurements.get("temperature")), _number(measurements.get("humidity"))
+    if temperature is None and humidity is None:
+        return None
+    return replace(
+        room, temperature=temperature if temperature is not None else room.temperature,
+        humidity=humidity if humidity is not None else room.humidity,
+        feels_like=_number(measurements.get("feelsLike")) or room.feels_like,
+        measured_at=_time(measurements.get("time")) or datetime.now(timezone.utc),
+    )
+
+
+# Her room changing this much since she was last told is worth a quiet note, at most this often.
+NOTE_DEGREES = 2.0
+NOTE_HUMIDITY = 15.0
+NOTE_MIN_SECONDS = 15 * 60
+
+
+def noticeable(told: tuple, room: Room, now: float) -> bool:
+    """Whether her room has changed enough since she was told (temperature, humidity, when) to tell
+    her again: 2 degrees or 15 points of humidity, and not within 15 minutes of the last note."""
+    temperature, humidity, at = told
+    if now - at < NOTE_MIN_SECONDS:
+        return False
+    warmer = room.temperature is not None and temperature is not None and abs(room.temperature - temperature) >= NOTE_DEGREES
+    damper = room.humidity is not None and humidity is not None and abs(room.humidity - humidity) >= NOTE_HUMIDITY
+    return warmer or damper
 
 
 def same_name(a: str, b: str) -> bool:

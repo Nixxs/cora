@@ -110,7 +110,8 @@ To do on this branch:
 - [x] Aircon 0: a read-only look at the real units (rooms, response shapes, what each supports)
 - [x] Aircon 1: Settings > Services > Sensibo, `aircon` status, and her own room's temperature (see [Air conditioning](#air-conditioning-sensibo))
 - [x] Aircon 2: control: changing a unit, and timers
-- [ ] Aircon 3: the live stream: changes on the dashboard and as awareness
+- [x] Aircon 3a: the live stream: her room as it changes, and changes made elsewhere as awareness
+- [ ] Aircon 3b: each room on the dashboard
 - [ ] Aircon 4: schedules, Climate React, and her own initiative
 
 ### Judgement calls
@@ -254,7 +255,15 @@ set up, and this API is small. If Home Assistant arrives, it can take over.
 3. **The live stream:** a unit turned off or changed by the remote or the app, a room getting very
    hot while the person is out, or a unit going offline, becomes an awareness event (the same path
    as mail); the dashboard shows each room. Reconnects with a growing delay, and re-reads every
-   unit every 15 minutes or so, as Sensibo asks.
+   unit every 15 minutes or so, as Sensibo asks. *3a done* (see
+   [Her home](DOCUMENTATION.md#her-home-the-air-conditioners-sensibo)): the stream, her room's
+   line kept current with a quiet note on a change of 2 degrees or 15 points of humidity (at most
+   every 15 minutes), and units switched on or off elsewhere, or going offline, as awareness. The
+   real stream said hello as documented (a heartbeat every 120 seconds), and in four minutes sent
+   each unit's `measurements` about every 90 seconds, shaped as read here (`id`, and `temperature`,
+   `humidity`, `feelsLike` and `time` under `measurements`). "Someone's in a room
+   that's too hot while the person is out" waits for knowing who's home (step 4). *3b next:*
+   each room on the dashboard.
 4. **Schedules, Climate React and initiative:** "every weekday at 4, cool the house to 24", "keep
    the bedroom between 22 and 25 tonight"; and on her own, offering (never doing unasked) to
    pre-cool before a hot afternoon, noticing units left on while the person is away or at

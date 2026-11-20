@@ -1335,8 +1335,8 @@ asked in the daytime, at most one a day.
 The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo.py),
 [app_areas/home.py](app_areas/home.py)). Set up under Settings › Services › **Her home ›
 Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
-until switched on with a key. The live stream and schedules are the next steps on the
-[roadmap](ROADMAP.md#air-conditioning-sensibo).
+until switched on with a key. The dashboard's rooms, schedules and Climate React are the next
+steps on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
 
 - **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
   readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
@@ -1369,9 +1369,34 @@ until switched on with a key. The live stream and schedules are the next steps o
   line of her context (`her_room`, at most 400 characters), in her voice session and her written
   chats alike: the room you live in, the nearest she has to feeling warm or cold, framed as
   where she is rather than a body she doesn't have. She mentions it only when it's notable or
-  asked, and it may colour her feelings like anything else in her day. A voice session gets
-  the reading as of its connect; written chats get the latest. A problem (a refused key, the unit
-  gone from the account) is noted in Activity once, not every ten minutes, and Settings shows it.
+  asked, and it may colour her feelings like anything else in her day. A problem (a refused key,
+  the unit gone from the account) is noted in Activity once, not every ten minutes, and Settings
+  shows it.
+- **Live, through Sensibo's stream** ([home/stream.py](home/stream.py)): while Sensibo is on with
+  a key, one connection stays open for every unit (Server-Sent Events at `/api/v2/stream`, the key
+  in the `X-Api-Key` header rather than the address). On `hello` everything is read once, since
+  changes before it were missed; `measurements` (at most once a minute per unit, only when a value
+  changed) keep her room's line current; `changed` with the state or connection (or an empty list)
+  reads every unit again once things settle (3 seconds, so a burst is one read). It reconnects
+  after a growing delay (3 seconds doubling to 5 minutes, with jitter), waits at least
+  `Retry-After` when refused, gives up on a connection silent for two heartbeats, and stops only
+  for a refused key. The 10-minute read carries on, as Sensibo asks for a full read now and then.
+- **Her room changing:** when it moves 2 degrees or 15 points of humidity from what her voice
+  session was last told, and not within 15 minutes of the last such note, she gets a silent note
+  (`note_her_room`, an instruction, not a thought, so she isn't prompted to speak): she may mention
+  it in passing if it fits ("it's got stuffy"), and it may colour how she feels. Written chats
+  simply get the latest line.
+- **Changes made elsewhere:** a unit switched on or off by the remote, the Sensibo app or a timer,
+  or one going offline or coming back, becomes an awareness event (`source: sensibo`, through
+  the attention manager like mail): "Declan's Room's air conditioner was just switched on (cool,
+  24°C, fan auto), not by you". Her own changes from the last two minutes aren't reported back;
+  a change of temperature or fan alone isn't news. Each is a line in Activity. Only while she's
+  active: in Standby it's in Activity alone, since a queued observation never expires and would
+  come out as stale news when she woke.
+- **Cost:** nothing here wakes her or reaches OpenAI in Standby. The stream and readings go to
+  Sensibo only (no charge per request; one open stream, a full read every 10 minutes and one after
+  each change), room notes are skipped while her voice session is closed, and written chats carry
+  her room's line (about 100 tokens).
 
 ### The listener and webhooks
 
