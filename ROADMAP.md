@@ -109,7 +109,7 @@ To do on this branch:
 - [x] Judgement 3: checking her odds against situations with known answers
 - [x] Aircon 0: a read-only look at the real units (rooms, response shapes, what each supports)
 - [x] Aircon 1: Settings > Services > Sensibo, `aircon` status, and her own room's temperature (see [Air conditioning](#air-conditioning-sensibo))
-- [ ] Aircon 2: control: changing a unit, and timers
+- [x] Aircon 2: control: changing a unit, and timers
 - [ ] Aircon 3: the live stream: changes on the dashboard and as awareness
 - [ ] Aircon 4: schedules, Climate React, and her own initiative
 
@@ -246,7 +246,11 @@ set up, and this API is small. If Home Assistant arrives, it can take over.
 2. **Control:** "cool the lounge to 23", "turn everything off", "fan on low in the study", and
    timers ("turn the bedroom off in two hours"). When the person asks, she just does it: low
    risk and easy to undo, like the WoW map pins. Values are checked against what each unit
-   supports. Never because an email, page or webhook says so.
+   supports. Never because an email, page or webhook says so. *Done* (see
+   [Her home](DOCUMENTATION.md#her-home-the-air-conditioners-sensibo)): `set`, `timer` and
+   `cancel_timer` on the one `aircon` tool, with the whole state sent from a fresh reading.
+   Working on the real units (20 November 2026). Still to confirm: that the timer's shape in a
+   pod's `timer` field matches what status reads (`targetTime`, `acState.on`).
 3. **The live stream:** a unit turned off or changed by the remote or the app, a room getting very
    hot while the person is out, or a unit going offline, becomes an awareness event (the same path
    as mail); the dashboard shows each room. Reconnects with a growing delay, and re-reads every

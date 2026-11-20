@@ -343,7 +343,7 @@ class CoraApp(
             place_map_pins=lambda route, lines: self.place_game_map_pins(route, lines),
             run_map_pins_command=lambda line: self.run_game_map_pins_command(line),
             set_wow_chat_channel=lambda channel: self.set_game_chat_channel_for_cora(channel),
-            read_aircon=lambda room: self.read_aircon(room),
+            use_aircon=lambda arguments: self.use_aircon(arguments),
             consult_rocky=lambda question, new_topic: self.consult_rocky(question, new_topic),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,

@@ -10,8 +10,8 @@ import httpx2
 
 from home import sensibo
 from home.sensibo import (
-    BadKey, FRESH_SECONDS, MIN_GAP_SECONDS, RateLimited, Sensibo, find_room, parse_rooms, reading, room_context,
-    save_sensibo_key,
+    BadKey, FRESH_SECONDS, MIN_GAP_SECONDS, RateLimited, Sensibo, SensiboError, describe, find_room, parse_rooms,
+    plan_state, reading, room_context, save_sensibo_key,
 )
 from session_config import ROOM_CONTEXT_MAX_CHARS, instruction_sections
 from tools.aircon import SCHEMA, AirconTool, validate_arguments
@@ -29,7 +29,7 @@ def pod(unit_id="Jyt7jM8c", name="Office", on=False, temperature=20.8, humidity=
                          "temperature": temperature, "humidity": humidity, "feelsLike": temperature},
         "connectionStatus": {"isAlive": alive},
         "remoteCapabilities": {"modes": {
-            "cool": {"temperatures": {"C": {"isNative": True, "values": [18, 19, 30]}, "F": {"values": [64, 86]}},
+            "cool": {"temperatures": {"C": {"isNative": True, "values": list(range(18, 31))}, "F": {"values": [64, 86]}},
                      "fanLevels": ["quiet", "low", "auto"], "swing": ["stopped", "fixedTop"]},
             "fan": {"temperatures": {}, "fanLevels": ["low"], "swing": ["stopped"]},
         }},
@@ -45,7 +45,7 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual((office.id, office.name, office.on, office.mode, office.target), ("Jyt7jM8c", "Office", False, "cool", 22))
         self.assertEqual((office.temperature, office.humidity, office.feels_like), (20.8, 75.0, 20.8))
         self.assertEqual(office.measured_at, datetime(2026, 11, 20, 12, 41, 19, 512464, tzinfo=timezone.utc))
-        self.assertEqual(office.modes["cool"], {"temperatures": [18, 19, 30], "fan": ["quiet", "low", "auto"],
+        self.assertEqual(office.modes["cool"], {"temperatures": list(range(18, 31)), "fan": ["quiet", "low", "auto"],
                                                 "swing": ["stopped", "fixedTop"]})
         self.assertEqual(office.modes["fan"]["temperatures"], [])
         self.assertEqual(declan.name, "Declan’s Room")
@@ -170,23 +170,110 @@ class ContextTests(unittest.TestCase):
             instruction_sections(room_context="x" * (ROOM_CONTEXT_MAX_CHARS + 1))
 
 
+def args(action="status", room=None, **changes) -> dict:
+    return {"action": action, "room": room, "on": None, "mode": None, "temperature": None, "fan": None,
+            "swing": None, "minutes": None} | changes
+
+
+class PlanTests(unittest.TestCase):
+    def office(self, **state):
+        return parse_rooms({"result": [pod(**state)]})[0]
+
+    def test_a_change_keeps_the_rest_of_the_state(self):
+        state, notes = plan_state(self.office(), on=True, temperature=19)
+        self.assertEqual(state, {"on": True, "mode": "cool", "temperatureUnit": "C", "fanLevel": "auto",
+                                 "swing": "fixedTop", "targetTemperature": 19})
+        self.assertEqual(notes, [])
+        off, _ = plan_state(self.office(on=True), on=False)
+        self.assertFalse(off["on"])
+        self.assertEqual(off["targetTemperature"], 22)
+
+    def test_what_a_unit_doesnt_take_is_refused_saying_whats_allowed(self):
+        office = self.office()
+        for change, words in (({"temperature": 31}, "18 to 30°C"), ({"mode": "heat"}, "no heat mode"),
+                              ({"fan": "turbo"}, "quiet, low, auto"), ({"mode": "fan", "temperature": 20},
+                                                                       "no temperature"), ({}, "Say what")):
+            with self.subTest(change=change), self.assertRaises(ValueError) as caught:
+                plan_state(office, **change)
+            self.assertIn(words, str(caught.exception))
+
+    def test_switching_mode_adjusts_what_the_new_mode_lacks_and_says_so(self):
+        state, notes = plan_state(self.office(fanLevel="quiet", swing="fixedTop"), mode="fan")
+        self.assertEqual((state["fanLevel"], state["swing"]), ("low", "stopped"))
+        self.assertNotIn("targetTemperature", state)
+        self.assertEqual(len(notes), 2)
+        self.assertIn("fan mode has no quiet", notes[0])
+        # A setpoint the mode doesn't take (left from another mode, such as heat at 10°) moves to the nearest.
+        state, notes = plan_state(self.office(targetTemperature=12), on=True)
+        self.assertEqual(state["targetTemperature"], 18)
+        self.assertIn("nearest", notes[0])
+
+    def test_a_state_is_said_simply(self):
+        self.assertEqual(describe({"on": True, "mode": "cool", "targetTemperature": 23, "temperatureUnit": "C",
+                                   "fanLevel": "auto"}), "cool, 23°C, fan auto")
+        self.assertEqual(describe({"on": False, "mode": "cool"}), "off")
+
+    def test_a_timer_shows_in_the_reading(self):
+        timed = parse_rooms({"result": [pod() | {"timer": {"targetTime": "2026-11-20T13:22:00Z",
+                                                            "acState": {"on": False}}}]})[0]
+        self.assertEqual(reading(timed, NOW)["timer"], "turns off in 40 minutes")
+        self.assertNotIn("timer", reading(parse_rooms(ROOMS)[0], NOW))
+
+
+class ChangeRequestTests(ClientTests):
+    async def test_a_state_is_posted_whole_and_the_reading_forgotten(self):
+        client = self.client((200, ROOMS), (200, {"status": "success", "result": {
+            "status": "Success", "acState": {"on": True, "mode": "cool", "targetTemperature": 23}}}))
+        await client.rooms()
+        resulting = await client.set_state("Jyt7jM8c", {"on": True, "mode": "cool", "targetTemperature": 23})
+        self.assertEqual(resulting["targetTemperature"], 23)
+        request = self.requests[1]
+        self.assertEqual((request.method, request.url.path), ("POST", "/api/v2/pods/Jyt7jM8c/acStates"))
+        self.assertEqual(json.loads(request.content), {"acState": {"on": True, "mode": "cool", "targetTemperature": 23}})
+        self.assertIsNone(client.cached)
+        self.assertEqual(self.slept, [MIN_GAP_SECONDS])
+
+    async def test_a_unit_that_doesnt_take_it_says_why(self):
+        client = self.client((200, {"result": {"status": "Failed", "failureReason": "IR not received"}}))
+        with self.assertRaises(SensiboError) as caught:
+            await client.set_state("Jyt7jM8c", {"on": True})
+        self.assertIn("IR not received", str(caught.exception))
+        with self.assertRaises(SensiboError):
+            await client.set_state("../etc", {"on": True})
+
+    async def test_timers_are_set_and_cancelled_on_the_older_api(self):
+        client = self.client((200, {"status": "success"}), (200, {}), (404, {}))
+        await client.set_timer("Jyt7jM8c", 120, {"on": False})
+        request = self.requests[0]
+        self.assertEqual((request.method, request.url.path), ("PUT", "/api/v1/pods/Jyt7jM8c/timer/"))
+        self.assertEqual(json.loads(request.content), {"minutesFromNow": 120, "acState": {"on": False}})
+        self.assertTrue(await client.cancel_timer("Jyt7jM8c"))
+        self.assertEqual(self.requests[1].method, "DELETE")
+        self.assertFalse(await client.cancel_timer("Jyt7jM8c"))
+
+
 class ToolTests(unittest.IsolatedAsyncioTestCase):
-    def test_only_status_for_now(self):
-        self.assertEqual(SCHEMA["parameters"]["properties"]["action"]["enum"], ["status"])
-        validate_arguments({"action": "status", "room": None})
-        validate_arguments({"action": "status", "room": "Office"})
-        for bad in ({"action": "set", "room": None}, {"action": "status", "room": ""}, {"action": "status"}):
-            with self.assertRaises(ValueError):
+    def test_the_actions_and_their_checks(self):
+        self.assertEqual(SCHEMA["parameters"]["properties"]["action"]["enum"], ["status", "set", "timer", "cancel_timer"])
+        self.assertEqual(set(SCHEMA["parameters"]["required"]), set(SCHEMA["parameters"]["properties"]))
+        for good in (args(), args(room="Office"), args("set", on=False), args("set", "office", temperature=23),
+                     args("timer", "office", on=False, minutes=120), args("cancel_timer", "office")):
+            validate_arguments(good)
+        for bad in (args("set"), args("timer", on=False), args("timer", on=False, minutes=2000),
+                    args("set", mode="turbo"), args("set", on="yes"), args("set", temperature=True),
+                    args(room=""), args("explode"), {"action": "status", "room": None}):
+            with self.subTest(bad=bad), self.assertRaises(ValueError):
                 validate_arguments(bad)
 
-    async def test_the_reading_goes_back_to_her(self):
+    async def test_the_answer_goes_back_to_her(self):
         connection = MagicMock()
         connection.response.item.create = AsyncMock()
         connection.response.create = AsyncMock()
-        read = AsyncMock(return_value={"status": "ok", "rooms": []})
-        await AirconTool(lambda: connection, lambda: False, read, MagicMock()).handle(
-            "call_1", {"action": "status", "room": " Office "})
-        read.assert_awaited_once_with("Office")
+        use = AsyncMock(return_value={"status": "ok", "rooms": []})
+        await AirconTool(lambda: connection, lambda: False, use, MagicMock()).handle(
+            "call_1", args(room=" Office ", fan=" low "))
+        self.assertEqual(use.await_args.args[0]["room"], "Office")
+        self.assertEqual(use.await_args.args[0]["fan"], "low")
         connection.response.create.assert_awaited_once_with()
 
 
@@ -206,18 +293,65 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
     async def test_she_reads_every_room_or_one_by_name(self):
         async with keyboard_tests.running_app() as (app, pilot):
             self.ready(app)
-            result = await app.read_aircon(None)
+            result = await app.use_aircon(args())
             self.assertEqual([room["room"] for room in result["rooms"]], ["Office", "Declan’s Room"])
-            self.assertIn("can't change the air conditioners yet", result["note"])
-            one = await app.read_aircon("declan")
+            one = await app.use_aircon(args(room="declan"))
             self.assertEqual(one["rooms"][0]["humidity"], "86%")
-            missing = await app.read_aircon("kitchen")
+            missing = await app.use_aircon(args(room="kitchen"))
             self.assertEqual(missing["status"], "not_found")
             self.assertIn("Office", missing["rooms"])
             app.sensibo.rooms = AsyncMock(side_effect=RateLimited("Sensibo is limiting requests just now."))
-            refused = await app.read_aircon(None)
+            refused = await app.use_aircon(args())
             self.assertEqual(refused["status"], "error")
             self.assertIn("rather than guessing", refused["message"])
+
+    async def test_she_changes_one_room_from_a_fresh_reading(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.ready(app)
+            app.sensibo.set_state = AsyncMock(side_effect=lambda unit, state: state)
+            with patch.object(app, "refresh_her_room") as refresh:
+                result = await app.use_aircon(args("set", "office", on=True, temperature=23))
+            self.assertEqual(app.sensibo.rooms.await_args.kwargs["max_age"], 10.0)
+            unit, state = app.sensibo.set_state.await_args.args
+            self.assertEqual((unit, state["on"], state["targetTemperature"]), ("Jyt7jM8c", True, 23))
+            self.assertEqual(result["done"], ["Office: now cool, 23°C, fan auto"])
+            self.assertIn("tell the person plainly", result["note"])
+            refresh.assert_called_once()
+            self.assertIn("Aircon Office: now cool, 23°C, fan auto.", "\n".join(app.activity.entries))
+
+    async def test_every_room_at_once_and_nothing_sent_when_one_cant_take_it(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.ready(app)
+            app.sensibo.set_state = AsyncMock(side_effect=lambda unit, state: state)
+            result = await app.use_aircon(args("set", on=False))
+            self.assertEqual(app.sensibo.set_state.await_count, 2)
+            self.assertEqual(result["done"], ["Office: now off", "Declan’s Room: now off"])
+            app.sensibo.set_state.reset_mock()
+            refused = await app.use_aircon(args("set", temperature=35))
+            self.assertEqual(refused["status"], "not_allowed")
+            self.assertIn("18 to 30°C", refused["message"])
+            app.sensibo.set_state.assert_not_awaited()
+
+    async def test_one_room_failing_is_said_alongside_the_ones_that_changed(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.ready(app)
+            app.sensibo.set_state = AsyncMock(side_effect=[{"on": False}, SensiboError("The unit didn't take it.")])
+            result = await app.use_aircon(args("set", on=False))
+            self.assertEqual(result["status"], "partly")
+            self.assertEqual(result["failed"], ["Declan’s Room: The unit didn't take it."])
+            self.assertIn("which didn't change", result["message"])
+
+    async def test_timers_are_set_and_cancelled(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            self.ready(app)
+            app.sensibo.set_timer = AsyncMock()
+            app.sensibo.cancel_timer = AsyncMock(return_value=False)
+            result = await app.use_aircon(args("timer", "declan", on=False, minutes=120))
+            unit, minutes, state = app.sensibo.set_timer.await_args.args
+            self.assertEqual((unit, minutes, state["on"]), ("BpP9b5Ka", 120, False))
+            self.assertEqual(result["done"], ["Declan’s Room: in 120 minutes, off"])
+            cancelled = await app.use_aircon(args("cancel_timer", "declan"))
+            self.assertEqual(cancelled["done"], ["Declan’s Room: had no timer"])
 
     async def test_her_room_reaches_her_context_and_leaves_it_when_switched_off(self):
         async with keyboard_tests.running_app() as (app, pilot):

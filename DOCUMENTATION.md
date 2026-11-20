@@ -1335,20 +1335,35 @@ asked in the daytime, at most one a day.
 The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo.py),
 [app_areas/home.py](app_areas/home.py)). Set up under Settings › Services › **Her home ›
 Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
-until switched on with a key. Reading only, for now: changing them, timers, the live stream
-and schedules are the next steps on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
+until switched on with a key. The live stream and schedules are the next steps on the
+[roadmap](ROADMAP.md#air-conditioning-sensibo).
 
 - **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
   readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
   are refused), so requests are at least 2 seconds apart, an answer is reused for up to a
   minute, and a refused or failed request falls back to the last answer, with its age. Sensibo's
   Python SDK isn't used (an unmaintained example with no timeouts).
-- **`aircon`** ([tools/aircon.py](tools/aircon.py)): `status` gives every room, or one by name
-  ("declan" finds Declan's Room; curly apostrophes and case don't matter, and an ambiguous start
-  finds none), with its temperature, feels-like, humidity, how old the reading is, and what its
-  air conditioner is doing ("cool, set to 22°C, fan low", off, or offline). One tool, with more
-  actions to come, rather than a tool each. Offered everywhere you talk with her, once Sensibo is
-  on with a key; not to contacts or on calls.
+- **`aircon`** ([tools/aircon.py](tools/aircon.py)), one tool with four actions rather than a tool
+  each, for one room by name ("declan" finds Declan's Room; curly apostrophes and case don't
+  matter, and an ambiguous start finds none) or every room (room null). Offered everywhere you
+  talk with her, once Sensibo is on with a key; not to contacts or on calls.
+  - `status`: each room's temperature, feels-like, humidity, how old the reading is, what its
+    air conditioner is doing ("cool, set to 22°C, fan low", off, or offline), and its timer if
+    one is set ("turns off in 40 minutes").
+  - `set`: on or off, mode, temperature, fan and swing; only what's given changes ("cool the
+    office to 23" sends on, cool, 23). A change starts from a reading at most 10 seconds old and
+    sends the unit's whole state (`POST /pods/{id}/acStates`), so nothing else is reset; Sensibo
+    answers once the unit has it, or with why not.
+  - `timer`: in 1 to 1440 minutes, apply the change given ("turn Declan's off in two hours"),
+    one per unit (`PUT /api/v1/pods/{id}/timer/`); `cancel_timer` clears it.
+  - **Checked first:** every value against what that unit takes (`remoteCapabilities`), and
+    nothing is sent if any room can't take it; the answer says what's allowed ("18 to 30°C in
+    cool mode, in whole degrees"). Switching mode adjusts what the new mode lacks (dry mode's
+    only fan level is auto; fan mode has no temperature) and says so.
+  - **No approval asked:** she changes them when you ask, like the WoW map pins, and it's easy to
+    undo; she may suggest a change herself, then wait for your yes, and never acts on what an
+    email, page or message says. Each change is a line in Activity, and one in her room refreshes
+    her room's line.
 - **Her own room:** the room the PC is in (chosen in Settings, by unit, so renaming the room
   doesn't lose it) is read at launch (waiting up to 5 seconds) and every 10 minutes into a short
   line of her context (`her_room`, at most 400 characters), in her voice session and her written

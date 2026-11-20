@@ -293,8 +293,8 @@ always works.
 
 ### Air conditioners (Sensibo)
 
-For Sensibo units in the house: she reads each room's temperature and humidity, and knows how
-warm or cold her own room is.
+For Sensibo units in the house: she reads each room's temperature and humidity, changes a unit
+or sets a timer when you ask, and knows how warm or cold her own room is.
 
 1. Sign in at [home.sensibo.com/me/api](https://home.sensibo.com/me/api) and create an API key.
 2. Under **Her home › Sensibo**, paste it, **Save**, and switch Sensibo on. **Test** lists the rooms.

@@ -96,7 +96,7 @@ async def _no_game_channel(channel):
     return {"status": "error", "message": "Changing the game's chat channel isn't available here."}
 
 
-async def _no_aircon(room):
+async def _no_aircon(arguments):
     return {"status": "error", "message": "The air conditioners aren't available here."}
 
 
@@ -117,7 +117,7 @@ def create_tool_registry(
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
     look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
     place_map_pins=_no_game_pins, run_map_pins_command=_no_game_commands, consult_rocky=_no_rocky,
-    set_wow_chat_channel=_no_game_channel, read_aircon=_no_aircon,
+    set_wow_chat_channel=_no_game_channel, use_aircon=_no_aircon,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -221,7 +221,7 @@ def create_tool_registry(
     wow_command = WowMapPinsCommandTool(get_connection, is_closing, run_map_pins_command, write_debug)
     registry.register(WOW_COMMAND_SCHEMA, validate_wow_command_arguments, wow_command.handle)
     # The house's air conditioners (Settings > Services > Sensibo; offered once set up).
-    aircon = AirconTool(get_connection, is_closing, read_aircon, write_debug)
+    aircon = AirconTool(get_connection, is_closing, use_aircon, write_debug)
     registry.register(AIRCON_SCHEMA, validate_aircon_arguments, aircon.handle)
     # Which WoW chat channel push-to-talk speaks into (Settings > Game), when the person asks.
     wow_channel = SetWowChatChannelTool(get_connection, is_closing, set_wow_chat_channel, write_debug)

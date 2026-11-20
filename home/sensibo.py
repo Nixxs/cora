@@ -29,7 +29,11 @@ KEY_ACCOUNT = "home:sensibo-key"
 # Sensibo's keys are letters and digits, about 30 of them; a little room either way.
 KEY_PATTERN = re.compile(r"[A-Za-z0-9]{20,64}")
 API = "https://home.sensibo.com/api/v2"
-FIELDS = "id,room,acState,measurements,connectionStatus,remoteCapabilities"
+# Timers (and schedules) are still on the older version.
+API_V1 = "https://home.sensibo.com/api/v1"
+FIELDS = "id,room,acState,measurements,connectionStatus,remoteCapabilities,timer"
+UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
+MAX_TIMER_MINUTES = 24 * 60
 TIMEOUT_SECONDS = 15.0
 MIN_GAP_SECONDS = 2.0
 FRESH_SECONDS = 60.0
@@ -88,6 +92,9 @@ class Room:
     measured_at: datetime | None = None
     # What it supports, by mode: {"cool": {"temperatures": [18, ...], "fan": [...], "swing": [...]}}.
     modes: dict = field(default_factory=dict, compare=False)
+    # Its timer, if one is set: when it goes off (UTC) and whether it turns the unit on or off.
+    timer_at: datetime | None = None
+    timer_on: bool | None = None
 
 
 def _number(value) -> float | None:
@@ -100,6 +107,16 @@ def _time(value) -> datetime | None:
         return datetime.fromisoformat(text.replace("Z", "+00:00")) if isinstance(text, str) else None
     except ValueError:
         return None
+
+
+def _timer(value) -> tuple[datetime | None, bool | None]:
+    """A unit's timer from its pod: (when, on or off), or (None, None) without one."""
+    if not isinstance(value, dict):
+        return None, None
+    when = value.get("targetTime")
+    when = _time(when) if isinstance(when, dict) else _time({"time": when})
+    state = value.get("acState") if isinstance(value.get("acState"), dict) else {}
+    return when, state.get("on") if isinstance(state.get("on"), bool) else None
 
 
 def _modes(capabilities, unit: str) -> dict:
@@ -126,6 +143,7 @@ def parse_rooms(body) -> list[Room]:
         name = str(((pod.get("room") or {}).get("name")) or pod["id"])[:ROOM_NAME_MAX_CHARS]
         unit = state.get("temperatureUnit") if state.get("temperatureUnit") in ("C", "F") else "C"
         target = state.get("targetTemperature")
+        timer_at, timer_on = _timer(pod.get("timer"))
         rooms.append(Room(
             id=pod["id"], name=name, online=bool((pod.get("connectionStatus") or {}).get("isAlive")),
             on=state.get("on") if isinstance(state.get("on"), bool) else None,
@@ -135,9 +153,76 @@ def parse_rooms(body) -> list[Room]:
             swing=state.get("swing") if isinstance(state.get("swing"), str) else None,
             temperature=_number(readings.get("temperature")), humidity=_number(readings.get("humidity")),
             feels_like=_number(readings.get("feelsLike")), measured_at=_time(readings.get("time")),
-            modes=_modes(pod.get("remoteCapabilities"), unit),
+            modes=_modes(pod.get("remoteCapabilities"), unit), timer_at=timer_at, timer_on=timer_on,
         ))
     return rooms
+
+
+def _nearest(value: int | None, allowed: list[int]) -> int:
+    return allowed[len(allowed) // 2] if value is None else min(allowed, key=lambda option: (abs(option - value), option))
+
+
+def plan_state(room: Room, *, on: bool | None = None, mode: str | None = None, temperature: int | None = None,
+               fan: str | None = None, swing: str | None = None) -> tuple[dict, list[str]]:
+    """The whole state to send for a change (None leaves a part as it is), checked against what the
+    unit supports, and notes on anything adjusted to fit (a fan level the new mode doesn't have).
+    ValueError, saying what's allowed, for a value it doesn't take."""
+    if all(part is None for part in (on, mode, temperature, fan, swing)):
+        raise ValueError("Say what to change: on or off, mode, temperature, fan or swing.")
+    new_mode = mode or room.mode
+    if new_mode is None:
+        raise ValueError(f"{room.name}'s mode isn't known; say which mode.")
+    supported = room.modes
+    if supported and new_mode not in supported:
+        raise ValueError(f"{room.name} has no {new_mode} mode; it has {', '.join(supported)}.")
+    caps = supported.get(new_mode, {})
+    notes = []
+    temperatures = caps.get("temperatures", [])
+    target = room.target
+    if temperature is not None:
+        if supported and not temperatures:
+            raise ValueError(f"{new_mode} mode has no temperature to set.")
+        if temperatures and temperature not in temperatures:
+            raise ValueError(f"{room.name} takes {min(temperatures)} to {max(temperatures)}°{room.unit} in "
+                             f"{new_mode} mode, in whole degrees.")
+        target = temperature
+    elif temperatures and target not in temperatures:
+        target = _nearest(target, temperatures)
+        notes.append(f"{room.name}'s temperature set to {target}°{room.unit}, the nearest {new_mode} mode takes.")
+
+    def pick(part: str, wanted: str | None, current: str | None, allowed: list[str]) -> str | None:
+        if wanted is not None:
+            if allowed and wanted not in allowed:
+                raise ValueError(f"{room.name}'s {part} in {new_mode} mode is one of {', '.join(allowed)}.")
+            return wanted
+        if not allowed or current in allowed:
+            return current
+        chosen = "auto" if "auto" in allowed else allowed[0]
+        notes.append(f"{room.name}'s {part} set to {chosen}: {new_mode} mode has no {current}.")
+        return chosen
+
+    state = {"on": bool(room.on) if on is None else on, "mode": new_mode, "temperatureUnit": room.unit}
+    chosen_fan = pick("fan", fan, room.fan, caps.get("fan", []))
+    chosen_swing = pick("swing", swing, room.swing, caps.get("swing", []))
+    if chosen_fan is not None:
+        state["fanLevel"] = chosen_fan
+    if chosen_swing is not None:
+        state["swing"] = chosen_swing
+    if target is not None and (temperatures or not supported):
+        state["targetTemperature"] = target
+    return state, notes
+
+
+def describe(state: dict, unit: str = "C") -> str:
+    """A state as she says it: "cool, 23°C, fan auto" or "off"."""
+    if not state.get("on"):
+        return "off"
+    parts = [state.get("mode") or "on"]
+    if state.get("targetTemperature") is not None:
+        parts.append(f"{state['targetTemperature']}°{state.get('temperatureUnit') or unit}")
+    if state.get("fanLevel"):
+        parts.append(f"fan {state['fanLevel']}")
+    return ", ".join(parts)
 
 
 def same_name(a: str, b: str) -> bool:
@@ -180,6 +265,10 @@ def reading(room: Room, now: datetime) -> dict:
         if room.fan:
             parts.append(f"fan {room.fan}")
         shown["aircon"] = ", ".join(parts)
+    if room.timer_at is not None and room.timer_at > now:
+        minutes = max(1, round((room.timer_at - now).total_seconds() / 60))
+        what = {True: "turns on", False: "turns off"}.get(room.timer_on, "changes")
+        shown["timer"] = f"{what} in {minutes} minutes"
     return shown
 
 
@@ -218,12 +307,14 @@ class Sensibo:
             # Strictly younger, so max_age=0 always asks again.
             if self.cached is not None and self.clock() - self.cached_at < max_age:
                 return self.cached, self.clock() - self.cached_at
-            wait = MIN_GAP_SECONDS - (self.clock() - self.last_request)
-            if wait > 0:
-                await self.sleep(wait)
-            self.last_request = self.clock()
             try:
-                rooms = await self._request()
+                response = await self._call("GET", f"{API}/users/me/pods", params={"fields": FIELDS})
+                if response.status_code != 200:
+                    raise SensiboError(f"Sensibo answered {response.status_code}.")
+                try:
+                    rooms = parse_rooms(response.json())
+                except ValueError as error:
+                    raise SensiboError("Sensibo's answer wasn't understood.") from error
             except BadKey:
                 raise
             except SensiboError:
@@ -233,24 +324,75 @@ class Sensibo:
             self.cached, self.cached_at = rooms, self.clock()
             return rooms, 0.0
 
-    async def _request(self) -> list[Room]:
+    async def set_state(self, unit_id: str, state: dict) -> dict:
+        """Sets a unit's whole state (see plan_state); Sensibo answers once the unit has it. The
+        resulting state, or SensiboError with Sensibo's reason."""
+        self._check_unit(unit_id)
+        async with self.lock:
+            response = await self._call("POST", f"{API}/pods/{unit_id}/acStates", body={"acState": state})
+            # What was read before no longer holds.
+            self.cached = None
+        if response.status_code != 200:
+            raise SensiboError(f"Sensibo answered {response.status_code}.")
+        try:
+            result = response.json().get("result") or {}
+        except (ValueError, AttributeError):
+            result = {}
+        if isinstance(result, dict) and result.get("status") not in (None, "Success"):
+            raise SensiboError(f"The unit didn't take it ({result.get('failureReason') or result.get('status')}).")
+        resulting = result.get("acState") if isinstance(result, dict) else None
+        return resulting if isinstance(resulting, dict) else state
+
+    async def set_timer(self, unit_id: str, minutes: int, state: dict) -> None:
+        """In `minutes`, the unit goes to `state` (one timer per unit; a new one replaces it)."""
+        self._check_unit(unit_id)
+        async with self.lock:
+            response = await self._call("PUT", f"{API_V1}/pods/{unit_id}/timer/",
+                                        body={"minutesFromNow": minutes, "acState": state})
+            self.cached = None
+        if response.status_code not in (200, 201):
+            raise SensiboError(f"Sensibo answered {response.status_code}.")
+
+    async def cancel_timer(self, unit_id: str) -> bool:
+        """Cancels a unit's timer; False when it had none (Sensibo answers 404 then)."""
+        self._check_unit(unit_id)
+        async with self.lock:
+            response = await self._call("DELETE", f"{API_V1}/pods/{unit_id}/timer/")
+            self.cached = None
+        if response.status_code == 404:
+            return False
+        if response.status_code not in (200, 204):
+            raise SensiboError(f"Sensibo answered {response.status_code}.")
+        return True
+
+    @staticmethod
+    def _check_unit(unit_id: str) -> None:
+        if not UNIT_ID.fullmatch(unit_id or ""):
+            raise SensiboError("Unknown unit.")
+
+    async def _call(self, method: str, url: str, *, params: dict | None = None, body: dict | None = None):
+        """One request, at least MIN_GAP_SECONDS after the last; the caller holds the lock. Raises
+        BadKey or RateLimited for those answers, SensiboError when it fails; otherwise the response."""
+        if not self.key:
+            raise BadKey("No Sensibo API key is saved (Settings > Services > Sensibo).")
+        wait = MIN_GAP_SECONDS - (self.clock() - self.last_request)
+        if wait > 0:
+            await self.sleep(wait)
+        self.last_request = self.clock()
         options = {"timeout": TIMEOUT_SECONDS, "headers": {"Accept-Encoding": "gzip"}}
         if self.transport is not None:
             options["transport"] = self.transport
         try:
             async with httpx2.AsyncClient(**options) as client:
-                response = await client.get(f"{API}/users/me/pods", params={"apiKey": self.key, "fields": FIELDS})
+                response = await client.request(method, url, params={"apiKey": self.key, **(params or {})},
+                                                json=body)
         except httpx2.TimeoutException as error:
             raise SensiboError("Sensibo didn't answer in time.") from error
         except httpx2.HTTPError as error:
+            # Only the type: the key is in the request's address.
             raise SensiboError(f"Sensibo couldn't be reached ({type(error).__name__}).") from error
         if response.status_code in (401, 403):
             raise BadKey("Sensibo refused the API key; check it in Settings > Services > Sensibo.")
         if response.status_code == 429:
             raise RateLimited("Sensibo is limiting requests just now; try again in a minute.")
-        if response.status_code != 200:
-            raise SensiboError(f"Sensibo answered {response.status_code}.")
-        try:
-            return parse_rooms(response.json())
-        except ValueError as error:
-            raise SensiboError("Sensibo's answer wasn't understood.") from error
+        return response

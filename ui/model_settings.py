@@ -424,9 +424,8 @@ class PhoneControls:
 
 
 HOME_INTRO = (
-    "The house's air conditioners, through Sensibo. She can read every room's temperature and "
-    "humidity and what each unit is doing (aircon), and she knows how warm or cold her own room is. "
-    "Changing them comes later."
+    "The house's air conditioners, through Sensibo. She reads every room's temperature and humidity, "
+    "changes a unit or sets a timer when you ask (aircon), and knows how warm or cold her own room is."
 )
 HOME_KEY_HELP = "From home.sensibo.com/me/api (sign in, then create a key). Kept in the system's credential store."
 HOME_ROOM_HELP = "Where the PC she runs on is: she knows how warm or cold it is there. Test first to list the rooms."
