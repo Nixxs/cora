@@ -117,7 +117,7 @@ class SchemaTests(unittest.TestCase):
     def test_registered_with_a_safe_default(self):
         registry = create_tool_registry(get_connection=lambda: None, is_closing=lambda: False, shutdown=None,
                                         request_standby=None, write_debug=MagicMock(), schedule=MagicMock())
-        self.assertEqual(registry.schemas()[-2], SCHEMA)
+        self.assertIn(SCHEMA, registry.schemas())
 
 
 def connection():

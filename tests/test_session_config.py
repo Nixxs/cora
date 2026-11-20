@@ -2,7 +2,8 @@ from copy import deepcopy
 import unittest
 
 from session_config import (
-    BACKEND_INSTRUCTIONS, CORA_FOUNDATION, LIVE_INSTRUCTIONS, MEMORY_RECALL_STYLE, build_session_config,
+    BACKEND_INSTRUCTIONS, CORA_FOUNDATION, JUDGEMENT_STYLE, LIVE_INSTRUCTIONS, MEMORY_RECALL_STYLE,
+    build_session_config,
 )
 
 
@@ -27,6 +28,17 @@ class SessionConfigTests(unittest.TestCase):
             self.assertIn(phrase, CORA_FOUNDATION)
         # The old "thoughts and interests eventually" framing is gone; she has them now.
         self.assertNotIn("eventually", LIVE_INSTRUCTIONS)
+
+    def test_both_models_make_the_call_with_what_they_have_and_give_odds_when_asked(self):
+        config = build_session_config([])
+        for instructions in (config["instructions"], config["delegation"]["responses"]["instructions"]):
+            self.assertIn(JUDGEMENT_STYLE, instructions)
+        for rule in ("how sure you are", "rather than stopping at 'we'd need to confirm'",
+                     "beside your recommendation rather than in place of it", "give a plain number",
+                     "never invented precision", "could hurt someone"):
+            self.assertIn(rule, JUDGEMENT_STYLE)
+        # Live has no tools of its own: real odds come from the backend's weigh_odds.
+        self.assertIn("delegate to your backend so it can weigh_odds", LIVE_INSTRUCTIONS)
 
     def test_both_models_use_quiet_grounded_memory_recall(self):
         config = build_session_config([])

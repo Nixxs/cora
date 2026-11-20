@@ -11,7 +11,9 @@ from game import chat_line
 from game.chat_line import (
     KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAX_MESSAGE_CHARS, VK_RETURN, chat_text, key_events,
 )
-from game.speech import GAME_WORDS, CloudTranscriber, Transcriber, vocabulary, wav_bytes
+from game.speech import (
+    GAME_WORDS, SAMPLE_RATE, TRIM_PAD_SECONDS, CloudTranscriber, Transcriber, trimmed, vocabulary, wav_bytes,
+)
 from storage.app_settings_store import AppSettingsStore
 from ui.model_settings import ModelSettingsScreen
 import test_keyboard_persistence as keyboard_tests
@@ -83,6 +85,30 @@ class TranscriberTests(unittest.TestCase):
         self.assertEqual(CloudTranscriber(client=client).transcribe(np.zeros(16000, dtype=np.float32)), "")
         client.audio.transcriptions.create.assert_not_called()
         self.assertEqual(len(wav_bytes(audio)), 44 + 2 * 16000)
+
+    def test_the_silence_either_side_of_speaking_is_trimmed(self):
+        quiet, speech = np.zeros(SAMPLE_RATE, dtype=np.float32), np.full(SAMPLE_RATE // 2, 0.1, dtype=np.float32)
+        audio = np.concatenate([quiet, speech, quiet])
+        kept = trimmed(audio)
+        self.assertEqual(kept.size, speech.size + 2 * int(TRIM_PAD_SECONDS * SAMPLE_RATE))
+        self.assertAlmostEqual(float(np.sum(kept)), float(np.sum(speech)), places=2)
+        self.assertEqual(trimmed(speech).size, speech.size)
+        self.assertEqual(trimmed(quiet).size, 0)
+        self.assertEqual(trimmed(np.zeros(0, dtype=np.float32)).size, 0)
+
+    def test_warming_opens_the_connection_and_never_raises(self):
+        client = MagicMock()
+        transcriber = CloudTranscriber(client=client)
+        self.assertTrue(transcriber.warm())
+        client.models.retrieve.assert_called_once_with("gpt-4o-transcribe")
+        client.models.retrieve.side_effect = ConnectionError()
+        self.assertFalse(transcriber.warm())
+
+    def test_the_client_keeps_its_connection_longer_than_the_default(self):
+        with patch("openai.OpenAI") as openai, patch("openai.DefaultHttpxClient") as http_client:
+            CloudTranscriber().connect()
+        self.assertEqual(http_client.call_args.kwargs["limits"].keepalive_expiry, 30.0)
+        self.assertIs(openai.call_args.kwargs["http_client"], http_client.return_value)
 
 
 class StoreTests(unittest.TestCase):
@@ -158,6 +184,11 @@ class PushToTalkTests(unittest.IsolatedAsyncioTestCase):
             app.live.note_said_in_game.assert_awaited_once()
             self.assertEqual(app.live.note_said_in_game.await_args.args[0], "hello there")
             self.assertIn("You in WoW (/p): hello there", "\n".join(map(str, app.conversation.log_entries)))
+            app.game_cloud_transcriber.warm.assert_called_once()
+            self.assertRegex("\n".join(app.activity.entries),
+                             r"Push-to-talk: [\d.]+s of speech heard in [\d.]+s \(OpenAI [\d.]+s, "
+                             r"(connection ready [\d.]+s into the press|its connection still opening)\), "
+                             r"typed [\d.]+s later")
 
     async def test_openai_failing_falls_back_to_this_pc_and_their_words_go_to_both(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -176,7 +207,9 @@ class PushToTalkTests(unittest.IsolatedAsyncioTestCase):
             app.game_transcription = "local"
             await self.talk(app, pilot)
             app.game_cloud_transcriber.transcribe.assert_not_called()
+            app.game_cloud_transcriber.warm.assert_not_called()
             typed.assert_called_once_with("/s from this pc")
+            self.assertRegex("\n".join(app.activity.entries), r"heard in [\d.]+s \(this PC [\d.]+s\)")
 
     async def test_nothing_is_typed_unless_wow_is_in_front(self):
         async with keyboard_tests.running_app() as (app, pilot):
@@ -248,6 +281,48 @@ class PushToTalkTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
             self.assertEqual(app.game_vocabulary, "Ja Avd, Githyiss")
             app.persistence.save_game_vocabulary.assert_called_once_with("Ja Avd, Githyiss")
+
+    async def test_cora_switches_the_channel_when_asked_and_it_is_saved(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.game_push_to_talk = True
+            result = await app.set_game_chat_channel_for_cora("party")
+            self.assertEqual(app.game_channel, "party")
+            app.persistence.save_game_chat_channel.assert_called_once_with("party")
+            self.assertEqual(result["channel"], "/p")
+            self.assertIn("now speaks in /p (it was /s)", result["message"])
+            again = await app.set_game_chat_channel_for_cora("party")
+            self.assertIn("already", again["message"])
+            app.persistence.save_game_chat_channel.assert_called_once()
+            app.game_push_to_talk = False
+            off = await app.set_game_chat_channel_for_cora("guild")
+            self.assertIn("Push-to-talk itself is off", off["message"])
+            app.persistence.save_game_chat_channel.side_effect = RuntimeError()
+            unsaved = await app.set_game_chat_channel_for_cora("yell")
+            self.assertEqual(app.game_channel, "yell")
+            self.assertIn("couldn't be saved", unsaved["message"])
+
+
+class ChannelToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_it_switches_only_to_a_known_channel_and_only_at_the_desk(self):
+        from backend_chat import SIGNAL_EXCLUDED, WEB_EXCLUDED
+        from tools.set_wow_chat_channel import SCHEMA, SetWowChatChannelTool, validate_arguments
+
+        self.assertEqual(SCHEMA["parameters"]["properties"]["channel"]["enum"], ["say", "party", "guild", "yell"])
+        validate_arguments({"channel": "guild"})
+        for bad in ({"channel": "trade"}, {"channel": "/p"}, {}, {"channel": "say", "extra": 1}):
+            with self.assertRaises(ValueError):
+                validate_arguments(bad)
+        self.assertIn("set_wow_chat_channel", SIGNAL_EXCLUDED)
+        self.assertIn("set_wow_chat_channel", WEB_EXCLUDED)
+        connection = MagicMock()
+        connection.response.item.create = AsyncMock()
+        connection.response.create = AsyncMock()
+        set_channel = AsyncMock(return_value={"status": "ok", "channel": "/g"})
+        await SetWowChatChannelTool(lambda: connection, lambda: False, set_channel, MagicMock()).handle(
+            "call_1", {"channel": "guild"})
+        set_channel.assert_awaited_once_with("guild")
+        self.assertIn('"/g"', connection.response.item.create.call_args.kwargs["item"]["output"])
+        connection.response.create.assert_awaited_once_with()
 
 
 if __name__ == "__main__":

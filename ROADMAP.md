@@ -104,6 +104,58 @@ To do on this branch:
 - [x] Calls 3: staying quiet for recorded menus and hold messages
 - [x] Calls 4: pacing a call's audio within Live's limits, and her session ready while it rings
 - [x] Calls 5: following a call live, at the desk and on the web page
+- [x] Judgement 1: making a call with what she has, and odds when you ask (her instructions; see [Judgement calls](#judgement-calls))
+- [x] Judgement 2: `weigh_odds`, real probabilities from the Decisions API
+- [x] Judgement 3: checking her odds against situations with known answers
+
+### Judgement calls
+
+Her recommendations are careful, which is fine, but you rarely have all the facts, and she
+often won't reach a conclusion: she wants to call someone to confirm, and that person usually
+doesn't know either and won't do more than answer off the top of their head.
+
+1. **Making a call with what she has.** Her instructions tell her to give her best judgement
+   on what's known, with how sure she is, rather than stopping at "we'd need to confirm".
+   Confirming stays open to her: she still suggests it when it would likely change the
+   decision and someone likely knows, as one option beside her recommendation rather than in
+   place of it. When you ask how likely something is ("what are the odds?", "how sure are
+   you?") she gives a number, plainly, like Jarvis: "about 70% it's the rim, 20% just the tyre."
+   *Done* (see [Advice and judgement calls](DOCUMENTATION.md#advice-and-judgement-calls)): the
+   same lines for her voice and her backend, and the coordinator gives its best reading of a
+   vague answer on a task. To check in use: whether she commits, and whether she still suggests
+   checking when it's really worth it.
+2. **`weigh_odds`:** a number she makes up herself is mostly decoration, so this tool asks
+   OpenAI's Decisions API for real probabilities. It takes only `gpt-6-luna` (as the game
+   watcher uses), so the work is split: her own model gathers and frames, and luna weighs. She
+   gives it the evidence she has (what you said, photos, what a shop said, a call through
+   `read_call`) and a few yes/no claims ("the rim is damaged beyond repair", "it's safe to drive
+   on until Monday"), or one choice question when only one answer can be right ("rim, tyre or
+   valve?"). She quotes what comes back, which also gives her the confidence to recommend.
+   Luna weighs only what it's given and does no research, so she looks things up first and
+   weighs second. Each use is a line in Activity with its cost.
+   *Done* (see [Advice and judgement calls](DOCUMENTATION.md#advice-and-judgement-calls)), with
+   your photos from the conversation too. The first real call (a pothole, a bent rim, a vague tyre
+   shop) showed the wording matters: "Is this true?" put driving on the spare at 24% and the rim
+   at 99%; asking how likely it is given how such cases usually turn out gave 64% and 92%, the
+   same on repeat runs.
+3. **Checking the numbers:** a handful of situations where the answer is already known, to
+   see whether luna's odds are sensible or too cautious (the game watcher's "worth mentioning"
+   never passed 1.64 of 3), before her instructions lean on them. If luna proves too weak, the
+   fallback is her own model estimating through structured output, with numbers that are
+   self-reported again.
+   *Done:* [examples/odds_check/main.py](examples/odds_check/main.py), 16 cases through the tool's
+   own code, all passed. Chance came out exact (a coin 0.50, three heads 0.12, a die 0.17, two dice
+   making 7 0.17, a heart 0.25, the birthday problem 0.51), and so did the base-rate puzzles people
+   get wrong (a positive test for a 1-in-100 disease 0.09, the blue taxi 0.41). Clear-cut cases
+   sat where they should (frozen water 0.97, a 2% phone lasting 5 hours 0.00, the spare 0.94,
+   rain on a January day in Perth 0.18), the likeliest cause won each choice, and more evidence
+   moved numbers the right way (a screw in the tread 0.60 to 0.99). Not too cautious, then. Where
+   it's softer: a choice is near all-or-nothing when one answer is clear (1.00 a flat battery),
+   though it spreads when it isn't (60/27/13 for a slow leak), and in a genuinely open case the
+   two ways of asking can disagree on the winner (the slow leak's choice said the valve, 0.60;
+   claims said a puncture, 0.47). So it's trustworthy where an answer can be worked out, and an
+   honest estimate where it rests on general know-how: as her instructions say, she quotes it as
+   her read and says when the evidence is thin.
 
 ### Calls from real use
 
@@ -314,6 +366,15 @@ lore. One small step at a time, each runnable:
    clipboard). The local `base.en` model proved poor at game names, so OpenAI's transcription
    with a vocabulary prompt is the default; if the first word gets clipped, keep a short
    buffer of audio from before the press.
+   **Faster into the game:** the line waits for the whole clip to upload and transcribe after
+   you let go. *Done:* silence either side trimmed, the connection opened on the press and kept
+   for 30 seconds, and each line's timing in Activity. In the game it went from 1.5–2.0 seconds
+   (a fresh connection from Perth each time) to 0.9–1.1, nearly all of it OpenAI's own time.
+   Measured outside the app, `gpt-transcribe` took about 0.6 seconds where `gpt-4o-transcribe`
+   took 0.65–0.9, with names spelled as well: worth trying next.
+   Next, if it's still slow: stream the audio while the button is held (`gpt-live-transcribe`
+   over a live transcription session, which takes the vocabulary too), so letting go only waits
+   for the last moment, with today's upload as the fallback.
 2. **Screen watcher, logging only.** *Built* (see
    [Playing games](DOCUMENTATION.md#playing-games)); to do in the game: play a session with it on,
    then read `game-watch.log` against what happened to choose thresholds, see which questions

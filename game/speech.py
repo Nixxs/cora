@@ -21,6 +21,15 @@ NOT_SPEECH = {"", "you", "thank you", "thank you.", "thanks for watching!", "[bl
 
 CLOUD_MODEL = "gpt-4o-transcribe"
 CLOUD_TIMEOUT_SECONDS = 10
+# How long an idle connection to OpenAI is kept (the library's default is 5 seconds, shorter than
+# a long line held down, so letting go would often wait for a new one).
+KEEPALIVE_SECONDS = 30.0
+# Trimming the silence before and after speaking: 20 ms frames, quiet below this level (or a
+# twentieth of the loudest frame), keeping a little either side so soft first and last sounds stay.
+TRIM_FRAME = 320
+TRIM_FLOOR = 0.003
+TRIM_SHARE = 0.05
+TRIM_PAD_SECONDS = 0.25
 # Settings > Game's choice, by saved value.
 TRANSCRIPTION_CHOICES = ("openai", "local")
 DEFAULT_TRANSCRIPTION = "openai"
@@ -51,6 +60,22 @@ def is_speech(audio: np.ndarray) -> bool:
     return audio.size >= MIN_SECONDS * SAMPLE_RATE and float(np.sqrt(np.mean(audio * audio))) >= 0.003
 
 
+def trimmed(audio: np.ndarray) -> np.ndarray:
+    """The audio without the silence before and after speaking, so there's less to send and
+    transcribe; empty when nothing is loud enough to be speech."""
+    frames = audio.size // TRIM_FRAME
+    if frames == 0:
+        return audio
+    levels = np.sqrt(np.mean(audio[:frames * TRIM_FRAME].reshape(frames, TRIM_FRAME) ** 2, axis=1))
+    loud = np.flatnonzero(levels >= max(TRIM_FLOOR, TRIM_SHARE * float(levels.max())))
+    if loud.size == 0:
+        return audio[:0]
+    pad = int(TRIM_PAD_SECONDS * SAMPLE_RATE)
+    start = max(0, int(loud[0]) * TRIM_FRAME - pad)
+    end = min(audio.size, (int(loud[-1]) + 1) * TRIM_FRAME + pad)
+    return audio[start:end]
+
+
 def clean(text: str) -> str:
     text = text.strip()
     return "" if text.casefold() in NOT_SPEECH else text
@@ -73,17 +98,36 @@ class CloudTranscriber:
     def __init__(self, model: str = CLOUD_MODEL, client=None):
         self.model = model
         self.client = client
+        self.lock = threading.Lock()
+
+    def connect(self):
+        """The client, kept so later lines reuse its connection rather than opening a new one."""
+        with self.lock:
+            if self.client is None:
+                import httpx2
+                from openai import DefaultHttpxClient, OpenAI
+
+                self.client = OpenAI(
+                    timeout=CLOUD_TIMEOUT_SECONDS, max_retries=0,
+                    http_client=DefaultHttpxClient(limits=httpx2.Limits(
+                        max_connections=10, max_keepalive_connections=5, keepalive_expiry=KEEPALIVE_SECONDS)),
+                )
+            return self.client
+
+    def warm(self) -> bool:
+        """Opens the connection while the button is held, so letting go doesn't wait for one. A
+        failure (False) is left for transcribe() to meet (and fall back from)."""
+        try:
+            self.connect().models.retrieve(self.model)
+            return True
+        except Exception:
+            return False
 
     def transcribe(self, audio: np.ndarray, own_words: str = "") -> str:
         if not is_speech(audio):
             return ""
-        from openai import OpenAI
-
-        # Kept, so later lines reuse its connection rather than opening a new one each time.
-        if self.client is None:
-            self.client = OpenAI(timeout=CLOUD_TIMEOUT_SECONDS, max_retries=0)
         try:
-            result = self.client.audio.transcriptions.create(
+            result = self.connect().audio.transcriptions.create(
                 model=self.model, file=("speech.wav", wav_bytes(audio), "audio/wav"),
                 language="en", prompt=vocabulary(own_words),
             )

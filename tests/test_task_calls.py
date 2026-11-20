@@ -683,6 +683,8 @@ class ReadCallTests(unittest.IsolatedAsyncioTestCase):
         from session_config import instruction_sections
         self.assertIn("read_call", COORDINATOR_TOOLS)
         self.assertIn("read_call", COORDINATOR_NOTE)
+        # A vague answer still gets her best reading, not just "nothing was confirmed".
+        self.assertIn("what it most likely means and how sure you are", COORDINATOR_NOTE)
         for allowed in (CALL_TOOLS, task_calls.TASK_CALL_TOOLS, CLIENT_CHAT_TOOLS):
             self.assertNotIn("read_call", allowed)
         self.assertIn("read_call", instruction_sections(tasks_context="[]")["tasks"])
