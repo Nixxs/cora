@@ -88,6 +88,7 @@ from app_areas.game import GameMixin
 from app_areas.game_watch import GameWatchMixin
 from app_areas.claude_code import ClaudeCodeMixin
 from app_areas.local_model import LocalModelMixin
+from app_areas.home import HomeMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -130,7 +131,7 @@ def settle_memory() -> None:
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, HomeMixin, App,
 ):
 
     live_trace = None
@@ -290,6 +291,8 @@ class CoraApp(
         self.init_claude_code()
         # Rocky's local model: its container, stopped once idle.
         self.init_local_model()
+        # The house's air conditioners (Sensibo), and the room she lives in.
+        self.init_home()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -340,6 +343,7 @@ class CoraApp(
             place_map_pins=lambda route, lines: self.place_game_map_pins(route, lines),
             run_map_pins_command=lambda line: self.run_game_map_pins_command(line),
             set_wow_chat_channel=lambda channel: self.set_game_chat_channel_for_cora(channel),
+            read_aircon=lambda room: self.read_aircon(room),
             consult_rocky=lambda question, new_topic: self.consult_rocky(question, new_topic),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,

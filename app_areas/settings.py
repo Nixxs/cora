@@ -9,7 +9,7 @@ from textual import work
 import openai_key
 import openai_spend
 from ui.model_settings import (
-    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, LocalModelControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, HomeControls, LocalModelControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
     gap_words,
 )
 from services.catalogue import SERVICES
@@ -96,6 +96,12 @@ class SettingsMixin:
                 webhooks=self.make_webhook_controls(),
                 web=self.make_web_controls(),
                 phone=self.make_phone_controls(),
+                home=HomeControls(
+                    status=lambda: (self.home_state, self.home_status), rooms=lambda: self.home_rooms,
+                    set_enabled=self.save_sensibo_enabled, save_key=self.save_sensibo_key,
+                    test=self.test_sensibo, save_her_room=self.save_her_room,
+                    enabled=self.sensibo_enabled, has_key=bool(self.sensibo.key), her_room=self.her_room_id,
+                ),
                 game=GameControls(
                     push_to_talk=self.game_push_to_talk, save_push_to_talk=self.save_game_push_to_talk,
                     channel=self.game_channel, save_channel=self.save_game_chat_channel,

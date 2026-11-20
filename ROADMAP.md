@@ -107,6 +107,11 @@ To do on this branch:
 - [x] Judgement 1: making a call with what she has, and odds when you ask (her instructions; see [Judgement calls](#judgement-calls))
 - [x] Judgement 2: `weigh_odds`, real probabilities from the Decisions API
 - [x] Judgement 3: checking her odds against situations with known answers
+- [x] Aircon 0: a read-only look at the real units (rooms, response shapes, what each supports)
+- [x] Aircon 1: Settings > Services > Sensibo, `aircon` status, and her own room's temperature (see [Air conditioning](#air-conditioning-sensibo))
+- [ ] Aircon 2: control: changing a unit, and timers
+- [ ] Aircon 3: the live stream: changes on the dashboard and as awareness
+- [ ] Aircon 4: schedules, Climate React, and her own initiative
 
 ### Judgement calls
 
@@ -188,6 +193,68 @@ was lost:
    events. Show it on the dashboard and the web page like a Claude Code session, with its
    transcript as it happens. *Done:* beside the chat, in the dashboard's tasks and on the web
    page, for 15 minutes after it ends.
+
+### Air conditioning (Sensibo)
+
+Sensibo units are now installed through the house, with a REST API
+([docs](https://support.sensibo.com/api/), base `https://home.sensibo.com/api/v2`; timers and
+schedules are still on `v1`) and a key from the Sensibo account. Its Python SDK isn't used: a
+50-line example last touched in 2022, with no timeouts, four calls and Python 2-era example
+code. Cora calls the API herself. What it offers: each unit ("pod") with its room, its state
+(`on`, `mode`, `targetTemperature`, `fanLevel`, `swing`) and the room's `temperature`, `humidity`
+and `feelsLike`; changing any part of a state; one timer per unit; schedules; Climate React
+(Sensibo's own thermostat: above one temperature do this, below another do that); each unit's
+history of who changed what; and a live event stream (Server-Sent Events, one connection for
+every unit, readings at most once a minute when they change). Polling often is rate-limited
+hard, so the stream is how she keeps up. Not documented, so to be read from the real units: which
+modes, temperatures and fan levels each unit takes, and the shape of most answers.
+
+Direct, not through [Home Assistant](#awareness) (which has a Sensibo integration): that isn't
+set up, and this API is small. If Home Assistant arrives, it can take over.
+
+0. **A read-only look first:** a script on the real units (the key from `SENSIBO_API_KEY` in
+   `.env`, never printed) for the rooms, the real answers, and what each unit supports. *Done*
+   (20 November 2026). Two units, **Office** and **Declan's Room** (with a curly apostrophe), both
+   `anywair` units on the same remote: cool, heat, fan, dry and auto; whole
+   degrees only, 18 to 30° cooling and 10 to 30° heating (none in fan mode); fan quiet, low,
+   medium, high or auto (auto only in dry); six vertical swing settings, no horizontal swing or
+   light. What each takes is in `remoteCapabilities.modes` on the pod, so it's read, not written
+   in. Readings: `temperature`, `humidity` and `feelsLike` (the office at 20.8° and 75% that
+   evening), a minute or so old; `historicalMeasurements` gives the day as two time series, for
+   trends. History (`events`) says who changed what and how (`reason: UserRequest`, the user's
+   name), so "Declan turned his on" is possible. No energy figures (`acUsage` and the power
+   fields are null). A unit without a timer answers the v1 timer path with a 404 HTML page, not
+   JSON. **The rate limit is tight:** about ten requests in a few seconds and the rest were
+   refused (429, "API Limit exceeded"), so requests are spaced, answers cached, and the stream
+   used instead of polling.
+1. **Settings and status:** Settings > Services > Sensibo, with the key in the credential store, a
+   Test that lists the rooms, and a switch. One `aircon` tool (status now; the other actions join
+   it in later steps, rather than a tool each, with the tool audit in mind): "how warm is the
+   bedroom?", every room's temperature, humidity and feels-like, and what each unit is set to.
+   **Her own room:** she lives in the office (the PC is there), so its reading is the nearest she
+   has to feeling warm or cold. Settings picks which room is hers; its temperature and humidity
+   go in her context at each connect, as a short line like her other sections, framed as the room
+   she's in rather than a body she doesn't have. She mentions it only when it's notable (stuffy,
+   cold, a big change since earlier), never every turn, and it can colour her short-lived
+   feelings the way anything else in her day can. Later, with step 3, a change that matters (the
+   office past 30°, or a big drop) reaches her during a conversation as a quiet note, as game notes
+   do. Whether she comes to prefer a temperature of her own is left to grow through experience,
+   like her other preferences, not written in.
+   *Done* (see [Her home](DOCUMENTATION.md#her-home-the-air-conditioners-sensibo)): her room is
+   read at launch and every 10 minutes; a voice session has the reading as of its connect until
+   step 3's quiet notes.
+2. **Control:** "cool the lounge to 23", "turn everything off", "fan on low in the study", and
+   timers ("turn the bedroom off in two hours"). When the person asks, she just does it: low
+   risk and easy to undo, like the WoW map pins. Values are checked against what each unit
+   supports. Never because an email, page or webhook says so.
+3. **The live stream:** a unit turned off or changed by the remote or the app, a room getting very
+   hot while the person is out, or a unit going offline, becomes an awareness event (the same path
+   as mail); the dashboard shows each room. Reconnects with a growing delay, and re-reads every
+   unit every 15 minutes or so, as Sensibo asks.
+4. **Schedules, Climate React and initiative:** "every weekday at 4, cool the house to 24", "keep
+   the bedroom between 22 and 25 tonight"; and on her own, offering (never doing unasked) to
+   pre-cool before a hot afternoon, noticing units left on while the person is away or at
+   bedtime, and filter-cleaning reminders if the units report them.
 
 ### Claude Code
 

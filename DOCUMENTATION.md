@@ -82,6 +82,7 @@ limit rather than letting the context grow.
 | The people you've added | 6,000 |
 | Open tasks | 6,000 |
 | Her calendar | 5,000 |
+| The room she lives in (its temperature and humidity) | 400 |
 | Her sign-ups to sites | 2,000 |
 | A memory snapshot | 3,000 |
 | Her interests and latest findings | 3,000 |
@@ -1328,6 +1329,34 @@ asked in the daytime, at most one a day.
   mentioned to you once.
 - **Limits:** one account per site, three requests a day, one sign-up at a time. Records are
   in `sign_ups` and on the dashboard; her sign-ups reach her own chats as their own section.
+
+### Her home: the air conditioners (Sensibo)
+
+The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo.py),
+[app_areas/home.py](app_areas/home.py)). Set up under Settings › Services › **Her home ›
+Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
+until switched on with a key. Reading only, for now: changing them, timers, the live stream
+and schedules are the next steps on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
+
+- **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
+  readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
+  are refused), so requests are at least 2 seconds apart, an answer is reused for up to a
+  minute, and a refused or failed request falls back to the last answer, with its age. Sensibo's
+  Python SDK isn't used (an unmaintained example with no timeouts).
+- **`aircon`** ([tools/aircon.py](tools/aircon.py)): `status` gives every room, or one by name
+  ("declan" finds Declan's Room; curly apostrophes and case don't matter, and an ambiguous start
+  finds none), with its temperature, feels-like, humidity, how old the reading is, and what its
+  air conditioner is doing ("cool, set to 22°C, fan low", off, or offline). One tool, with more
+  actions to come, rather than a tool each. Offered everywhere you talk with her, once Sensibo is
+  on with a key; not to contacts or on calls.
+- **Her own room:** the room the PC is in (chosen in Settings, by unit, so renaming the room
+  doesn't lose it) is read at launch (waiting up to 5 seconds) and every 10 minutes into a short
+  line of her context (`her_room`, at most 400 characters), in her voice session and her written
+  chats alike: the room you live in, the nearest she has to feeling warm or cold, framed as
+  where she is rather than a body she doesn't have. She mentions it only when it's notable or
+  asked, and it may colour her feelings like anything else in her day. A voice session gets
+  the reading as of its connect; written chats get the latest. A problem (a refused key, the unit
+  gone from the account) is noted in Activity once, not every ten minutes, and Settings shows it.
 
 ### The listener and webhooks
 

@@ -201,6 +201,8 @@ class CoraLive:
         self.own_name = "Cora"
         # Her coming week, kept fresh by the app from her calendar.
         self.calendar_context = ""
+        # The room she lives in, kept fresh by the app from its air conditioner (home/sensibo.py).
+        self.room_context = ""
         self.relationship_context = ""
         self.person_name = None
         self.delegation_model = BACKEND_MODEL
@@ -237,7 +239,7 @@ class CoraLive:
             tasks_context=self.tasks_context, calendar_context=self.calendar_context,
             sign_ups_context=self.sign_ups_context, desire_context=self.desire_context,
             own_name=self.own_name, feelings_context=feelings_context(self.feelings),
-            key_details_context=self.key_details_context,
+            key_details_context=self.key_details_context, room_context=self.room_context,
         )
         # What this session knows of how she feels, for the quiet notes as it changes.
         self.feeling_bands = {item.feeling: item.band for item in self.feelings}

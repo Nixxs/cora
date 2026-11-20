@@ -217,6 +217,17 @@ class KeyboardPersistence:
                 "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary(),
                 "watch": store.game_watch(), "chattiness": store.game_chattiness()}
 
+    def load_home_settings(self) -> dict:
+        """{"sensibo": bool, "her_room": str} from Settings > Services > Sensibo."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"sensibo": store.sensibo_enabled(), "her_room": store.her_room()}
+
+    def save_sensibo_enabled(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_sensibo_enabled(on)
+
+    def save_her_room(self, unit_id: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_her_room(unit_id)
+
     def save_game_push_to_talk(self, on: bool) -> None:
         AppSettingsStore(self._get_store().engine).set_game_push_to_talk(on)
 

@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 
 from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -27,6 +28,8 @@ MAX_IDLE_MINUTES = 720
 MAX_GAP_MINUTES = 1440
 # Saved for "no second backup copy", which overrides .env; a folder is always an absolute path.
 NO_BACKUP_COPY = "none"
+# A Sensibo unit's id, such as "Jyt7jM8c".
+HOME_UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
 BACKUP_COPY_MAX_CHARS = 200
 
 
@@ -157,6 +160,28 @@ class AppSettingsStore:
 
     def set_game_watch(self, on: bool) -> None:
         self._set("game_watch", "on" if on else "off")
+
+    def sensibo_enabled(self) -> bool:
+        """Whether she uses the house's air conditioners (Settings > Services > Sensibo); off unless switched on."""
+        return self._switch("sensibo") is True
+
+    def set_sensibo_enabled(self, on: bool) -> None:
+        self._set("sensibo", "on" if on else "off")
+
+    def her_room(self) -> str:
+        """The Sensibo unit in the room she lives in, by id, or "" for none chosen."""
+        saved = self._get("her_room") or ""
+        return saved if HOME_UNIT_ID.fullmatch(saved) else ""
+
+    def set_her_room(self, unit_id: str) -> None:
+        """Her room's unit; "" clears it (the row goes: an empty value isn't stored)."""
+        if not unit_id:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "her_room"))
+            return
+        if not HOME_UNIT_ID.fullmatch(unit_id):
+            raise ValueError("Unknown unit id")
+        self._set("her_room", unit_id)
 
     def game_chattiness(self) -> str:
         """How often she reacts to the game: 'off', 'quiet', 'normal' (unless another was chosen) or 'chatty'."""
