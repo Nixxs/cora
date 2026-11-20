@@ -33,7 +33,8 @@ STANDBY_EXCLUDED = frozenset({"close_app", "enter_standby", *CLIENT_ONLY, *CALL_
 # Signal, away from the desk: nothing that needs the screen either, and not where they are (that's
 # for the web page, as are maps). Tools that change things are offered: the person approves them in the chat.
 # Not pins in their game either, nor the pin addon's other commands: they're typed in at the desk, without asking.
-GAME_TOOLS = frozenset({"place_wow_map_pins", "wow_map_pins_command"})
+# Nor switching push-to-talk's chat channel: they're at the game when they ask.
+GAME_TOOLS = frozenset({"place_wow_map_pins", "wow_map_pins_command", "set_wow_chat_channel"})
 SIGNAL_EXCLUDED = STANDBY_EXCLUDED | GAME_TOOLS | {"look_at_screen", "show_web_image", "where_is_person", "show_map"}
 # The web page, often on a phone: like Signal, except that the page shows her pictures.
 WEB_EXCLUDED = STANDBY_EXCLUDED | GAME_TOOLS | {"look_at_screen"}

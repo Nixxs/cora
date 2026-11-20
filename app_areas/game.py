@@ -439,8 +439,13 @@ class GameMixin:
 
     @work(group="model-settings-save")
     async def save_game_chat_channel(self, channel: str) -> None:
+        """Settings > Game's channel."""
+        await self.store_game_chat_channel(channel)
+
+    async def store_game_chat_channel(self, channel: str) -> bool:
+        """The channel in use from now on, and saved; whether the save worked."""
         if channel not in CHANNELS:
-            return
+            return False
         self.game_channel = channel
         self.activity.write(f"Push-to-talk now speaks with {CHANNELS[channel][0]}.", "Settings changed")
         try:
@@ -448,3 +453,19 @@ class GameMixin:
         except Exception as error:
             self.activity.write(f"Game setting save failed ({type(error).__name__}).", "Settings error")
             self.notify("Could not save the chat channel; it applies until Cora closes.", severity="error")
+            return False
+        return True
+
+    async def set_game_chat_channel_for_cora(self, channel: str) -> dict:
+        """set_wow_chat_channel: the channel changed and saved, and what to tell the person."""
+        command = CHANNELS[channel][0]
+        if channel == self.game_channel:
+            return {"status": "ok", "channel": command, "message": f"Push-to-talk was already speaking in {command}."}
+        before = CHANNELS[self.game_channel][0]
+        saved = await self.store_game_chat_channel(channel)
+        message = f"Push-to-talk now speaks in {command} (it was {before})."
+        if not saved:
+            message += " It couldn't be saved, so it lasts until Cora closes."
+        if not self.game_push_to_talk:
+            message += " Push-to-talk itself is off (Settings > Game), so it applies once they switch it on."
+        return {"status": "ok", "channel": command, "message": message}

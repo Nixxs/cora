@@ -26,6 +26,10 @@ from .read_call import ReadCallTool, SCHEMA as READ_CALL_SCHEMA, validate_argume
 from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_arguments as validate_standby_arguments
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .look_again import KeptImages, LookAgainTool, SCHEMA as LOOK_AGAIN_SCHEMA, validate_arguments as validate_look_again_arguments
+from .weigh_odds import SCHEMA as WEIGH_ODDS_SCHEMA, WeighOddsTool, validate_arguments as validate_weigh_odds_arguments
+from .set_wow_chat_channel import (
+    SCHEMA as WOW_CHANNEL_SCHEMA, SetWowChatChannelTool, validate_arguments as validate_wow_channel_arguments,
+)
 from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
 from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
@@ -87,6 +91,10 @@ async def _no_game_commands(line):
     return {"status": "error", "message": "Running map pin commands in the game isn't available here."}
 
 
+async def _no_game_channel(channel):
+    return {"status": "error", "message": "Changing the game's chat channel isn't available here."}
+
+
 async def _no_sign_ups(url):
     return None, "Signing up isn't available here."
 
@@ -104,6 +112,7 @@ def create_tool_registry(
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
     look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
     place_map_pins=_no_game_pins, run_map_pins_command=_no_game_commands, consult_rocky=_no_rocky,
+    set_wow_chat_channel=_no_game_channel,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -129,8 +138,13 @@ def create_tool_registry(
     screen = LookAtScreenTool(get_connection, is_closing, screen_looking, write_debug)
     registry.register(SCREEN_SCHEMA, validate_screen_arguments, screen.handle)
     # The person's photos from this conversation (web page, desk paste, their own Signal).
-    look_again = LookAgainTool(get_connection, is_closing, kept_images or KeptImages(), write_debug)
+    if kept_images is None:
+        kept_images = KeptImages()
+    look_again = LookAgainTool(get_connection, is_closing, kept_images, write_debug)
     registry.register(LOOK_AGAIN_SCHEMA, validate_look_again_arguments, look_again.handle)
+    # Real probabilities for a judgement call (the Decisions API), with those photos if they help.
+    weigh_odds = WeighOddsTool(get_connection, is_closing, kept_images, write_debug)
+    registry.register(WEIGH_ODDS_SCHEMA, validate_weigh_odds_arguments, weigh_odds.handle)
     # Where the person is, from their open web page, when it matters to what they asked.
     where = WhereIsPersonTool(get_connection, is_closing, locate_person, write_debug)
     registry.register(WHERE_SCHEMA, validate_where_arguments, where.handle)
@@ -201,4 +215,7 @@ def create_tool_registry(
     # The addon's other /cmp commands (clear, done, tracker...), one checked line, the same way.
     wow_command = WowMapPinsCommandTool(get_connection, is_closing, run_map_pins_command, write_debug)
     registry.register(WOW_COMMAND_SCHEMA, validate_wow_command_arguments, wow_command.handle)
+    # Which WoW chat channel push-to-talk speaks into (Settings > Game), when the person asks.
+    wow_channel = SetWowChatChannelTool(get_connection, is_closing, set_wow_chat_channel, write_debug)
+    registry.register(WOW_CHANNEL_SCHEMA, validate_wow_channel_arguments, wow_channel.handle)
     return registry

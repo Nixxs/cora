@@ -159,8 +159,9 @@ buttons sit on one line. Statuses share one style: ● working, ◌ busy, ○ of
 Every area starts on `BACKEND_MODEL`. The choices are the fixed list `MODEL_CHOICES` in
 [session_config.py](session_config.py); a saved model no longer in that list falls back to
 the default, and if the settings can't be read at connect she connects with the default and
-notes it in Activity. Not covered: the Live model, and embeddings (`text-embedding-3-small`;
-changing it would need a migration and re-embedding every memory).
+notes it in Activity. Not covered: the Live model, embeddings (`text-embedding-3-small`;
+changing it would need a migration and re-embedding every memory), and the Decisions API
+(`weigh_odds` and the game watcher), which takes only `gpt-6-luna`.
 
 ### Costs
 
@@ -172,6 +173,40 @@ background process has its own limits on how often it runs. A contact's call ope
 Live session, so contact calls are kept short and few (see Phone calls).
 
 ## Talking to Cora
+
+### Advice and judgement calls
+
+You rarely have every fact, so she makes the call with what's known rather than stopping at
+"we'd need to confirm". Both halves of Cora-prime get the same few lines (`JUDGEMENT_STYLE` in
+[session_config.py](session_config.py)):
+
+- **A recommendation, with how sure she is:** what she'd do and why. Checking with someone is
+  still hers to suggest, beside her recommendation rather than in place of it, when it would
+  likely change the decision and that person is likely to know.
+- **Odds when you ask:** "what are the odds?" or "how sure are you?" gets a plain, rounded number
+  ("about 70% it's the rim, 20% the tyre") with the main reason, and she says so when the
+  evidence is thin.
+- **Weighing them properly (`weigh_odds`,** [tools/weigh_odds.py](tools/weigh_odds.py)): when the
+  odds matter, or before recommending on an uncertain call, her backend (Live delegates it) hands
+  OpenAI's Decisions API (`gpt-6-luna`, the only model it takes) everything known, in her words,
+  with any of your photos from the conversation (the `img` ids `look_again` uses), and asks up
+  to 5 yes/no claims, each weighed on its own, and/or one question with 2 to 8 options that share
+  100%. Each is asked as how likely it is given the situation and how such cases usually turn
+  out: a plain "is this true?" read as "does the text say so?" and put driving 10 km on a spare
+  at 24% (64% this way). Only the rounded numbers come back, with a note to quote them as her
+  own read and to say so if she disagrees. Luna weighs only what it's given, so she looks
+  things up first. About half a second and 750 tokens (under $0.0001) a use, with a line in
+  Activity; a photo no longer kept weighs nothing, and a failure tells her to give her own
+  estimate and say it's hers. Not offered in contacts' chats or on calls.
+- **How good the numbers are:** [examples/odds_check/main.py](examples/odds_check/main.py) runs
+  16 situations with known answers through the tool's own code (`--list` shows them, `--only`
+  picks some; under $0.002 a run). Chance and base-rate puzzles come out almost exactly right
+  (a coin 0.50, a positive test for a 1-in-100 disease 0.09), and clear-cut cases sit near 0 or 1.
+  In genuinely open cases it's an estimate: asking the same thing as a choice or as claims can
+  favour different answers. See the [roadmap](ROADMAP.md#judgement-calls) for the full run.
+- **Safety first:** where a wrong guess could hurt someone, she still says what has to be checked.
+- **Task news:** when someone's answer on a task is vague, the coordinator says what it most
+  likely means and how sure she is, not just that nothing was confirmed.
 
 ### The desk
 
@@ -416,6 +451,11 @@ watching the game, with her reacting to what happens.
   you don't look like a bot: sentences start in lower case and drop their full stops, while
   "I", acronyms (LFG, GG), WoW names and your own names keep their capitals, and `?`, `!` and
   `...` stay.
+- **Switching channel by asking:** "put me on party chat" has her switch it with
+  `set_wow_chat_channel` ([tools/set_wow_chat_channel.py](tools/set_wow_chat_channel.py)): say,
+  party, guild or yell, changed and saved as Settings > Game does (Settings shows it next time
+  it's opened). Nothing is typed into the game. Desk only, like the map pins; she's told if it
+  was already that channel, or if push-to-talk itself is off.
 - **Speech to text:** OpenAI's `gpt-4o-transcribe` by default (about a second a line; the
   recording goes to OpenAI), or the wake word's offline Whisper model on this PC, which is
   private but often gets names wrong. OpenAI falls back to this PC when it can't be reached.

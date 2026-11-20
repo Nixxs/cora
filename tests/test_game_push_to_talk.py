@@ -282,6 +282,48 @@ class PushToTalkTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.game_vocabulary, "Ja Avd, Githyiss")
             app.persistence.save_game_vocabulary.assert_called_once_with("Ja Avd, Githyiss")
 
+    async def test_cora_switches_the_channel_when_asked_and_it_is_saved(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.game_push_to_talk = True
+            result = await app.set_game_chat_channel_for_cora("party")
+            self.assertEqual(app.game_channel, "party")
+            app.persistence.save_game_chat_channel.assert_called_once_with("party")
+            self.assertEqual(result["channel"], "/p")
+            self.assertIn("now speaks in /p (it was /s)", result["message"])
+            again = await app.set_game_chat_channel_for_cora("party")
+            self.assertIn("already", again["message"])
+            app.persistence.save_game_chat_channel.assert_called_once()
+            app.game_push_to_talk = False
+            off = await app.set_game_chat_channel_for_cora("guild")
+            self.assertIn("Push-to-talk itself is off", off["message"])
+            app.persistence.save_game_chat_channel.side_effect = RuntimeError()
+            unsaved = await app.set_game_chat_channel_for_cora("yell")
+            self.assertEqual(app.game_channel, "yell")
+            self.assertIn("couldn't be saved", unsaved["message"])
+
+
+class ChannelToolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_it_switches_only_to_a_known_channel_and_only_at_the_desk(self):
+        from backend_chat import SIGNAL_EXCLUDED, WEB_EXCLUDED
+        from tools.set_wow_chat_channel import SCHEMA, SetWowChatChannelTool, validate_arguments
+
+        self.assertEqual(SCHEMA["parameters"]["properties"]["channel"]["enum"], ["say", "party", "guild", "yell"])
+        validate_arguments({"channel": "guild"})
+        for bad in ({"channel": "trade"}, {"channel": "/p"}, {}, {"channel": "say", "extra": 1}):
+            with self.assertRaises(ValueError):
+                validate_arguments(bad)
+        self.assertIn("set_wow_chat_channel", SIGNAL_EXCLUDED)
+        self.assertIn("set_wow_chat_channel", WEB_EXCLUDED)
+        connection = MagicMock()
+        connection.response.item.create = AsyncMock()
+        connection.response.create = AsyncMock()
+        set_channel = AsyncMock(return_value={"status": "ok", "channel": "/g"})
+        await SetWowChatChannelTool(lambda: connection, lambda: False, set_channel, MagicMock()).handle(
+            "call_1", {"channel": "guild"})
+        set_channel.assert_awaited_once_with("guild")
+        self.assertIn('"/g"', connection.response.item.create.call_args.kwargs["item"]["output"])
+        connection.response.create.assert_awaited_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
