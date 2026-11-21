@@ -217,11 +217,11 @@ class KeyboardPersistence:
                 "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary(),
                 "watch": store.game_watch(), "chattiness": store.game_chattiness()}
 
-    def load_dashboard_minimised(self) -> list[str]:
-        return AppSettingsStore(self._get_store().engine).dashboard_minimised()
+    def load_dashboard_boxes(self) -> tuple[list[str], list[str]]:
+        return AppSettingsStore(self._get_store().engine).dashboard_boxes()
 
-    def save_dashboard_minimised(self, boxes: list[str]) -> None:
-        AppSettingsStore(self._get_store().engine).set_dashboard_minimised(boxes)
+    def save_dashboard_boxes(self, opened: list[str], minimised: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_dashboard_boxes(opened, minimised)
 
     def load_home_settings(self) -> dict:
         """{"sensibo": bool, "her_room": str} from Settings > Services > Sensibo."""

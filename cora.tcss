@@ -299,48 +299,25 @@ Screen > .screen--selection {
     height: 1fr;
 }
 
-/* Voice and chat grow with the window up to a cap, then the bottom row takes the rest. */
+/* Voice and chat grow with the window up to a cap, then the boxes below take the rest. */
 #dashboard-top {
     min-height: 11;
     max-height: 24;
 }
 
-/* Sized to its boxes plus a scrollbar line when they don't all fit. */
-#dashboard-middle {
-    height: auto;
+/* Twice the top row's share, as the two rows of boxes it replaced had (16 lines, then a share). */
+#dashboard-scroll {
+    height: 2fr;
+    min-height: 24;
     scrollbar-size-horizontal: 1;
 }
 
-/* Just tall enough for the feelings box's contents; narrower than this pans instead. */
-#dashboard-middle > .dashboard-box {
-    width: 20%;
-    height: 16;
-    min-width: 34;
-}
-
-#dashboard-bottom {
-    min-height: 8;
-    scrollbar-size-horizontal: 1;
-}
-
-/* From 5 to 26 weeks of the heatmap: initials, cells and gaps, plus border and padding. */
-/* Under the feelings box, the width of a middle-row box. */
-#relationship-box {
-    width: 18%;
-    min-width: 34;
-}
-
-/* No cap: the bottom row shares its width out (the dashboard's fit_rows), so it may be wider than
-   the heatmap's 26 weeks need. */
-#conversations-box {
-    width: 18%;
-    min-width: 16;
-}
-
-/* Fr widths grow without limit once a scrolling row overflows, so only this box uses one. */
-#context-box {
+/* The boxes' grid: its columns, rows and each box's span are set by the dashboard (arrange()), and
+   its minimum width, past which it pans. Each box fills its cell (.dashboard-box). */
+#dashboard-boxes {
+    layout: grid;
     width: 1fr;
-    min-width: 40;
+    height: 1fr;
 }
 
 #context-placeholder {
@@ -730,18 +707,6 @@ Screen > .screen--selection {
     color: #d0d6e0;
 }
 
-/* Beside the heatmap; a percentage, as only the context box may use a fr width in a scrolling row. */
-#tasks-box {
-    width: 22%;
-    min-width: 34;
-}
-
-/* Each room's air conditioner, while Sensibo is set up; left out otherwise. */
-#home-box {
-    width: 18%;
-    min-width: 30;
-}
-
 #home-scroll {
     height: 1fr;
     scrollbar-size: 1 0;
@@ -775,11 +740,6 @@ Screen > .screen--selection {
 #background-runs {
     height: auto;
     color: #d0d6e0;
-}
-
-/* Only as wide as its list; conversations and context share the rest of the row. */
-#background-box {
-    width: auto;
 }
 
 /* 26 weeks at most (2 columns each, after the day initials), however wide its box is shared out. */

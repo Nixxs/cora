@@ -97,10 +97,10 @@ class LiveSessionMixin:
         # The air conditioners and her room's first reading, before she connects.
         await self.load_home_settings()
         try:
-            self.dashboard_minimised = await self.conversation_persistence.call_database(
-                self.persistence.load_dashboard_minimised)
+            self.dashboard_boxes = await self.conversation_persistence.call_database(
+                self.persistence.load_dashboard_boxes)
         except Exception as error:
-            self.activity.write(f"The dashboard's minimised boxes unavailable ({type(error).__name__}).", "Settings")
+            self.activity.write(f"The dashboard's layout unavailable ({type(error).__name__}).", "Settings")
         try:
             self.apply_claude_code_settings(
                 await self.conversation_persistence.call_database(self.persistence.load_claude_code_settings))

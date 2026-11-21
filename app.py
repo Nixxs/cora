@@ -294,8 +294,8 @@ class CoraApp(
         self.conversation_end_timer = None
         # Settings > General. Kept for this run only; not saved yet.
         self.screen_looking = True
-        # The dashboard's boxes minimised to chips (loaded at launch, saved as they change).
-        self.dashboard_minimised: list[str] = []
+        # The dashboard's open boxes in order and its minimised ones (loaded at launch, saved as they change).
+        self.dashboard_boxes: tuple[list[str], list[str]] = ([], [])
         # Settings > Game: push-to-talk into the game's chat.
         self.init_game()
         self.init_game_watch()
@@ -702,7 +702,7 @@ class CoraApp(
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context, load_spend=self.load_spend,
                     claude_sessions=self.claude_sessions_shown, task_call=self.task_call_view,
-                    minimised=self.dashboard_minimised, save_minimised=self.save_dashboard_minimised,
+                    boxes=self.dashboard_boxes, save_boxes=self.save_dashboard_boxes,
                     home_view=self.home_view,
                 ))
         elif event.button.id in ("chat-image", "dashboard-chat-image"):

@@ -403,18 +403,20 @@ stored; **chat** switches back. The conversation carries on: its chat box shows 
 messages and sends what you type, and its voice controls are the chat's. The state at its
 top right (● active, ○ standby) enters standby or resumes.
 
-**Minimising boxes:** click a box's title (marked ▾) in the middle or bottom row and it
-becomes a chip (▸ feelings) on the dashboard's bottom border, in the rows' order; click the chip
-to open it again. The rows line up on five shared columns (the middle row's boxes): a row with
-fewer open boxes gives the spare columns to the boxes with the most to show (interests, identity
-and desires in the middle; conversations, context and tasks below), so every box edge meets one
-in the row above. With all six bottom boxes open, more than the columns, that row shares its
-width instead and the background box keeps to its widest line. No box goes below its minimum
-width (34 columns in the middle row; the background box its list); when they don't fit, the row
-pans. The heatmap stops at 26 weeks however wide its box. Widths are worked out from the window
-before the screen is drawn, so opening the dashboard or minimising a box changes the rows in one
-step. The top row (voice, Claude Code, chat) always shows. Which boxes are minimised is saved
-(`dashboard_minimised` in `app_settings`) and the dashboard opens as it was left.
+**Arranging the boxes:** below the top row (voice, Claude Code, chat, which always show), the
+boxes are one list that flows through the space, on a grid (`arrange()` in
+[ui/dashboard.py](ui/dashboard.py)). Up to three open boxes share one tall row; from four they
+split into two rows, the first taking the odd one (five is three and two) and just tall enough
+for the feelings box (16 lines), the second taking the rest. The columns are shared, so every
+edge in the second row meets one in the first; when the second row has a box fewer, its spare
+column goes to the box there with the most to show (conversations, then interests, context,
+tasks...). Click a box's title (marked ▾) and it becomes a chip (▸ feelings) on the dashboard's
+bottom border; click the chip and the box opens again last, at the bottom right. A column never
+goes below 34 cells; narrower, the boxes pan sideways. The heatmap stops at 26 weeks however wide
+its box. The grid is set before the screen is drawn, so the boxes move in one step. The open boxes
+in their order and the minimised ones are saved (`dashboard_boxes` in `app_settings`, as
+`open,open|minimised`) and the dashboard opens as it was left; a box the saved layout doesn't
+name (a new one) opens last.
 
 | Box | Shows |
 | --- | --- |

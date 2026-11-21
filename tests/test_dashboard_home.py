@@ -88,7 +88,7 @@ class DashboardHomeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_left_out_until_set_up_then_shown_with_each_room(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            app.dashboard_minimised = ["home-box"]
+            app.dashboard_boxes = ([], ["home-box"])
             screen = await self.open(app, pilot)
             await pilot.pause()
             box = screen.query_one("#home-box")
@@ -108,7 +108,9 @@ class DashboardHomeTests(unittest.IsolatedAsyncioTestCase):
             self.assertGreaterEqual(box.outer_size.width, 30)
             self.assertIn("◆ Office · her room", str(screen.query_one("#home-rooms", Static).render()))
             await asyncio.wait_for(app.workers.wait_for_complete(), 3)
-            app.persistence.save_dashboard_minimised.assert_called_with([])
+            # Opened again last.
+            self.assertEqual(app.dashboard_boxes, (screen.order, []))
+            self.assertEqual(screen.order[-1], "home-box")
             # Switched off: gone again, and the rest of the row closes up.
             app.sensibo_enabled = False
             screen.show_home()
