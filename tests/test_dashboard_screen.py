@@ -30,7 +30,7 @@ from ui.braille import BrailleGraph
 from ui.chat_widgets import SelectableRichLog
 from ui.composer import IMAGE_MARKER, ChatComposer
 from ui.claude_code_view import ClaudeSessionScreen
-from ui.dashboard import BOX_TITLES, FALL_PER_TICK, DashboardScreen, ago, until
+from ui.dashboard import BOX_TITLES, FALL_PER_TICK, MINIMISABLE, DashboardScreen, ago, until
 from ui.meters import (
     HEAT_STYLES, HOVER_STYLE, LABEL_STYLE, MAX_WEEKS, MIN_WEEKS, TONE_STYLES, TRACK_STYLE, CalendarHeatmap,
     ContextMeters, Meters, ToneRibbon, meter_bar,
@@ -251,9 +251,10 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             for box_id, title in BOX_TITLES.items():
                 box = app.screen.query_one(f"#{box_id}")
-                self.assertEqual(box.border_title, title)
-                if box_id == "claude-code-box":
-                    # Hidden until Cora listens for Claude Code.
+                minimisable = any(box_id in boxes for boxes in MINIMISABLE.values())
+                self.assertEqual(box.border_title, f"▾ {title}" if minimisable else title)
+                if box_id in ("claude-code-box", "home-box"):
+                    # Hidden until Cora listens for Claude Code, or Sensibo is set up.
                     self.assertEqual(box.size.width, 0)
                     continue
                 self.assertGreater(box.size.width, 0)
@@ -637,7 +638,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
             desires = screen.query_one("#desire-list", Static)
             self.assertEqual(str(desires.render()), "no desires yet")
-            self.assertEqual(screen.query_one("#desires-box").border_title, "desires")
+            self.assertEqual(screen.query_one("#desires-box").border_title, "▾ desires")
             app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
                 relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
                 memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={},
@@ -698,7 +699,7 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
             items = lambda: list(screen.query(".task-item").results(Static))
             self.assertEqual([str(item.render()) for item in items()], ["no open tasks"])
-            self.assertEqual(screen.query_one("#tasks-box").border_title, "tasks")
+            self.assertEqual(screen.query_one("#tasks-box").border_title, "▾ tasks")
             now = datetime.now(timezone.utc)
             app.persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(
                 relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(),
@@ -859,9 +860,9 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(row.can_focus)
             self.assertEqual(screen.query_one("#conversation-days", CalendarHeatmap).visible_weeks(), MIN_WEEKS)
 
-    async def test_wide_bottom_row_caps_the_heatmap_and_gives_context_the_rest(self):
+    async def test_wide_bottom_row_caps_the_heatmap_and_shares_out_the_rest(self):
         async with keyboard_tests.running_app() as (app, pilot):
-            # 18% of the row reaches the heatmap's cap of 58 columns.
+            # Wide enough for the heatmap's box to pass its cap of 26 weeks.
             await pilot.resize_terminal(330, 53)
             await pilot.click("#view-button")
             await pilot.pause()
@@ -870,11 +871,14 @@ class DashboardScreenTests(unittest.IsolatedAsyncioTestCase):
             # No empty columns between the day initials and the grid.
             self.assertEqual(heatmap.visible_weeks(), MAX_WEEKS)
             self.assertEqual(heatmap.size.width, 2 + 2 * MAX_WEEKS)
-            self.assertGreater(
-                screen.query_one("#context-box").outer_size.width,
-                screen.query_one("#conversations-box").outer_size.width,
-            )
-            self.assertEqual(screen.query_one("#dashboard-bottom", HorizontalScroll).max_scroll_x, 0)
+            # The row's boxes share it (the background box hugs its lines), to its last column.
+            shared = [screen.query_one(f"#{box}").outer_size.width
+                      for box in ("relationship-box", "conversations-box", "tasks-box", "context-box")]
+            self.assertLessEqual(max(shared) - min(shared), 1)
+            self.assertGreater(screen.query_one("#conversations-box").outer_size.width, 2 + 2 * MAX_WEEKS + 4)
+            row = screen.query_one("#dashboard-bottom", HorizontalScroll)
+            self.assertEqual(row.max_scroll_x, 0)
+            self.assertEqual(screen.query_one("#background-box").region.right, row.region.right)
 
     async def test_settings_open_from_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):

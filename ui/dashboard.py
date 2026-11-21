@@ -4,6 +4,7 @@ from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.containers import Horizontal, HorizontalGroup, HorizontalScroll, Vertical, VerticalScroll
+from textual.geometry import Size
 from textual.screen import Screen
 from textual.widgets import Button, Static
 
@@ -59,6 +60,66 @@ STEP_PREVIEW_CHARS = 120
 
 # Box id -> border title, in the btop-style layout: a wide voice band with the chat beside
 # it, then the database panels below.
+# Boxes that can be minimised to a chip on the dashboard's bottom border (clicking the title), by row.
+# The top row (voice, Claude Code, chat) always shows.
+MINIMISABLE = {
+    "dashboard-middle": ("feelings-box", "memories-box", "interests-box", "identity-box", "desires-box"),
+    "dashboard-bottom": ("relationship-box", "conversations-box", "tasks-box", "home-box", "context-box",
+                         "background-box"),
+}
+# The rows line up on this many columns (the middle row's boxes). A row with fewer open boxes gives
+# its spare columns to these first, the ones with the most to show.
+COLUMNS = 5
+WIDENED_FIRST = {
+    "dashboard-middle": ("interests-box", "identity-box", "desires-box", "memories-box", "feelings-box"),
+    "dashboard-bottom": ("conversations-box", "context-box", "tasks-box", "relationship-box", "home-box",
+                         "background-box"),
+}
+# With more boxes open than columns, the row shares its width instead, these keeping to their contents.
+HUGGING = {"background-box"}
+
+
+def column_spans(open_boxes, widened_first, columns: int = COLUMNS) -> list[int] | None:
+    """How many columns each open box spans, in order (the spare ones in widened_first's order), or
+    None when there are more boxes than columns."""
+    if not open_boxes or len(open_boxes) > columns:
+        return None
+    spans = dict.fromkeys(open_boxes, 1)
+    order = [box for box in widened_first if box in spans] or list(open_boxes)
+    for index in range(columns - len(open_boxes)):
+        spans[order[index % len(order)]] += 1
+    return [spans[box] for box in open_boxes]
+
+
+def column_widths(width: int, spans, columns: int = COLUMNS) -> list[int]:
+    """Each box's width from its span, on column edges shared by every row (so they line up)."""
+    edges = [round(width * index / columns) for index in range(columns + 1)]
+    widths, start = [], 0
+    for span in spans:
+        widths.append(edges[start + span] - edges[start])
+        start += span
+    return widths
+
+
+def shared_widths(width: int, fixed: dict, sharing) -> dict:
+    """More boxes than columns: the fixed ones keep their widths and the rest share what's left,
+    the spare cells one each to the first, so the last reaches the edge."""
+    share, spare = divmod(max(0, width - sum(fixed.values())), len(sharing) or 1)
+    return fixed | {box: share + (index < spare) for index, box in enumerate(sharing)}
+
+
+class BoxChip(Static):
+    """A minimised box, on the dashboard's bottom border: clicking it opens the box again."""
+
+    def __init__(self, box_id: str, title: str) -> None:
+        super().__init__(f" ▸ {title} ", classes="box-chip", id=f"chip-{box_id}")
+        self.box_id = box_id
+
+    def on_click(self, event) -> None:
+        event.stop()
+        self.screen.restore_box(self.box_id)
+
+
 BOX_TITLES = {
     "chat-box": "chat",
     "relationship-box": "relationship",
@@ -72,7 +133,62 @@ BOX_TITLES = {
     "context-box": "context",
     "background-box": "background",
     "claude-code-box": "claude code",
+    "home-box": "home",
 }
+
+# A room's temperature: amber when it's hot, blue when it's cold, plain between.
+HOT_DEGREES = 28.0
+COLD_DEGREES = 18.0
+HOT_STYLE, COLD_STYLE = "#e0b45c", "#7fb8d8"
+AIRCON_ON_STYLE = "#8fcca6"
+OFFLINE_STYLE = "#d27a7a"
+# What a running unit is doing, by mode ({target} is its set temperature).
+AIRCON_DOING = {"cool": "cooling to {target}", "heat": "heating to {target}", "auto": "auto at {target}",
+                "dry": "drying", "fan": "fan only"}
+# The open dashboard redraws the home box this often, from what the app already holds.
+HOME_REFRESH_SECONDS = 2
+
+
+def room_lines(rooms, her_room_id: str, now) -> Text:
+    """Each room: its name (her own marked), its readings, and what its air conditioner is doing."""
+    lines = Text()
+    for index, room in enumerate(rooms):
+        if index:
+            lines.append("\n\n")
+        mine = room.id == her_room_id
+        lines.append(("◆ " if mine else "") + room.name, style="bold" if mine else "")
+        if mine:
+            lines.append(" · her room", style=LABEL_STYLE)
+        lines.append("\n  ")
+        if room.temperature is not None:
+            warmth = (HOT_STYLE if room.temperature >= HOT_DEGREES
+                      else COLD_STYLE if room.temperature <= COLD_DEGREES else "")
+            lines.append(f"{room.temperature:g}°{room.unit}", style=warmth)
+        if room.humidity is not None:
+            lines.append(f"  {room.humidity:g}%")
+        if (room.feels_like is not None and room.temperature is not None
+                and round(room.feels_like) != round(room.temperature)):
+            lines.append(f"  feels {room.feels_like:g}°", style=LABEL_STYLE)
+        if room.temperature is None and room.humidity is None:
+            lines.append("no readings", style=TRACK_STYLE)
+        elif room.measured_at is not None:
+            lines.append(f" · {ago(room.measured_at, now)}", style=TRACK_STYLE)
+        lines.append("\n  ")
+        if not room.online:
+            lines.append("offline", style=OFFLINE_STYLE)
+            continue
+        if room.on:
+            target = f"{room.target}°" if room.target is not None else "its setting"
+            doing = AIRCON_DOING.get(room.mode or "", room.mode or "on").format(target=target)
+            lines.append(doing, style=AIRCON_ON_STYLE)
+            if room.fan:
+                lines.append(f" · fan {room.fan}", style=LABEL_STYLE)
+        else:
+            lines.append("off", style=LABEL_STYLE if room.on is False else TRACK_STYLE)
+        if room.timer_at is not None and room.timer_at > now:
+            what = {True: "on", False: "off"}.get(room.timer_on, "changes")
+            lines.append(f" · {what} {until(room.timer_at, now)}", style=LABEL_STYLE)
+    return lines or Text("no rooms on the account", style=TRACK_STYLE)
 
 
 def until(when, now) -> str:
@@ -179,8 +295,17 @@ class DashboardScreen(Screen):
     """A read-only view of what Cora has stored, switched to from the chat."""
 
     def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
-                 load_spend=None, claude_sessions=None, task_call=None) -> None:
+                 load_spend=None, claude_sessions=None, task_call=None, minimised=(), save_minimised=None,
+                 home_view=None) -> None:
         super().__init__()
+        # home_view() -> (rooms, her room's id, a problem or ""), or None to leave the home box out.
+        self.home_view = home_view or (lambda: None)
+        # Boxes left out (not set up), shown neither as a box nor as a chip.
+        self.absent: set[str] = set()
+        # The boxes minimised to chips, remembered between launches by save_minimised(list of box ids).
+        known = {box for boxes in MINIMISABLE.values() for box in boxes}
+        self.minimised = {box for box in minimised if box in known}
+        self.save_minimised = save_minimised or (lambda boxes: None)
         # Returns Claude Code's sessions (newest first), or None while Cora isn't listening for them.
         self.claude_sessions = claude_sessions
         # task_call() -> the call she's placed for a task, as shown while it happens, or None.
@@ -313,6 +438,10 @@ class DashboardScreen(Screen):
                         yield Vertical(id="task-list")
                         yield Static("sign-ups", id="sign-up-label", classes="dashboard-label")
                         yield Static(id="sign-up-list")
+                # Each room's air conditioner, while Sensibo is set up.
+                with Vertical(id="home-box", classes="dashboard-box"):
+                    with VerticalScroll(id="home-scroll"):
+                        yield Static(id="home-rooms")
                 with Vertical(id="context-box", classes="dashboard-box"):
                     yield Static("connect to measure", id="context-placeholder")
                     # Each item's share of its model's startup context; scrolls if the box is short.
@@ -325,10 +454,110 @@ class DashboardScreen(Screen):
                 with Vertical(id="background-box", classes="dashboard-box"):
                     yield Static("last ran · next", classes="dashboard-label")
                     yield Static(id="background-runs")
+        # The panel's bottom border, drawn as widgets so the minimised boxes can sit on it as chips.
+        with HorizontalGroup(id="dashboard-tray"):
+            yield Static("╰─", classes="tray-line")
+            yield BorderLine(id="tray-fill")
+            yield HorizontalGroup(id="dashboard-chips")
+            yield Static("─╯", classes="tray-line")
+
+    # Minimising boxes to chips on the bottom border.
+
+    def on_click(self, event) -> None:
+        """A click on a minimisable box's top border (where its title is) minimises it."""
+        node = event.widget
+        while node is not None and not (node.id and any(node.id in boxes for boxes in MINIMISABLE.values())):
+            node = node.parent
+        if node is not None and event.screen_y == node.region.y:
+            event.stop()
+            self.minimise_box(node.id)
+
+    def minimise_box(self, box_id: str) -> None:
+        if box_id in self.minimised:
+            return
+        self.minimised.add(box_id)
+        self.boxes_changed()
+
+    def restore_box(self, box_id: str) -> None:
+        if box_id not in self.minimised:
+            return
+        self.minimised.discard(box_id)
+        self.boxes_changed()
+
+    def boxes_changed(self, save: bool = True) -> None:
+        for boxes in MINIMISABLE.values():
+            for box in boxes:
+                self.query_one(f"#{box}").display = box not in self.minimised and box not in self.absent
+        # Sized before the next paint, so the rows change in one step rather than reflowing after.
+        self.fit_rows()
+        # One rebuild at a time, in order (each waits for the old chips to go before adding new ones).
+        self.call_later(self.show_chips)
+        if save:
+            # In the rows' order, so the saved list reads the way the dashboard does.
+            self.save_minimised([box for boxes in MINIMISABLE.values() for box in boxes if box in self.minimised])
+
+    async def show_chips(self) -> None:
+        chips = self.query_one("#dashboard-chips", HorizontalGroup)
+        await chips.remove_children()
+        shown = [box for boxes in MINIMISABLE.values() for box in boxes
+                 if box in self.minimised and box not in self.absent]
+        widgets = []
+        for index, box in enumerate(shown):
+            if index:
+                widgets.append(Static("─", classes="tray-line"))
+            widgets.append(BoxChip(box, BOX_TITLES[box]))
+        await chips.mount_all(widgets)
+
+    def row_width(self) -> int:
+        """The rows' width: the panel's, or worked out from the screen's before the first layout."""
+        panel = self.query_one("#dashboard-panel")
+        return panel.size.width or self.size.width - panel.styles.gutter.width
+
+    def fit_rows(self) -> None:
+        """The open boxes on the columns every row shares (a row with fewer boxes widening some), or,
+        with more boxes than columns, sharing the row; each at least its own minimum width, and when
+        those don't fit, the row pans."""
+        width = self.row_width()
+        if width <= 0:
+            return
+        for row_id, box_ids in MINIMISABLE.items():
+            open_ids = [box for box in box_ids if box not in self.minimised | self.absent]
+            spans = column_spans(open_ids, WIDENED_FIRST[row_id])
+            if spans is not None:
+                widths = dict(zip(open_ids, column_widths(width, spans)))
+            elif open_ids:
+                fixed = {box: self.content_width(box, width) for box in open_ids if box in HUGGING}
+                widths = shared_widths(width, fixed, [box for box in open_ids if box not in fixed])
+            else:
+                continue
+            for box_id, cells in widths.items():
+                box = self.query_one(f"#{box_id}")
+                least = box.styles.min_width.cells if box.styles.min_width is not None else 0
+                if box_id in HUGGING:
+                    # Never narrower than its list, even on a column.
+                    least = max(least or 0, self.content_width(box_id, width))
+                box.styles.width = max(least or 0, cells)
+
+    def content_width(self, box_id: str, width: int) -> int:
+        """A box's width to fit its contents (border and padding included)."""
+        box = self.query_one(f"#{box_id}")
+        space = Size(width, max(self.size.height, 1))
+        return box.get_content_width(space, space) + box.styles.gutter.width
+
+    def on_resize(self, event) -> None:
+        self.fit_rows()
 
     def on_mount(self) -> None:
+        minimisable = {box for boxes in MINIMISABLE.values() for box in boxes}
         for box_id, title in BOX_TITLES.items():
-            self.query_one(f"#{box_id}").border_title = title
+            # ▾ on the ones whose title minimises them.
+            self.query_one(f"#{box_id}").border_title = f"▾ {title}" if box_id in minimisable else title
+        # Left out from the start while it isn't set up, so it doesn't flash up and go.
+        if self.home_view() is None:
+            self.absent.add("home-box")
+        self.boxes_changed(save=False)
+        self.show_home()
+        self.set_interval(HOME_REFRESH_SECONDS, self.show_home)
         self.set_interval(0.05, self.sample_voice)
         self.sync_audio_controls()
         self.set_interval(0.1, self.sync_audio_controls)
@@ -446,6 +675,29 @@ class DashboardScreen(Screen):
             if job in self.snapshot.next_due:
                 runs.append(" " * (10 - len(last)) + until(self.snapshot.next_due[job], now), style=LABEL_STYLE)
         self.query_one("#background-runs", Static).update(runs)
+        # Its list may be wider or narrower now, which a row sharing its width out works from.
+        self.fit_rows()
+
+    def show_home(self) -> None:
+        """Each room, from what the app holds; the box comes and goes as Sensibo is set up or not."""
+        view = self.home_view()
+        if (view is None) != ("home-box" in self.absent):
+            (self.absent.add if view is None else self.absent.discard)("home-box")
+            self.boxes_changed(save=False)
+        if view is None:
+            return
+        rooms, her_room_id, problem = view
+        now = datetime.now(timezone.utc)
+        if rooms:
+            shown = room_lines(rooms, her_room_id, now)
+        elif problem:
+            # Text, so brackets in Sensibo's message are not read as markup.
+            shown = Text(problem, style=OFFLINE_STYLE)
+        else:
+            shown = room_lines([], her_room_id, now) if rooms is not None else Text("reading…", style=TRACK_STYLE)
+        self.query_one("#home-rooms", Static).update(shown)
+        # A problem with rooms still shown: they're the last good reading.
+        self.query_one("#home-box").border_subtitle = "last reading" if problem and rooms else ""
 
     def show_tasks(self, now) -> None:
         """One Openable per open task (or a line saying there are none), reused between refreshes."""

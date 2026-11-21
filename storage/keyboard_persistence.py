@@ -217,6 +217,12 @@ class KeyboardPersistence:
                 "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary(),
                 "watch": store.game_watch(), "chattiness": store.game_chattiness()}
 
+    def load_dashboard_minimised(self) -> list[str]:
+        return AppSettingsStore(self._get_store().engine).dashboard_minimised()
+
+    def save_dashboard_minimised(self, boxes: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_dashboard_minimised(boxes)
+
     def load_home_settings(self) -> dict:
         """{"sensibo": bool, "her_room": str} from Settings > Services > Sensibo."""
         store = AppSettingsStore(self._get_store().engine)

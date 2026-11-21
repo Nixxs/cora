@@ -50,7 +50,7 @@ class BoxTests(unittest.IsolatedAsyncioTestCase):
             screen = app.screen
             await asyncio.wait_for(screen.workers.wait_for_complete(), 3)
             self.assertEqual(BOX_TITLES["feelings-box"], "feelings")
-            self.assertEqual(screen.query_one("#feelings-box").border_title, "feelings")
+            self.assertEqual(screen.query_one("#feelings-box").border_title, "▾ feelings")
             latest = screen.query_one("#feeling-latest", Static)
             self.assertEqual(str(latest.render()), "nothing felt lately")
             names = [str(screen.query_one(f"#{feeling}-name", Static).render()) for feeling in FEELINGS]

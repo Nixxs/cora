@@ -403,6 +403,19 @@ stored; **chat** switches back. The conversation carries on: its chat box shows 
 messages and sends what you type, and its voice controls are the chat's. The state at its
 top right (● active, ○ standby) enters standby or resumes.
 
+**Minimising boxes:** click a box's title (marked ▾) in the middle or bottom row and it
+becomes a chip (▸ feelings) on the dashboard's bottom border, in the rows' order; click the chip
+to open it again. The rows line up on five shared columns (the middle row's boxes): a row with
+fewer open boxes gives the spare columns to the boxes with the most to show (interests, identity
+and desires in the middle; conversations, context and tasks below), so every box edge meets one
+in the row above. With all six bottom boxes open, more than the columns, that row shares its
+width instead and the background box keeps to its widest line. No box goes below its minimum
+width (34 columns in the middle row; the background box its list); when they don't fit, the row
+pans. The heatmap stops at 26 weeks however wide its box. Widths are worked out from the window
+before the screen is drawn, so opening the dashboard or minimising a box changes the rows in one
+step. The top row (voice, Claude Code, chat) always shows. Which boxes are minimised is saved
+(`dashboard_minimised` in `app_settings`) and the dashboard opens as it was left.
+
 | Box | Shows |
 | --- | --- |
 | voice | Her playback above the line and your microphone below, as loudness bands from low to high pitch, with the latest Activity summary on its border |
@@ -415,6 +428,7 @@ top right (● active, ○ standby) enters standby or resumes.
 | desires | Live desires, strongest first: pursuing, held, or forming (dimmed) |
 | conversations | OpenAI spend this month and a bar per month for the last year (hover a bar for its amount), or a placeholder whose hover and click say to add an Admin key; below it, your messages per day over the last year, a week per column |
 | tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups. Click a task to read it in full, with its whole latest step and each person's brief |
+| home | Each room (her own marked ◆): its temperature (amber from 28°, blue at 18° and below), humidity, feels-like when it differs and how old the reading is; then what its air conditioner is doing (cooling to 23° · fan low, off, offline) and its timer. Only while Sensibo is set up, and redrawn every 2 seconds from what the app already holds, so it asks Sensibo nothing; after a failed read it keeps the last one, marked "last reading" |
 | context | How full each model's context is (measured by the API), then each item's estimated share; click an item to read its text |
 | background | When each background job last saved something, and when the timed ones are next due |
 
@@ -424,7 +438,12 @@ does (`MarkdownView` in [ui/context_view.py](ui/context_view.py)), except that a
 break stays a line break and tags like `<system-reminder>` stay as written, since much of what's
 shown (prompts, instructions, transcripts) isn't written as Markdown; JSON shows as a code block. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
 values and notes it in Activity); the context box reads the running app once a second. Its
-item sizes are estimates (about four bytes a token). Tuning constants (refresh rate, bar
+item sizes are estimates (about four bytes a token). The animations (voice bars at 20 frames a
+second, pulses, graphs growing in) run on Textual timers, which on Windows each hold one of the
+loop's default threads while they sleep, the hourly timers included; so the app gives the loop
+128 (`LOOP_THREADS` in [app.py](app.py)) where Python's default is the CPU count plus four. With
+too few, the fast timers waited for a thread and skipped ticks: the voice bars ran at about 11
+frames a second and fell half as fast as they should. Tuning constants (refresh rate, bar
 fall, history limits, graph timing, voice bands) are at the top of
 [ui/dashboard.py](ui/dashboard.py), [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py),
 [ui/braille.py](ui/braille.py) and [devices/audio_bands.py](devices/audio_bands.py).
@@ -1335,8 +1354,9 @@ asked in the daytime, at most one a day.
 The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo.py),
 [app_areas/home.py](app_areas/home.py)). Set up under Settings › Services › **Her home ›
 Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
-until switched on with a key. The dashboard's rooms, schedules and Climate React are the next
-steps on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
+until switched on with a key. Each room shows in the dashboard's **home** box (see
+[The dashboard](#the-dashboard)). Schedules and Climate React are the next step on the
+[roadmap](ROADMAP.md#air-conditioning-sensibo).
 
 - **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
   readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
@@ -1376,7 +1396,7 @@ steps on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
   a key, one connection stays open for every unit (Server-Sent Events at `/api/v2/stream`, the key
   in the `X-Api-Key` header rather than the address). On `hello` everything is read once, since
   changes before it were missed; `measurements` (at most once a minute per unit, only when a value
-  changed) keep her room's line current; `changed` with the state or connection (or an empty list)
+  changed) keep every room current for the dashboard, and her room's line; `changed` with the state or connection (or an empty list)
   reads every unit again once things settle (3 seconds, so a burst is one read). It reconnects
   after a growing delay (3 seconds doubling to 5 minutes, with jitter), waits at least
   `Retry-After` when refused, gives up on a connection silent for two heartbeats, and stops only

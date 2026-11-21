@@ -111,7 +111,8 @@ To do on this branch:
 - [x] Aircon 1: Settings > Services > Sensibo, `aircon` status, and her own room's temperature (see [Air conditioning](#air-conditioning-sensibo))
 - [x] Aircon 2: control: changing a unit, and timers
 - [x] Aircon 3a: the live stream: her room as it changes, and changes made elsewhere as awareness
-- [ ] Aircon 3b: each room on the dashboard
+- [x] Dashboard: minimising boxes to chips on its bottom border, the rows on shared columns (first, as it was getting crowded)
+- [x] Aircon 3b: each room on the dashboard
 - [ ] Aircon 4: schedules, Climate React, and her own initiative
 
 ### Judgement calls
@@ -262,8 +263,10 @@ set up, and this API is small. If Home Assistant arrives, it can take over.
    real stream said hello as documented (a heartbeat every 120 seconds), and in four minutes sent
    each unit's `measurements` about every 90 seconds, shaped as read here (`id`, and `temperature`,
    `humidity`, `feelsLike` and `time` under `measurements`). "Someone's in a room
-   that's too hot while the person is out" waits for knowing who's home (step 4). *3b next:*
-   each room on the dashboard.
+   that's too hot while the person is out" waits for knowing who's home (step 4). *3b done:* a
+   home box on the dashboard (bottom row, minimisable, only while Sensibo is set up) with each
+   room's readings and its unit's state and timer, from what the stream keeps current, so it
+   costs no requests.
 4. **Schedules, Climate React and initiative:** "every weekday at 4, cool the house to 24", "keep
    the bedroom between 22 and 25 tonight"; and on her own, offering (never doing unasked) to
    pre-cool before a hot afternoon, noticing units left on while the person is away or at

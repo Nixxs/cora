@@ -330,10 +330,11 @@ Screen > .screen--selection {
     min-width: 34;
 }
 
+/* No cap: the bottom row shares its width out (the dashboard's fit_rows), so it may be wider than
+   the heatmap's 26 weeks need. */
 #conversations-box {
     width: 18%;
     min-width: 16;
-    max-width: 58;
 }
 
 /* Fr widths grow without limit once a scrolling row overflows, so only this box uses one. */
@@ -379,6 +380,42 @@ Screen > .screen--selection {
 #voice-column {
     width: 2fr;
     height: 1fr;
+}
+
+/* The dashboard's bottom border is drawn as widgets (its tray), so minimised boxes sit on it as chips. */
+#dashboard-panel {
+    border-bottom: none;
+}
+
+#dashboard-tray {
+    height: 1;
+    background: #141820;
+}
+
+#dashboard-tray .tray-line {
+    width: auto;
+    color: #7799cc;
+}
+
+#tray-fill {
+    width: 1fr;
+    height: 1;
+    color: #7799cc;
+}
+
+#dashboard-chips {
+    width: auto;
+    height: 1;
+}
+
+.box-chip {
+    width: auto;
+    color: #8f98a8;
+}
+
+.box-chip:hover {
+    color: #e0e6ef;
+    text-style: underline;
 }
 
 /* Claude Code's sessions, between voice and chat while Cora listens for them; voice gives up the room. */
@@ -699,6 +736,22 @@ Screen > .screen--selection {
     min-width: 34;
 }
 
+/* Each room's air conditioner, while Sensibo is set up; left out otherwise. */
+#home-box {
+    width: 18%;
+    min-width: 30;
+}
+
+#home-scroll {
+    height: 1fr;
+    scrollbar-size: 1 0;
+}
+
+#home-rooms {
+    height: auto;
+    color: #d0d6e0;
+}
+
 #tasks-scroll {
     height: 1fr;
     scrollbar-size: 1 0;
@@ -729,8 +782,10 @@ Screen > .screen--selection {
     width: auto;
 }
 
+/* 26 weeks at most (2 columns each, after the day initials), however wide its box is shared out. */
 #conversation-days {
     height: 7;
+    max-width: 54;
 }
 
 #background-box > Static {

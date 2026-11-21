@@ -1,5 +1,6 @@
 import asyncio
 import gc
+from concurrent.futures import ThreadPoolExecutor
 from os import getenv
 from pathlib import Path
 from time import monotonic
@@ -120,6 +121,9 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 # audible stutter. What exists once startup has settled lives for good, so it's frozen out of the
 # collector's reach then and later collections only walk what's new.
 MEMORY_SETTLE_SECONDS = 20.0
+# The loop's default threads: every timer's sleep (see on_load) plus asyncio.to_thread's work.
+# About 40 timers run with the dashboard open; a waiting thread costs next to nothing.
+LOOP_THREADS = 128
 
 
 def settle_memory() -> None:
@@ -207,6 +211,12 @@ class CoraApp(
                 yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(),
                                 task_call=lambda: self.task_call_view(), id="side-panel")
 
+    def on_load(self) -> None:
+        # On Windows each Textual timer holds one of the loop's default threads while it sleeps,
+        # the hourly ones included. With fewer threads than timers, the fast ones (voice bars,
+        # pulses) wait for a thread, wake late and skip ticks; so plenty of threads, before any start.
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=LOOP_THREADS))
+
     def on_mount(self) -> None:
         if self.freeze_memory:
             self.set_timer(MEMORY_SETTLE_SECONDS, settle_memory)
@@ -284,6 +294,8 @@ class CoraApp(
         self.conversation_end_timer = None
         # Settings > General. Kept for this run only; not saved yet.
         self.screen_looking = True
+        # The dashboard's boxes minimised to chips (loaded at launch, saved as they change).
+        self.dashboard_minimised: list[str] = []
         # Settings > Game: push-to-talk into the game's chat.
         self.init_game()
         self.init_game_watch()
@@ -690,6 +702,8 @@ class CoraApp(
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context, load_spend=self.load_spend,
                     claude_sessions=self.claude_sessions_shown, task_call=self.task_call_view,
+                    minimised=self.dashboard_minimised, save_minimised=self.save_dashboard_minimised,
+                    home_view=self.home_view,
                 ))
         elif event.button.id in ("chat-image", "dashboard-chat-image"):
             # The system's file picker, for the box beside it.

@@ -65,9 +65,21 @@ class HomeMixin:
         self.aircon_seen: dict[str, tuple[bool | None, bool]] = {}
         self.aircon_own: dict[str, float] = {}
         self.home_stream_key = ""
+        # Every room as last read, kept current by the stream's measurements, for the dashboard
+        # (which reads only this, never Sensibo).
+        self.home_shown: list | None = None
 
     def sensibo_ready(self) -> bool:
         return self.sensibo_enabled and bool(self.sensibo.key)
+
+    def home_view(self):
+        """The dashboard's home box: (every room as last read or None before the first, her room's id, a
+        problem or ""), or None while Sensibo isn't set up (the box is left out). From memory only, so
+        it costs nothing."""
+        if not self.sensibo_ready():
+            return None
+        rooms = None if self.home_shown is None else list(self.home_shown)
+        return rooms, self.her_room_id, self.home_status if self.home_state == "problem" else ""
 
     def sync_home_stream(self) -> None:
         """The stream runs exactly while Sensibo is on with a key; a new key starts a new one."""
@@ -100,10 +112,18 @@ class HomeMixin:
             if not fields or {"acState", "connectionStatus"} & set(fields if isinstance(fields, list) else []):
                 # Several often come together (a timer, a schedule): one read after they settle.
                 self.reread_home(CHANGED_SETTLE_SECONDS)
-        elif name == "measurements" and data.get("id") == self.her_room_id and self.her_room_reading is not None:
-            room = with_measurements(self.her_room_reading, data.get("measurements"))
-            if room is not None:
-                self.her_room_now(room)
+        elif name == "measurements":
+            unit = data.get("id")
+            index = next((index for index, room in enumerate(self.home_shown or ()) if room.id == unit), None)
+            if index is None:
+                return
+            room = with_measurements(self.home_shown[index], data.get("measurements"))
+            if room is None:
+                return
+            self.home_shown[index] = room
+            if unit == self.her_room_id and self.her_room_reading is not None:
+                # Her room's own reading keeps the state it was read with; only the readings are new.
+                self.her_room_now(with_measurements(self.her_room_reading, data.get("measurements")))
 
     @work(group="home-reread", exclusive=True, exit_on_error=False)
     async def reread_home(self, settle: float) -> None:
@@ -197,6 +217,7 @@ class HomeMixin:
 
     def remember_rooms(self, rooms) -> None:
         self.home_rooms = [(room.id, room.name) for room in rooms]
+        self.home_shown = list(rooms)
         self.notice_aircon_changes(rooms)
         now = datetime.now(timezone.utc)
         mine = next((room for room in rooms if room.id == self.her_room_id), None)
@@ -327,6 +348,7 @@ class HomeMixin:
             return
         self.sensibo.set_key(saved)
         self.home_rooms = []
+        self.home_shown = None
         self.home_state, self.home_status = "", ""
         self.her_room_problem = ""
         # Another account's units: nothing read before compares.

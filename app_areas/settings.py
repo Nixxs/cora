@@ -398,6 +398,15 @@ class SettingsMixin:
         self.activity.write(f"Cora will start {'in standby' if mode == 'standby' else 'active'} from the next launch.",
                             "Settings changed")
 
+    @work(group="dashboard-minimised", exclusive=True, exit_on_error=False)
+    async def save_dashboard_minimised(self, boxes: list[str]) -> None:
+        """The dashboard's boxes minimised to chips, for the next time it opens and the next launch."""
+        self.dashboard_minimised = list(boxes)
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_dashboard_minimised, list(boxes))
+        except Exception as error:
+            self.activity.write(f"The dashboard's layout wasn't saved ({type(error).__name__}).", "Settings error")
+
     @work(group="model-settings-save")
     async def save_voice_setting(self, voice: str) -> None:
         try:

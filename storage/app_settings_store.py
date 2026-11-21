@@ -30,6 +30,8 @@ MAX_GAP_MINUTES = 1440
 NO_BACKUP_COPY = "none"
 # A Sensibo unit's id, such as "Jyt7jM8c".
 HOME_UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
+# A dashboard box's id, such as "feelings-box".
+DASHBOARD_BOX_ID = re.compile(r"[a-z]+(-[a-z]+)*")
 BACKUP_COPY_MAX_CHARS = 200
 
 
@@ -182,6 +184,24 @@ class AppSettingsStore:
         if not HOME_UNIT_ID.fullmatch(unit_id):
             raise ValueError("Unknown unit id")
         self._set("her_room", unit_id)
+
+    def dashboard_minimised(self) -> list[str]:
+        """The dashboard's boxes minimised to chips, by id; none unless some were."""
+        saved = self._get("dashboard_minimised") or ""
+        return [box for box in saved.split(",") if DASHBOARD_BOX_ID.fullmatch(box)]
+
+    def set_dashboard_minimised(self, boxes: list[str]) -> None:
+        """Saves them; none clears the setting (an empty value isn't stored)."""
+        if not boxes:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "dashboard_minimised"))
+            return
+        if not all(DASHBOARD_BOX_ID.fullmatch(box) for box in boxes):
+            raise ValueError("Unknown dashboard box")
+        value = ",".join(boxes)
+        if len(value) > 200:
+            raise ValueError("Too many dashboard boxes")
+        self._set("dashboard_minimised", value)
 
     def game_chattiness(self) -> str:
         """How often she reacts to the game: 'off', 'quiet', 'normal' (unless another was chosen) or 'chatty'."""
