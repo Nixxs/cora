@@ -223,11 +223,25 @@ class KeyboardPersistence:
     def save_dashboard_boxes(self, opened: list[str], minimised: list[str]) -> None:
         AppSettingsStore(self._get_store().engine).set_dashboard_boxes(opened, minimised)
 
+    def load_side_boxes(self) -> list[str]:
+        return AppSettingsStore(self._get_store().engine).side_boxes()
+
+    def save_side_boxes(self, minimised: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_side_boxes(minimised)
+
+    def load_open_tasks(self) -> list:
+        """The open tasks, as the dashboard shows them, for the chat's side panel."""
+        return TaskStore(self._get_store().engine).open_tasks()
+
     def load_home_settings(self) -> dict:
-        """{"sensibo": bool, "her_room": str, "bedtime": (time, [unit id])} from Settings > Services > Sensibo."""
+        """{"sensibo": bool, "her_room": str, "bedtime": (time, [unit id]), "hot_day": (degrees, [unit id]),
+        "presence": bool} from Settings > Her home."""
         store = AppSettingsStore(self._get_store().engine)
         return {"sensibo": store.sensibo_enabled(), "her_room": store.her_room(), "bedtime": store.bedtime(),
-                "hot_day": store.hot_day()}
+                "hot_day": store.hot_day(), "presence": store.presence_enabled()}
+
+    def save_presence_enabled(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_presence_enabled(on)
 
     def save_sensibo_enabled(self, on: bool) -> None:
         AppSettingsStore(self._get_store().engine).set_sensibo_enabled(on)

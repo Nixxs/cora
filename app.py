@@ -90,6 +90,7 @@ from app_areas.game_watch import GameWatchMixin
 from app_areas.claude_code import ClaudeCodeMixin
 from app_areas.local_model import LocalModelMixin
 from app_areas.home import HomeMixin
+from app_areas.presence import PresenceMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -135,7 +136,7 @@ def settle_memory() -> None:
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, HomeMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, HomeMixin, PresenceMixin, App,
 ):
 
     live_trace = None
@@ -209,7 +210,9 @@ class CoraApp(
                                 highlight_cursor_line=False,
                             )
                 yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(),
-                                task_call=lambda: self.task_call_view(), id="side-panel")
+                                task_call=lambda: self.task_call_view(), home_view=lambda: self.home_view(),
+                                presence_view=lambda: self.presence_view(), load_tasks=self.side_panel_tasks,
+                                save_minimised=self.save_side_boxes, id="side-panel")
 
     def on_load(self) -> None:
         # On Windows each Textual timer holds one of the loop's default threads while it sleeps,
@@ -305,6 +308,7 @@ class CoraApp(
         self.init_local_model()
         # The house's air conditioners (Sensibo), and the room she lives in.
         self.init_home()
+        self.init_presence()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -703,7 +707,7 @@ class CoraApp(
                     self.live.context, load_spend=self.load_spend,
                     claude_sessions=self.claude_sessions_shown, task_call=self.task_call_view,
                     boxes=self.dashboard_boxes, save_boxes=self.save_dashboard_boxes,
-                    home_view=self.home_view,
+                    home_view=self.home_view, presence_view=self.presence_view,
                 ))
         elif event.button.id in ("chat-image", "dashboard-chat-image"):
             # The system's file picker, for the box beside it.

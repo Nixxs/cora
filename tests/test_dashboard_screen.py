@@ -928,6 +928,55 @@ class ChatSidePanelTests(unittest.IsolatedAsyncioTestCase):
             await pilot.pause()
             self.assertFalse(panel.display)
 
+
+    async def test_home_and_tasks_below_voice_minimise_to_chips_and_back(self):
+        from datetime import datetime
+        from home.presence import Look
+
+        async with keyboard_tests.running_app() as (app, pilot):
+            app.persistence.load_open_tasks.return_value = []
+            panel = app.query_one("#side-panel")
+            await pilot.resize_terminal(150, 40)
+            await pilot.pause()
+            home, tasks = app.query_one("#side-home"), app.query_one("#side-tasks")
+            # Home only while Sensibo or presence is set up; tasks always, once the database is up.
+            self.assertFalse(home.display)
+            self.assertIn("reading", str(app.query_one("#side-task-list Static").render()))
+            panel.ready([])
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            await pilot.pause()
+            self.assertTrue(tasks.display)
+            self.assertIn("no open tasks", str(app.query_one("#side-task-list Openable").render()))
+            app.presence_enabled = True
+            app.presence_last = Look(0.08, datetime(2026, 11, 21, 20, 15), 812)
+            with patch("app_areas.presence.idle_seconds", return_value=3600.0):
+                panel.show_home()
+            await pilot.pause()
+            self.assertTrue(home.display)
+            self.assertIn("empty", str(app.query_one("#side-home-rooms").render()))
+            # A click on its title minimises it to a chip on the tray, saved.
+            await pilot.click(home, offset=(3, 0))
+            await pilot.pause()
+            await pilot.pause()
+            self.assertFalse(home.display)
+            self.assertTrue(app.query_one("#side-tray").display)
+            [chip] = app.query("#side-chips .box-chip")
+            self.assertIn("home", str(chip.render()))
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.persistence.save_side_boxes.assert_called_with(["side-home"])
+            await pilot.click(chip)
+            await pilot.pause()
+            await pilot.pause()
+            self.assertTrue(home.display)
+            self.assertFalse(app.query_one("#side-tray").display)
+            await asyncio.wait_for(app.workers.wait_for_complete(), 3)
+            app.persistence.save_side_boxes.assert_called_with([])
+            # The saved choice, once loaded.
+            panel.set_minimised(["side-tasks", "unknown"])
+            await pilot.pause()
+            self.assertFalse(tasks.display)
+            self.assertEqual(panel.minimised, {"side-tasks"})
+
     async def test_shrinking_the_window_never_crashes_the_chat_or_the_dashboard(self):
         async with keyboard_tests.running_app() as (app, pilot):
             app.standby = True

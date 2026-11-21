@@ -713,18 +713,24 @@ class CoraLive:
             f"Facts: {brief}"
         ))
 
-    async def send_welcome_back(self) -> None:
-        """Ask Cora to briefly welcome the person back after they resume her from standby."""
+    async def send_welcome_back(self, note: str = "") -> None:
+        """Ask Cora to briefly welcome the person back after they resume her from standby, or after she
+        woke herself for them coming back (note: how long they were out, and what's waiting)."""
         connection = self.connection
         if connection is None or not self.ready:
             raise RuntimeError("Live is not ready for a welcome back")
 
         event_id = f"greeting_{uuid4().hex}"
-        await self.append_commentary(connection, event_id, (
-            "Welcome back note, not a message from the person. They have just brought you "
-            "back from standby, so welcome them back in a few words of your own. Do not "
-            "mention this note, standby or the app."
-        ))
+        if note:
+            text = ("Welcome back note, not a message from the person. You woke from standby because they've "
+                    f"come back and something's waiting for them. {note} Welcome them back in a few words of "
+                    "your own and tell them; what you noticed while they were out follows shortly. Do not "
+                    "mention this note, standby or the app.")
+        else:
+            text = ("Welcome back note, not a message from the person. They have just brought you "
+                    "back from standby, so welcome them back in a few words of your own. Do not "
+                    "mention this note, standby or the app.")
+        await self.append_commentary(connection, event_id, text)
 
     async def send_phone_answer(self) -> None:
         """Ask Cora to answer the phone: the person has just called her and the call is connected."""

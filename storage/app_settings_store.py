@@ -173,6 +173,13 @@ class AppSettingsStore:
     def set_sensibo_enabled(self, on: bool) -> None:
         self._set("sensibo", "on" if on else "off")
 
+    def presence_enabled(self) -> bool:
+        """Whether she looks through the webcam for whether anyone's in her room; off unless switched on."""
+        return self._switch("presence") is True
+
+    def set_presence_enabled(self, on: bool) -> None:
+        self._set("presence", "on" if on else "off")
+
     def her_room(self) -> str:
         """The Sensibo unit in the room she lives in, by id, or "" for none chosen."""
         saved = self._get("her_room") or ""
@@ -255,6 +262,21 @@ class AppSettingsStore:
         if len(value) > 200:
             raise ValueError("Too many dashboard boxes")
         self._set("dashboard_boxes", value)
+
+    def side_boxes(self) -> list[str]:
+        """The chat's side panel's minimised boxes, by id; none unless saved."""
+        saved = self._get("side_boxes") or ""
+        return [box for box in saved.split(",") if DASHBOARD_BOX_ID.fullmatch(box)]
+
+    def set_side_boxes(self, minimised: list[str]) -> None:
+        """Saves them; with none, clears the setting (an empty value isn't stored)."""
+        if not minimised:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "side_boxes"))
+            return
+        if not all(DASHBOARD_BOX_ID.fullmatch(box) for box in minimised) or len(",".join(minimised)) > 200:
+            raise ValueError("Unknown side panel box")
+        self._set("side_boxes", ",".join(minimised))
 
     def game_chattiness(self) -> str:
         """How often she reacts to the game: 'off', 'quiet', 'normal' (unless another was chosen) or 'chatty'."""

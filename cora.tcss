@@ -419,18 +419,53 @@ Screen > .screen--selection {
     height: 1fr;
 }
 
+/* Shown or not from ui/side_panel.py (set up, and not minimised). */
 #side-claude {
-    display: none;
     height: 1fr;
 }
 
-#side-panel.with-claude-code #side-claude {
-    display: block;
+/* Voice takes what the boxes below leave; while Claude Code shows, voice keeps a small box and the
+   sessions take the rest. */
+#side-voice {
+    height: 1fr;
+    min-height: 6;
 }
 
-/* While Claude Code shows, voice keeps a small box and the sessions take the rest. */
 #side-panel.with-claude-code #side-voice {
     height: 10;
+}
+
+#side-home, #side-tasks, #side-task-list {
+    height: auto;
+}
+
+/* Long enough for a few rooms or tasks; past that they scroll. */
+.side-scroll {
+    height: auto;
+    max-height: 16;
+    scrollbar-size: 1 0;
+}
+
+/* The minimised boxes' chips, at the panel's foot. */
+#side-tray {
+    display: none;
+    height: 1;
+}
+
+#side-tray .tray-line {
+    width: auto;
+    color: #7799cc;
+}
+
+#side-chips {
+    width: auto;
+    height: 1;
+}
+
+#side-tray-fill {
+    width: 1fr;
+    height: 1;
+    color: #7799cc;
 }
 
 /* A call she's placed for a task: shown while it's on, and for a while after. */
@@ -730,6 +765,11 @@ Screen > .screen--selection {
 .task-item {
     height: auto;
     margin: 0 0 1 0;
+}
+
+/* The side panel's tasks box hugs its last task. */
+#side-task-list .task-item:last-child {
+    margin: 0;
 }
 
 /* Dashboard text that opens in full when clicked. */

@@ -121,7 +121,9 @@ class AttentionMixin:
         elif kind == "phone":
             send, sent = self.live.send_phone_answer(), "Phone call answered"
         else:
-            send, sent = self.live.send_welcome_back(), "Welcome back sent"
+            # Woken for someone coming back (app_areas/presence.py): what's waiting, and how long they were out.
+            note, self.return_note = getattr(self, "return_note", ""), ""
+            send, sent = self.live.send_welcome_back(note), "Welcome back sent"
         try:
             await asyncio.wait_for(send, timeout=5)
         except Exception as error:

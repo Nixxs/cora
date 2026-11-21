@@ -196,6 +196,7 @@ class HomeMixin:
         hot = saved.get("hot_day")
         self.hot_day, self.hot_day_rooms = hot if isinstance(hot, tuple) else (None, [])
         self.schedule_hot_day()
+        self.start_presence(saved.get("presence") is True)
         if self.her_room_timer is None:
             # Sensibo asks for everything to be read again now and then even with the stream open.
             self.her_room_timer = self.set_interval(ROOM_CHECK_SECONDS, self.refresh_her_room)

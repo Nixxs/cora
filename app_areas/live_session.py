@@ -7,6 +7,7 @@ from textual.widgets import Button
 from textual import work
 
 from ui.composer import ChatComposer
+from ui.side_panel import SidePanel
 from inactivity import StandbyAlert
 from app_areas.shared import conversation_end_standby_seconds
 from phone import twilio
@@ -101,6 +102,13 @@ class LiveSessionMixin:
                 self.persistence.load_dashboard_boxes)
         except Exception as error:
             self.activity.write(f"The dashboard's layout unavailable ({type(error).__name__}).", "Settings")
+        minimised = []
+        try:
+            saved = await self.conversation_persistence.call_database(self.persistence.load_side_boxes)
+            minimised = saved if isinstance(saved, list) else []
+        except Exception as error:
+            self.activity.write(f"The side panel's layout unavailable ({type(error).__name__}).", "Settings")
+        self.query_one(SidePanel).ready(minimised)
         try:
             self.apply_claude_code_settings(
                 await self.conversation_persistence.call_database(self.persistence.load_claude_code_settings))
@@ -341,6 +349,7 @@ class LiveSessionMixin:
             self.record_idle_activity()
             self.inactivity.record_output()
         if event.type == "session.input_transcript.delta":
+            self.person_heard_at = monotonic()
             self.person_is_talking()
 
         self.live_events.handle(event)

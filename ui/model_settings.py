@@ -411,6 +411,12 @@ class HomeControls:
     hot_day: int | None = None
     hot_day_rooms: list[str] = field(default_factory=list)
     save_hot_day: Callable[[int | None, list[str]], None] = lambda degrees, units: None
+    # Presence (the webcam): on or off, set_presence(on), look_now() for one look straight away, and
+    # presence_status() -> the line under it (the latest look, or what's wrong).
+    presence: bool = False
+    set_presence: Callable[[bool], None] = lambda on: None
+    look_now: Callable[[], None] = lambda: None
+    presence_status: Callable[[], str] = lambda: ""
 
 
 @dataclass
@@ -448,6 +454,14 @@ HOME_HOT_DAY_HELP = (
     "10 km). If it reaches this, she offers to cool the ticked rooms ahead of the heat, unless one's already "
     "on, kept by Climate React or due to come on by a schedule; by Signal if she's in standby. Whole °C; "
     "empty for none."
+)
+HOME_PRESENCE_HELP = (
+    "Whether anyone's in her room. Once nobody has touched the PC or spoken to her for 15 minutes, she "
+    "takes one picture with the webcam (and again at most every 30 minutes) and OpenAI's Decisions API "
+    "weighs it with what she knows. The picture is never saved; only the odds come back, into Activity. "
+    "If it's empty she goes to standby (unless you're talking to her by phone or the web page), and after "
+    "an hour empty she turns her room's air conditioner off and tells you on Signal. Needs the OpenAI key; "
+    "about $0.0001 a look."
 )
 HOME_BEDTIME_HELP = (
     "At this time she checks the ticked rooms: any air conditioner still on (no timer to turn it off, not "
@@ -1001,10 +1015,17 @@ class ModelSettingsScreen(ModalScreen):
                             placeholder="32", max_length=2, restrict=r"\d*"),
                       button("Save", "home-save-hot-day"))
             yield SelectionList(id="home-hot-day-rooms", compact=True)
+        with Horizontal(classes="switch-row"):
+            yield Switch(value=self.home.presence, id="home-presence")
+            yield Label("Presence (the webcam)", classes="settings-label")
+            yield button("Look now", "home-look-now")
+        yield note(HOME_PRESENCE_HELP)
+        yield Static(id="home-presence-status", classes="settings-note")
 
     def show_home(self) -> None:
         state, status = self.home.status()
         self.query_one("#home-status", Static).update(home_line(self.home.enabled, state, status))
+        self.query_one("#home-presence-status", Static).update(Text(self.home.presence_status(), style=DIM))
         detail = self.query_one("#home-detail", Static)
         problem = self.home.enabled and state == "problem"
         detail.display = problem
@@ -1528,6 +1549,11 @@ class ModelSettingsScreen(ModalScreen):
             self.web.enabled = event.value
             self.web.set_enabled(event.value)
             return
+        if event.switch.id == "home-presence":
+            if event.value != self.home.presence:
+                self.home.presence = event.value
+                self.home.set_presence(event.value)
+            return
         if event.switch.id == "home-enabled":
             if event.value != self.home.enabled:
                 self.home.enabled = event.value
@@ -1921,6 +1947,8 @@ class ModelSettingsScreen(ModalScreen):
             self.query_one("#home-key", Input).placeholder = "paste the key"
         elif button == "home-test":
             self.home.test()
+        elif button == "home-look-now":
+            self.home.look_now()
         elif button == "home-save-bedtime":
             self.save_home_bedtime()
         elif button == "home-save-hot-day":

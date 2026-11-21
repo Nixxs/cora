@@ -92,7 +92,8 @@ def arrange(boxes, widened_first=WIDENED_FIRST) -> tuple[int, int, list[int]]:
 
 
 class BoxChip(Static):
-    """A minimised box, on the dashboard's bottom border: clicking it opens the box again."""
+    """A minimised box, on the dashboard's bottom border (or the side panel's tray): clicking it opens
+    the box again."""
 
     def __init__(self, box_id: str, title: str) -> None:
         super().__init__(f" ▸ {title} ", classes="box-chip", id=f"chip-{box_id}")
@@ -100,7 +101,8 @@ class BoxChip(Static):
 
     def on_click(self, event) -> None:
         event.stop()
-        self.screen.restore_box(self.box_id)
+        owner = next(node for node in self.ancestors if hasattr(node, "restore_box"))
+        owner.restore_box(self.box_id)
 
 
 # Box id -> border title.
@@ -129,12 +131,22 @@ OFFLINE_STYLE = "#d27a7a"
 # What a running unit is doing, by mode ({target} is its set temperature).
 AIRCON_DOING = {"cool": "cooling to {target}", "heat": "heating to {target}", "auto": "auto at {target}",
                 "dry": "drying", "fan": "fan only"}
+# Presence's line, by kind (app_areas/presence.py presence_view).
+PRESENCE_STYLES = {"here": AIRCON_ON_STYLE, "someone": AIRCON_ON_STYLE, "empty": LABEL_STYLE, "unsure": HOT_STYLE,
+                   "problem": OFFLINE_STYLE, "waiting": TRACK_STYLE}
 # The open dashboard redraws the home box this often, from what the app already holds.
 HOME_REFRESH_SECONDS = 2
 
 
-def room_lines(rooms, her_room_id: str, now) -> Text:
-    """Each room: its name (her own marked), its readings, and what its air conditioner is doing."""
+def presence_text(presence) -> Text:
+    """Presence's (words, kind) as the home box shows it: "◉ empty · looked 20:15 (8%)"."""
+    words, kind = presence
+    return Text(f"◉ {words}", style=PRESENCE_STYLES.get(kind, LABEL_STYLE))
+
+
+def room_lines(rooms, her_room_id: str, now, presence=None) -> Text:
+    """Each room: its name (her own marked, with presence's latest under it), its readings, and what
+    its air conditioner is doing."""
     lines = Text()
     for index, room in enumerate(rooms):
         if index:
@@ -143,6 +155,9 @@ def room_lines(rooms, her_room_id: str, now) -> Text:
         lines.append(("◆ " if mine else "") + room.name, style="bold" if mine else "")
         if mine:
             lines.append(" · her room", style=LABEL_STYLE)
+            if presence is not None:
+                lines.append("\n  ")
+                lines.append_text(presence_text(presence))
         lines.append("\n  ")
         if room.temperature is not None:
             warmth = (HOT_STYLE if room.temperature >= HOT_DEGREES
@@ -178,6 +193,42 @@ def room_lines(rooms, her_room_id: str, now) -> Text:
         if plan:
             lines.append("\n  " + plan, style=LABEL_STYLE)
     return lines or Text("no rooms on the account", style=TRACK_STYLE)
+
+
+def home_text(view, presence, now) -> tuple[Text, str]:
+    """The home box (the dashboard's and the side panel's): each room with presence's latest under
+    hers, or presence alone without Sensibo; and its subtitle ("last reading" after a problem)."""
+    rooms, her_room_id, problem = view if view is not None else ([], "", "")
+    if rooms:
+        shown = room_lines(rooms, her_room_id, now, presence)
+    elif problem:
+        # Text, so brackets in Sensibo's message are not read as markup.
+        shown = Text(problem, style=OFFLINE_STYLE)
+    elif view is None:
+        shown = Text()
+    else:
+        shown = room_lines([], her_room_id, now) if rooms is not None else Text("reading…", style=TRACK_STYLE)
+    # Her room not among those shown (no Sensibo, or none chosen): presence heads the box instead.
+    if presence is not None and not any(room.id == her_room_id for room in rooms or []):
+        head = Text("◆ her room", style="bold").append("\n  ").append_text(presence_text(presence))
+        shown = head.append("\n\n").append_text(shown) if shown.plain else head
+    # A problem with rooms still shown: they're the last good reading.
+    return shown, "last reading" if problem and rooms else ""
+
+
+def fill_task_list(box, tasks, now) -> None:
+    """One Openable per open task in box (or a line saying there are none), reused between refreshes."""
+    wanted = max(len(tasks), 1)
+    shown = list(box.query(Openable).results(Openable))
+    if len(shown) != wanted:
+        box.remove_children()
+        shown = [Openable(classes="task-item") for _ in range(wanted)]
+        box.mount_all(shown)
+    if not tasks:
+        shown[0].show(Text("no open tasks", style=TRACK_STYLE))
+        return
+    for item, task in zip(shown, tasks):
+        item.show(task_text(task, now), task_detail(task, now))
 
 
 def plan_line(room) -> str:
@@ -302,10 +353,13 @@ class DashboardScreen(Screen):
 
     def __init__(self, voice_bands, conversation, audio_status, connection, load_snapshot, activity, context,
                  load_spend=None, claude_sessions=None, task_call=None, boxes=((), ()), save_boxes=None,
-                 home_view=None) -> None:
+                 home_view=None, presence_view=None) -> None:
         super().__init__()
-        # home_view() -> (rooms, her room's id, a problem or ""), or None to leave the home box out.
+        # home_view() -> (rooms, her room's id, a problem or ""), or None while Sensibo isn't set up;
+        # presence_view() -> (words, kind), or None while presence is off. The home box is left out
+        # while both are None.
         self.home_view = home_view or (lambda: None)
+        self.presence_view = presence_view or (lambda: None)
         # Boxes left out (not set up), shown neither as a box nor as a chip.
         self.absent: set[str] = set()
         # The open boxes in the order they flow, and the ones minimised to chips; remembered between
@@ -538,7 +592,7 @@ class DashboardScreen(Screen):
             # ▾ on the ones whose title minimises them.
             self.query_one(f"#{box_id}").border_title = f"▾ {title}" if box_id in BOXES else title
         # Left out from the start while it isn't set up, so it doesn't flash up and go.
-        if self.home_view() is None:
+        if self.home_view() is None and self.presence_view() is None:
             self.absent.add("home-box")
         self.boxes_changed(save=False)
         self.show_home()
@@ -662,41 +716,21 @@ class DashboardScreen(Screen):
         self.query_one("#background-runs", Static).update(runs)
 
     def show_home(self) -> None:
-        """Each room, from what the app holds; the box comes and goes as Sensibo is set up or not."""
-        view = self.home_view()
-        if (view is None) != ("home-box" in self.absent):
-            (self.absent.add if view is None else self.absent.discard)("home-box")
+        """Each room and presence's latest, from what the app holds; the box comes and goes as Sensibo
+        and presence are set up or not."""
+        view, presence = self.home_view(), self.presence_view()
+        gone = view is None and presence is None
+        if gone != ("home-box" in self.absent):
+            (self.absent.add if gone else self.absent.discard)("home-box")
             self.boxes_changed(save=False)
-        if view is None:
+        if gone:
             return
-        rooms, her_room_id, problem = view
-        now = datetime.now(timezone.utc)
-        if rooms:
-            shown = room_lines(rooms, her_room_id, now)
-        elif problem:
-            # Text, so brackets in Sensibo's message are not read as markup.
-            shown = Text(problem, style=OFFLINE_STYLE)
-        else:
-            shown = room_lines([], her_room_id, now) if rooms is not None else Text("reading…", style=TRACK_STYLE)
+        shown, subtitle = home_text(view, presence, datetime.now(timezone.utc))
         self.query_one("#home-rooms", Static).update(shown)
-        # A problem with rooms still shown: they're the last good reading.
-        self.query_one("#home-box").border_subtitle = "last reading" if problem and rooms else ""
+        self.query_one("#home-box").border_subtitle = subtitle
 
     def show_tasks(self, now) -> None:
-        """One Openable per open task (or a line saying there are none), reused between refreshes."""
-        box = self.query_one("#task-list", Vertical)
-        tasks = self.snapshot.tasks
-        wanted = max(len(tasks), 1)
-        shown = list(box.query(Openable).results(Openable))
-        if len(shown) != wanted:
-            box.remove_children()
-            shown = [Openable(classes="task-item") for _ in range(wanted)]
-            box.mount_all(shown)
-        if not tasks:
-            shown[0].show(Text("no open tasks", style=TRACK_STYLE))
-            return
-        for item, task in zip(shown, tasks):
-            item.show(task_text(task, now), task_detail(task, now))
+        fill_task_list(self.query_one("#task-list", Vertical), self.snapshot.tasks, now)
 
     def show_claude_code(self) -> None:
         self.query_one("#dashboard-call", CallEntry).refresh_view()
