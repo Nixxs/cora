@@ -1358,7 +1358,8 @@ The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo
 Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
 until switched on with a key. Each room shows in the dashboard's **home** box (see
 [The dashboard](#the-dashboard)). Her own initiative (offering to pre-cool, a unit left on at
-bedtime, filter cleaning) is the next step on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
+bedtime, filter cleaning, a hot day's forecast) is below; what's next is on the
+[roadmap](ROADMAP.md#air-conditioning-sensibo).
 
 - **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
   readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
@@ -1391,7 +1392,30 @@ bedtime, filter cleaning) is the next step on the [roadmap](ROADMAP.md#air-condi
     given a temperature (`POST /api/v2/pods/{id}/smartmode`, thresholds in °C). Without a range it
     switches the room's saved one back on; `climate_react_off` stops it and keeps its settings. It
     has no end time.
-  - Both are Sensibo's own, run on its side, so nothing in Cora keeps time for them. Status lists
+  - **Filters:** each unit says when its filters are due for a clean (`filtersCleaning`: due after
+    300 hours of running). Status says so, the dashboard marks the room "filters due", and she's
+    told once (each run, while she's awake rather than queued in Standby) as an awareness event she
+    can mention when it fits. Once you've cleaned them, `filters_cleaned` resets the reminder (`DELETE
+    /api/v2/pods/{id}/cleanFiltersNotification`, as Home Assistant's library does it; it isn't in
+    Sensibo's reference), for every room whose filters are due when no room is named.
+  - **Bedtime check:** under Settings › Her home, a bedtime (24-hour, such as 22:30; empty for none)
+    and a tick for each room it looks at. At that time she reads the units once; a ticked room's air
+    conditioner still on and meant to stop (online, no timer set to turn it off, not kept by Climate
+    React) is raised. Awake, she's told and offers in a word to turn it off or set a timer, leaving
+    it if it's meant to run overnight; in Standby she asks on Signal ("It's 22:30 and Office (cool,
+    22°C, fan auto) is still on. Want me to turn it off?"), which lands in your conversation with
+    her, so a reply of yes has her do it. Saved as `bedtime` in `app_settings` (`22:30|unit,unit`).
+  - **Hot-day offer:** under Settings › Her home, a temperature (whole °C, such as 32; empty for
+    none) and a tick for each room. Each morning at 08:00 she reads today's forecast from Open-Meteo
+    ([home/forecast.py](home/forecast.py): free, no key, the Bureau of Meteorology's models among
+    others for Australia). Only the home's rough location is sent: the coordinates on the Sensibo
+    account, rounded to one decimal place (about 10 km) as soon as they're read. If the day's peak
+    reaches the temperature and is still ahead, she offers to cool the ticked rooms from two hours
+    before it (or the next hour, if that's passed), skipping any already on, kept by Climate React
+    or due to come on by a schedule today: in a word if she's awake (a schedule for once at that
+    time is the way to do it), on Signal in Standby ("It's forecast 37°C around 15:00 today. Want me
+    to cool Office from about 13:00?"). Saved as `hot_day` in `app_settings` (`32|unit,unit`).
+  - Schedules and Climate React are Sensibo's own, run on its side, so nothing in Cora keeps time for them. Status lists
     each room's schedules and Climate React (they come with the room read, at no extra request), and
     the dashboard's home box shows its Climate React range and next schedule.
   - **Checked first:** every value against what that unit takes (`remoteCapabilities`), and

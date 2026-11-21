@@ -9,7 +9,9 @@ from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Click
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
+from textual.widgets import (
+    Button, Input, Label, Select, SelectionList, Static, Switch, TabbedContent, TabPane, TextArea,
+)
 
 from mail import account as email_setup
 from mail.account import EmailStatus
@@ -17,6 +19,8 @@ from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
 from game.chat_line import CHANNELS as GAME_CHANNELS
+from home.sensibo import SCHEDULE_TIME as BEDTIME_TIME
+from storage.app_settings_store import HOT_DAY_HIGHEST, HOT_DAY_LOWEST
 from local_model.manager import IDLE_CHOICES
 from openai_spend import likely_cora_project
 from phone.twilio import REGIONS
@@ -397,6 +401,16 @@ class HomeControls:
     enabled: bool = False
     has_key: bool = False
     her_room: str = ""
+    # The bedtime check: its time ("22:30", or "" for none) and the units it looks at;
+    # save_bedtime(time, units) ("" turns it off).
+    bedtime: str = ""
+    bedtime_rooms: list[str] = field(default_factory=list)
+    save_bedtime: Callable[[str, list[str]], None] = lambda at, units: None
+    # The hot-day offer: the forecast top it starts at (°C, or None for off) and the units it offers
+    # to cool; save_hot_day(degrees, units).
+    hot_day: int | None = None
+    hot_day_rooms: list[str] = field(default_factory=list)
+    save_hot_day: Callable[[int | None, list[str]], None] = lambda degrees, units: None
 
 
 @dataclass
@@ -429,6 +443,17 @@ HOME_INTRO = (
 )
 HOME_KEY_HELP = "From home.sensibo.com/me/api (sign in, then create a key). Kept in the system's credential store."
 HOME_ROOM_HELP = "Where the PC she runs on is: she knows how warm or cold it is there. Test first to list the rooms."
+HOME_HOT_DAY_HELP = (
+    "Each morning at 8 she checks today's forecast (Open-Meteo, from the home's location rounded to about "
+    "10 km). If it reaches this, she offers to cool the ticked rooms ahead of the heat, unless one's already "
+    "on, kept by Climate React or due to come on by a schedule; by Signal if she's in standby. Whole °C; "
+    "empty for none."
+)
+HOME_BEDTIME_HELP = (
+    "At this time she checks the ticked rooms: any air conditioner still on (no timer to turn it off, not "
+    "kept by Climate React), she offers to turn off; by Signal if she's in standby. 24-hour, such as 22:30; "
+    "empty for none."
+)
 
 
 # The Twilio region choice when .env's CORA_TWILIO_API names an address of its own.
@@ -967,6 +992,15 @@ class ModelSettingsScreen(ModalScreen):
                       button("Test", "home-test"))
             yield field("Her room", HOME_ROOM_HELP)
             yield Select([], prompt="No room chosen", allow_blank=True, id="home-her-room", compact=True)
+            yield field("Bedtime check", HOME_BEDTIME_HELP)
+            yield row(entry(id="home-bedtime", value=self.home.bedtime, placeholder="22:30", max_length=5),
+                      button("Save", "home-save-bedtime"))
+            yield SelectionList(id="home-bedtime-rooms", compact=True)
+            yield field("Hot-day offer", HOME_HOT_DAY_HELP)
+            yield row(entry(id="home-hot-day", value="" if self.home.hot_day is None else str(self.home.hot_day),
+                            placeholder="32", max_length=2, restrict=r"\d*"),
+                      button("Save", "home-save-hot-day"))
+            yield SelectionList(id="home-hot-day-rooms", compact=True)
 
     def show_home(self) -> None:
         state, status = self.home.status()
@@ -986,6 +1020,12 @@ class ModelSettingsScreen(ModalScreen):
             choice.set_options([(name, unit_id) for unit_id, name in options])
             if self.home.her_room:
                 choice.value = self.home.her_room
+            for ticks_id, ticked in (("#home-bedtime-rooms", self.home.bedtime_rooms),
+                                     ("#home-hot-day-rooms", self.home.hot_day_rooms)):
+                ticks = self.query_one(ticks_id, SelectionList)
+                with ticks.prevent(SelectionList.SelectedChanged):
+                    ticks.clear_options()
+                    ticks.add_options([(name, unit_id, unit_id in ticked) for unit_id, name in rooms])
 
     def compose_web(self) -> ComposeResult:
         yield self.service_heading("web", "Web interface", "web-status",
@@ -1656,6 +1696,10 @@ class ModelSettingsScreen(ModalScreen):
         event.stop()
         if event.input.id == "game-vocabulary":
             self.save_game_vocabulary()
+        elif event.input.id == "home-bedtime":
+            self.save_home_bedtime()
+        elif event.input.id == "home-hot-day":
+            self.save_home_hot_day()
         elif event.input.id == "signal-person":
             self.save_person_number()
         elif event.input.id in ("email-client-id", "email-tenant"):
@@ -1730,6 +1774,36 @@ class ModelSettingsScreen(ModalScreen):
         self.phone.save_token(field_.value)
         field_.value = ""
         field_.placeholder = "token saved · paste to replace"
+
+    def save_home_bedtime(self) -> None:
+        """The bedtime check's time, from its field ("" turns it off), with the rooms ticked."""
+        at = self.query_one("#home-bedtime", Input).value.strip()
+        if at and not BEDTIME_TIME.fullmatch(at):
+            self.notify("Bedtime is a 24-hour time, such as 22:30.", severity="warning")
+            return
+        self.home.bedtime = at
+        self.home.save_bedtime(at, list(self.home.bedtime_rooms))
+
+    def save_home_hot_day(self) -> None:
+        """The hot-day offer's temperature, from its field ("" turns it off), with the rooms ticked."""
+        typed = self.query_one("#home-hot-day", Input).value.strip()
+        degrees = int(typed) if typed.isdigit() else None
+        if typed and (degrees is None or not HOT_DAY_LOWEST <= degrees <= HOT_DAY_HIGHEST):
+            self.notify(f"The hot-day temperature is whole degrees, {HOT_DAY_LOWEST} to {HOT_DAY_HIGHEST}.",
+                        severity="warning")
+            return
+        self.home.hot_day = degrees
+        self.home.save_hot_day(degrees, list(self.home.hot_day_rooms))
+
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        if event.selection_list.id == "home-bedtime-rooms":
+            event.stop()
+            self.home.bedtime_rooms = list(event.selection_list.selected)
+            self.home.save_bedtime(self.home.bedtime, list(self.home.bedtime_rooms))
+        elif event.selection_list.id == "home-hot-day-rooms":
+            event.stop()
+            self.home.hot_day_rooms = list(event.selection_list.selected)
+            self.home.save_hot_day(self.home.hot_day, list(self.home.hot_day_rooms))
 
     def save_home_key(self) -> None:
         field_ = self.query_one("#home-key", Input)
@@ -1847,6 +1921,10 @@ class ModelSettingsScreen(ModalScreen):
             self.query_one("#home-key", Input).placeholder = "paste the key"
         elif button == "home-test":
             self.home.test()
+        elif button == "home-save-bedtime":
+            self.save_home_bedtime()
+        elif button == "home-save-hot-day":
+            self.save_home_hot_day()
         elif button == "web-maps-save":
             self.save_maps_key()
         elif button == "web-maps-forget":

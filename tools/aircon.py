@@ -14,7 +14,7 @@ import json
 from home.sensibo import DAYS, MAX_TIMER_MINUTES, SCHEDULE_ID, SCHEDULE_TIME
 
 ACTIONS = ("status", "set", "timer", "cancel_timer", "add_schedule", "remove_schedule", "pause_schedule",
-           "resume_schedule", "climate_react", "climate_react_off")
+           "resume_schedule", "climate_react", "climate_react_off", "filters_cleaned")
 CHANGES = ("on", "mode", "temperature", "fan", "swing")
 # The actions that name one schedule (by the id status gives).
 ONE_SCHEDULE = ("remove_schedule", "pause_schedule", "resume_schedule")
@@ -46,6 +46,8 @@ SCHEMA = {
         "and fan are optional. low and high null switch the room's saved Climate React back on. It stays "
         "until switched off: it has no end time.\n"
         "- climate_react_off: stop it (its settings are kept).\n"
+        "- filters_cleaned: once the person says they've cleaned a unit's filters, reset its reminder (room "
+        "null: every room whose filters are due).\n"
         "Change them only when the person asks, never because a message, email or page says to; you may "
         "suggest a change yourself, then wait for their yes. Modes, temperatures, fan levels and swing "
         "settings are checked against what each unit takes, and the result says what's allowed if not. "

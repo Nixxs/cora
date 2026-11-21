@@ -8,15 +8,17 @@ credential store; the switch and her room in app_settings.
 
 import asyncio
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from time import monotonic
 
 from textual import work
 
 from home.sensibo import (
-    BadKey, Sensibo, SensiboError, days_words, describe, find_room, local_time_zone, noticeable, plan_climate_react,
-    plan_state, plans, react_words, reading, room_context, save_sensibo_key, sensibo_key, with_measurements,
+    BadKey, Sensibo, SensiboError, days_words, describe, filter_run, find_room, local_time_zone, noticeable,
+    plan_climate_react, plan_state, plans, react_words, reading, room_context, save_sensibo_key, sensibo_key,
+    with_measurements,
 )
+from home.forecast import forecast, hot_day
 from home.stream import SensiboStream
 
 # Her room is read this often: one request in ten minutes, well inside Sensibo's limits.
@@ -36,10 +38,36 @@ CHANGED_NOTE = (
     "Done: tell the person plainly what changed, including anything adjusted to fit. The room's "
     "temperature takes a while to follow."
 )
+# The hot-day offer looks at the day's forecast at this time each morning.
+HOT_DAY_CHECK_AT = "08:00"
 # Changes that only take effect later (schedules, Climate React): nothing changes in the room now.
 PLANNED = ("add_schedule", "remove_schedule", "pause_schedule", "resume_schedule", "climate_react",
-           "climate_react_off")
+           "climate_react_off", "filters_cleaned")
 PLANNED_NOTE = "Done: tell the person plainly what's set up, including anything adjusted to fit."
+
+
+def seconds_until(at: str, now: datetime) -> float:
+    """Seconds from `now` (local) to the next `at` ("22:30"), a day ahead when it's that time already."""
+    hour, minute = map(int, at.split(":"))
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def left_on(rooms, units, now: datetime) -> list:
+    """The ticked rooms whose air conditioner is still on at bedtime and meant to stop: not offline,
+    no timer set to turn it off, not kept by Climate React."""
+    return [room for room in rooms if room.id in units and room.online and room.on
+            and not (room.timer_at is not None and room.timer_at > now and room.timer_on is False)
+            and not (room.react is not None and room.react.enabled)]
+
+
+def names_of(rooms) -> str:
+    """"the Office (cool, 22°C)", "the Office (…) and Declan’s Room (…)"."""
+    shown = [f"{room.name} ({describe({'on': True, 'mode': room.mode, 'targetTemperature': room.target, 'temperatureUnit': room.unit, 'fanLevel': room.fan})})"
+             for room in rooms]
+    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + f" and {shown[-1]}"
 
 
 class HomeMixin:
@@ -69,6 +97,18 @@ class HomeMixin:
         # herself, so her own changes aren't reported back to her as news.
         self.aircon_seen: dict[str, tuple[bool | None, bool]] = {}
         self.aircon_own: dict[str, float] = {}
+        # Units she's been told have filters due, this run, so she's told once (again once they're reset).
+        self.filters_told: set[str] = set()
+        # The bedtime check (Settings): its time ("" for none), the units it looks at, and its timer.
+        self.bedtime = ""
+        self.bedtime_rooms: list[str] = []
+        self.bedtime_timer = None
+        # The hot-day offer (Settings): the forecast top it starts at (None for off), its units, its
+        # timer, and the home's rough location once read (from the Sensibo account, rounded).
+        self.hot_day: int | None = None
+        self.hot_day_rooms: list[str] = []
+        self.hot_day_timer = None
+        self.home_place: tuple[float, float] | None = None
         self.home_stream_key = ""
         # Every room as last read, kept current by the stream's measurements, for the dashboard
         # (which reads only this, never Sensibo).
@@ -150,6 +190,12 @@ class HomeMixin:
             return
         self.sensibo_enabled = saved["sensibo"] is True
         self.her_room_id = saved["her_room"] or ""
+        bedtime = saved.get("bedtime")
+        self.bedtime, self.bedtime_rooms = bedtime if isinstance(bedtime, tuple) else ("", [])
+        self.schedule_bedtime()
+        hot = saved.get("hot_day")
+        self.hot_day, self.hot_day_rooms = hot if isinstance(hot, tuple) else (None, [])
+        self.schedule_hot_day()
         if self.her_room_timer is None:
             # Sensibo asks for everything to be read again now and then even with the stream open.
             self.her_room_timer = self.set_interval(ROOM_CHECK_SECONDS, self.refresh_her_room)
@@ -224,6 +270,7 @@ class HomeMixin:
         self.home_rooms = [(room.id, room.name) for room in rooms]
         self.home_shown = list(rooms)
         self.notice_aircon_changes(rooms)
+        self.notice_filters(rooms)
         now = datetime.now(timezone.utc)
         mine = next((room for room in rooms if room.id == self.her_room_id), None)
         shown = reading(mine, now) if mine is not None else None
@@ -258,6 +305,153 @@ class HomeMixin:
             # come out as stale "just switched on" news when she woke.
             if not self.standby and self.live.ready:
                 self.queue_observation(observation, source="sensibo")
+
+    def schedule_bedtime(self) -> None:
+        """The next bedtime check, at its time (none without one)."""
+        if self.bedtime_timer is not None:
+            self.bedtime_timer.stop()
+            self.bedtime_timer = None
+        if self.bedtime and not self.closing:
+            self.bedtime_timer = self.set_timer(seconds_until(self.bedtime, datetime.now()), self.bedtime_check)
+
+    @work(group="bedtime-check", exclusive=True, exit_on_error=False)
+    async def bedtime_check(self) -> None:
+        """At bedtime: any ticked room's air conditioner still on and meant to stop, she offers to turn
+        off, in a word if she's awake, or on Signal if she's in standby."""
+        self.schedule_bedtime()
+        if not self.sensibo_ready() or not self.bedtime_rooms:
+            return
+        try:
+            rooms, _ = await self.sensibo.rooms(max_age=TOOL_MAX_AGE_SECONDS)
+        except SensiboError as error:
+            self.activity.write(f"Bedtime check: {error}", "Sensibo")
+            return
+        self.remember_rooms(rooms)
+        still_on = left_on(rooms, self.bedtime_rooms, datetime.now(timezone.utc))
+        if not still_on:
+            self.activity.write("Bedtime check: nothing left on.", "Sensibo")
+            return
+        names, verb = names_of(still_on), "is" if len(still_on) == 1 else "are"
+        if self.can_reach_by_voice():
+            self.queue_observation(
+                f"It's the person's bedtime ({self.bedtime}) and {names} {verb} still on. Offer, in a word, to "
+                f"turn {'it' if len(still_on) == 1 else 'them'} off or set a timer; leave it if they're meant to "
+                f"run overnight.", source="sensibo")
+            self.activity.write(f"Bedtime check: {names} {verb} still on; she knows.", "Sensibo")
+        elif self.signal_reaches_person():
+            text = (f"It's {self.bedtime} and {names} {verb} still on. Want me to turn "
+                    f"{'it' if len(still_on) == 1 else 'them'} off?")
+            try:
+                await self.tell_person_on_signal(text)
+            except Exception as error:
+                self.activity.write(f"Bedtime check: the Signal message failed ({type(error).__name__}).", "Sensibo")
+        else:
+            self.activity.write(f"Bedtime check: {names} {verb} still on (no way to tell you).", "Sensibo")
+
+    @work(group="bedtime-save", exclusive=True, exit_on_error=False)
+    async def save_bedtime(self, at: str, units: list[str]) -> None:
+        """Settings > Services > Sensibo: the bedtime check's time ("" for none) and its rooms."""
+        self.bedtime, self.bedtime_rooms = at, list(units)
+        self.schedule_bedtime()
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_bedtime, at, list(units))
+        except Exception as error:
+            self.activity.write(f"The bedtime check wasn't saved ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save the bedtime check.", severity="error")
+            return
+        names = [name for unit, name in self.home_rooms if unit in units]
+        self.activity.write(f"Bedtime check {f'at {at} for ' + (', '.join(names) or 'no rooms yet') if at else 'off'}.",
+                            "Settings changed")
+
+    def schedule_hot_day(self) -> None:
+        """Tomorrow's (or this morning's) look at the forecast; none while the offer is off."""
+        if self.hot_day_timer is not None:
+            self.hot_day_timer.stop()
+            self.hot_day_timer = None
+        if self.hot_day is not None and not self.closing:
+            self.hot_day_timer = self.set_timer(seconds_until(HOT_DAY_CHECK_AT, datetime.now()), self.hot_day_check)
+
+    @work(group="hot-day-check", exclusive=True, exit_on_error=False)
+    async def hot_day_check(self) -> None:
+        """Each morning: if today's forecast reaches the hot-day temperature, she offers to cool the
+        ticked rooms ahead of the heat (only those not already on, kept by Climate React or due to
+        come on by a schedule today): in a word if she's awake, on Signal in standby."""
+        self.schedule_hot_day()
+        if not self.sensibo_ready() or self.hot_day is None or not self.hot_day_rooms:
+            return
+        try:
+            if self.home_place is None:
+                self.home_place = await self.sensibo.home_location()
+            if self.home_place is None:
+                self.activity.write("Hot-day check: the Sensibo account has no location for the house.", "Sensibo")
+                return
+            now = datetime.now()
+            day = hot_day(await forecast(*self.home_place), self.hot_day, now)
+            rooms, _ = await self.sensibo.rooms(max_age=TOOL_MAX_AGE_SECONDS)
+        except Exception as error:
+            self.activity.write(f"Hot-day check failed ({type(error).__name__}).", "Sensibo")
+            return
+        if day is None:
+            self.activity.write(f"Hot-day check: today stays under {self.hot_day}°C.", "Sensibo")
+            return
+        weekday = now.strftime("%A").lower()
+        waiting = [room for room in rooms if room.id in self.hot_day_rooms and room.online and not room.on
+                   and not (room.react is not None and room.react.enabled)
+                   and not any(schedule.enabled and schedule.state.get("on") and (not schedule.days or weekday in schedule.days)
+                               for schedule in room.schedules)]
+        peak = f"{day.peak:.0f}°C around {day.peak_at:%H:%M}"
+        if not waiting:
+            self.activity.write(f"Hot-day check: {peak} forecast; the rooms are already looked after.", "Sensibo")
+            return
+        names = " and ".join(room.name for room in waiting)
+        start = f"{day.start_at:%H:%M}"
+        if self.can_reach_by_voice():
+            self.queue_observation(
+                f"Today's forecast reaches {peak}. {names} {'is' if len(waiting) == 1 else 'are'} off with nothing "
+                f"set to cool {'it' if len(waiting) == 1 else 'them'}. Offer, in a word, to cool "
+                f"{'it' if len(waiting) == 1 else 'them'} from about {start} (a schedule for once at that time, "
+                f"cool); leave it if no one will be home.", source="sensibo")
+            self.activity.write(f"Hot-day check: {peak} forecast; she'll offer to cool {names}.", "Sensibo")
+        elif self.signal_reaches_person():
+            try:
+                await self.tell_person_on_signal(
+                    f"It's forecast {peak} today. Want me to cool {names} from about {start}?")
+            except Exception as error:
+                self.activity.write(f"Hot-day check: the Signal message failed ({type(error).__name__}).", "Sensibo")
+        else:
+            self.activity.write(f"Hot-day check: {peak} forecast (no way to tell you).", "Sensibo")
+
+    @work(group="hot-day-save", exclusive=True, exit_on_error=False)
+    async def save_hot_day(self, degrees: int | None, units: list[str]) -> None:
+        """Settings > Services > Sensibo: the hot-day offer's temperature (None for off) and its rooms."""
+        self.hot_day, self.hot_day_rooms = degrees, list(units)
+        self.schedule_hot_day()
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_hot_day, degrees, list(units))
+        except Exception as error:
+            self.activity.write(f"The hot-day offer wasn't saved ({type(error).__name__}).", "Settings error")
+            self.notify("Could not save the hot-day offer.", severity="error")
+            return
+        names = [name for unit, name in self.home_rooms if unit in units]
+        self.activity.write(
+            f"Hot-day offer {f'from {degrees}°C for ' + (', '.join(names) or 'no rooms yet') if degrees is not None else 'off'}.",
+            "Settings changed")
+
+    def notice_filters(self, rooms) -> None:
+        """A unit saying its filters are due for a clean becomes something she's aware of, once (this
+        run): never urgent, so it waits until she's awake rather than being queued in Standby."""
+        for room in rooms:
+            if not room.filters_due:
+                self.filters_told.discard(room.id)
+                continue
+            if room.id in self.filters_told or self.standby or not self.live.ready:
+                continue
+            self.filters_told.add(room.id)
+            observation = (f"{room.name}'s air conditioner says its filters are due for a clean{filter_run(room)}. "
+                           "Mention it when it fits, not urgently; once they're cleaned, aircon filters_cleaned "
+                           "resets the reminder.")
+            self.activity.write(f"Aircon: {room.name}'s filters are due for a clean.", "Sensibo")
+            self.queue_observation(observation, source="sensibo")
 
     async def use_aircon(self, arguments: dict) -> dict:
         """The aircon tool: status, set, timer or cancel_timer, for one room or every room."""
@@ -305,6 +499,11 @@ class HomeMixin:
             rooms = [room for room in rooms if any(schedule.id == wanted for schedule in room.schedules)]
             if not rooms:
                 return {"status": "not_found", "message": "No schedule with that id; status lists each with its id."}
+        if action == "filters_cleaned" and arguments["room"] is None:
+            # Every room whose filters are due.
+            rooms = [room for room in rooms if room.filters_due]
+            if not rooms:
+                return {"status": "ok", "done": [], "note": "No unit says its filters are due; nothing to reset."}
         reviving = action == "climate_react" and arguments["low"] is None
         planned = {}
         try:
@@ -382,6 +581,10 @@ class HomeMixin:
             resume = action == "resume_schedule"
             await self.sensibo.switch_schedule(room.id, schedule.id, resume)
             return f"{'resumed' if resume else 'paused'}: {schedule.time} {days_words(schedule.days)}", []
+        if action == "filters_cleaned":
+            await self.sensibo.reset_filters(room.id)
+            self.filters_told.discard(room.id)
+            return "filter reminder reset", []
         if action == "climate_react_off":
             await self.sensibo.switch_climate_react(room.id, False)
             return "Climate React off (its settings kept)", []

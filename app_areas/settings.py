@@ -101,6 +101,8 @@ class SettingsMixin:
                     set_enabled=self.save_sensibo_enabled, save_key=self.save_sensibo_key,
                     test=self.test_sensibo, save_her_room=self.save_her_room,
                     enabled=self.sensibo_enabled, has_key=bool(self.sensibo.key), her_room=self.her_room_id,
+                    bedtime=self.bedtime, bedtime_rooms=list(self.bedtime_rooms), save_bedtime=self.save_bedtime,
+                    hot_day=self.hot_day, hot_day_rooms=list(self.hot_day_rooms), save_hot_day=self.save_hot_day,
                 ),
                 game=GameControls(
                     push_to_talk=self.game_push_to_talk, save_push_to_talk=self.save_game_push_to_talk,

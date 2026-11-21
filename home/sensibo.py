@@ -31,7 +31,7 @@ KEY_PATTERN = re.compile(r"[A-Za-z0-9]{20,64}")
 API = "https://home.sensibo.com/api/v2"
 # Timers (and schedules) are still on the older version.
 API_V1 = "https://home.sensibo.com/api/v1"
-FIELDS = "id,room,acState,measurements,connectionStatus,remoteCapabilities,timer,schedules,smartMode"
+FIELDS = "id,room,acState,measurements,connectionStatus,remoteCapabilities,timer,schedules,smartMode,filtersCleaning"
 UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
 SCHEDULE_ID = re.compile(r"[A-Za-z0-9]{4,32}")
 DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -106,6 +106,10 @@ class Room:
     # Its schedules, and its Climate React (None if it was never set up).
     schedules: tuple = field(default=(), compare=False)
     react: "ClimateReact | None" = field(default=None, compare=False)
+    # Whether it says its filters are due for a clean, and the hours it has run since the last (None
+    # when it doesn't say).
+    filters_due: bool | None = None
+    filter_hours: float | None = None
 
 
 @dataclass(frozen=True)
@@ -170,6 +174,15 @@ def _schedules(value) -> tuple:
     return tuple(schedules)
 
 
+def _filters(value) -> tuple[bool | None, float | None]:
+    """A unit's filter reminder from its pod: (due, hours run since the last clean)."""
+    if not isinstance(value, dict):
+        return None, None
+    due = value.get("shouldCleanFilters")
+    seconds = _number(value.get("acOnSecondsSinceLastFiltersClean"))
+    return (due if isinstance(due, bool) else None), (round(seconds / 3600, 1) if seconds is not None else None)
+
+
 def _climate_react(value) -> "ClimateReact | None":
     """A unit's Climate React from its pod; None when it was never set up (null or {})."""
     if not isinstance(value, dict) or not value:
@@ -229,6 +242,7 @@ def parse_rooms(body) -> list[Room]:
             feels_like=_number(readings.get("feelsLike")), measured_at=_time(readings.get("time")),
             modes=_modes(pod.get("remoteCapabilities"), unit), timer_at=timer_at, timer_on=timer_on,
             schedules=_schedules(pod.get("schedules")), react=_climate_react(pod.get("smartMode")),
+            **dict(zip(("filters_due", "filter_hours"), _filters(pod.get("filtersCleaning")))),
         ))
     return rooms
 
@@ -402,7 +416,14 @@ def reading(room: Room, now: datetime) -> dict:
         minutes = max(1, round((room.timer_at - now).total_seconds() / 60))
         what = {True: "turns on", False: "turns off"}.get(room.timer_on, "changes")
         shown["timer"] = f"{what} in {minutes} minutes"
+    if room.filters_due:
+        shown["filters"] = "due for a clean" + filter_run(room)
     return shown
+
+
+def filter_run(room: Room) -> str:
+    """" (312 hours of running since the last clean)", or "" when the unit doesn't say."""
+    return f" ({room.filter_hours:.0f} hours of running since the last clean)" if room.filter_hours is not None else ""
 
 
 def days_words(days) -> str:
@@ -570,6 +591,25 @@ class Sensibo:
             raise SensiboError(f"Sensibo answered {response.status_code}.")
         return True
 
+    async def home_location(self) -> tuple[float, float] | None:
+        """The home's location from the Sensibo account, rounded to one decimal place (about 10 km) as
+        soon as it's read; None when the account has none."""
+        async with self.lock:
+            response = await self._call("GET", f"{API}/users/me/pods", params={"fields": "id,location"})
+        if response.status_code != 200:
+            raise SensiboError(f"Sensibo answered {response.status_code}.")
+        try:
+            pods = response.json().get("result") or []
+        except (ValueError, AttributeError) as error:
+            raise SensiboError("Sensibo's answer wasn't understood.") from error
+        for pod in pods:
+            place = (pod.get("location") or {}).get("latLon") if isinstance(pod, dict) else None
+            if (isinstance(place, list) and len(place) == 2
+                    and all(isinstance(part, (int, float)) and not isinstance(part, bool) for part in place)
+                    and -90 <= place[0] <= 90 and -180 <= place[1] <= 180):
+                return round(place[0], 1), round(place[1], 1)
+        return None
+
     async def add_schedule(self, unit_id: str, at: str, zone: str, days, state: dict) -> None:
         """At `at` ("16:00") in `zone` (such as "Australia/Perth"), on `days` (none: once), the unit
         goes to `state`."""
@@ -598,6 +638,12 @@ class Sensibo:
         """Turns a unit's Climate React off or back on, keeping its settings."""
         self._check_unit(unit_id)
         await self._write("PUT", f"{API}/pods/{unit_id}/smartmode", {"enabled": enabled})
+
+    async def reset_filters(self, unit_id: str) -> None:
+        """Clears a unit's filter reminder, once they're cleaned (not in Sensibo's reference; as Home
+        Assistant's library does it)."""
+        self._check_unit(unit_id)
+        await self._write("DELETE", f"{API}/pods/{unit_id}/cleanFiltersNotification", None)
 
     async def _write(self, method: str, url: str, body: dict | None, missing_ok: bool = False) -> bool:
         """A change; what was read before no longer holds. False for a 404 when missing_ok; SensiboError

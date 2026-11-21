@@ -114,8 +114,12 @@ To do on this branch:
 - [x] Dashboard: minimising boxes to chips on its bottom border, the open ones flowing through one row or two on shared columns, a reopened box going last (first, as it was getting crowded)
 - [x] Aircon 3b: each room on the dashboard
 - [x] Aircon 4a: schedules and Climate React, set up when asked
-- [ ] Aircon 4b: her own initiative (offering to pre-cool before a hot afternoon, a unit left on at bedtime, filter cleaning)
-- [ ] Presence: knowing who's home, for "a unit left on while you're out" and "a room too hot while you're away"
+- [x] Aircon 4b-i: filter cleaning, told once and reset when cleaned
+- [x] Aircon 4b-ii: a unit left on at bedtime (rooms ticked in Settings; Signal in standby)
+- [x] Aircon 4b-iii: offering to pre-cool before a hot afternoon (Open-Meteo, the home's rough location, with the person's OK)
+- [ ] Presence 1: the office webcam and the Decisions API judging whether anyone's there (only once the PC has been idle 15 minutes; frames never kept), shown on the dashboard and in Activity, no actions yet
+- [ ] Presence 2: acting on it: standby when the office is empty during voice; her room's aircon off after an hour empty (unless a timer or Climate React has it), told on Signal
+- [ ] Presence 3: lights and other devices, when there are some
 
 ### Judgement calls
 
@@ -278,11 +282,16 @@ set up, and this API is small. If Home Assistant arrives, it can take over.
    `aircon` tool, each room's shown in status and on the dashboard. Sensibo runs both itself, so
    nothing in Cora keeps time. Formats from Sensibo's API reference and Home Assistant's library,
    which differ on a listed schedule's days (`recurringDays` read, `recurOnDaysOfWeek` sent); both
-   are read. Still to confirm on the real units: a listed schedule's and Climate React's shapes once
-   one exists. Climate React has no end time, so "tonight" means switching it off later. *4b:* her
-   initiative. The units do report filter cleaning (`filtersCleaning`: `shouldCleanFilters`, run
-   time since the last clean against a 300-hour threshold), so the reminder is possible; "while
-   you're out" waits for presence, its own item.
+   are read. Confirmed on the real units (21 November 2026): schedules list their days capitalised
+   (`"Monday"`) and their next time in UTC without a zone, and Climate React reads back as sent
+   (thresholds in °C, both states whole), in the room read and on its own endpoint alike. Climate React has no end time, so "tonight" means switching it off later. *4b:* her
+   initiative. *4b-i built:* filter cleaning (`filtersCleaning`: `shouldCleanFilters`, run time
+   since the last clean against a 300-hour threshold), told once and reset with `filters_cleaned`.
+   *4b-ii built:* the bedtime check (a time and rooms ticked in Settings; offered in a word when
+   she's awake, asked on Signal in standby). *4b-iii built:* the hot-day offer (Open-Meteo's
+   forecast at 08:00 from the Sensibo account's location rounded to about 10 km, sent with the
+   person's OK on 21 November 2026; offered when the peak reaches a set temperature, 32°C chosen). "While you're out" waits for
+   presence, its own item.
 
 ### Claude Code
 

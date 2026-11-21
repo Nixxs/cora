@@ -172,6 +172,8 @@ def room_lines(rooms, her_room_id: str, now) -> Text:
         if room.timer_at is not None and room.timer_at > now:
             what = {True: "on", False: "off"}.get(room.timer_on, "changes")
             lines.append(f" · {what} {until(room.timer_at, now)}", style=LABEL_STYLE)
+        if room.filters_due:
+            lines.append(" · filters due", style=HOT_STYLE)
         plan = plan_line(room)
         if plan:
             lines.append("\n  " + plan, style=LABEL_STYLE)

@@ -32,6 +32,9 @@ NO_BACKUP_COPY = "none"
 HOME_UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
 # A dashboard box's id, such as "feelings-box".
 DASHBOARD_BOX_ID = re.compile(r"[a-z]+(-[a-z]+)*")
+BEDTIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+# The hot-day offer's temperature, in whole °C.
+HOT_DAY_LOWEST, HOT_DAY_HIGHEST = 20, 50
 BACKUP_COPY_MAX_CHARS = 200
 
 
@@ -184,6 +187,53 @@ class AppSettingsStore:
         if not HOME_UNIT_ID.fullmatch(unit_id):
             raise ValueError("Unknown unit id")
         self._set("her_room", unit_id)
+
+    def bedtime(self) -> tuple[str, list[str]]:
+        """The bedtime check: its time ("22:30", or "" for none) and the units it looks at, by id."""
+        saved = self._get("bedtime") or ""
+        at, _, units = saved.partition("|")
+        if not BEDTIME.fullmatch(at):
+            return "", []
+        return at, [unit for unit in units.split(",") if HOME_UNIT_ID.fullmatch(unit)]
+
+    def set_bedtime(self, at: str, units: list[str]) -> None:
+        """Saves it; no time clears the setting (an empty value isn't stored)."""
+        if not at:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "bedtime"))
+            return
+        if not BEDTIME.fullmatch(at):
+            raise ValueError("Bedtime must be a 24-hour time, such as 22:30")
+        if not all(HOME_UNIT_ID.fullmatch(unit) for unit in units):
+            raise ValueError("Unknown unit id")
+        value = f"{at}|{','.join(units)}"
+        if len(value) > 200:
+            raise ValueError("Too many rooms")
+        self._set("bedtime", value)
+
+    def hot_day(self) -> tuple[int | None, list[str]]:
+        """The hot-day offer: the forecast top it starts at (whole °C, or None for off) and the units it
+        offers to cool, by id."""
+        saved = self._get("hot_day") or ""
+        degrees, _, units = saved.partition("|")
+        if not degrees.isdigit() or not HOT_DAY_LOWEST <= int(degrees) <= HOT_DAY_HIGHEST:
+            return None, []
+        return int(degrees), [unit for unit in units.split(",") if HOME_UNIT_ID.fullmatch(unit)]
+
+    def set_hot_day(self, degrees: int | None, units: list[str]) -> None:
+        """Saves it; None turns it off (an empty value isn't stored)."""
+        if degrees is None:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "hot_day"))
+            return
+        if isinstance(degrees, bool) or not isinstance(degrees, int) or not HOT_DAY_LOWEST <= degrees <= HOT_DAY_HIGHEST:
+            raise ValueError(f"The hot-day temperature must be {HOT_DAY_LOWEST} to {HOT_DAY_HIGHEST}°C")
+        if not all(HOME_UNIT_ID.fullmatch(unit) for unit in units):
+            raise ValueError("Unknown unit id")
+        value = f"{degrees}|{','.join(units)}"
+        if len(value) > 200:
+            raise ValueError("Too many rooms")
+        self._set("hot_day", value)
 
     def dashboard_boxes(self) -> tuple[list[str], list[str]]:
         """The dashboard's open boxes in the order they flow, and its minimised ones, by id; both

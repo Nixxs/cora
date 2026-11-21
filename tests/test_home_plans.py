@@ -2,6 +2,7 @@
 
 import json
 import unittest
+import unittest.mock
 from unittest.mock import AsyncMock, patch
 
 from home.sensibo import (
@@ -211,6 +212,61 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(app.sensibo.switch_climate_react.await_args_list[1].args, ("Jyt7jM8c", True))
             self.assertIn("Climate React back on: keeps 22–25°C", back["done"][0])
             self.assertEqual(none_saved["status"], "not_allowed")
+
+
+FILTERS_DUE = {"acOnSecondsSinceLastFiltersClean": 1123200, "filtersCleanSecondsThreshold": 1080000,
+               "lastFiltersCleanTime": None, "shouldCleanFilters": True}
+
+
+class FilterTests(unittest.TestCase):
+    def test_a_unit_saying_its_filters_are_due_shows_in_its_reading_and_on_the_dashboard(self):
+        due = parse_rooms({"result": [pod() | {"filtersCleaning": FILTERS_DUE}]})[0]
+        self.assertEqual((due.filters_due, due.filter_hours), (True, 312.0))
+        self.assertEqual(reading(due, NOW)["filters"], "due for a clean (312 hours of running since the last clean)")
+        from ui.dashboard import room_lines
+        self.assertIn("off · filters due", room_lines([due], "", NOW).plain)
+        fine = parse_rooms({"result": [pod() | {"filtersCleaning": FILTERS_DUE | {"shouldCleanFilters": False}}]})[0]
+        self.assertNotIn("filters", reading(fine, NOW))
+        self.assertIsNone(parse_rooms(ROOMS)[0].filters_due)
+
+
+class FilterRequestTests(test_home.ClientTests):
+    async def test_the_reminder_is_reset_as_home_assistant_does(self):
+        client = self.client((200, {"status": "success"}))
+        await client.reset_filters("Jyt7jM8c")
+        request = self.requests[0]
+        self.assertEqual((request.method, request.url.path), ("DELETE", "/api/v2/pods/Jyt7jM8c/cleanFiltersNotification"))
+        self.assertEqual(request.content, b"")
+
+
+class FilterAppTests(unittest.IsolatedAsyncioTestCase):
+    def ready(self, app):
+        test_home.AppTests.ready(self, app)
+        rooms = parse_rooms({"result": [pod() | {"filtersCleaning": FILTERS_DUE}, pod("BpP9b5Ka", "Declan’s Room")]})
+        app.sensibo.rooms = AsyncMock(return_value=(rooms, 0.0))
+        return rooms
+
+    async def test_she_is_told_once_while_awake_and_again_after_a_reset(self):
+        async with keyboard_tests.running_app() as (app, pilot):
+            rooms = self.ready(app)
+            app.queue_observation = unittest.mock.MagicMock()
+            app.live.ready = True
+            app.standby = True
+            app.remember_rooms(rooms)
+            app.queue_observation.assert_not_called()
+            app.standby = False
+            app.remember_rooms(rooms)
+            app.remember_rooms(rooms)
+            app.queue_observation.assert_called_once()
+            self.assertIn("Office's air conditioner says its filters are due", app.queue_observation.call_args.args[0])
+            app.sensibo.reset_filters = AsyncMock()
+            with patch.object(app, "reread_home"):
+                result = await app.use_aircon(args("filters_cleaned"))
+            # Room null: only the rooms whose filters are due.
+            app.sensibo.reset_filters.assert_awaited_once_with("Jyt7jM8c")
+            self.assertEqual(result["done"], ["Office: filter reminder reset"])
+            app.remember_rooms(rooms)
+            self.assertEqual(app.queue_observation.call_count, 2)
 
 
 if __name__ == "__main__":
