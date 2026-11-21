@@ -103,6 +103,8 @@ class SettingsMixin:
                     enabled=self.sensibo_enabled, has_key=bool(self.sensibo.key), her_room=self.her_room_id,
                     bedtime=self.bedtime, bedtime_rooms=list(self.bedtime_rooms), save_bedtime=self.save_bedtime,
                     hot_day=self.hot_day, hot_day_rooms=list(self.hot_day_rooms), save_hot_day=self.save_hot_day,
+                    presence=self.presence_enabled, set_presence=self.save_presence_enabled,
+                    look_now=lambda: self.look_for_someone(asked=True), presence_status=self.presence_status,
                 ),
                 game=GameControls(
                     push_to_talk=self.game_push_to_talk, save_push_to_talk=self.save_game_push_to_talk,
@@ -410,6 +412,23 @@ class SettingsMixin:
                 self.persistence.save_dashboard_boxes, list(opened), list(minimised))
         except Exception as error:
             self.activity.write(f"The dashboard's layout wasn't saved ({type(error).__name__}).", "Settings error")
+
+    @work(group="side-boxes", exclusive=True, exit_on_error=False)
+    async def save_side_boxes(self, minimised: list[str]) -> None:
+        """The chat's side panel's minimised boxes, for the next launch."""
+        try:
+            await self.conversation_persistence.call_database(self.persistence.save_side_boxes, list(minimised))
+        except Exception as error:
+            self.activity.write(f"The side panel's layout wasn't saved ({type(error).__name__}).", "Settings error")
+
+    async def side_panel_tasks(self):
+        """The open tasks for the side panel, or None while they can't be read (before the database is
+        up, or it failing)."""
+        try:
+            tasks = await self.conversation_persistence.call_database(self.persistence.load_open_tasks)
+        except Exception:
+            return None
+        return tasks if isinstance(tasks, list) else None
 
     @work(group="model-settings-save")
     async def save_voice_setting(self, voice: str) -> None:

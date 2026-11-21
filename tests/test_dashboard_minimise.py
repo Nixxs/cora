@@ -170,6 +170,20 @@ class StoreTests(unittest.TestCase):
             saved.assert_not_called()
             session.return_value.__enter__.return_value.execute.assert_called_once()
 
+    def test_the_side_panels_minimised_boxes(self):
+        store = AppSettingsStore(MagicMock())
+        with patch.object(store, "_get", return_value="side-home,Bad Box,side-tasks"):
+            self.assertEqual(store.side_boxes(), ["side-home", "side-tasks"])
+        with patch.object(store, "_set") as saved:
+            store.set_side_boxes(["side-tasks"])
+            saved.assert_called_once_with("side_boxes", "side-tasks")
+            with self.assertRaises(ValueError):
+                store.set_side_boxes(["../x"])
+        with patch.object(store, "_set") as saved, patch("storage.app_settings_store.Session") as session:
+            store.set_side_boxes([])
+            saved.assert_not_called()
+            session.return_value.__enter__.return_value.execute.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -216,9 +216,21 @@ Speaking and typing go into the same conversation.
 The chat sits in a **chat** box of its own: the history, Activity, the controls and the
 message box. **Beside it** ([ui/side_panel.py](ui/side_panel.py)), when the window is at least
 110 columns wide, a column on the right shows her **voice** (the dashboard's graph: her voice
-above the line, yours below) and, while Cora listens for Claude Code, a **claude code** box
-under it that takes the rest of the height, with the same session lines as the dashboard's,
-so you can follow what Claude is doing next to the whole chat history. Narrower, the chat box
+above the line, yours below), with these boxes under it:
+
+- **claude code**, while Cora listens for Claude Code: the same session lines as the dashboard's,
+  so you can follow what Claude is doing next to the whole chat history. It takes the rest of the
+  height and leaves voice a small box.
+- **home**, while Sensibo or presence is set up: the dashboard's home box, redrawn every 2
+  seconds from memory.
+- **tasks**: the open tasks, read from the database every 15 seconds while the panel shows. Click
+  one to read it in full.
+
+Home and tasks are as tall as they need, up to 16 lines, and then scroll; voice takes whatever
+height is left. Like the dashboard's boxes, a click on one of these boxes' titles minimises it to a
+chip ("▸ tasks") on a tray at the panel's foot, and a click on the chip opens it again. The
+minimised ones are kept as `side_boxes` in `app_settings` and loaded at launch, when home and tasks
+first fill (they can't be read before the settings and database are up). Narrower, the chat box
 keeps the full width; narrower than 50 columns the screen is cut off rather than squeezed
 (text boxes squeezed under their own padding can't lay out their text).
 
@@ -430,7 +442,7 @@ name (a new one) opens last.
 | desires | Live desires, strongest first: pursuing, held, or forming (dimmed) |
 | conversations | OpenAI spend this month and a bar per month for the last year (hover a bar for its amount), or a placeholder whose hover and click say to add an Admin key; below it, your messages per day over the last year, a week per column |
 | tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups. Click a task to read it in full, with its whole latest step and each person's brief |
-| home | Each room (her own marked ◆): its temperature (amber from 28°, blue at 18° and below), humidity, feels-like when it differs and how old the reading is; then what its air conditioner is doing (cooling to 23° · fan low, off, offline) and its timer. Only while Sensibo is set up, and redrawn every 2 seconds from what the app already holds, so it asks Sensibo nothing; after a failed read it keeps the last one, marked "last reading" |
+| home | Each room (her own marked ◆): its temperature (amber from 28°, blue at 18° and below), humidity, feels-like when it differs and how old the reading is; then what its air conditioner is doing (cooling to 23° · fan low, off, offline) and its timer. Under her room, presence's latest (see [Presence](#presence-whether-anyones-in-her-room-the-webcam)); with presence on and no Sensibo, the box holds just that. Only while Sensibo or presence is set up, and redrawn every 2 seconds from what the app already holds, so it asks Sensibo nothing; after a failed read it keeps the last one, marked "last reading" |
 | context | How full each model's context is (measured by the API), then each item's estimated share; click an item to read its text |
 | background | When each background job last saved something, and when the timed ones are next due |
 
@@ -1459,6 +1471,77 @@ bedtime, filter cleaning, a hot day's forecast) is below; what's next is on the
   Sensibo only (no charge per request; one open stream, a full read every 10 minutes and one after
   each change), room notes are skipped while her voice session is closed, and written chats carry
   her room's line (about 100 tokens).
+
+### Presence: whether anyone's in her room (the webcam)
+
+[app_areas/presence.py](app_areas/presence.py) and [home/presence.py](home/presence.py), switched on
+under Settings › Her home › Presence (`presence` in `app_settings`; off by default). She looks,
+reports, and acts on an empty room (below).
+
+- **When she looks:** a check every minute measures how long it's been quiet: since the PC's last
+  keyboard or mouse input (Windows' `GetLastInputInfo`) or since the person's voice was last
+  transcribed, whichever is sooner. Once that reaches 15 minutes she takes one look, then at most
+  one every 30 minutes while it stays quiet; using the PC or speaking to her starts a new quiet
+  stretch. While someone's using the PC they're plainly there, so she doesn't look. **Look now**
+  in Settings takes one straight away, switched on or not.
+- **The frame:** [home/camera_grab.py](home/camera_grab.py) runs in a process of its own
+  (`python -I`, no window) and opens camera 0 through DirectShow. It throws away the first frames
+  while the exposure settles, shrinks the picture to 640 px wide and prints it as a base64 JPEG on
+  a `FRAME` line. It runs apart because some camera drivers (NVIDIA Broadcast's virtual camera)
+  write logs straight to the console, which would scribble over the TUI; it also keeps OpenCV
+  (`opencv-python-headless`) out of Cora's own memory. A look takes about 3 seconds, and the
+  webcam's light comes on for that long. The frame is never written to disk and isn't kept after
+  the look.
+- **The judgement:** one Decisions API request (`gpt-6-luna`), with the frame and a few lines of
+  evidence:
+  - the day and time
+  - her room's name
+  - how long the PC has been untouched
+  - whether she's listening, and when someone last spoke to her
+  - her room's air conditioner and temperature as last read
+  - the previous look
+
+  It asks one predicate: how likely is it that someone's in the room, in view or not? 70% or more
+  reads as "someone's there", 30% or less as "empty", and anything between as unsure. Only the
+  probability comes back.
+- **Shown:** each look is a line in Activity (`Presence`), for example "Office: empty (8% someone's
+  there) · PC idle 17 minutes · 812 tokens ($0.00008)". The latest look or problem shows under the
+  switch in Settings, and under her room in the dashboard's home box ("◉ empty · looked 20:15
+  (8%)", green for someone there, amber for unsure, red for a problem). That line is checked again
+  every 2 seconds: if the PC has been used or she's been spoken to since the last look, it reads
+  "someone's here · active just now" rather than an out-of-date "empty". A problem (no camera, the API failing) is written to Activity once until it
+  changes.
+- **Acting on an empty room:** only after an automatic look that says empty; **Look now** never
+  acts.
+  - **Standby:** if she's in voice, she goes to standby the way idle standby does. She stays in
+    voice if you're talking to her from the web page or on a phone call (the office is meant to
+    be empty then), or if she's busy, such as mid-reply or running a tool; Activity says which.
+  - **Her room's air conditioner:** the empty stretch is timed from when the room went quiet, as
+    of the first empty look. When the quiet reaches an hour and her room's unit was on at its last
+    reading, she takes one more look then, rather than waiting for the half-hourly one. If that's
+    empty too, she reads the room afresh and turns the unit off. She leaves it if it's already off,
+    offline, has a timer to turn it off or is kept by Climate React. She tells you on Signal ("Office
+    has looked empty for about an hour, so I turned its air conditioner off."), which also goes into
+    your conversation; without Signal it's in Activity only. This happens once per empty stretch.
+  - **The stretch ends** when anyone uses the PC or speaks to her, a look doesn't say empty, or
+    presence is switched off.
+- **Coming back:** if the stretch ends because someone used the PC or spoke to her, and she's in
+  standby, she notices within a minute (the minute check) and works out roughly how long you were
+  out.
+  - **Something waiting:** she wakes, the same as pressing the status button. Waiting means
+    observations queued while she rested, the mail digest, or a task that needs you. Her welcome
+    back is told how long you were out, what's waiting, and whether she turned the aircon off, so she
+    greets you with it; the queued observations follow as usual.
+  - **Nothing waiting:** she stays in standby and leaves a short note in the desk chat ("Cora ·
+    written"). It's written by her backend model as the same Cora: her context and the recent
+    conversation, plus how long you were out, when you left and came back, and the room whose
+    aircon she turned off, if any (she offers to turn it back on). The note is saved with the
+    conversation like any written reply. It costs a fraction of a cent.
+  - **Never:** for her interest findings or chances for her desires (they wait for your next talk),
+    while she's awake, or after a quiet stretch that no look judged empty.
+- **Cost:** about $0.0001 a look ($0.10 per million input tokens; output is free). At most two
+  looks an hour while the room is quiet (plus the hour's confirming look), and none while the PC
+  is in use.
 
 ### The listener and webhooks
 

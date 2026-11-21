@@ -112,14 +112,18 @@ To do on this branch:
 - [x] Aircon 2: control: changing a unit, and timers
 - [x] Aircon 3a: the live stream: her room as it changes, and changes made elsewhere as awareness
 - [x] Dashboard: minimising boxes to chips on its bottom border, the open ones flowing through one row or two on shared columns, a reopened box going last (first, as it was getting crowded)
+- [x] The chat's side panel: claude code, home and tasks under voice, each minimising to a chip on a tray at its foot (remembered)
 - [x] Aircon 3b: each room on the dashboard
 - [x] Aircon 4a: schedules and Climate React, set up when asked
 - [x] Aircon 4b-i: filter cleaning, told once and reset when cleaned
 - [x] Aircon 4b-ii: a unit left on at bedtime (rooms ticked in Settings; Signal in standby)
 - [x] Aircon 4b-iii: offering to pre-cool before a hot afternoon (Open-Meteo, the home's rough location, with the person's OK)
-- [ ] Presence 1: the office webcam and the Decisions API judging whether anyone's there (only once the PC has been idle 15 minutes; frames never kept), shown on the dashboard and in Activity, no actions yet
-- [ ] Presence 2: acting on it: standby when the office is empty during voice; her room's aircon off after an hour empty (unless a timer or Climate React has it), told on Signal
+- [x] Presence 1a: the office webcam and the Decisions API judging whether anyone's there (only once the PC and her voice have been quiet 15 minutes, at most every 30; frames never kept), in Activity and Settings, no actions yet
+- [x] Presence 1b: the latest look on the dashboard
+- [x] Presence 2: acting on it: standby when the office is empty during voice; her room's aircon off after an hour empty (unless a timer or Climate React has it), told on Signal
+- [x] Presence 2b: coming back: a note in the chat from her while she stays in standby, or waking with a welcome back when something's waiting (queued observations, the mail digest, a task that needs you)
 - [ ] Presence 3: lights and other devices, when there are some
+- [ ] Eyes (later): a camera switch, off by default, that lets her voice session see live, mainly through the phone's back camera on the web page while out (showing her something, or taking her to see something she's wanted to), and the desk webcam beside Mic and Speaker. Frames go when the person starts speaking and when the scene changes; only the latest frame or two stay in her session; what she saw is described and kept, so an outing is remembered
 
 ### Judgement calls
 
