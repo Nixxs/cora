@@ -11,7 +11,7 @@ from uuid import uuid4
 from subconscious.identity.identity_rules import Trait
 from subconscious.identity.identity_store import Event
 from tools import create_tool_registry
-from tools.recall_self import ERROR_RESULT, SCHEMA, RecallSelfTool, validate_arguments
+from tools.recall_self import ERROR_RESULT, RecallSelfTool, validate_arguments
 
 FORMED = datetime(2026, 10, 15, 23, tzinfo=timezone(timedelta(hours=-8)))  # 2026-10-16 UTC
 
@@ -48,25 +48,14 @@ class RecallSelfToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((item["type"], item["call_id"]), ("function_call_output", "call_self"))
         return json.loads(item["output"])
 
-    def test_strict_schema_validation_and_registration(self):
-        self.assertEqual(SCHEMA["name"], "recall_self")
-        self.assertTrue(SCHEMA["strict"])
-        parameters = SCHEMA["parameters"]
-        self.assertFalse(parameters["additionalProperties"])
-        self.assertEqual(parameters["required"], ["statement"])
-        self.assertEqual(parameters["properties"]["statement"],
-                         {"type": "string", "minLength": 1, "maxLength": 300})
+    def test_its_argument_is_checked(self):
+        # Offered as the recall tool's kind 'self' (tools/recall.py).
         for arguments in ({"statement": " s "}, {"statement": "x" * 300}):
             validate_arguments(arguments)
         for arguments in ({}, {"statement": "s", "extra": 1}, {"statement": " \n"},
                           {"statement": "x" * 301}, {"statement": None}, {"title": "s"}):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 validate_arguments(arguments)
-        registry = create_tool_registry(
-            get_connection=lambda: self.current, is_closing=lambda: self.closing,
-            shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=MagicMock(),
-        )
-        self.assertEqual(registry.schemas()[5], SCHEMA)
         self.build.assert_not_called()
 
     async def test_match_returns_recent_changes_newest_first_off_event_loop(self):

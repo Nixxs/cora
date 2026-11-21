@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from subconscious.desires.desire_store import Desire, DesireEvent
 from tools import create_tool_registry
-from tools.recall_desire import ERROR_RESULT, SCHEMA, RecallDesireTool, validate_arguments
+from tools.recall_desire import ERROR_RESULT, RecallDesireTool, validate_arguments
 
 FORMED = datetime(2026, 10, 15, 23, tzinfo=timezone(timedelta(hours=-8)))  # 2026-10-16 UTC
 
@@ -48,24 +48,14 @@ class RecallDesireToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((item["type"], item["call_id"]), ("function_call_output", "call_desire"))
         return json.loads(item["output"])
 
-    def test_strict_schema_validation_and_registration(self):
-        self.assertEqual(SCHEMA["name"], "recall_desire")
-        self.assertTrue(SCHEMA["strict"])
-        parameters = SCHEMA["parameters"]
-        self.assertFalse(parameters["additionalProperties"])
-        self.assertEqual(parameters["required"], ["wish"])
-        self.assertEqual(parameters["properties"]["wish"], {"type": "string", "minLength": 1, "maxLength": 300})
+    def test_its_argument_is_checked(self):
+        # Offered as the recall tool's kind 'desire' (tools/recall.py).
         for arguments in ({"wish": " w "}, {"wish": "x" * 300}):
             validate_arguments(arguments)
         for arguments in ({}, {"wish": "w", "extra": 1}, {"wish": " \n"}, {"wish": "x" * 301}, {"wish": None},
                           {"statement": "w"}):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 validate_arguments(arguments)
-        registry = create_tool_registry(
-            get_connection=lambda: self.current, is_closing=lambda: self.closing,
-            shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=MagicMock(),
-        )
-        self.assertEqual(registry.schemas()[6], SCHEMA)
         self.build.assert_not_called()
 
     async def test_match_returns_what_it_grew_from_and_recent_changes_newest_first_off_event_loop(self):

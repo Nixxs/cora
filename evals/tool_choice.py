@@ -63,10 +63,10 @@ SECTIONS = instruction_sections(
 CASES = [
     # Remembering: the person, herself, her interests and wishes.
     ("Do you remember what I said my sister's name was?", {"search_memory"}),
-    ("Why do you say you're straightforward?", {"recall_self"}),
-    ("How did you get into old maps?", {"recall_interest"}),
-    ("What have you found out lately about tidal pools?", {"recall_interest"}),
-    ("Why do you want to see the ocean at sunset?", {"recall_desire"}),
+    ("Why do you say you're straightforward?", {"recall"}),
+    ("How did you get into old maps?", {"recall"}),
+    ("What have you found out lately about tidal pools?", {"recall"}),
+    ("Why do you want to see the ocean at sunset?", {"recall"}),
     ("Sure, I'll take you to see the ocean at sunset this weekend.", {"note_desire"}),
     ("Call me Al from now on.", {"set_person_name"}),
     ("My car rego is 1ABC234, keep that handy for me.", {"note_detail"}),

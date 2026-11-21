@@ -89,8 +89,10 @@ limit rather than letting the context grow.
 | What she wants (desires) | 2,000 |
 
 Everything else comes on demand, through tools with bounded results: `search_memory`, and
-`recall_interest`, `recall_self` and `recall_desire` for where an interest, a trait or a
-desire came from. A contact's session gets their own memories and conversation instead of
+`recall` (kind `interest`, `self` or `desire`, by its exact wording) for where an interest, a
+trait or a desire came from. `recall` is one tool for the three, since every tool offered costs
+its description on every request ([tools/recall.py](tools/recall.py)); each kind still does its
+own lookup. A contact's session gets their own memories and conversation instead of
 yours, and none of your private context.
 
 ### What runs when
@@ -819,7 +821,7 @@ can hold an interest without wanting anything from it.
   grew from a strong pull, and she feels fulfilment.
 - **Knowing them:** desires she holds or pursues reach both models at each connect,
   strongest first, within 2,000 characters, as her own wishes, never to press you to help.
-  `recall_desire` returns why she wants one, what it grew from, and its latest changes.
+  `recall` (kind `desire`) returns why she wants one, what it grew from, and its latest changes.
 - **Pursuing:** at most once a day, an exploration attempt becomes a step toward one,
   taking turns. She looks for what would actually make it happen (a real place, event, date,
   group or way in), and when it needs travel, money, a body or your time, finds a nearer
@@ -868,7 +870,7 @@ with reasons, and kept apart from yours: learning your view doesn't make it hers
   behind it, append-only.
 - **In conversation:** held traits reach both models at each connect, most confident first
   (within 4,000 characters), as "What you've come to know about yourself"; they never replace
-  the foundation. `recall_self` returns one trait's latest changes and reasons.
+  the foundation. `recall` (kind `self`) returns one trait's latest changes and reasons.
 
 ```powershell
 python -m subconscious.identity.identity_store            # active traits
@@ -2149,4 +2151,4 @@ offered costs its description's tokens on every backend request, so this matters
 Examples: [tools/enter_standby.py](tools/enter_standby.py) (no arguments),
 [tools/random_number.py](tools/random_number.py) (validated integers, kept as the example),
 and [tools/recall_interest.py](tools/recall_interest.py) (an off-thread read and an error
-result). Tests follow [tests/test_close_tool.py](tests/test_close_tool.py).
+result, offered through `recall`). Tests follow [tests/test_close_tool.py](tests/test_close_tool.py).

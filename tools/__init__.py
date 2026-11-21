@@ -29,9 +29,7 @@ from .aircon import SCHEMA as AIRCON_SCHEMA, AirconTool, validate_arguments as v
 from .set_wow_chat_channel import (
     SCHEMA as WOW_CHANNEL_SCHEMA, SetWowChatChannelTool, validate_arguments as validate_wow_channel_arguments,
 )
-from .recall_interest import RecallInterestTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
-from .recall_self import RecallSelfTool, SCHEMA as SELF_SCHEMA, validate_arguments as validate_self_arguments
-from .recall_desire import RecallDesireTool, SCHEMA as DESIRE_SCHEMA, validate_arguments as validate_desire_arguments
+from .recall import RecallTool, SCHEMA as RECALL_SCHEMA, validate_arguments as validate_recall_arguments
 from .feel import FeelTool, SCHEMA as FEEL_SCHEMA, validate_arguments as validate_feel_arguments
 from .note_desire import NoteDesireTool, SCHEMA as NOTE_DESIRE_SCHEMA, validate_arguments as validate_note_desire_arguments
 from .note_detail import NoteDetailTool, SCHEMA as NOTE_DETAIL_SCHEMA, validate_arguments as validate_note_detail_arguments
@@ -122,16 +120,12 @@ def create_tool_registry(
     registry.register(SCHEMA, validate_arguments, close_app.handle)
     search = SearchMemoryTool(get_connection, is_closing, write_debug)
     registry.register(SEARCH_SCHEMA, validate_search_arguments, search.handle)
-    recall = RecallInterestTool(get_connection, is_closing, write_debug)
+    recall = RecallTool(get_connection, is_closing, write_debug)
     registry.register(RECALL_SCHEMA, validate_recall_arguments, recall.handle)
     standby = StandbyTool(get_connection, is_closing, request_standby, write_debug)
     registry.register(STANDBY_SCHEMA, validate_standby_arguments, standby.handle)
     name = SetPersonNameTool(get_connection, is_closing, write_debug)
     registry.register(NAME_SCHEMA, validate_name_arguments, name.handle)
-    recall_self = RecallSelfTool(get_connection, is_closing, write_debug)
-    registry.register(SELF_SCHEMA, validate_self_arguments, recall_self.handle)
-    recall_desire = RecallDesireTool(get_connection, is_closing, write_debug)
-    registry.register(DESIRE_SCHEMA, validate_desire_arguments, recall_desire.handle)
     note_desire = NoteDesireTool(get_connection, is_closing, write_debug)
     registry.register(NOTE_DESIRE_SCHEMA, validate_note_desire_arguments, note_desire.handle)
     feel = FeelTool(get_connection, is_closing, write_debug, note_feeling)

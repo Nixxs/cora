@@ -11,7 +11,7 @@ from uuid import uuid4
 from subconscious.interests.exploration_store import LIST_LIMIT, Exploration
 from subconscious.interests.interest_store import Interest
 from tools import create_tool_registry
-from tools.recall_interest import ERROR_RESULT, SCHEMA, RecallInterestTool, validate_arguments
+from tools.recall_interest import ERROR_RESULT, RecallInterestTool, validate_arguments
 
 NOW = datetime.now(timezone.utc)
 CREATED = datetime(2026, 10, 15, 23, tzinfo=timezone(timedelta(hours=-8)))  # 2026-10-16 UTC
@@ -62,24 +62,14 @@ class RecallInterestToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((item["type"], item["call_id"]), ("function_call_output", "call_recall"))
         return json.loads(item["output"])
 
-    def test_strict_schema_validation_and_registration(self):
-        self.assertEqual(SCHEMA["name"], "recall_interest")
-        self.assertTrue(SCHEMA["strict"])
-        parameters = SCHEMA["parameters"]
-        self.assertFalse(parameters["additionalProperties"])
-        self.assertEqual(parameters["required"], ["title"])
-        self.assertEqual(parameters["properties"]["title"], {"type": "string", "minLength": 1, "maxLength": 200})
+    def test_its_argument_is_checked(self):
+        # Offered as the recall tool's kind 'interest' (tools/recall.py).
         for arguments in ({"title": " t "}, {"title": "x" * 200}):
             validate_arguments(arguments)
         for arguments in ({}, {"title": "t", "extra": 1}, {"title": ""}, {"title": " \n"},
                           {"title": "x" * 201}, {"title": None}, {"title": 4}, {"title": []}):
             with self.subTest(arguments=arguments), self.assertRaises(ValueError):
                 validate_arguments(arguments)
-        registry = create_tool_registry(
-            get_connection=lambda: self.current, is_closing=lambda: self.closing,
-            shutdown=AsyncMock(), request_standby=MagicMock(), write_debug=self.log, schedule=MagicMock(),
-        )
-        self.assertEqual(registry.schemas()[2], SCHEMA)
         self.build.assert_not_called()
 
     async def test_match_returns_bounded_latest_findings_off_event_loop(self):
