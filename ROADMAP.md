@@ -55,8 +55,8 @@ Waiting on devices at home: **Home Assistant** (starting with its demo devices) 
 
 Nothing is broken; these keep things healthy as she grows.
 
-- **Tool audit.** She has about 30 tools of her own, plus web search and any service tools
-  switched on. She picks well today, but choices get less reliable as the list grows,
+- **Tool audit (done 22 Nov 2026).** She has about 30 tools of her own, plus web search and any
+  service tools switched on. She picks well today, but choices get less reliable as the list grows,
   especially between similar tools.
   - [x] *Merge the calendar's changes:* `create_event`, `update_event`, `cancel_event` and
     `forward_event` into one `change_calendar` with an action. 87/90 still; about 460 fewer
@@ -73,8 +73,16 @@ Nothing is broken; these keep things healthy as she grows.
   - [x] *Measure it:* [evals/tool_choice.py](evals/tool_choice.py). Baseline 87/90 (97%). Her
     choices were already good, so the gain is mostly tokens: the tool list is about 11,700 of
     each request's 15,800.
-  - [ ] *Trim the longest descriptions,* starting with aircon's (4,300 characters).
-  - About 30 tools down to about 20, with per-chat exclusions working as now.
+  - [x] *Trim the longest descriptions:* aircon (4,266 to 2,820 characters), send_email,
+    send_signal_message and call_someone, with every rule kept. The tool list went from 46,750
+    characters to 40,800.
+  - *Where it ended (22 Nov 2026):* 86/90 as scored then; 88/90 counting `note_detail` as a fair
+    first step for an email that gives the person's address (it was 1 in 4 with the old
+    description too). 34 tools offered instead of 39. About 15,200 tokens a request instead of
+    16,450, roughly 7% less on every backend request. The WoW tools' 1,250 tokens go too when
+    the game isn't in use.
+  - The aim was about 20 tools. It stopped at 34, because her choices were already right and the
+    rest aren't close relatives; the tool list per request is what the measurement says to watch.
 - **Checks still to do on real devices:** the automatic hang-up after goodbye on a real
   call; wake-word microphone accuracy and opening-speech continuity; the standby heads-up's
   timing; the playback bars' alignment with real audio; image display in the VS Code

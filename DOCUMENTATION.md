@@ -2083,8 +2083,10 @@ tasks), so nothing personal is sent and runs stay comparable. A line said before
 asking Rocky") counts as the tool. It prints the misses, a score and the tokens used, and saves the
 run in `evals/results/`. A run costs about 1.5 million input tokens with `--repeat 2`, mostly the
 tool list, which is billed as cached input after the first request. `--only recall` or `--limit 3`
-run a few requests. The baseline (21 Nov 2026) is 87/90 right, with 39 tools and about 15,800
-tokens a request, about 11,700 of them the tools.
+run a few requests. The baseline (21 Nov 2026) was 87/90 right, with 39 tools and about 16,450
+tokens a request. After the tool audit (22 Nov 2026) it's 88/90 with 34 tools and about 15,200
+tokens. The miss it keeps is "what are the odds my flight gets delayed": she answers without
+`weigh_odds`.
 
 **Migrations:** never edit, rename or remove an applied migration; add a new higher-numbered
 SQL file. `python migrate.py` checks the history and applies pending ones in transactions,

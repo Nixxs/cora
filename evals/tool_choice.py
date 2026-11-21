@@ -93,7 +93,9 @@ CASES = [
     ("Message Declan on Signal and say hi from me.", {"send_signal_message"}),
     ("Have you got any new emails?", {"check_email"}),
     ("Email Sparkle Cleaning at hello@sparkle.example and ask what they'd charge for a two-bedroom end-of-lease "
-     "clean at 12 Smith Street, Joondalup, any day next week. Sign it from me, Alex.", {"send_email"}),
+     "clean at 12 Smith Street, Joondalup, any day next week. Sign it from me, Alex.",
+     # Saving the person's address first is what note_detail asks for ("as soon as they give one").
+     {"send_email", "note_detail"}),
     ("Ring Smile Dental on 08 9300 1234 and ask if they have a check-up appointment free Thursday afternoon "
      "for me, Alex Smith. Go ahead.", {"call_someone"}),
     ("What exactly did the hairdresser say on that call you made for me?", {"read_call"}),
