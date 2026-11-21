@@ -31,8 +31,16 @@ KEY_PATTERN = re.compile(r"[A-Za-z0-9]{20,64}")
 API = "https://home.sensibo.com/api/v2"
 # Timers (and schedules) are still on the older version.
 API_V1 = "https://home.sensibo.com/api/v1"
-FIELDS = "id,room,acState,measurements,connectionStatus,remoteCapabilities,timer"
+FIELDS = "id,room,acState,measurements,connectionStatus,remoteCapabilities,timer,schedules,smartMode"
 UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
+SCHEDULE_ID = re.compile(r"[A-Za-z0-9]{4,32}")
+DAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+# A schedule's time of day, in the person's own time zone: "16:00".
+SCHEDULE_TIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+# Climate React keeps a room between two temperatures (in °C, as Sensibo takes them): within this
+# range, at least this far apart.
+REACT_LOWEST, REACT_HIGHEST = 5.0, 40.0
+REACT_MIN_GAP = 1.0
 MAX_TIMER_MINUTES = 24 * 60
 TIMEOUT_SECONDS = 15.0
 MIN_GAP_SECONDS = 2.0
@@ -95,6 +103,37 @@ class Room:
     # Its timer, if one is set: when it goes off (UTC) and whether it turns the unit on or off.
     timer_at: datetime | None = None
     timer_on: bool | None = None
+    # Its schedules, and its Climate React (None if it was never set up).
+    schedules: tuple = field(default=(), compare=False)
+    react: "ClimateReact | None" = field(default=None, compare=False)
+
+
+@dataclass(frozen=True)
+class Schedule:
+    """A standing change Sensibo makes at a time of day, on some days or once."""
+
+    id: str
+    # "16:00", in the time zone it was made in.
+    time: str
+    # Lowercase day names; none means once.
+    days: tuple[str, ...]
+    enabled: bool
+    state: dict = field(compare=False)
+    # When it next goes off (UTC), if Sensibo says.
+    next_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class ClimateReact:
+    """Sensibo keeping a room between two readings: each threshold's state, applied when it's crossed."""
+
+    enabled: bool
+    # What it watches: temperature, feelsLike or humidity.
+    type: str
+    low: float | None
+    low_state: dict = field(compare=False)
+    high: float | None = None
+    high_state: dict = field(default_factory=dict, compare=False)
 
 
 def _number(value) -> float | None:
@@ -102,11 +141,46 @@ def _number(value) -> float | None:
 
 
 def _time(value) -> datetime | None:
+    """A time Sensibo gives as {"time": "..."}; one without a zone is UTC (as its timers and schedules
+    give theirs)."""
     text = value.get("time") if isinstance(value, dict) else None
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")) if isinstance(text, str) else None
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00")) if isinstance(text, str) else None
     except ValueError:
         return None
+    return moment.replace(tzinfo=timezone.utc) if moment is not None and moment.tzinfo is None else moment
+
+
+def _schedules(value) -> tuple:
+    """A unit's schedules from its pod (listed with recurringDays; made with recurOnDaysOfWeek)."""
+    schedules = []
+    for item in value if isinstance(value, list) else ():
+        if not isinstance(item, dict) or not SCHEDULE_ID.fullmatch(str(item.get("id") or "")):
+            continue
+        days = item.get("recurringDays", item.get("recurOnDaysOfWeek")) or []
+        days = tuple(day.lower() for day in days if isinstance(day, str) and day.lower() in DAYS)
+        when = item.get("targetTimeLocal")
+        upcoming = item.get("nextTime")
+        schedules.append(Schedule(
+            id=item["id"], time=when[:5] if isinstance(when, str) else "", days=days,
+            enabled=item.get("isEnabled") is not False,
+            state=item.get("acState") if isinstance(item.get("acState"), dict) else {},
+            next_at=_time(upcoming) if isinstance(upcoming, dict) else _time({"time": upcoming}),
+        ))
+    return tuple(schedules)
+
+
+def _climate_react(value) -> "ClimateReact | None":
+    """A unit's Climate React from its pod; None when it was never set up (null or {})."""
+    if not isinstance(value, dict) or not value:
+        return None
+    state = lambda key: value.get(key) if isinstance(value.get(key), dict) else {}
+    return ClimateReact(
+        enabled=value.get("enabled") is True,
+        type=value.get("type") if value.get("type") in ("temperature", "feelsLike", "humidity") else "temperature",
+        low=_number(value.get("lowTemperatureThreshold")), low_state=state("lowTemperatureState"),
+        high=_number(value.get("highTemperatureThreshold")), high_state=state("highTemperatureState"),
+    )
 
 
 def _timer(value) -> tuple[datetime | None, bool | None]:
@@ -154,6 +228,7 @@ def parse_rooms(body) -> list[Room]:
             temperature=_number(readings.get("temperature")), humidity=_number(readings.get("humidity")),
             feels_like=_number(readings.get("feelsLike")), measured_at=_time(readings.get("time")),
             modes=_modes(pod.get("remoteCapabilities"), unit), timer_at=timer_at, timer_on=timer_on,
+            schedules=_schedules(pod.get("schedules")), react=_climate_react(pod.get("smartMode")),
         ))
     return rooms
 
@@ -211,6 +286,32 @@ def plan_state(room: Room, *, on: bool | None = None, mode: str | None = None, t
     if target is not None and (temperatures or not supported):
         state["targetTemperature"] = target
     return state, notes
+
+
+def plan_climate_react(room: Room, low: float, high: float, *, mode: str | None = None,
+                       temperature: int | None = None, fan: str | None = None) -> tuple[dict, list[str]]:
+    """Climate React keeping a room between low and high (in its own unit): cooling (or heating)
+    on one side, the unit off on the other. The body to send, and notes on anything adjusted to fit;
+    ValueError, saying what's allowed, otherwise."""
+    mode = mode or "cool"
+    if mode not in ("cool", "heat"):
+        raise ValueError("Climate React here keeps a room in range by cooling or heating.")
+    # Sensibo's thresholds are in °C.
+    to_celsius = (lambda degrees: round((degrees - 32) * 5 / 9, 1)) if room.unit == "F" else (lambda degrees: degrees)
+    bottom, top = to_celsius(low), to_celsius(high)
+    if not REACT_LOWEST <= bottom < top <= REACT_HIGHEST or top - bottom < REACT_MIN_GAP:
+        raise ValueError(f"Keep the range between {REACT_LOWEST:g} and {REACT_HIGHEST:g}°C, the top at least "
+                         f"{REACT_MIN_GAP:g} degree above the bottom.")
+    temperatures = room.modes.get(mode, {}).get("temperatures", [])
+    if temperature is None and temperatures:
+        # Without one, the unit aims at the middle of the range.
+        temperature = _nearest(round((low + high) / 2), temperatures)
+    working, notes = plan_state(room, on=True, mode=mode, temperature=temperature, fan=fan)
+    idle = {**working, "on": False}
+    on_low, on_high = (idle, working) if mode == "cool" else (working, idle)
+    return {"enabled": True, "deviceUid": room.id, "type": "temperature",
+            "lowTemperatureThreshold": bottom, "lowTemperatureState": on_low,
+            "highTemperatureThreshold": top, "highTemperatureState": on_high}, notes
 
 
 def describe(state: dict, unit: str = "C") -> str:
@@ -304,11 +405,83 @@ def reading(room: Room, now: datetime) -> dict:
     return shown
 
 
+def days_words(days) -> str:
+    """A schedule's days as said: "every day", "weekdays", "weekends", "mon, wed" or "once"."""
+    chosen = set(days)
+    if not chosen:
+        return "once"
+    if chosen == set(DAYS):
+        return "every day"
+    if chosen == set(DAYS[:5]):
+        return "weekdays"
+    if chosen == set(DAYS[5:]):
+        return "weekends"
+    return ", ".join(day[:3] for day in DAYS if day in chosen)
+
+
+def schedule_words(schedule: Schedule, unit: str = "C") -> str:
+    """"16:00 weekdays: cool, 24°C, fan auto", with "(paused)" when it is."""
+    paused = "" if schedule.enabled else " (paused)"
+    return f"{schedule.time} {days_words(schedule.days)}: {describe(schedule.state, unit)}{paused}"
+
+
+def react_words(react: ClimateReact, unit: str = "C") -> str:
+    """"keeps 22–25°C: cool, 23°C, fan auto above 25, off below 22", or "off" ahead of it when off."""
+    watched = {"temperature": "°C", "feelsLike": "°C feels-like", "humidity": "% humidity"}[react.type]
+    low, high = f"{react.low:g}" if react.low is not None else "?", f"{react.high:g}" if react.high is not None else "?"
+    shown = (f"keeps {low}–{high}{watched}: {describe(react.high_state, unit)} above {high}, "
+             f"{describe(react.low_state, unit)} below {low}")
+    return shown if react.enabled else f"off (saved: {shown})"
+
+
+def plans(room: Room) -> dict:
+    """A room's schedules and Climate React as Cora is told them (each schedule with its id, which
+    removing, pausing or resuming it needs); empty without any."""
+    shown = {}
+    if room.schedules:
+        shown["schedules"] = [{"id": schedule.id, "when": schedule_words(schedule, room.unit)}
+                              for schedule in room.schedules]
+    if room.react is not None:
+        shown["climate_react"] = react_words(room.react, room.unit)
+    return shown
+
+
 def room_context(room: Room, now: datetime, local_now: datetime) -> str:
-    """Her own room, for her instructions: one short line of JSON."""
+    """Her own room, for her instructions: one short line of JSON (its schedules aren't in it)."""
     shown = reading(room, now)
     shown["as_of"] = local_now.strftime("%Y-%m-%d %H:%M")
     return json.dumps(shown, ensure_ascii=False)
+
+
+def refusal(response) -> str:
+    """Sensibo's reason for refusing a change, short, when it gives one: ": Bad temperature"."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    reason = body.get("reason") or body.get("message") if isinstance(body, dict) else None
+    return f": {' '.join(str(reason).split())[:120]}" if reason else ""
+
+
+def local_time_zone() -> str:
+    """This PC's time zone as Sensibo takes it ("Australia/Perth"), from the Windows name through the
+    ICU Windows ships; "" when it can't be worked out."""
+    try:
+        import ctypes
+        from zoneinfo import ZoneInfo
+
+        from mail.calendar_events import local_zone
+        convert = ctypes.CDLL("icu.dll").ucal_getTimeZoneIDForWindowsID
+        convert.restype = ctypes.c_int32
+        convert.argtypes = [ctypes.c_wchar_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_wchar_p, ctypes.c_int32,
+                            ctypes.POINTER(ctypes.c_int)]
+        found, status = ctypes.create_unicode_buffer(64), ctypes.c_int(0)
+        length = convert(local_zone(), -1, None, found, 64, ctypes.byref(status))
+        name = found.value[:length] if status.value <= 0 else ""
+        ZoneInfo(name)
+        return name
+    except Exception:
+        return ""
 
 
 class Sensibo:
@@ -397,10 +570,56 @@ class Sensibo:
             raise SensiboError(f"Sensibo answered {response.status_code}.")
         return True
 
+    async def add_schedule(self, unit_id: str, at: str, zone: str, days, state: dict) -> None:
+        """At `at` ("16:00") in `zone` (such as "Australia/Perth"), on `days` (none: once), the unit
+        goes to `state`."""
+        self._check_unit(unit_id)
+        await self._write("POST", f"{API_V1}/pods/{unit_id}/schedules/", {
+            "targetTimeLocal": at, "timezone": zone, "acState": state, "recurOnDaysOfWeek": list(days)})
+
+    async def remove_schedule(self, unit_id: str, schedule_id: str) -> bool:
+        """Removes one; False when it was already gone (Sensibo answers 404 then)."""
+        self._check_unit(unit_id)
+        self._check_schedule(schedule_id)
+        return await self._write("DELETE", f"{API_V1}/pods/{unit_id}/schedules/{schedule_id}", None, missing_ok=True)
+
+    async def switch_schedule(self, unit_id: str, schedule_id: str, enabled: bool) -> None:
+        """Pauses (False) or resumes (True) one, keeping it."""
+        self._check_unit(unit_id)
+        self._check_schedule(schedule_id)
+        await self._write("PUT", f"{API_V1}/pods/{unit_id}/schedules/{schedule_id}", {"isEnabled": enabled})
+
+    async def set_climate_react(self, unit_id: str, body: dict) -> None:
+        """Sets up a unit's Climate React (see plan_climate_react)."""
+        self._check_unit(unit_id)
+        await self._write("POST", f"{API}/pods/{unit_id}/smartmode", body)
+
+    async def switch_climate_react(self, unit_id: str, enabled: bool) -> None:
+        """Turns a unit's Climate React off or back on, keeping its settings."""
+        self._check_unit(unit_id)
+        await self._write("PUT", f"{API}/pods/{unit_id}/smartmode", {"enabled": enabled})
+
+    async def _write(self, method: str, url: str, body: dict | None, missing_ok: bool = False) -> bool:
+        """A change; what was read before no longer holds. False for a 404 when missing_ok; SensiboError
+        with Sensibo's reason when it's refused."""
+        async with self.lock:
+            response = await self._call(method, url, body=body)
+            self.cached = None
+        if missing_ok and response.status_code == 404:
+            return False
+        if response.status_code not in (200, 201, 204):
+            raise SensiboError(f"Sensibo answered {response.status_code}{refusal(response)}.")
+        return True
+
     @staticmethod
     def _check_unit(unit_id: str) -> None:
         if not UNIT_ID.fullmatch(unit_id or ""):
             raise SensiboError("Unknown unit.")
+
+    @staticmethod
+    def _check_schedule(schedule_id: str) -> None:
+        if not SCHEDULE_ID.fullmatch(schedule_id or ""):
+            raise SensiboError("Unknown schedule.")
 
     async def _call(self, method: str, url: str, *, params: dict | None = None, body: dict | None = None):
         """One request, at least MIN_GAP_SECONDS after the last; the caller holds the lock. Raises

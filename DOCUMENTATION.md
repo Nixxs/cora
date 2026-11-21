@@ -1357,8 +1357,8 @@ The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo
 [app_areas/home.py](app_areas/home.py)). Set up under Settings › Services › **Her home ›
 Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
 until switched on with a key. Each room shows in the dashboard's **home** box (see
-[The dashboard](#the-dashboard)). Schedules and Climate React are the next step on the
-[roadmap](ROADMAP.md#air-conditioning-sensibo).
+[The dashboard](#the-dashboard)). Her own initiative (offering to pre-cool, a unit left on at
+bedtime, filter cleaning) is the next step on the [roadmap](ROADMAP.md#air-conditioning-sensibo).
 
 - **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
   readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
@@ -1378,6 +1378,22 @@ until switched on with a key. Each room shows in the dashboard's **home** box (s
     answers once the unit has it, or with why not.
   - `timer`: in 1 to 1440 minutes, apply the change given ("turn Declan's off in two hours"),
     one per unit (`PUT /api/v1/pods/{id}/timer/`); `cancel_timer` clears it.
+  - **Schedules:** `add_schedule` sets a standing change Sensibo makes at a time of day, on chosen
+    days or once ("every weekday at 4, cool the house to 24"); one that sets a mode or temperature
+    turns the unit on unless told otherwise. It's made in this PC's time zone, from the Windows name
+    converted to the one Sensibo takes ("W. Australia Standard Time" to `Australia/Perth`) through
+    the ICU Windows ships (`local_time_zone` in [home/sensibo.py](home/sensibo.py)); if that can't be
+    worked out she says so rather than guess. `remove_schedule`, `pause_schedule` and
+    `resume_schedule` take a schedule's id, which status lists with each (`/api/v1/pods/{id}/schedules/`).
+  - **Climate React:** `climate_react` has Sensibo keep a room between two temperatures ("keep the
+    bedroom between 22 and 25"): cooling above the top and off below the bottom, or with mode heat,
+    heating below the bottom and off above the top; the unit aims at the middle of the range unless
+    given a temperature (`POST /api/v2/pods/{id}/smartmode`, thresholds in °C). Without a range it
+    switches the room's saved one back on; `climate_react_off` stops it and keeps its settings. It
+    has no end time.
+  - Both are Sensibo's own, run on its side, so nothing in Cora keeps time for them. Status lists
+    each room's schedules and Climate React (they come with the room read, at no extra request), and
+    the dashboard's home box shows its Climate React range and next schedule.
   - **Checked first:** every value against what that unit takes (`remoteCapabilities`), and
     nothing is sent if any room can't take it; the answer says what's allowed ("18 to 30°C in
     cool mode, in whole degrees"). Switching mode adjusts what the new mode lacks (dry mode's
@@ -1408,9 +1424,9 @@ until switched on with a key. Each room shows in the dashboard's **home** box (s
   (`note_her_room`, an instruction, not a thought, so she isn't prompted to speak): she may mention
   it in passing if it fits ("it's got stuffy"), and it may colour how she feels. Written chats
   simply get the latest line.
-- **Changes made elsewhere:** a unit switched on or off by the remote, the Sensibo app or a timer,
-  or one going offline or coming back, becomes an awareness event (`source: sensibo`, through
-  the attention manager like mail): "Declan's Room's air conditioner was just switched on (cool,
+- **Changes made elsewhere:** a unit switched on or off by the remote, the Sensibo app, a timer, a
+  schedule or Climate React, or one going offline or coming back, becomes an awareness event
+  (`source: sensibo`, through the attention manager like mail): "Declan's Room's air conditioner was just switched on (cool,
   24°C, fan auto), not by you". Her own changes from the last two minutes aren't reported back;
   a change of temperature or fan alone isn't news. Each is a line in Activity. Only while she's
   active: in Standby it's in Activity alone, since a queued observation never expires and would

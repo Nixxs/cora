@@ -172,7 +172,8 @@ class ContextTests(unittest.TestCase):
 
 def args(action="status", room=None, **changes) -> dict:
     return {"action": action, "room": room, "on": None, "mode": None, "temperature": None, "fan": None,
-            "swing": None, "minutes": None} | changes
+            "swing": None, "minutes": None, "time": None, "days": None, "schedule": None, "low": None,
+            "high": None} | changes
 
 
 class PlanTests(unittest.TestCase):
@@ -254,7 +255,7 @@ class ChangeRequestTests(ClientTests):
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):
     def test_the_actions_and_their_checks(self):
-        self.assertEqual(SCHEMA["parameters"]["properties"]["action"]["enum"], ["status", "set", "timer", "cancel_timer"])
+        self.assertEqual(SCHEMA["parameters"]["properties"]["action"]["enum"][:4], ["status", "set", "timer", "cancel_timer"])
         self.assertEqual(set(SCHEMA["parameters"]["required"]), set(SCHEMA["parameters"]["properties"]))
         for good in (args(), args(room="Office"), args("set", on=False), args("set", "office", temperature=23),
                      args("timer", "office", on=False, minutes=120), args("cancel_timer", "office")):

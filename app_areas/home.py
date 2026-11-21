@@ -7,14 +7,15 @@ credential store; the switch and her room in app_settings.
 """
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime, timezone
 from time import monotonic
 
 from textual import work
 
 from home.sensibo import (
-    BadKey, Sensibo, SensiboError, describe, find_room, noticeable, plan_state, reading, room_context,
-    save_sensibo_key, sensibo_key, with_measurements,
+    BadKey, Sensibo, SensiboError, days_words, describe, find_room, local_time_zone, noticeable, plan_climate_react,
+    plan_state, plans, react_words, reading, room_context, save_sensibo_key, sensibo_key, with_measurements,
 )
 from home.stream import SensiboStream
 
@@ -35,6 +36,10 @@ CHANGED_NOTE = (
     "Done: tell the person plainly what changed, including anything adjusted to fit. The room's "
     "temperature takes a while to follow."
 )
+# Changes that only take effect later (schedules, Climate React): nothing changes in the room now.
+PLANNED = ("add_schedule", "remove_schedule", "pause_schedule", "resume_schedule", "climate_react",
+           "climate_react_off")
+PLANNED_NOTE = "Done: tell the person plainly what's set up, including anything adjusted to fit."
 
 
 class HomeMixin:
@@ -246,7 +251,7 @@ class HomeMixin:
                 what = f"was just switched {'on' if room.on else 'off'}"
                 if room.on:
                     what += f" ({describe({'on': True, 'mode': room.mode, 'targetTemperature': room.target, 'temperatureUnit': room.unit, 'fanLevel': room.fan})})"
-                what += ", not by you (the remote, the Sensibo app or a timer)"
+                what += ", not by you (the remote, the Sensibo app, a timer, a schedule or Climate React)"
             observation = f"{room.name}'s air conditioner {what}."
             self.activity.write(f"Aircon: {observation}", "Sensibo")
             # Only while she's awake to hear it: queued in standby, it would wait (never expiring) and
@@ -273,7 +278,8 @@ class HomeMixin:
             rooms = [room]
         if not changing:
             now = datetime.now(timezone.utc)
-            result = {"status": "ok", "rooms": [reading(room, now) for room in rooms], "note": RESULT_NOTE}
+            result = {"status": "ok", "rooms": [reading(room, now) | plans(room) for room in rooms],
+                      "note": RESULT_NOTE}
             if age > 2 * TOOL_MAX_AGE_SECONDS:
                 result["stale"] = f"Sensibo couldn't be asked again just now, so this is from {round(age / 60)} minutes ago."
             self.activity.write(f"Read the air conditioners ({wanted or 'every room'}).", "Sensibo")
@@ -281,28 +287,54 @@ class HomeMixin:
         return await self.change_aircon(action, rooms, arguments)
 
     async def change_aircon(self, action: str, rooms, arguments: dict) -> dict:
-        """set, timer or cancel_timer on each room: every value checked before anything is sent, then
-        one request a room. What happened in each, and anything adjusted to fit."""
+        """A change on each room: every value checked before anything is sent, then one request a
+        room. What happened in each, and anything adjusted to fit."""
         changes = {part: arguments[part] for part in ("on", "mode", "temperature", "fan", "swing")}
-        plans = {}
-        if action != "cancel_timer":
+        if action == "add_schedule" and changes["on"] is None:
+            # A schedule that sets a mode or temperature is one that turns the unit on.
+            changes["on"] = True
+        zone = ""
+        if action == "add_schedule":
+            zone = await asyncio.to_thread(local_time_zone)
+            if not zone:
+                return {"status": "error", "message": "This PC's time zone couldn't be worked out, so a schedule "
+                                                      "can't be set; say so."}
+        if action in ("remove_schedule", "pause_schedule", "resume_schedule"):
+            # The one room that has it.
+            wanted = arguments["schedule"]
+            rooms = [room for room in rooms if any(schedule.id == wanted for schedule in room.schedules)]
+            if not rooms:
+                return {"status": "not_found", "message": "No schedule with that id; status lists each with its id."}
+        reviving = action == "climate_react" and arguments["low"] is None
+        planned = {}
+        try:
             for room in rooms:
-                try:
-                    plans[room.id] = plan_state(room, **changes)
-                except ValueError as error:
-                    # Nothing is sent when any room can't take it.
-                    return {"status": "not_allowed", "message": str(error)}
+                if action in ("set", "timer", "add_schedule"):
+                    planned[room.id] = plan_state(room, **changes)
+                elif action == "climate_react" and not reviving:
+                    planned[room.id] = plan_climate_react(room, arguments["low"], arguments["high"],
+                                                          mode=changes["mode"], temperature=changes["temperature"],
+                                                          fan=changes["fan"])
+                elif reviving and room.react is None:
+                    raise ValueError(f"{room.name} has no saved Climate React; give low and high to set one up.")
+        except ValueError as error:
+            # Nothing is sent when any room can't take it.
+            return {"status": "not_allowed", "message": str(error)}
         done, failed, notes = [], [], []
         for room in rooms:
             try:
-                if action == "set":
-                    state, adjusted = plans[room.id]
+                if action in PLANNED:
+                    line, adjusted = await self.plan_aircon(action, room, arguments, planned.get(room.id), zone)
+                    done.append(f"{room.name}: {line}")
+                    notes += adjusted
+                elif action == "set":
+                    state, adjusted = planned[room.id]
                     self.aircon_own[room.id] = monotonic()
                     resulting = await self.sensibo.set_state(room.id, state)
                     done.append(f"{room.name}: now {describe(resulting, room.unit)}")
                     notes += adjusted
                 elif action == "timer":
-                    state, adjusted = plans[room.id]
+                    state, adjusted = planned[room.id]
                     await self.sensibo.set_timer(room.id, arguments["minutes"], state)
                     done.append(f"{room.name}: in {arguments['minutes']} minutes, {describe(state, room.unit)}")
                     notes += adjusted
@@ -317,7 +349,10 @@ class HomeMixin:
         for line in failed:
             self.activity.write(f"Aircon {line}", "Sensibo")
         stream_open = self.home_stream_worker is not None and not self.home_stream_worker.is_finished
-        if any(room.id == self.her_room_id for room in rooms) and done and not stream_open:
+        if action in PLANNED and done:
+            # Read again, so the dashboard and her status show what's set up.
+            self.reread_home(CHANGED_SETTLE_SECONDS)
+        elif any(room.id == self.her_room_id for room in rooms) and done and not stream_open:
             # Her room's line says what its air conditioner is doing (the stream's news does it otherwise).
             self.refresh_her_room()
         result = {"status": "ok" if done and not failed else "partly" if done else "error"}
@@ -329,8 +364,38 @@ class HomeMixin:
             result["failed"] = failed
             result["message"] = "Say plainly which didn't change, and why."
         else:
-            result["note"] = CHANGED_NOTE
+            result["note"] = PLANNED_NOTE if action in PLANNED else CHANGED_NOTE
         return result
+
+    async def plan_aircon(self, action: str, room, arguments: dict, plan, zone: str) -> tuple[str, list[str]]:
+        """One room's schedule or Climate React change (checked already): what's now set up, and notes."""
+        if action == "add_schedule":
+            state, adjusted = plan
+            days = arguments["days"] or []
+            await self.sensibo.add_schedule(room.id, arguments["time"], zone, days, state)
+            return f"at {arguments['time']} {days_words(days)}, {describe(state, room.unit)}", adjusted
+        if action in ("remove_schedule", "pause_schedule", "resume_schedule"):
+            schedule = next(schedule for schedule in room.schedules if schedule.id == arguments["schedule"])
+            if action == "remove_schedule":
+                gone = await self.sensibo.remove_schedule(room.id, schedule.id)
+                return f"{'removed' if gone else 'already gone'}: {schedule.time} {days_words(schedule.days)}", []
+            resume = action == "resume_schedule"
+            await self.sensibo.switch_schedule(room.id, schedule.id, resume)
+            return f"{'resumed' if resume else 'paused'}: {schedule.time} {days_words(schedule.days)}", []
+        if action == "climate_react_off":
+            await self.sensibo.switch_climate_react(room.id, False)
+            return "Climate React off (its settings kept)", []
+        if plan is None:
+            # Its saved one, back on.
+            await self.sensibo.switch_climate_react(room.id, True)
+            return f"Climate React back on: {react_words(replace(room.react, enabled=True), room.unit)}", []
+        body, adjusted = plan
+        await self.sensibo.set_climate_react(room.id, body)
+        low, high = arguments["low"], arguments["high"]
+        working = body["highTemperatureState"] if body["highTemperatureState"]["on"] else body["lowTemperatureState"]
+        side = f"above {high:g}" if body["highTemperatureState"]["on"] else f"below {low:g}"
+        return (f"Climate React keeps {low:g}–{high:g}°{room.unit}: {describe(working, room.unit)} {side}, "
+                f"off on the other side"), adjusted
 
     # Settings > Services > Sensibo.
 

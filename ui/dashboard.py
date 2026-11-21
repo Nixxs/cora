@@ -12,6 +12,7 @@ from context_window import BACKEND, VOICE, short_tokens
 from devices.audio_bands import BAND_COUNT
 from memory.store import fade_weight
 from session_config import BACKEND_CONTEXT_TOKENS
+from home.sensibo import schedule_words
 from storage.task_store import TASK_NUDGES_MAX
 from subconscious.emotions.feeling_rules import FEELING_WORDS, FEELINGS, band
 from subconscious.identity.identity_rules import is_held
@@ -171,7 +172,27 @@ def room_lines(rooms, her_room_id: str, now) -> Text:
         if room.timer_at is not None and room.timer_at > now:
             what = {True: "on", False: "off"}.get(room.timer_on, "changes")
             lines.append(f" · {what} {until(room.timer_at, now)}", style=LABEL_STYLE)
+        plan = plan_line(room)
+        if plan:
+            lines.append("\n  " + plan, style=LABEL_STYLE)
     return lines or Text("no rooms on the account", style=TRACK_STYLE)
+
+
+def plan_line(room) -> str:
+    """What a room's set up to do: "keeps 22–25° by cooling · next 16:00 weekdays: cool, 24°C (+1)"."""
+    parts = []
+    react = room.react
+    if react is not None and react.enabled and react.low is not None and react.high is not None:
+        how = "heating" if react.low_state.get("on") else "cooling"
+        unit = "%" if react.type == "humidity" else "°"
+        parts.append(f"keeps {react.low:g}–{react.high:g}{unit} by {how}")
+    active = [schedule for schedule in room.schedules if schedule.enabled]
+    if active:
+        # The soonest, when Sensibo says when each is next.
+        soonest = min(active, key=lambda schedule: (schedule.next_at is None, schedule.next_at or 0))
+        more = f" (+{len(active) - 1})" if len(active) > 1 else ""
+        parts.append(f"next {schedule_words(soonest, room.unit)}{more}")
+    return " · ".join(parts)
 
 
 def until(when, now) -> str:

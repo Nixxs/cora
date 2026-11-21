@@ -113,7 +113,9 @@ To do on this branch:
 - [x] Aircon 3a: the live stream: her room as it changes, and changes made elsewhere as awareness
 - [x] Dashboard: minimising boxes to chips on its bottom border, the open ones flowing through one row or two on shared columns, a reopened box going last (first, as it was getting crowded)
 - [x] Aircon 3b: each room on the dashboard
-- [ ] Aircon 4: schedules, Climate React, and her own initiative
+- [x] Aircon 4a: schedules and Climate React, set up when asked
+- [ ] Aircon 4b: her own initiative (offering to pre-cool before a hot afternoon, a unit left on at bedtime, filter cleaning)
+- [ ] Presence: knowing who's home, for "a unit left on while you're out" and "a room too hot while you're away"
 
 ### Judgement calls
 
@@ -270,7 +272,17 @@ set up, and this API is small. If Home Assistant arrives, it can take over.
 4. **Schedules, Climate React and initiative:** "every weekday at 4, cool the house to 24", "keep
    the bedroom between 22 and 25 tonight"; and on her own, offering (never doing unasked) to
    pre-cool before a hot afternoon, noticing units left on while the person is away or at
-   bedtime, and filter-cleaning reminders if the units report them.
+   bedtime, and filter-cleaning reminders if the units report them. *4a built* (see
+   [Her home](DOCUMENTATION.md#her-home-the-air-conditioners-sensibo)): schedules (add, remove,
+   pause, resume) and Climate React (a range kept by cooling or heating, off, back on) on the
+   `aircon` tool, each room's shown in status and on the dashboard. Sensibo runs both itself, so
+   nothing in Cora keeps time. Formats from Sensibo's API reference and Home Assistant's library,
+   which differ on a listed schedule's days (`recurringDays` read, `recurOnDaysOfWeek` sent); both
+   are read. Still to confirm on the real units: a listed schedule's and Climate React's shapes once
+   one exists. Climate React has no end time, so "tonight" means switching it off later. *4b:* her
+   initiative. The units do report filter cleaning (`filtersCleaning`: `shouldCleanFilters`, run
+   time since the last clean against a 300-hour threshold), so the reminder is possible; "while
+   you're out" waits for presence, its own item.
 
 ### Claude Code
 
