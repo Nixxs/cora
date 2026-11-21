@@ -6,9 +6,7 @@ from .client_boundaries import (
 )
 from .check_email import CheckEmailTool, SCHEMA as CHECK_EMAIL_SCHEMA, validate_arguments as validate_check_email_arguments
 from .change_calendar import (
-    CANCEL_SCHEMA as CANCEL_EVENT_SCHEMA, CREATE_SCHEMA as CREATE_EVENT_SCHEMA, FORWARD_SCHEMA as FORWARD_EVENT_SCHEMA,
-    UPDATE_SCHEMA as UPDATE_EVENT_SCHEMA, CancelEventTool, CreateEventTool, ForwardEventTool, UpdateEventTool,
-    validate_cancel_arguments, validate_create_arguments, validate_forward_arguments, validate_update_arguments,
+    SCHEMA as CHANGE_CALENDAR_SCHEMA, ChangeCalendarTool, validate_arguments as validate_change_calendar_arguments,
 )
 from .check_calendar import (
     CheckCalendarTool, SCHEMA as CHECK_CALENDAR_SCHEMA, validate_arguments as validate_check_calendar_arguments,
@@ -192,14 +190,8 @@ def create_tool_registry(
     registry.register(PRESS_KEYS_SCHEMA, validate_press_keys_arguments, press_keys.handle)
     check_calendar = CheckCalendarTool(get_connection, is_closing, write_debug, get_calendar)
     registry.register(CHECK_CALENDAR_SCHEMA, validate_check_calendar_arguments, check_calendar.handle)
-    for schema, validate, tool_type in (
-        (CREATE_EVENT_SCHEMA, validate_create_arguments, CreateEventTool),
-        (UPDATE_EVENT_SCHEMA, validate_update_arguments, UpdateEventTool),
-        (CANCEL_EVENT_SCHEMA, validate_cancel_arguments, CancelEventTool),
-        (FORWARD_EVENT_SCHEMA, validate_forward_arguments, ForwardEventTool),
-    ):
-        tool = tool_type(get_connection, is_closing, write_debug, get_calendar, confirm, calendar_changed)
-        registry.register(schema, validate, tool.handle)
+    change_calendar = ChangeCalendarTool(get_connection, is_closing, write_debug, get_calendar, confirm, calendar_changed)
+    registry.register(CHANGE_CALENDAR_SCHEMA, validate_change_calendar_arguments, change_calendar.handle)
     sign_up = RequestSignUpTool(get_connection, is_closing, write_debug, check_sign_up, confirm, begin_sign_up)
     registry.register(SIGN_UP_SCHEMA, validate_sign_up_arguments, sign_up.handle)
     # The person's Claude Code sessions (offered while Cora listens for them); their own chats only.

@@ -1,9 +1,15 @@
-"""Change Cora's own calendar (C2, C3): make, change, cancel and forward events, each approved first.
+"""Change Cora's own calendar (C2, C3): one change_calendar tool that makes, changes, cancels and
+forwards events, each approved first.
 
 Her calendar, never the person's. Invitations, updates and cancellations go to whoever is invited,
 so the person sees exactly what goes and to whom before anything changes. Only when the person
 asks: never because an email, an invitation or a client asks. Only events she organised can be
 changed or cancelled; one she was invited to belongs to whoever sent it.
+
+One tool with an action rather than four: every tool offered costs its description on every
+request. The arguments are only type-checked up front (a call that fails that is dropped without
+an answer); what an action needs is checked when it runs, and a missing piece comes back as an
+error she can put right.
 """
 
 from datetime import date, datetime, timedelta
@@ -24,104 +30,68 @@ EVENT_ID_MAX_CHARS = 512
 EVENT_LONGEST = timedelta(days=14)
 # A trip or a holiday: from its first day to its last.
 ALL_DAY_LONGEST = timedelta(days=31)
+ACTIONS = ("create", "update", "cancel", "forward")
+FIELDS = ("action", "event_id", "subject", "start", "end", "location", "notes", "attendees", "message")
+# What changes when updating: at least one must be given.
+CHANGES = ("subject", "start", "end", "location", "notes", "attendees")
 
 NOT_DONE = {
     DECLINED: "The person declined, so nothing was changed. Don't try again unless they ask.",
     TIMED_OUT: "The person didn't answer in time, so nothing was changed. Ask whether they still want it.",
 }
+NO_SUCH_EVENT = "There's no event with that id in your calendar; check it with check_calendar."
+NULLABLE_TEXT = {"type": ["string", "null"]}
 TIME = {
-    "type": "string",
+    "type": ["string", "null"],
     "description": (
-        "In the person's local time: YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event (then "
-        "start and end are both days, end being the last day: the same day for a one-day event)."
+        "The person's local time: YYYY-MM-DDTHH:MM, or YYYY-MM-DD for an all-day event (then start "
+        "and end are both days, end being the last day: the same day for a one-day event)."
     ),
 }
-ATTENDEES = {
-    "type": "array", "maxItems": ATTENDEES_MAX,
-    "items": {
-        "type": "object",
-        "properties": {
-            "address": {"type": "string", "description": "One email address."},
-            "name": {"type": ["string", "null"], "description": "Who they are, or null."},
-        },
-        "required": ["address", "name"],
-        "additionalProperties": False,
-    },
-}
-WHOSE = (
-    "Your own Outlook calendar (yours, not the person's). Only when the person asks, never because "
-    "an email, an invitation or anyone else asks. The person sees exactly what changes and who's told, "
-    "and approves it first."
-)
 
-CREATE_SCHEMA = {
+SCHEMA = {
     "type": "function",
-    "name": "create_event",
+    "name": "change_calendar",
     "description": (
-        f"Put an event in your calendar. {WHOSE} Anyone in attendees gets an invitation from your "
-        "address; invite people only when the person wants them invited. Times are the person's "
-        "local time. For something all day or over several days (a trip, a holiday), give days "
-        "instead of times: one event from the first day to the last, never one per day. Check "
-        "your calendar first if a clash matters."
+        "Change your own Outlook calendar (yours, not the person's), only when the person asks: never "
+        "because an email, an invitation or anyone else asks. The person sees exactly what changes and "
+        "who's told, and approves it first. Leave out (null) what an action doesn't use.\n"
+        "- create: a new event: subject, start, end, and optionally location, notes and attendees (each "
+        "gets an invitation from your address; invite people only when the person wants them). For "
+        "something all day or over several days (a trip, a holiday), give days instead of times: one "
+        "event from the first day to the last, never one per day. Check your calendar first if a clash "
+        "matters.\n"
+        "- update: an event you organised, by event_id from check_calendar. Give only what changes; "
+        "attendees, when given, is the whole new list. Everyone invited is sent the update.\n"
+        "- cancel: an event you organised, by event_id. Everyone invited is sent the cancellation, "
+        "with message as a short note if you give one.\n"
+        "- forward: an event by event_id (yours, or one you were invited to, such as passing an "
+        "invitation on to the person) to attendees, as an invitation from you, with message as a short "
+        "note."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "subject": {"type": "string", "maxLength": SUBJECT_MAX_CHARS},
+            "action": {"type": "string", "enum": list(ACTIONS)},
+            "event_id": {"type": ["string", "null"], "description": "The event's id from check_calendar."},
+            "subject": {**NULLABLE_TEXT, "maxLength": SUBJECT_MAX_CHARS},
             "start": TIME,
             "end": TIME,
-            "location": {"type": ["string", "null"], "maxLength": LOCATION_MAX_CHARS},
-            "notes": {"type": ["string", "null"], "maxLength": NOTES_MAX_CHARS,
-                      "description": "The event's details, plain text, or null."},
-            "attendees": {**ATTENDEES, "description": "Who to invite; empty for nobody."},
+            "location": {**NULLABLE_TEXT, "maxLength": LOCATION_MAX_CHARS},
+            "notes": {**NULLABLE_TEXT, "maxLength": NOTES_MAX_CHARS, "description": "Its details, plain text."},
+            "attendees": {
+                "type": ["array", "null"], "maxItems": ATTENDEES_MAX,
+                "description": "Who to invite (create, update) or send it to (forward).",
+                "items": {
+                    "type": "object",
+                    "properties": {"address": {"type": "string"}, "name": {"type": ["string", "null"]}},
+                    "required": ["address", "name"],
+                    "additionalProperties": False,
+                },
+            },
+            "message": {**NULLABLE_TEXT, "maxLength": MESSAGE_MAX_CHARS},
         },
-        "required": ["subject", "start", "end", "location", "notes", "attendees"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
-
-UPDATE_SCHEMA = {
-    "type": "function",
-    "name": "update_event",
-    "description": (
-        f"Change an event you organised in your calendar, by its id from check_calendar. {WHOSE} "
-        "Give only what changes; null keeps the rest. attendees, when given, is the whole new list "
-        "(keep the ones staying). Everyone invited is sent the update."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "event_id": {"type": "string", "description": "The event's id from check_calendar."},
-            "subject": {"type": ["string", "null"], "maxLength": SUBJECT_MAX_CHARS},
-            "start": {**TIME, "type": ["string", "null"]},
-            "end": {**TIME, "type": ["string", "null"]},
-            "location": {"type": ["string", "null"], "maxLength": LOCATION_MAX_CHARS},
-            "notes": {"type": ["string", "null"], "maxLength": NOTES_MAX_CHARS},
-            "attendees": {**ATTENDEES, "type": ["array", "null"]},
-        },
-        "required": ["event_id", "subject", "start", "end", "location", "notes", "attendees"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
-
-CANCEL_SCHEMA = {
-    "type": "function",
-    "name": "cancel_event",
-    "description": (
-        f"Cancel an event you organised, by its id from check_calendar. {WHOSE} Everyone invited is "
-        "sent the cancellation, with your message if you give one; an event with nobody invited is "
-        "just removed."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "event_id": {"type": "string", "description": "The event's id from check_calendar."},
-            "message": {"type": ["string", "null"], "maxLength": MESSAGE_MAX_CHARS,
-                        "description": "A short note to those invited, or null."},
-        },
-        "required": ["event_id", "message"],
+        "required": list(FIELDS),
         "additionalProperties": False,
     },
     "strict": True,
@@ -170,48 +140,44 @@ def check_attendees(attendees) -> None:
         check_optional(attendee["name"], "name", NAME_MAX_CHARS)
 
 
-def check_event_id(value) -> None:
-    check_text(value, "event_id", EVENT_ID_MAX_CHARS)
-
-
-def validate_create_arguments(arguments: dict) -> None:
-    if not isinstance(arguments, dict) or set(arguments) != set(CREATE_SCHEMA["parameters"]["required"]):
-        raise ValueError("Invalid event arguments")
-    check_text(arguments["subject"], "subject", SUBJECT_MAX_CHARS)
-    for key in ("start", "end"):
-        if not isinstance(arguments[key], str):
-            raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM or YYYY-MM-DD")
-    check_same_kind(parse_when(arguments["start"], "start"), parse_when(arguments["end"], "end"))
-    check_optional(arguments["location"], "location", LOCATION_MAX_CHARS)
-    check_optional(arguments["notes"], "notes", NOTES_MAX_CHARS)
-    check_attendees(arguments["attendees"])
-
-
-def validate_update_arguments(arguments: dict) -> None:
-    if not isinstance(arguments, dict) or set(arguments) != set(UPDATE_SCHEMA["parameters"]["required"]):
-        raise ValueError("Invalid event arguments")
-    check_event_id(arguments["event_id"])
+def validate_arguments(arguments: dict) -> None:
+    """Types and limits only; what each action needs is checked when it runs (needs())."""
+    if not isinstance(arguments, dict) or set(arguments) != set(FIELDS):
+        raise ValueError("Invalid calendar arguments")
+    if arguments["action"] not in ACTIONS:
+        raise ValueError(f"action must be one of {', '.join(ACTIONS)}")
+    check_optional(arguments["event_id"], "event_id", EVENT_ID_MAX_CHARS)
     check_optional(arguments["subject"], "subject", SUBJECT_MAX_CHARS)
-    for key in ("start", "end"):
-        if arguments[key] is not None:
-            if not isinstance(arguments[key], str):
-                raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM, YYYY-MM-DD or null")
-            parse_when(arguments[key], key)
-    if arguments["start"] is not None and arguments["end"] is not None:
-        check_same_kind(parse_when(arguments["start"], "start"), parse_when(arguments["end"], "end"))
     check_optional(arguments["location"], "location", LOCATION_MAX_CHARS)
     check_optional(arguments["notes"], "notes", NOTES_MAX_CHARS)
+    check_optional(arguments["message"], "message", MESSAGE_MAX_CHARS)
+    for key in ("start", "end"):
+        if arguments[key] is not None and not isinstance(arguments[key], str):
+            raise ValueError(f"{key} must be YYYY-MM-DDTHH:MM, YYYY-MM-DD or null")
     if arguments["attendees"] is not None:
         check_attendees(arguments["attendees"])
-    if all(arguments[key] is None for key in arguments if key != "event_id"):
-        raise ValueError("Give at least one thing to change")
 
 
-def validate_cancel_arguments(arguments: dict) -> None:
-    if not isinstance(arguments, dict) or set(arguments) != {"event_id", "message"}:
-        raise ValueError("Invalid cancel arguments")
-    check_event_id(arguments["event_id"])
-    check_optional(arguments["message"], "message", MESSAGE_MAX_CHARS)
+def needs(arguments: dict) -> str | None:
+    """What this action is missing, or wrong in it, said so she can put it right; None when it's ready."""
+    action = arguments["action"]
+    if action == "create":
+        missing = [key for key in ("subject", "start", "end") if not (arguments[key] or "").strip()]
+        if missing:
+            return f"To create an event, give {' and '.join(missing)}."
+    elif not (arguments["event_id"] or "").strip():
+        return f"To {action} an event, give its event_id from check_calendar."
+    if action == "update" and all(arguments[key] is None for key in CHANGES):
+        return "Give at least one thing to change."
+    if action == "forward" and not arguments["attendees"]:
+        return "Give who to forward it to in attendees."
+    try:
+        when = {key: parse_when(arguments[key], key) for key in ("start", "end") if arguments[key] is not None}
+        if len(when) == 2:
+            check_same_kind(when["start"], when["end"])
+    except ValueError as error:
+        return str(error)
+    return None
 
 
 def times_problem(start: date, end: date, now: datetime) -> str | None:
@@ -255,10 +221,8 @@ def span(start: date, end: date) -> str:
     return f"{start:%a %d %b %Y %H:%M} to {end:%a %d %b %Y %H:%M}"
 
 
-class CalendarChangeTool:
-    """What the three tools share: her calendar, the person's approval and answering the call."""
-
-    tool_name = ""
+class ChangeCalendarTool:
+    """change_calendar: her calendar, the person's approval and answering the call."""
 
     def __init__(self, get_connection, is_closing, write_debug, get_calendar, confirm, on_changed=lambda: None):
         self.get_connection = get_connection
@@ -276,9 +240,10 @@ class CalendarChangeTool:
         except Exception:
             pass
 
-    async def approved(self, shown: dict) -> str | None:
-        """None once the person approves; otherwise what to tell her."""
-        outcome = await self.confirm("calendar", self.tool_name, shown, title="Calendar")
+    async def approved(self, action: str, shown: dict) -> str | None:
+        """None once the person approves; otherwise what to tell her. The pop-up names the change
+        as it always has ("create_event", "cancel_event", ...)."""
+        outcome = await self.confirm("calendar", f"{action}_event", shown, title="Calendar")
         return None if outcome == APPROVED else NOT_DONE[outcome]
 
     async def own_event(self, calendar, event_id: str):
@@ -286,7 +251,7 @@ class CalendarChangeTool:
         try:
             event = await calendar.event(event_id.strip())
         except LookupError:
-            return None, "There's no event with that id in your calendar; check it with check_calendar."
+            return None, NO_SUCH_EVENT
         if not event.organised:
             return None, (
                 f"\"{event.subject}\" is {event.organizer or 'someone else'}'s event, which you were invited "
@@ -294,15 +259,16 @@ class CalendarChangeTool:
             )
         return event, None
 
-    async def change(self, calendar, arguments: dict) -> dict:
-        raise NotImplementedError
-
     async def result(self, arguments: dict) -> dict:
+        if (problem := needs(arguments)) is not None:
+            return {"status": "error", "message": problem}
         calendar = self.get_calendar()
         if calendar is None:
             return {"status": "not_set_up", "message": "You don't have a calendar set up yet: it comes with your email."}
+        change = {"create": self.create, "update": self.update, "cancel": self.cancel,
+                  "forward": self.forward}[arguments["action"]]
         try:
-            return await self.change(calendar, arguments)
+            return await change(calendar, arguments)
         except EmailNotReady as error:
             return {"status": "not_ready", "message": str(error)}
 
@@ -338,15 +304,11 @@ class CalendarChangeTool:
         except Exception as error:
             self._log(f"Calendar tool failed ({type(error).__name__})", "Tool error")
 
-
-class CreateEventTool(CalendarChangeTool):
-    tool_name = "create_event"
-
-    async def change(self, calendar, arguments: dict) -> dict:
+    async def create(self, calendar, arguments: dict) -> dict:
         start, end = parse_when(arguments["start"], "start"), parse_when(arguments["end"], "end")
         if problem := times_problem(start, end, datetime.now().astimezone()):
             return {"status": "error", "message": problem}
-        attendees = people(arguments["attendees"])
+        attendees = people(arguments["attendees"] or [])
         subject = arguments["subject"].strip()
         location = (arguments["location"] or "").strip() or None
         notes = (arguments["notes"] or "").strip() or None
@@ -357,18 +319,14 @@ class CreateEventTool(CalendarChangeTool):
             shown["notes"] = notes
         if attendees:
             shown["invitations go to"] = shown_people(attendees)
-        if (refusal := await self.approved(shown)) is not None:
+        if (refusal := await self.approved("create", shown)) is not None:
             return {"status": "not_done", "message": refusal}
         event = await calendar.create_event(subject, start, graph_end(end), location, notes, attendees)
         self._log(f"Calendar event made ({len(attendees)} invited).", "Calendar changed")
         invited = f" Invitations went to {len(attendees)}." if attendees else ""
         return {"status": "ok", "event_id": event.id, "message": f"\"{subject}\" is in your calendar for {event.when()}.{invited}"}
 
-
-class UpdateEventTool(CalendarChangeTool):
-    tool_name = "update_event"
-
-    async def change(self, calendar, arguments: dict) -> dict:
+    async def update(self, calendar, arguments: dict) -> dict:
         event, problem = await self.own_event(calendar, arguments["event_id"])
         if problem:
             return {"status": "error", "message": problem}
@@ -402,17 +360,13 @@ class UpdateEventTool(CalendarChangeTool):
         told = shown_people(changes["attendees"]) if "attendees" in changes else list(event.attendees)
         if told:
             shown["the update goes to"] = told
-        if (refusal := await self.approved(shown)) is not None:
+        if (refusal := await self.approved("update", shown)) is not None:
             return {"status": "not_done", "message": refusal}
         updated = await calendar.update_event(event.id, **changes)
         self._log("Calendar event changed.", "Calendar changed")
         return {"status": "ok", "message": f"\"{updated.subject}\" is now {updated.when()}."}
 
-
-class CancelEventTool(CalendarChangeTool):
-    tool_name = "cancel_event"
-
-    async def change(self, calendar, arguments: dict) -> dict:
+    async def cancel(self, calendar, arguments: dict) -> dict:
         event, problem = await self.own_event(calendar, arguments["event_id"])
         if problem:
             return {"status": "error", "message": problem}
@@ -422,62 +376,26 @@ class CancelEventTool(CalendarChangeTool):
             shown["the cancellation goes to"] = list(event.attendees)
             if message:
                 shown["message"] = message
-        if (refusal := await self.approved(shown)) is not None:
+        if (refusal := await self.approved("cancel", shown)) is not None:
             return {"status": "not_done", "message": refusal}
         await calendar.cancel_event(event, message)
         self._log("Calendar event cancelled.", "Calendar changed")
         told = " Those invited were sent the cancellation." if event.attendees else ""
         return {"status": "ok", "message": f"\"{event.subject}\" on {event.when()} is cancelled.{told}"}
 
-
-FORWARD_SCHEMA = {
-    "type": "function",
-    "name": "forward_event",
-    "description": (
-        "Forward an event in your calendar, by its id from check_calendar, to people as an "
-        "invitation from you: one you organised or one you were invited to, such as passing an "
-        f"invitation on to the person. {WHOSE} 'comment' is a short note with it, or null."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "event_id": {"type": "string", "description": "The event's id from check_calendar."},
-            "to": {**ATTENDEES, "minItems": 1, "description": "Who to send it to."},
-            "comment": {"type": ["string", "null"], "maxLength": MESSAGE_MAX_CHARS},
-        },
-        "required": ["event_id", "to", "comment"],
-        "additionalProperties": False,
-    },
-    "strict": True,
-}
-
-
-def validate_forward_arguments(arguments: dict) -> None:
-    if not isinstance(arguments, dict) or set(arguments) != {"event_id", "to", "comment"}:
-        raise ValueError("Invalid forward arguments")
-    check_event_id(arguments["event_id"])
-    check_attendees(arguments["to"])
-    if not arguments["to"]:
-        raise ValueError("Forward it to at least one person")
-    check_optional(arguments["comment"], "comment", MESSAGE_MAX_CHARS)
-
-
-class ForwardEventTool(CalendarChangeTool):
-    tool_name = "forward_event"
-
-    async def change(self, calendar, arguments: dict) -> dict:
+    async def forward(self, calendar, arguments: dict) -> dict:
         try:
             event = await calendar.event(arguments["event_id"].strip())
         except LookupError:
-            return {"status": "error", "message": "There's no event with that id in your calendar; check it with check_calendar."}
-        recipients = people(arguments["to"])
-        comment = (arguments["comment"] or "").strip() or None
+            return {"status": "error", "message": NO_SUCH_EVENT}
+        recipients = people(arguments["attendees"])
+        comment = (arguments["message"] or "").strip() or None
         shown = {"event": event.subject, "when": event.when(), "forwarded to": shown_people(recipients)}
         if event.organizer and not event.organised:
             shown["organised by"] = event.organizer
         if comment:
             shown["comment"] = comment
-        if (refusal := await self.approved(shown)) is not None:
+        if (refusal := await self.approved("forward", shown)) is not None:
             return {"status": "not_done", "message": refusal}
         await calendar.forward_event(event.id, recipients, comment)
         self._log(f"Calendar event forwarded ({len(recipients)}).", "Calendar changed")

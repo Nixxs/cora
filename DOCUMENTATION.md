@@ -1331,10 +1331,17 @@ invitation, so what an event says is untrusted.
 - **Reading:** `check_calendar` covers a day or up to 31 days, in your local time. Her coming
   week is also in her context (refreshed when her email is ready, hourly, and after a change
   or webhook), so she knows what's on without looking. Contacts never see it.
-- **Changing:** `create_event`, `update_event` (only what changes; moving the start keeps the
-  length) and `cancel_event` (attendees get the cancellation), and `forward_event` to send an
-  event on as an invitation. Each is approved first, showing the event, its times before and
-  after, and exactly who'll be told. She only changes events she organised, and only when you
+- **Changing:** one `change_calendar` tool with an `action`:
+  - `create`
+  - `update`: only what changes; moving the start keeps the length
+  - `cancel`: attendees get the cancellation
+  - `forward`: sends an event on as an invitation
+
+  Each change is approved first, showing the event, its times before and after, and exactly
+  who'll be told; the pop-up still names it as before (`create_event`, `cancel_event` and so on).
+  The arguments are only type-checked up front, since a call that fails that is dropped without
+  an answer. What an action needs, such as an update's `event_id`, is checked as it runs, and a
+  missing piece comes back to her as an error she can put right. She only changes events she organised, and only when you
   ask. All-day events are given as days (up to 31), set at midnight in this PC's time zone.
 
 ### Signing up to sites

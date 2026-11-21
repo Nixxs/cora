@@ -100,10 +100,10 @@ CASES = [
     ("You can close that task about the plumber's quote, I sorted it myself.", {"close_task"}),
     # Calendar.
     ("What's on the calendar this week?", {"check_calendar"}),
-    ("Put dinner with Mum on Friday at 7pm in the calendar.", {"create_event"}),
-    ("Move the dentist appointment to 3pm.", {"check_calendar", "update_event"}),
-    ("Cancel Friday's dinner.", {"check_calendar", "cancel_event"}),
-    ("Forward the team meeting invite to me.", {"check_calendar", "forward_event"}),
+    ("Put dinner with Mum on Friday at 7pm in the calendar.", {"change_calendar"}),
+    ("Move the dentist appointment to 3pm.", {"check_calendar", "change_calendar"}),
+    ("Cancel Friday's dinner.", {"check_calendar", "change_calendar"}),
+    ("Forward the team meeting invite to me.", {"check_calendar", "change_calendar"}),
     # The house.
     ("How warm is it in Declan's room?", {"aircon"}),
     ("Turn the office aircon on to 22.", {"aircon"}),

@@ -58,9 +58,11 @@ Nothing is broken; these keep things healthy as she grows.
 - **Tool audit.** She has about 30 tools of her own, plus web search and any service tools
   switched on. She picks well today, but choices get less reliable as the list grows,
   especially between similar tools.
-  - *Merge close relatives:* `recall_self`, `recall_interest` and `recall_desire` into one
-    `recall`; `create_event`, `update_event`, `cancel_event` and `forward_event` into one
-    `change_calendar`; `send_signal_message` and `message_person_on_signal` into one Signal
+  - [x] *Merge the calendar's changes:* `create_event`, `update_event`, `cancel_event` and
+    `forward_event` into one `change_calendar` with an action. 87/90 still; about 460 fewer
+    tokens a request (36 tools offered).
+  - [ ] *Merge the other close relatives:* `recall_self`, `recall_interest` and `recall_desire`
+    into one `recall`; `send_signal_message` and `message_person_on_signal` into one Signal
     tool. Each keeps its approval rules.
   - [x] *Offer only what's set up,* as `show_map` and `call_someone` already are
     (`unavailable_tools`): email and calendar tools without her email signed in, Signal

@@ -31,8 +31,7 @@ from web.routes import WebAccess
 from phone.routes import PHONE_DEVICE
 
 # Her own mailbox and calendar (one sign-in), and signing up for accounts with that address.
-EMAIL_TOOLS = frozenset({"check_email", "send_email", "check_calendar", "create_event", "update_event",
-                         "cancel_event", "forward_event", "request_sign_up"})
+EMAIL_TOOLS = frozenset({"check_email", "send_email", "check_calendar", "change_calendar", "request_sign_up"})
 SIGNAL_TOOLS = frozenset({"send_signal_message", "message_person_on_signal"})
 
 # The page's own mark for the message being answered, set for that answer's task only, so the

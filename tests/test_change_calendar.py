@@ -1,5 +1,6 @@
 import app_areas.tasks
-"""Changing her calendar (C2): each event made, changed or cancelled is approved first, showing who's told."""
+"""Changing her calendar (C2): change_calendar makes, changes, cancels or forwards an event, each
+approved first, showing who's told."""
 
 from datetime import datetime, timedelta, timezone
 import json
@@ -9,10 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 from mail.account import GraphError
 from mail.calendar_events import Calendar, calendar_event, event_body, local_zone
 from services.confirmation import APPROVED, DECLINED, TIMED_OUT
-from tools.change_calendar import (
-    CANCEL_SCHEMA, CREATE_SCHEMA, UPDATE_SCHEMA, CancelEventTool, CreateEventTool, ForwardEventTool, UpdateEventTool,
-    validate_cancel_arguments, validate_create_arguments, validate_forward_arguments, validate_update_arguments,
-)
+from tools.change_calendar import FIELDS, SCHEMA, ChangeCalendarTool, needs, validate_arguments
 import test_keyboard_persistence as keyboard_tests
 from test_email import FakeClient, FakeResponse
 
@@ -23,7 +21,15 @@ SLOT_END = LATER.strftime("%Y-%m-%dT%H:%M")
 SARAH = {"address": "Sarah@Example.com", "name": "Sarah"}
 NEW = {"subject": "Driving lesson", "start": SLOT, "end": SLOT_END, "location": "Bright Driving School",
        "notes": None, "attendees": [SARAH]}
-UNCHANGED = {"subject": None, "start": None, "end": None, "location": None, "notes": None, "attendees": None}
+
+
+def call(action, **given) -> dict:
+    """change_calendar's arguments: the action, what's given, null for the rest."""
+    return {key: None for key in FIELDS} | {"action": action} | given
+
+
+def create(fields=None, **given) -> dict:
+    return call("create", **((fields if fields is not None else NEW) | given))
 
 
 def utc(at: datetime) -> dict:
@@ -90,8 +96,8 @@ class AllDayTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(event_body(start=SOON.astimezone(), end=LATER.astimezone())["isAllDay"])
 
     async def test_a_trip_is_one_event_from_its_first_day_to_its_last(self):
-        tool = ToolTests.tool(self, CreateEventTool)
-        await tool.handle("c1", TRIP)
+        tool = ToolTests.tool(self)
+        await tool.handle("c1", create(TRIP))
         shown = self.confirm.await_args.args[2]
         self.assertEqual(shown["when"], f"{FIRST_DAY:%a %d %b %Y} to {LAST_DAY:%a %d %b %Y}, all day")
         _, start, end, *_ = self.calendar.create_event.await_args.args
@@ -103,43 +109,50 @@ class AllDayTests(unittest.IsolatedAsyncioTestCase):
         for bad in ({**TRIP, "end": (FIRST_DAY - timedelta(days=1)).isoformat()},
                     {**TRIP, "end": (FIRST_DAY + timedelta(days=31)).isoformat()},
                     {**TRIP, "start": "2020-01-01", "end": "2020-01-02"}):
-            tool = ToolTests.tool(self, CreateEventTool)
-            await tool.handle("c1", bad)
+            tool = ToolTests.tool(self)
+            await tool.handle("c1", create(bad))
             self.confirm.assert_not_awaited()
-        with self.assertRaisesRegex(ValueError, "both"):
-            validate_create_arguments({**TRIP, "end": SLOT})
+        self.assertRegex(needs(create({**TRIP, "end": SLOT})), "both")
 
     async def test_moving_a_trip_by_its_first_day_keeps_its_length(self):
-        tool = ToolTests.tool(self, UpdateEventTool, event=all_day_event())
+        tool = ToolTests.tool(self, event=all_day_event())
         moved = FIRST_DAY + timedelta(days=7)
-        await tool.handle("c1", {"event_id": "e1", **UNCHANGED, "start": moved.isoformat()})
+        await tool.handle("c1", call("update", event_id="e1", start=moved.isoformat()))
         changes = self.calendar.update_event.await_args.kwargs
         self.assertEqual((changes["start"], changes["end"]), (moved, moved + timedelta(days=6)))
         self.assertTrue(self.confirm.await_args.args[2]["now"].endswith("all day"))
 
 
 class ValidationTests(unittest.TestCase):
-    def test_schemas_are_strict_and_arguments_checked(self):
-        for schema in (CREATE_SCHEMA, UPDATE_SCHEMA, CANCEL_SCHEMA):
-            self.assertTrue(schema["strict"])
-        validate_create_arguments(NEW)
-        validate_update_arguments({"event_id": "e1", **UNCHANGED, "subject": "Moved"})
-        validate_cancel_arguments({"event_id": "e1", "message": None})
-        for validate, bad in (
-            (validate_create_arguments, {**NEW, "start": "tomorrow 9am"}),
-            (validate_create_arguments, {**NEW, "start": SOON.date().isoformat()}),
-            (validate_create_arguments, {**NEW, "attendees": [{"address": "a@b.co, c@d.co", "name": None}]}),
-            (validate_create_arguments, {**NEW, "subject": " "}),
-            (validate_update_arguments, {"event_id": "e1", **UNCHANGED}),
-            (validate_update_arguments, {"event_id": " ", **UNCHANGED, "subject": "x"}),
-            (validate_cancel_arguments, {"event_id": "e1"}),
+    def test_types_are_checked_up_front(self):
+        self.assertTrue(SCHEMA["strict"])
+        self.assertEqual(SCHEMA["parameters"]["required"], list(FIELDS))
+        validate_arguments(create())
+        validate_arguments(call("update", event_id="e1", subject="Moved"))
+        validate_arguments(call("cancel", event_id="e1"))
+        for bad in (
+            create() | {"action": "delete"},
+            create(attendees=[{"address": "a@b.co, c@d.co", "name": None}]),
+            create(subject=" "),
+            {key: value for key, value in create().items() if key != "message"},
+            create(start=9),
         ):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
-                validate(bad)
+                validate_arguments(bad)
+
+    def test_what_an_action_needs_comes_back_to_her_to_put_right(self):
+        # A call that fails validation is dropped without an answer, so these are told, not refused.
+        self.assertIsNone(needs(create()))
+        self.assertEqual(needs(call("create", subject="Lunch", start=SLOT)), "To create an event, give end.")
+        self.assertRegex(needs(create(start="tomorrow 9am")), "YYYY-MM-DD")
+        self.assertRegex(needs(create(start=SOON.date().isoformat())), "both")
+        self.assertEqual(needs(call("update", event_id="e1")), "Give at least one thing to change.")
+        self.assertRegex(needs(call("cancel", event_id=" ")), "event_id")
+        self.assertRegex(needs(call("forward", event_id="e1")), "attendees")
 
 
 class ToolTests(unittest.IsolatedAsyncioTestCase):
-    def tool(self, tool_type, outcome=APPROVED, event=None):
+    def tool(self, outcome=APPROVED, event=None):
         self.connection = MagicMock()
         self.connection.response.item.create = AsyncMock()
         self.connection.response.create = AsyncMock()
@@ -150,14 +163,15 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.calendar.update_event = AsyncMock(return_value=calendar_event(graph_event(subject="Moved")))
         self.calendar.cancel_event = AsyncMock()
         self.changed = MagicMock()
-        return tool_type(lambda: self.connection, lambda: False, MagicMock(), lambda: self.calendar, self.confirm, self.changed)
+        return ChangeCalendarTool(lambda: self.connection, lambda: False, MagicMock(), lambda: self.calendar, self.confirm,
+                                  self.changed)
 
     def output(self):
         return json.loads(self.connection.response.item.create.call_args.kwargs["item"]["output"])
 
     async def test_a_new_event_shows_who_is_invited_before_anything_is_made(self):
-        tool = self.tool(CreateEventTool)
-        await tool.handle("c1", NEW)
+        tool = self.tool()
+        await tool.handle("c1", create())
         service, name, shown = self.confirm.await_args.args
         self.assertEqual((service, name, self.confirm.await_args.kwargs["title"]), ("calendar", "create_event", "Calendar"))
         self.assertEqual(shown["invitations go to"], ["Sarah <sarah@example.com>"])
@@ -172,22 +186,22 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_declined_lapsed_or_impossible_changes_nothing(self):
         for outcome in (DECLINED, TIMED_OUT):
-            tool = self.tool(CreateEventTool, outcome=outcome)
-            await tool.handle("c1", NEW)
+            tool = self.tool(outcome=outcome)
+            await tool.handle("c1", create())
             self.calendar.create_event.assert_not_awaited()
             self.assertEqual(self.output()["status"], "not_done")
             self.assertIn("nothing was changed", self.output()["message"])
             self.changed.assert_not_called()
         for bad in ({**NEW, "end": SLOT}, {**NEW, "start": "2020-01-01T09:00", "end": "2020-01-01T10:00"}):
-            tool = self.tool(CreateEventTool)
-            await tool.handle("c1", bad)
+            tool = self.tool()
+            await tool.handle("c1", create(bad))
             self.confirm.assert_not_awaited()
             self.assertEqual(self.output()["status"], "error")
 
     async def test_a_change_shows_before_and_after_and_who_gets_the_update(self):
-        tool = self.tool(UpdateEventTool)
+        tool = self.tool()
         moved = (SOON + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M")
-        await tool.handle("c1", {"event_id": "e1", **UNCHANGED, "start": moved})
+        await tool.handle("c1", call("update", event_id="e1", start=moved))
         shown = self.confirm.await_args.args[2]
         self.assertEqual(shown["event"], "Driving lesson")
         self.assertTrue(shown["was"].endswith("09:00-10:00"))
@@ -200,20 +214,19 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.output()["status"], "ok")
 
     async def test_only_her_own_events_can_be_changed_or_cancelled(self):
-        for tool_type, arguments in ((UpdateEventTool, {"event_id": "e1", **UNCHANGED, "subject": "Mine now"}),
-                                     (CancelEventTool, {"event_id": "e1", "message": None})):
-            tool = self.tool(tool_type, event=graph_event(organised=False))
+        for arguments in (call("update", event_id="e1", subject="Mine now"), call("cancel", event_id="e1")):
+            tool = self.tool(event=graph_event(organised=False))
             await tool.handle("c1", arguments)
             self.confirm.assert_not_awaited()
             self.assertIn("only they can change it", self.output()["message"])
-        tool = self.tool(CancelEventTool)
+        tool = self.tool()
         self.calendar.event = AsyncMock(side_effect=LookupError())
-        await tool.handle("c1", {"event_id": "gone", "message": None})
+        await tool.handle("c1", call("cancel", event_id="gone"))
         self.assertIn("no event with that id", self.output()["message"])
 
     async def test_cancelling_shows_who_is_told_and_the_message(self):
-        tool = self.tool(CancelEventTool)
-        await tool.handle("c1", {"event_id": "e1", "message": "Sarah's unwell"})
+        tool = self.tool()
+        await tool.handle("c1", call("cancel", event_id="e1", message="Sarah's unwell"))
         shown = self.confirm.await_args.args[2]
         self.assertEqual((shown["the cancellation goes to"], shown["message"]), (["Sarah <sarah@example.com>"], "Sarah's unwell"))
         event, message = self.calendar.cancel_event.await_args.args
@@ -221,19 +234,20 @@ class ToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("sent the cancellation", self.output()["message"])
 
     async def test_a_failure_never_claims_what_happened(self):
-        tool = self.tool(CreateEventTool)
+        tool = self.tool()
         self.calendar.create_event = AsyncMock(side_effect=GraphError("Microsoft said HTTP 500 (x)."))
-        await tool.handle("c1", NEW)
+        await tool.handle("c1", create())
         self.assertIn("check it before saying", self.output()["message"])
         self.changed.assert_not_called()
 
 
 class ForwardTests(unittest.IsolatedAsyncioTestCase):
     async def test_an_invitation_can_be_forwarded_once_approved_showing_whose_it_is(self):
-        tool = ToolTests.tool(self, ForwardEventTool, event=graph_event(organised=False))
+        tool = ToolTests.tool(self, event=graph_event(organised=False))
         self.calendar.forward_event = AsyncMock()
-        arguments = {"event_id": "e1", "to": [{"address": "Nick@Example.com", "name": "Nick"}], "comment": "FYI"}
-        validate_forward_arguments(arguments)
+        arguments = call("forward", event_id="e1", attendees=[{"address": "Nick@Example.com", "name": "Nick"}],
+                         message="FYI")
+        validate_arguments(arguments)
         await tool.handle("c1", arguments)
         shown = self.confirm.await_args.args[2]
         self.assertEqual(shown["forwarded to"], ["Nick <nick@example.com>"])
@@ -242,12 +256,14 @@ class ForwardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ToolTests.output(self)["status"], "ok")
 
     async def test_declined_forwards_nothing_and_nobody_is_refused(self):
-        tool = ToolTests.tool(self, ForwardEventTool, outcome=DECLINED)
+        tool = ToolTests.tool(self, outcome=DECLINED)
         self.calendar.forward_event = AsyncMock()
-        await tool.handle("c1", {"event_id": "e1", "to": [{"address": "a@b.co", "name": None}], "comment": None})
+        await tool.handle("c1", call("forward", event_id="e1", attendees=[{"address": "a@b.co", "name": None}]))
         self.calendar.forward_event.assert_not_awaited()
-        with self.assertRaises(ValueError):
-            validate_forward_arguments({"event_id": "e1", "to": [], "comment": None})
+        tool = ToolTests.tool(self)
+        await tool.handle("c1", call("forward", event_id="e1", attendees=[]))
+        self.confirm.assert_not_awaited()
+        self.assertIn("who to forward it to", ToolTests.output(self)["message"])
 
     async def test_the_request_microsoft_gets(self):
         client = FakeClient([FakeResponse(202, None)])
@@ -262,10 +278,9 @@ class AppTests(unittest.IsolatedAsyncioTestCase):
     async def test_offered_where_you_talk_with_her_never_to_the_coordinator(self):
         async with keyboard_tests.running_app() as (app, pilot):
             names = [schema["name"] for schema in app.live.tool_schemas()]
-            for name in ("create_event", "update_event", "cancel_event", "forward_event"):
-                self.assertIn(name, names)
-            self.assertFalse({"create_event", "update_event", "cancel_event"}
-                             & (app_areas.tasks.COORDINATOR_TOOLS | app_areas.tasks.COORDINATOR_SEND_TOOLS))
+            self.assertIn("change_calendar", names)
+            self.assertNotIn("create_event", names)
+            self.assertNotIn("change_calendar", app_areas.tasks.COORDINATOR_TOOLS | app_areas.tasks.COORDINATOR_SEND_TOOLS)
 
 
 if __name__ == "__main__":
