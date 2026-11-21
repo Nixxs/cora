@@ -62,12 +62,13 @@ Nothing is broken; these keep things healthy as she grows.
     `recall`; `create_event`, `update_event`, `cancel_event` and `forward_event` into one
     `change_calendar`; `send_signal_message` and `message_person_on_signal` into one Signal
     tool. Each keeps its approval rules.
-  - *Offer only what's set up,* as `show_map` and `call_someone` already are
+  - [x] *Offer only what's set up,* as `show_map` and `call_someone` already are
     (`unavailable_tools`): email and calendar tools without her email signed in, Signal
-    tools without Signal linked.
-  - *Measure it:* a small set of test requests, each with the tool she should pick (or
-    none), run against the real model before and after, so changes show whether her choices
-    got better or worse.
+    tools without Signal linked, and the WoW tools unless the game's in use.
+  - [x] *Measure it:* [evals/tool_choice.py](evals/tool_choice.py). Baseline 87/90 (97%). Her
+    choices were already good, so the gain is mostly tokens: the tool list is about 11,700 of
+    each request's 15,800.
+  - [ ] *Trim the longest descriptions,* starting with aircon's (4,300 characters).
   - About 30 tools down to about 20, with per-chat exclusions working as now.
 - **Checks still to do on real devices:** the automatic hang-up after goodbye on a real
   call; wake-word microphone accuracy and opening-speech continuity; the standby heads-up's

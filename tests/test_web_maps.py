@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
 
-from backend_chat import SIGNAL_EXCLUDED, WEB_EXCLUDED
+from backend_chat import GAME_TOOLS, SIGNAL_EXCLUDED, WEB_EXCLUDED
 from tools.pass_on import CLIENT_ONLY
 from tools.show_map import NOT_SET_UP_RESULT, SHOWN_RESULT, ShowMapTool, map_view
 from web import maps
@@ -93,12 +93,16 @@ class ShowMapAppTests(unittest.IsolatedAsyncioTestCase):
     async def test_without_a_key_its_not_offered_and_with_one_the_page_gets_the_map(self):
         async with keyboard_tests.running_app() as (app, pilot):
             app.maps_key = ""
-            self.assertEqual(app.unavailable_tools() - {"call_someone", "claude_code", "run_claude_code", "consult_rocky", "aircon"}, frozenset({"show_map"}))
+            self.assertEqual(app.unavailable_tools() - {"call_someone", "claude_code", "run_claude_code", "consult_rocky", "aircon",
+                                                                 "send_signal_message", "message_person_on_signal",
+                                                                 *GAME_TOOLS}, frozenset({"show_map"}))
             self.assertNotIn("show_map", [schema["name"] for schema in app.live.tool_schemas()])
             self.assertFalse(app.show_map(MapView("place", "Kings Park")))
 
             app.maps_key = KEY
-            self.assertEqual(app.unavailable_tools() - {"call_someone", "claude_code", "run_claude_code", "consult_rocky", "aircon"}, frozenset())
+            self.assertEqual(app.unavailable_tools() - {"call_someone", "claude_code", "run_claude_code", "consult_rocky", "aircon",
+                                                        "send_signal_message", "message_person_on_signal", *GAME_TOOLS},
+                             frozenset())
             self.assertIn("show_map", [schema["name"] for schema in app.tools.schemas(excluding=CLIENT_ONLY)])
             app.conversation.record_message = MagicMock()
             route = MapView("directions", "Fremantle", "Leederville", "driving")

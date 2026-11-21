@@ -17,6 +17,13 @@ class EmailAccountMixin:
     async def check_email_account(self) -> None:
         """Whether her mailbox can be reached: at launch (so a lapsed sign-in shows) and after setting it up."""
         try:
+            await self.read_email_account()
+        finally:
+            # From now on, an email that isn't set up leaves her email tools out (unavailable_tools).
+            self.email_checked = True
+
+    async def read_email_account(self) -> None:
+        try:
             if await asyncio.to_thread(self.email_account.client_id) is None:
                 self.email_status = EmailStatus(EMAIL_NO_APP)
                 return

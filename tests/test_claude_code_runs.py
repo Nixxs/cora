@@ -1,6 +1,7 @@
 """Cora running Claude Code herself: projects folders, the runner (with a stand-in for the SDK's
 client), what each step asks of you, and her run_claude_code tool."""
 
+from tool_gates import gates
 import asyncio
 from datetime import datetime, timezone
 import json
@@ -380,7 +381,7 @@ class RunToolTests(unittest.IsolatedAsyncioTestCase):
     def test_only_offered_when_settings_allow_it(self):
         app = SimpleNamespace(maps_key="k", calling_out_problem=lambda: None, claude_code_listen=True,
                               claude_code_run=False, claude_code_folders=["D:\\"], can_consult_rocky=lambda: False,
-                              sensibo_ready=lambda: False)
+                              sensibo_ready=lambda: False, **gates())
         app.can_run_claude_code = lambda: ClaudeCodeMixin.can_run_claude_code(app)
         self.assertIn("run_claude_code", WebInterfaceMixin.unavailable_tools(app))
         app.claude_code_run = True

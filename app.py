@@ -338,6 +338,8 @@ class CoraApp(
         # Why her calendar couldn't last be read, so it's said once, not hourly.
         self.calendar_problem = ""
         self.email_status = EmailStatus()
+        # Until her mailbox has been checked at launch, its tools stay offered (unavailable_tools).
+        self.email_checked = False
         self.email_controls: EmailControls | None = None
         # The person's photos from this conversation, in memory only, for look_again.
         self.kept_images = KeptImages()

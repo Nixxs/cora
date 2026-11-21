@@ -2066,6 +2066,17 @@ inside the app in place of the error it caused in the test (a crashed app cancel
 workers too). To check a test holds up on a busy machine, run a dozen copies of its file at
 once.
 
+**Her tool choices:** [evals/tool_choice.py](evals/tool_choice.py) runs 45 fixed requests against
+the real backend model, each with the tool she should reach for first (or none). It covers voice
+too, since her voice session hands tool work to the backend model. She gets her real tools and
+instructions, with sample stand-ins for her own context (an identity, interests, a desire, two
+tasks), so nothing personal is sent and runs stay comparable. A line said before a tool ("I'm
+asking Rocky") counts as the tool. It prints the misses, a score and the tokens used, and saves the
+run in `evals/results/`. A run costs about 1.5 million input tokens with `--repeat 2`, mostly the
+tool list, which is billed as cached input after the first request. `--only recall` or `--limit 3`
+run a few requests. The baseline (21 Nov 2026) is 87/90 right, with 39 tools and about 15,800
+tokens a request, about 11,700 of them the tools.
+
 **Migrations:** never edit, rename or remove an applied migration; add a new higher-numbered
 SQL file. `python migrate.py` checks the history and applies pending ones in transactions,
 with no automatic downgrades.
@@ -2108,7 +2119,18 @@ If a tool needs an app action, add it as a parameter of `create_tool_registry` a
 from [app.py](app.py). Decide where it's offered: each kind of conversation excludes tools
 that don't fit (`STANDBY_EXCLUDED`, `SIGNAL_EXCLUDED` and `WEB_EXCLUDED` in
 [backend_chat.py](backend_chat.py); contacts, task threads, calls and the coordinator allow
-only listed tools), and `unavailable_tools()` hides tools whose service isn't set up.
+only listed tools), and `unavailable_tools()` hides tools that can't be used. Every tool
+offered costs its description's tokens on every backend request, so this matters. It hides:
+- `show_map` without a Google Maps key
+- `call_someone` until calling out is set up
+- `claude_code`, `run_claude_code` and `consult_rocky` until Settings allows them
+- `aircon` without Sensibo
+- her email, calendar and sign-up tools once her email has been checked at launch and found
+  missing or signed out (until then they're offered, so the first session isn't without them)
+- the Signal tools without Signal, and `message_person_on_signal` without the person's number
+- the three World of Warcraft tools unless push-to-talk or game watch is on, or the game is
+  running when she connects. A quick look down the process list, `game_running()`, takes about
+  20 ms.
 
 - Keep results small and size-capped: they enter Cora-prime's context.
 - Treat external or stored text in results as untrusted, and say so in a `note` field.

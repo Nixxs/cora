@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend_chat import (
+    GAME_TOOLS,
     MAX_ROUNDS, OUT_OF_ROUNDS, STANDBY_EXCLUDED, TOOL_NO_RESULT, TOOL_REFUSED, BackendChat, BackendRoute,
 )
 from session_config import BACKEND_INSTRUCTIONS, TEXT_CHAT_INSTRUCTIONS
@@ -236,7 +237,9 @@ class StandbyTypingTests(unittest.IsolatedAsyncioTestCase):
             # History is taken before the new message joins the chat, so it isn't sent twice.
             self.assertEqual([h["content"][0]["text"] for h in kwargs["history"]], ["Earlier answer"])
             # Maps only with a Google Maps key (none here).
-            self.assertEqual(kwargs["route"].excluded, STANDBY_EXCLUDED | {"show_map", "call_someone", "claude_code", "run_claude_code", "consult_rocky", "aircon"})
+            self.assertEqual(kwargs["route"].excluded, STANDBY_EXCLUDED | GAME_TOOLS | {
+                "show_map", "call_someone", "claude_code", "run_claude_code", "consult_rocky", "aircon",
+                "send_signal_message", "message_person_on_signal"})
             self.assertIn("Cora · written:", app.conversation.log_entries)
             self.assertIn("You: Are you there?", app.conversation.log_entries)
             self.assertTrue(app.standby)

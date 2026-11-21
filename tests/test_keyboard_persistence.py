@@ -132,6 +132,8 @@ async def started_app(persistence=None, has_key=True):
             patch("app_areas.signal_chats.delete_attachments", AsyncMock()), patch("app_areas.signal_chats.clear_attachments", AsyncMock()), \
             patch.object(CoraApp, "daily_backup", return_value=None):
         app = CoraApp()
+        # Whether World of Warcraft is open on this PC mustn't change which tools tests see.
+        app.wow_running = lambda: False
         async with app.run_test(size=(90, 35)) as pilot:
             # Email not set up, so launch checks nothing; tests that need it say otherwise.
             app.email_account.client_id.return_value = None

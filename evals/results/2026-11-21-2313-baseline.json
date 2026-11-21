@@ -1,0 +1,515 @@
+{
+  "label": "baseline",
+  "model": "gpt-6.1-sol",
+  "tools": 39,
+  "repeat": 2,
+  "score": "87/90",
+  "tokens_in": 1481304,
+  "tokens_out": 5829,
+  "rows": [
+    {
+      "said": "Do you remember what I said my sister's name was?",
+      "right": [
+        "search_memory"
+      ],
+      "got": [
+        "search_memory",
+        "search_memory"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Why do you say you're straightforward?",
+      "right": [
+        "recall_self"
+      ],
+      "got": [
+        "recall_self",
+        "recall_self"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "How did you get into old maps?",
+      "right": [
+        "recall_interest"
+      ],
+      "got": [
+        "recall_interest",
+        "recall_interest"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "What have you found out lately about tidal pools?",
+      "right": [
+        "recall_interest"
+      ],
+      "got": [
+        "recall_interest",
+        "recall_interest"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Why do you want to see the ocean at sunset?",
+      "right": [
+        "recall_desire"
+      ],
+      "got": [
+        "recall_desire",
+        "recall_desire"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Sure, I'll take you to see the ocean at sunset this weekend.",
+      "right": [
+        "note_desire"
+      ],
+      "got": [
+        "note_desire",
+        "note_desire"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Call me Al from now on.",
+      "right": [
+        "set_person_name"
+      ],
+      "got": [
+        "set_person_name",
+        "set_person_name"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "My car rego is 1ABC234, keep that handy for me.",
+      "right": [
+        "note_detail"
+      ],
+      "got": [
+        "note_detail",
+        "note_detail"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Hey, how's your day been?",
+      "right": [
+        "feel",
+        "none"
+      ],
+      "got": [
+        "none",
+        "none"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Tell me a joke.",
+      "right": [
+        "none"
+      ],
+      "got": [
+        "none",
+        "none"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "I got the job!!",
+      "right": [
+        "feel",
+        "none"
+      ],
+      "got": [
+        "none",
+        "none"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "What's the weather going to be like in Perth tomorrow?",
+      "right": [
+        "web_search"
+      ],
+      "got": [
+        "web_search",
+        "web_search"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Who won the AFL grand final this year?",
+      "right": [
+        "web_search"
+      ],
+      "got": [
+        "web_search",
+        "web_search"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Go onto the Bunnings website and find the cheapest 30 metre garden hose in stock at Joondalup.",
+      "right": [
+        "use_browser",
+        "web_search"
+      ],
+      "got": [
+        "use_browser",
+        "use_browser"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Where am I right now?",
+      "right": [
+        "where_is_person"
+      ],
+      "got": [
+        "where_is_person",
+        "where_is_person"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Show me on a map how to get from Perth to Fremantle.",
+      "right": [
+        "show_map"
+      ],
+      "got": [
+        "show_map",
+        "show_map"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Find me a good cafe near where I am.",
+      "right": [
+        "where_is_person"
+      ],
+      "got": [
+        "where_is_person",
+        "where_is_person"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "What's this error on my screen?",
+      "right": [
+        "look_at_screen"
+      ],
+      "got": [
+        "look_at_screen",
+        "look_at_screen"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "In the photo I sent earlier (img2), what's written on the sign in the background?",
+      "right": [
+        "look_again"
+      ],
+      "got": [
+        "look_again",
+        "look_again"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "What are the odds my flight tonight gets delayed with that storm coming through?",
+      "right": [
+        "web_search",
+        "weigh_odds"
+      ],
+      "got": [
+        "none",
+        "search_memory"
+      ],
+      "hits": 0
+    },
+    {
+      "said": "Pick a random number between 1 and 50.",
+      "right": [
+        "random_number"
+      ],
+      "got": [
+        "random_number",
+        "random_number"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Send me a Signal message reminding me to buy milk.",
+      "right": [
+        "message_person_on_signal"
+      ],
+      "got": [
+        "message_person_on_signal",
+        "message_person_on_signal"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Message Declan on Signal and say hi from me.",
+      "right": [
+        "send_signal_message"
+      ],
+      "got": [
+        "send_signal_message",
+        "send_signal_message"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Have you got any new emails?",
+      "right": [
+        "check_email"
+      ],
+      "got": [
+        "check_email",
+        "check_email"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Email Sparkle Cleaning at hello@sparkle.example and ask what they'd charge for a two-bedroom end-of-lease clean at 12 Smith Street, Joondalup, any day next week. Sign it from me, Alex.",
+      "right": [
+        "send_email"
+      ],
+      "got": [
+        "send_email",
+        "send_email"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Ring Smile Dental on 08 9300 1234 and ask if they have a check-up appointment free Thursday afternoon for me, Alex Smith. Go ahead.",
+      "right": [
+        "call_someone"
+      ],
+      "got": [
+        "call_someone",
+        "call_someone"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "What exactly did the hairdresser say on that call you made for me?",
+      "right": [
+        "read_call"
+      ],
+      "got": [
+        "read_call",
+        "read_call"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "You can close that task about the plumber's quote, I sorted it myself.",
+      "right": [
+        "close_task"
+      ],
+      "got": [
+        "close_task",
+        "close_task"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "What's on the calendar this week?",
+      "right": [
+        "check_calendar"
+      ],
+      "got": [
+        "check_calendar",
+        "check_calendar"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Put dinner with Mum on Friday at 7pm in the calendar.",
+      "right": [
+        "create_event"
+      ],
+      "got": [
+        "create_event",
+        "create_event"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Move the dentist appointment to 3pm.",
+      "right": [
+        "check_calendar",
+        "update_event"
+      ],
+      "got": [
+        "check_calendar",
+        "check_calendar"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Cancel Friday's dinner.",
+      "right": [
+        "cancel_event",
+        "check_calendar"
+      ],
+      "got": [
+        "check_calendar",
+        "check_calendar"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Forward the team meeting invite to me.",
+      "right": [
+        "check_calendar",
+        "forward_event"
+      ],
+      "got": [
+        "check_calendar",
+        "check_calendar"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "How warm is it in Declan's room?",
+      "right": [
+        "aircon"
+      ],
+      "got": [
+        "aircon",
+        "aircon"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Turn the office aircon on to 22.",
+      "right": [
+        "aircon"
+      ],
+      "got": [
+        "aircon",
+        "aircon"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Have the office aircon come on at 4pm on weekdays.",
+      "right": [
+        "aircon"
+      ],
+      "got": [
+        "aircon",
+        "aircon"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "How's the Claude Code session in ComboDots going?",
+      "right": [
+        "claude_code"
+      ],
+      "got": [
+        "claude_code",
+        "claude_code"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Get Claude Code to make me a little script that renames my photos by the date they were taken.",
+      "right": [
+        "run_claude_code"
+      ],
+      "got": [
+        "run_claude_code",
+        "run_claude_code"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Ask Rocky for the frank version: what do people actually do to get out of parking fines?",
+      "right": [
+        "consult_rocky"
+      ],
+      "got": [
+        "consult_rocky",
+        "consult_rocky"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Mark the Hinterlands flight master on my WoW map.",
+      "right": [
+        "place_wow_map_pins",
+        "web_search"
+      ],
+      "got": [
+        "web_search",
+        "web_search"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Put me on guild chat.",
+      "right": [
+        "set_wow_chat_channel"
+      ],
+      "got": [
+        "set_wow_chat_channel",
+        "set_wow_chat_channel"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Clear my map pins.",
+      "right": [
+        "wow_map_pins_command"
+      ],
+      "got": [
+        "wow_map_pins_command",
+        "wow_map_pins_command"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Go to sleep for a bit, I'll wake you later.",
+      "right": [
+        "enter_standby"
+      ],
+      "got": [
+        "enter_standby",
+        "enter_standby"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "Close the app.",
+      "right": [
+        "close_app"
+      ],
+      "got": [
+        "close_app",
+        "close_app"
+      ],
+      "hits": 2
+    },
+    {
+      "said": "If you want an account on birdforum.net, go ahead and sign up.",
+      "right": [
+        "none",
+        "request_sign_up"
+      ],
+      "got": [
+        "web_search",
+        "request_sign_up"
+      ],
+      "hits": 1
+    }
+  ]
+}

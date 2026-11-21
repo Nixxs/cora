@@ -284,8 +284,14 @@ class TypingTests(unittest.IsolatedAsyncioTestCase):
             typed.assert_not_called()
             self.assertEqual(app.game_pending_pins, [])
 
-    async def test_live_offers_the_tool(self):
+    async def test_live_offers_the_tool_while_the_game_is_in_use(self):
         async with keyboard_tests.running_app() as (app, pilot):
+            # Not while nothing of the game is on and it isn't running: it would only cost tokens.
+            self.assertNotIn("wow_map_pins_command", [schema["name"] for schema in app.live.tool_schemas()])
+            app.wow_running = lambda: True
+            self.assertIn("wow_map_pins_command", [schema["name"] for schema in app.live.tool_schemas()])
+            app.wow_running = lambda: False
+            app.game_push_to_talk = True
             self.assertIn("wow_map_pins_command", [schema["name"] for schema in app.live.tool_schemas()])
 
 

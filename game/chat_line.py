@@ -130,6 +130,37 @@ def game_in_front() -> bool:
     return foreground_process() in GAME_PROCESSES
 
 
+def game_running() -> bool:
+    """Whether the game is open at all (in front or not): a quick look down the process list."""
+    if sys.platform != "win32":
+        return False
+    from ctypes import wintypes
+
+    class ProcessEntry(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD), ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", ctypes.c_long), ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", ctypes.c_wchar * 260)]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    snapshot = kernel32.CreateToolhelp32Snapshot(0x2, 0)  # TH32CS_SNAPPROCESS
+    if snapshot in (None, wintypes.HANDLE(-1).value):
+        return False
+    try:
+        entry = ProcessEntry()
+        entry.dwSize = ctypes.sizeof(ProcessEntry)
+        found = kernel32.Process32FirstW(snapshot, ctypes.byref(entry))
+        while found:
+            if entry.szExeFile.lower() in GAME_PROCESSES:
+                return True
+            found = kernel32.Process32NextW(snapshot, ctypes.byref(entry))
+        return False
+    finally:
+        kernel32.CloseHandle(snapshot)
+
+
 def type_into_game(line: str) -> None:
     """Open the chat box, type the line and send it, all in one batch. Raises OSError when Windows
     took fewer events than sent (such as another program blocking input)."""

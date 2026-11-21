@@ -12,7 +12,9 @@ from uuid import UUID
 
 from textual import work
 
-from backend_chat import WEB_EXCLUDED, BackendRoute
+from backend_chat import GAME_TOOLS, WEB_EXCLUDED, BackendRoute
+from game.chat_line import game_running
+from mail.account import NO_APP as EMAIL_NO_APP, SIGNED_OUT as EMAIL_SIGNED_OUT
 from live import group_note, typed_content
 from messaging.images import photo_content, photo_described, read_photo
 from messaging.messages import APPROVAL_SECONDS, image_seen_content
@@ -27,6 +29,11 @@ from web.feed import APPROVAL, APPROVAL_DONE, KEEP as FEED_KEEP, MAP, PHOTO, PIC
 from web.pairing import shown_code
 from web.routes import WebAccess
 from phone.routes import PHONE_DEVICE
+
+# Her own mailbox and calendar (one sign-in), and signing up for accounts with that address.
+EMAIL_TOOLS = frozenset({"check_email", "send_email", "check_calendar", "create_event", "update_event",
+                         "cancel_event", "forward_event", "request_sign_up"})
+SIGNAL_TOOLS = frozenset({"send_signal_message", "message_person_on_signal"})
 
 # The page's own mark for the message being answered, set for that answer's task only, so the
 # message and her reply reach the feed marked and that page doesn't show them twice.
@@ -261,8 +268,12 @@ class WebInterfaceMixin:
     def unavailable_tools(self) -> frozenset[str]:
         """Tools not set up, so not offered anywhere: show_map without a Google Maps key,
         call_someone until calling out is set up, claude_code while Cora isn't listening for it,
-        run_claude_code unless Settings lets her run sessions, and consult_rocky unless Settings lets
-        her consult Rocky."""
+        run_claude_code unless Settings lets her run sessions, consult_rocky unless Settings lets
+        her consult Rocky, aircon without Sensibo, her email and calendar tools without her email
+        (once it's been checked), the Signal tools without Signal (and messaging the person without
+        their number), and the World of Warcraft tools unless the game's features are on or it's
+        running. Every tool offered costs tokens on every request, so what can't be used isn't sent.
+        Her voice session takes its tools as it connects."""
         missing = set() if self.maps_key else {"show_map"}
         if self.calling_out_problem():
             missing.add("call_someone")
@@ -274,7 +285,22 @@ class WebInterfaceMixin:
             missing.add("consult_rocky")
         if not self.sensibo_ready():
             missing.add("aircon")
+        if self.email_checked and self.email_status.state in (EMAIL_NO_APP, EMAIL_SIGNED_OUT):
+            missing |= EMAIL_TOOLS
+        signal = self.signal_settings
+        if not (signal.enabled and signal.account):
+            missing |= SIGNAL_TOOLS
+        elif not signal.person_recipient:
+            missing.add("message_person_on_signal")
+        if not (self.game_push_to_talk or self.game_watch or self.wow_running()):
+            missing |= GAME_TOOLS
         return frozenset(missing)
+
+    def wow_running(self) -> bool:
+        try:
+            return game_running()
+        except Exception:
+            return False
 
     def show_map(self, view: maps.MapView) -> bool:
         """show_map: the map on every open page, and its caption and link in the desk's chat.

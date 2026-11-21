@@ -224,8 +224,14 @@ class PlacingTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(result["placed"], 3)
             self.assertEqual([call.args[0] for call in typed.call_args_list], EXAMPLE_LINES, "the old one is never typed")
 
-    async def test_live_offers_the_tool(self):
+    async def test_live_offers_the_tool_while_the_game_is_in_use(self):
         async with keyboard_tests.running_app() as (app, pilot):
+            # Not while nothing of the game is on and it isn't running: it would only cost tokens.
+            self.assertNotIn("place_wow_map_pins", [schema["name"] for schema in app.live.tool_schemas()])
+            app.wow_running = lambda: True
+            self.assertIn("place_wow_map_pins", [schema["name"] for schema in app.live.tool_schemas()])
+            app.wow_running = lambda: False
+            app.game_push_to_talk = True
             self.assertIn("place_wow_map_pins", [schema["name"] for schema in app.live.tool_schemas()])
 
 
