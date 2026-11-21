@@ -27,6 +27,7 @@ from .enter_standby import StandbyTool, SCHEMA as STANDBY_SCHEMA, validate_argum
 from .look_at_screen import LookAtScreenTool, SCHEMA as SCREEN_SCHEMA, validate_arguments as validate_screen_arguments
 from .look_again import KeptImages, LookAgainTool, SCHEMA as LOOK_AGAIN_SCHEMA, validate_arguments as validate_look_again_arguments
 from .weigh_odds import SCHEMA as WEIGH_ODDS_SCHEMA, WeighOddsTool, validate_arguments as validate_weigh_odds_arguments
+from .aircon import SCHEMA as AIRCON_SCHEMA, AirconTool, validate_arguments as validate_aircon_arguments
 from .set_wow_chat_channel import (
     SCHEMA as WOW_CHANNEL_SCHEMA, SetWowChatChannelTool, validate_arguments as validate_wow_channel_arguments,
 )
@@ -95,6 +96,10 @@ async def _no_game_channel(channel):
     return {"status": "error", "message": "Changing the game's chat channel isn't available here."}
 
 
+async def _no_aircon(arguments):
+    return {"status": "error", "message": "The air conditioners aren't available here."}
+
+
 async def _no_sign_ups(url):
     return None, "Signing up isn't available here."
 
@@ -112,7 +117,7 @@ def create_tool_registry(
     can_call=lambda number: "Phone calls aren't set up.", place_call=_not_set_up,
     look_at_claude_code=_no_claude_code, run_claude_code=_no_claude_code_runs,
     place_map_pins=_no_game_pins, run_map_pins_command=_no_game_commands, consult_rocky=_no_rocky,
-    set_wow_chat_channel=_no_game_channel,
+    set_wow_chat_channel=_no_game_channel, use_aircon=_no_aircon,
 ) -> ToolRegistry:
     registry = ToolRegistry(write_debug, is_closing, schedule)
     close_app = CloseAppTool(get_connection, is_closing, shutdown, write_debug)
@@ -215,6 +220,9 @@ def create_tool_registry(
     # The addon's other /cmp commands (clear, done, tracker...), one checked line, the same way.
     wow_command = WowMapPinsCommandTool(get_connection, is_closing, run_map_pins_command, write_debug)
     registry.register(WOW_COMMAND_SCHEMA, validate_wow_command_arguments, wow_command.handle)
+    # The house's air conditioners (Settings > Services > Sensibo; offered once set up).
+    aircon = AirconTool(get_connection, is_closing, use_aircon, write_debug)
+    registry.register(AIRCON_SCHEMA, validate_aircon_arguments, aircon.handle)
     # Which WoW chat channel push-to-talk speaks into (Settings > Game), when the person asks.
     wow_channel = SetWowChatChannelTool(get_connection, is_closing, set_wow_chat_channel, write_debug)
     registry.register(WOW_CHANNEL_SCHEMA, validate_wow_channel_arguments, wow_channel.handle)

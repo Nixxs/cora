@@ -272,6 +272,8 @@ class WebInterfaceMixin:
             missing.add("run_claude_code")
         if not self.can_consult_rocky():
             missing.add("consult_rocky")
+        if not self.sensibo_ready():
+            missing.add("aircon")
         return frozenset(missing)
 
     def show_map(self, view: maps.MapView) -> bool:

@@ -248,7 +248,8 @@ class ClaudeCodeToolTests(unittest.IsolatedAsyncioTestCase):
 
     def test_only_offered_while_listening(self):
         app = SimpleNamespace(maps_key="key", calling_out_problem=lambda: None, claude_code_listen=False,
-                              can_run_claude_code=lambda: False, can_consult_rocky=lambda: False)
+                              can_run_claude_code=lambda: False, can_consult_rocky=lambda: False,
+                              sensibo_ready=lambda: False)
         self.assertIn("claude_code", WebInterfaceMixin.unavailable_tools(app))
         app.claude_code_listen = True
         self.assertNotIn("claude_code", WebInterfaceMixin.unavailable_tools(app))

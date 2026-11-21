@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 
 from sqlalchemy import Engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -27,6 +28,13 @@ MAX_IDLE_MINUTES = 720
 MAX_GAP_MINUTES = 1440
 # Saved for "no second backup copy", which overrides .env; a folder is always an absolute path.
 NO_BACKUP_COPY = "none"
+# A Sensibo unit's id, such as "Jyt7jM8c".
+HOME_UNIT_ID = re.compile(r"[A-Za-z0-9]{4,32}")
+# A dashboard box's id, such as "feelings-box".
+DASHBOARD_BOX_ID = re.compile(r"[a-z]+(-[a-z]+)*")
+BEDTIME = re.compile(r"([01]\d|2[0-3]):[0-5]\d")
+# The hot-day offer's temperature, in whole °C.
+HOT_DAY_LOWEST, HOT_DAY_HIGHEST = 20, 50
 BACKUP_COPY_MAX_CHARS = 200
 
 
@@ -157,6 +165,96 @@ class AppSettingsStore:
 
     def set_game_watch(self, on: bool) -> None:
         self._set("game_watch", "on" if on else "off")
+
+    def sensibo_enabled(self) -> bool:
+        """Whether she uses the house's air conditioners (Settings > Services > Sensibo); off unless switched on."""
+        return self._switch("sensibo") is True
+
+    def set_sensibo_enabled(self, on: bool) -> None:
+        self._set("sensibo", "on" if on else "off")
+
+    def her_room(self) -> str:
+        """The Sensibo unit in the room she lives in, by id, or "" for none chosen."""
+        saved = self._get("her_room") or ""
+        return saved if HOME_UNIT_ID.fullmatch(saved) else ""
+
+    def set_her_room(self, unit_id: str) -> None:
+        """Her room's unit; "" clears it (the row goes: an empty value isn't stored)."""
+        if not unit_id:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "her_room"))
+            return
+        if not HOME_UNIT_ID.fullmatch(unit_id):
+            raise ValueError("Unknown unit id")
+        self._set("her_room", unit_id)
+
+    def bedtime(self) -> tuple[str, list[str]]:
+        """The bedtime check: its time ("22:30", or "" for none) and the units it looks at, by id."""
+        saved = self._get("bedtime") or ""
+        at, _, units = saved.partition("|")
+        if not BEDTIME.fullmatch(at):
+            return "", []
+        return at, [unit for unit in units.split(",") if HOME_UNIT_ID.fullmatch(unit)]
+
+    def set_bedtime(self, at: str, units: list[str]) -> None:
+        """Saves it; no time clears the setting (an empty value isn't stored)."""
+        if not at:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "bedtime"))
+            return
+        if not BEDTIME.fullmatch(at):
+            raise ValueError("Bedtime must be a 24-hour time, such as 22:30")
+        if not all(HOME_UNIT_ID.fullmatch(unit) for unit in units):
+            raise ValueError("Unknown unit id")
+        value = f"{at}|{','.join(units)}"
+        if len(value) > 200:
+            raise ValueError("Too many rooms")
+        self._set("bedtime", value)
+
+    def hot_day(self) -> tuple[int | None, list[str]]:
+        """The hot-day offer: the forecast top it starts at (whole °C, or None for off) and the units it
+        offers to cool, by id."""
+        saved = self._get("hot_day") or ""
+        degrees, _, units = saved.partition("|")
+        if not degrees.isdigit() or not HOT_DAY_LOWEST <= int(degrees) <= HOT_DAY_HIGHEST:
+            return None, []
+        return int(degrees), [unit for unit in units.split(",") if HOME_UNIT_ID.fullmatch(unit)]
+
+    def set_hot_day(self, degrees: int | None, units: list[str]) -> None:
+        """Saves it; None turns it off (an empty value isn't stored)."""
+        if degrees is None:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "hot_day"))
+            return
+        if isinstance(degrees, bool) or not isinstance(degrees, int) or not HOT_DAY_LOWEST <= degrees <= HOT_DAY_HIGHEST:
+            raise ValueError(f"The hot-day temperature must be {HOT_DAY_LOWEST} to {HOT_DAY_HIGHEST}°C")
+        if not all(HOME_UNIT_ID.fullmatch(unit) for unit in units):
+            raise ValueError("Unknown unit id")
+        value = f"{degrees}|{','.join(units)}"
+        if len(value) > 200:
+            raise ValueError("Too many rooms")
+        self._set("hot_day", value)
+
+    def dashboard_boxes(self) -> tuple[list[str], list[str]]:
+        """The dashboard's open boxes in the order they flow, and its minimised ones, by id; both
+        empty unless saved (every box open in its first order)."""
+        saved = self._get("dashboard_boxes") or ""
+        opened, _, minimised = saved.partition("|")
+        ids = lambda text: [box for box in text.split(",") if DASHBOARD_BOX_ID.fullmatch(box)]
+        return ids(opened), ids(minimised)
+
+    def set_dashboard_boxes(self, opened: list[str], minimised: list[str]) -> None:
+        """Saves them; with neither, clears the setting (an empty value isn't stored)."""
+        if not opened and not minimised:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(AppSettingRecord).where(AppSettingRecord.key == "dashboard_boxes"))
+            return
+        if not all(DASHBOARD_BOX_ID.fullmatch(box) for box in [*opened, *minimised]):
+            raise ValueError("Unknown dashboard box")
+        value = ",".join(opened) + "|" + ",".join(minimised)
+        if len(value) > 200:
+            raise ValueError("Too many dashboard boxes")
+        self._set("dashboard_boxes", value)
 
     def game_chattiness(self) -> str:
         """How often she reacts to the game: 'off', 'quiet', 'normal' (unless another was chosen) or 'chatty'."""

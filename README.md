@@ -291,6 +291,15 @@ If Cloudflare's bot protection covers the address, check Twilio's requests aren'
 carriers (`**21*<number>*11#`), but not all complete it; calling the Twilio number directly
 always works.
 
+### Air conditioners (Sensibo)
+
+For Sensibo units in the house: she reads each room's temperature and humidity, changes a unit
+or sets a timer when you ask, and knows how warm or cold her own room is.
+
+1. Sign in at [home.sensibo.com/me/api](https://home.sensibo.com/me/api) and create an API key.
+2. Under **Her home › Sensibo**, paste it, **Save**, and switch Sensibo on. **Test** lists the rooms.
+3. Under **Her room**, choose the room the PC is in.
+
 ### Local model (Rocky)
 
 Rocky, her consultant, runs on your own GPU through Ollama in Docker. It needs an NVIDIA card

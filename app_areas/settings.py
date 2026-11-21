@@ -9,7 +9,7 @@ from textual import work
 import openai_key
 import openai_spend
 from ui.model_settings import (
-    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, LocalModelControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
+    ClaudeCodeControls, EmailControls, GameControls, GeneralControls, HomeControls, LocalModelControls, ModelSettingsScreen, ServiceControls, SignalControls, WebhookControls,
     gap_words,
 )
 from services.catalogue import SERVICES
@@ -96,6 +96,14 @@ class SettingsMixin:
                 webhooks=self.make_webhook_controls(),
                 web=self.make_web_controls(),
                 phone=self.make_phone_controls(),
+                home=HomeControls(
+                    status=lambda: (self.home_state, self.home_status), rooms=lambda: self.home_rooms,
+                    set_enabled=self.save_sensibo_enabled, save_key=self.save_sensibo_key,
+                    test=self.test_sensibo, save_her_room=self.save_her_room,
+                    enabled=self.sensibo_enabled, has_key=bool(self.sensibo.key), her_room=self.her_room_id,
+                    bedtime=self.bedtime, bedtime_rooms=list(self.bedtime_rooms), save_bedtime=self.save_bedtime,
+                    hot_day=self.hot_day, hot_day_rooms=list(self.hot_day_rooms), save_hot_day=self.save_hot_day,
+                ),
                 game=GameControls(
                     push_to_talk=self.game_push_to_talk, save_push_to_talk=self.save_game_push_to_talk,
                     channel=self.game_channel, save_channel=self.save_game_chat_channel,
@@ -391,6 +399,17 @@ class SettingsMixin:
             return
         self.activity.write(f"Cora will start {'in standby' if mode == 'standby' else 'active'} from the next launch.",
                             "Settings changed")
+
+    @work(group="dashboard-boxes", exclusive=True, exit_on_error=False)
+    async def save_dashboard_boxes(self, opened: list[str], minimised: list[str]) -> None:
+        """The dashboard's open boxes in order and its minimised ones, for the next time it opens and
+        the next launch."""
+        self.dashboard_boxes = (list(opened), list(minimised))
+        try:
+            await self.conversation_persistence.call_database(
+                self.persistence.save_dashboard_boxes, list(opened), list(minimised))
+        except Exception as error:
+            self.activity.write(f"The dashboard's layout wasn't saved ({type(error).__name__}).", "Settings error")
 
     @work(group="model-settings-save")
     async def save_voice_setting(self, voice: str) -> None:

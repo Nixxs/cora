@@ -217,6 +217,30 @@ class KeyboardPersistence:
                 "transcription": store.game_transcription(), "vocabulary": store.game_vocabulary(),
                 "watch": store.game_watch(), "chattiness": store.game_chattiness()}
 
+    def load_dashboard_boxes(self) -> tuple[list[str], list[str]]:
+        return AppSettingsStore(self._get_store().engine).dashboard_boxes()
+
+    def save_dashboard_boxes(self, opened: list[str], minimised: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_dashboard_boxes(opened, minimised)
+
+    def load_home_settings(self) -> dict:
+        """{"sensibo": bool, "her_room": str, "bedtime": (time, [unit id])} from Settings > Services > Sensibo."""
+        store = AppSettingsStore(self._get_store().engine)
+        return {"sensibo": store.sensibo_enabled(), "her_room": store.her_room(), "bedtime": store.bedtime(),
+                "hot_day": store.hot_day()}
+
+    def save_sensibo_enabled(self, on: bool) -> None:
+        AppSettingsStore(self._get_store().engine).set_sensibo_enabled(on)
+
+    def save_her_room(self, unit_id: str) -> None:
+        AppSettingsStore(self._get_store().engine).set_her_room(unit_id)
+
+    def save_bedtime(self, at: str, units: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_bedtime(at, units)
+
+    def save_hot_day(self, degrees: int | None, units: list[str]) -> None:
+        AppSettingsStore(self._get_store().engine).set_hot_day(degrees, units)
+
     def save_game_push_to_talk(self, on: bool) -> None:
         AppSettingsStore(self._get_store().engine).set_game_push_to_talk(on)
 

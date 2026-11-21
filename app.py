@@ -1,5 +1,6 @@
 import asyncio
 import gc
+from concurrent.futures import ThreadPoolExecutor
 from os import getenv
 from pathlib import Path
 from time import monotonic
@@ -88,6 +89,7 @@ from app_areas.game import GameMixin
 from app_areas.game_watch import GameWatchMixin
 from app_areas.claude_code import ClaudeCodeMixin
 from app_areas.local_model import LocalModelMixin
+from app_areas.home import HomeMixin
 from app_areas.shared import WEBHOOK_STARTUP_SECONDS
 
 
@@ -119,6 +121,9 @@ TASK_MAIL_CHECK_SECONDS = 10 * 60
 # audible stutter. What exists once startup has settled lives for good, so it's frozen out of the
 # collector's reach then and later collections only walk what's new.
 MEMORY_SETTLE_SECONDS = 20.0
+# The loop's default threads: every timer's sleep (see on_load) plus asyncio.to_thread's work.
+# About 40 timers run with the dashboard open; a waiting thread costs next to nothing.
+LOOP_THREADS = 128
 
 
 def settle_memory() -> None:
@@ -130,7 +135,7 @@ def settle_memory() -> None:
 class CoraApp(
     LiveSessionMixin, VoiceMixin, AttentionMixin, ChatMixin, SettingsMixin, ServicesMixin,
     SignalSetupMixin, SignalChatsMixin, ReachingYouMixin, TasksMixin, EmailAccountMixin, MailMixin,
-    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, App,
+    WebhooksMixin, WebInterfaceMixin, PhoneCallsMixin, ContactCallsMixin, TaskCallsMixin, BackgroundMixin, SignUpsMixin, FeelingsMixin, GameMixin, GameWatchMixin, ClaudeCodeMixin, LocalModelMixin, HomeMixin, App,
 ):
 
     live_trace = None
@@ -205,6 +210,12 @@ class CoraApp(
                             )
                 yield SidePanel(lambda: self.voice_bands(), lambda: self.claude_sessions_shown(),
                                 task_call=lambda: self.task_call_view(), id="side-panel")
+
+    def on_load(self) -> None:
+        # On Windows each Textual timer holds one of the loop's default threads while it sleeps,
+        # the hourly ones included. With fewer threads than timers, the fast ones (voice bars,
+        # pulses) wait for a thread, wake late and skip ticks; so plenty of threads, before any start.
+        asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(max_workers=LOOP_THREADS))
 
     def on_mount(self) -> None:
         if self.freeze_memory:
@@ -283,6 +294,8 @@ class CoraApp(
         self.conversation_end_timer = None
         # Settings > General. Kept for this run only; not saved yet.
         self.screen_looking = True
+        # The dashboard's open boxes in order and its minimised ones (loaded at launch, saved as they change).
+        self.dashboard_boxes: tuple[list[str], list[str]] = ([], [])
         # Settings > Game: push-to-talk into the game's chat.
         self.init_game()
         self.init_game_watch()
@@ -290,6 +303,8 @@ class CoraApp(
         self.init_claude_code()
         # Rocky's local model: its container, stopped once idle.
         self.init_local_model()
+        # The house's air conditioners (Sensibo), and the room she lives in.
+        self.init_home()
         try:
             idle_timeout_seconds = read_idle_timeout()
         except ValueError:
@@ -340,6 +355,7 @@ class CoraApp(
             place_map_pins=lambda route, lines: self.place_game_map_pins(route, lines),
             run_map_pins_command=lambda line: self.run_game_map_pins_command(line),
             set_wow_chat_channel=lambda channel: self.set_game_chat_channel_for_cora(channel),
+            use_aircon=lambda arguments: self.use_aircon(arguments),
             consult_rocky=lambda question, new_topic: self.consult_rocky(question, new_topic),
             show_image=self.conversation.show_image,
             find_signal_contact=self.find_signal_contact,
@@ -686,6 +702,8 @@ class CoraApp(
                     self.query_one("#chat-status", Button), self.conversation_persistence.load_dashboard_snapshot, self.activity,
                     self.live.context, load_spend=self.load_spend,
                     claude_sessions=self.claude_sessions_shown, task_call=self.task_call_view,
+                    boxes=self.dashboard_boxes, save_boxes=self.save_dashboard_boxes,
+                    home_view=self.home_view,
                 ))
         elif event.button.id in ("chat-image", "dashboard-chat-image"):
             # The system's file picker, for the box beside it.

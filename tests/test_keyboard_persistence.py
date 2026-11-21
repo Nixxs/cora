@@ -179,6 +179,7 @@ async def started_app(persistence=None, has_key=True):
                 persistence.load_clients.return_value = []
                 persistence.load_client_memory_context.return_value = ""
                 persistence.load_last_talked_at.return_value = None
+                persistence.load_dashboard_boxes.return_value = ([], [])
                 persistence.load_dashboard_snapshot.return_value = DashboardSnapshot(relationship=None, history=(), tones=(), memory_kinds={}, memory_days=(), memory_pending={}, interests=(), latest_finding=None, last_runs={}, next_due={}, message_days=(), traits=())
             app.persistence = persistence
             app.live.send_text = AsyncMock()

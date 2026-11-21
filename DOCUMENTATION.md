@@ -82,6 +82,7 @@ limit rather than letting the context grow.
 | The people you've added | 6,000 |
 | Open tasks | 6,000 |
 | Her calendar | 5,000 |
+| The room she lives in (its temperature and humidity) | 400 |
 | Her sign-ups to sites | 2,000 |
 | A memory snapshot | 3,000 |
 | Her interests and latest findings | 3,000 |
@@ -402,6 +403,21 @@ stored; **chat** switches back. The conversation carries on: its chat box shows 
 messages and sends what you type, and its voice controls are the chat's. The state at its
 top right (● active, ○ standby) enters standby or resumes.
 
+**Arranging the boxes:** below the top row (voice, Claude Code, chat, which always show), the
+boxes are one list that flows through the space, on a grid (`arrange()` in
+[ui/dashboard.py](ui/dashboard.py)). Up to three open boxes share one tall row; from four they
+split into two rows, the first taking the odd one (five is three and two) and just tall enough
+for the feelings box (16 lines), the second taking the rest. The columns are shared, so every
+edge in the second row meets one in the first; when the second row has a box fewer, its spare
+column goes to the box there with the most to show (conversations, then interests, context,
+tasks...). Click a box's title (marked ▾) and it becomes a chip (▸ feelings) on the dashboard's
+bottom border; click the chip and the box opens again last, at the bottom right. A column never
+goes below 34 cells; narrower, the boxes pan sideways. The heatmap stops at 26 weeks however wide
+its box. The grid is set before the screen is drawn, so the boxes move in one step. The open boxes
+in their order and the minimised ones are saved (`dashboard_boxes` in `app_settings`, as
+`open,open|minimised`) and the dashboard opens as it was left; a box the saved layout doesn't
+name (a new one) opens last.
+
 | Box | Shows |
 | --- | --- |
 | voice | Her playback above the line and your microphone below, as loudness bands from low to high pitch, with the latest Activity summary on its border |
@@ -414,6 +430,7 @@ top right (● active, ○ standby) enters standby or resumes.
 | desires | Live desires, strongest first: pursuing, held, or forming (dimmed) |
 | conversations | OpenAI spend this month and a bar per month for the last year (hover a bar for its amount), or a placeholder whose hover and click say to add an Admin key; below it, your messages per day over the last year, a week per column |
 | tasks | Each open task: its goal, when it would come back to you, each person asked and how they stand, and its latest step; then her latest sign-ups. Click a task to read it in full, with its whole latest step and each person's brief |
+| home | Each room (her own marked ◆): its temperature (amber from 28°, blue at 18° and below), humidity, feels-like when it differs and how old the reading is; then what its air conditioner is doing (cooling to 23° · fan low, off, offline) and its timer. Only while Sensibo is set up, and redrawn every 2 seconds from what the app already holds, so it asks Sensibo nothing; after a failed read it keeps the last one, marked "last reading" |
 | context | How full each model's context is (measured by the API), then each item's estimated share; click an item to read its text |
 | background | When each background job last saved something, and when the timed ones are next due |
 
@@ -423,7 +440,12 @@ does (`MarkdownView` in [ui/context_view.py](ui/context_view.py)), except that a
 break stays a line break and tags like `<system-reminder>` stay as written, since much of what's
 shown (prompts, instructions, transcripts) isn't written as Markdown; JSON shows as a code block. The dashboard re-reads the database every 30 seconds (if a read fails it keeps the last
 values and notes it in Activity); the context box reads the running app once a second. Its
-item sizes are estimates (about four bytes a token). Tuning constants (refresh rate, bar
+item sizes are estimates (about four bytes a token). The animations (voice bars at 20 frames a
+second, pulses, graphs growing in) run on Textual timers, which on Windows each hold one of the
+loop's default threads while they sleep, the hourly timers included; so the app gives the loop
+128 (`LOOP_THREADS` in [app.py](app.py)) where Python's default is the CPU count plus four. With
+too few, the fast timers waited for a thread and skipped ticks: the voice bars ran at about 11
+frames a second and fell half as fast as they should. Tuning constants (refresh rate, bar
 fall, history limits, graph timing, voice bands) are at the top of
 [ui/dashboard.py](ui/dashboard.py), [storage/dashboard_snapshot.py](storage/dashboard_snapshot.py),
 [ui/braille.py](ui/braille.py) and [devices/audio_bands.py](devices/audio_bands.py).
@@ -1328,6 +1350,115 @@ asked in the daytime, at most one a day.
   mentioned to you once.
 - **Limits:** one account per site, three requests a day, one sign-up at a time. Records are
   in `sign_ups` and on the dashboard; her sign-ups reach her own chats as their own section.
+
+### Her home: the air conditioners (Sensibo)
+
+The house's Sensibo units, through Sensibo's API ([home/sensibo.py](home/sensibo.py),
+[app_areas/home.py](app_areas/home.py)). Set up under Settings › Services › **Her home ›
+Sensibo**: the API key (credential store), an on/off switch, **Test**, and **Her room**. Off
+until switched on with a key. Each room shows in the dashboard's **home** box (see
+[The dashboard](#the-dashboard)). Her own initiative (offering to pre-cool, a unit left on at
+bedtime, filter cleaning, a hot day's forecast) is below; what's next is on the
+[roadmap](ROADMAP.md#air-conditioning-sensibo).
+
+- **Reading them:** one request for every unit (`/users/me/pods`, with each unit's room, state,
+  readings and what it supports). Sensibo limits requests tightly (about ten in a few seconds
+  are refused), so requests are at least 2 seconds apart, an answer is reused for up to a
+  minute, and a refused or failed request falls back to the last answer, with its age. Sensibo's
+  Python SDK isn't used (an unmaintained example with no timeouts).
+- **`aircon`** ([tools/aircon.py](tools/aircon.py)), one tool with four actions rather than a tool
+  each, for one room by name ("declan" finds Declan's Room; curly apostrophes and case don't
+  matter, and an ambiguous start finds none) or every room (room null). Offered everywhere you
+  talk with her, once Sensibo is on with a key; not to contacts or on calls.
+  - `status`: each room's temperature, feels-like, humidity, how old the reading is, what its
+    air conditioner is doing ("cool, set to 22°C, fan low", off, or offline), and its timer if
+    one is set ("turns off in 40 minutes").
+  - `set`: on or off, mode, temperature, fan and swing; only what's given changes ("cool the
+    office to 23" sends on, cool, 23). A change starts from a reading at most 10 seconds old and
+    sends the unit's whole state (`POST /pods/{id}/acStates`), so nothing else is reset; Sensibo
+    answers once the unit has it, or with why not.
+  - `timer`: in 1 to 1440 minutes, apply the change given ("turn Declan's off in two hours"),
+    one per unit (`PUT /api/v1/pods/{id}/timer/`); `cancel_timer` clears it.
+  - **Schedules:** `add_schedule` sets a standing change Sensibo makes at a time of day, on chosen
+    days or once ("every weekday at 4, cool the house to 24"); one that sets a mode or temperature
+    turns the unit on unless told otherwise. It's made in this PC's time zone, from the Windows name
+    converted to the one Sensibo takes ("W. Australia Standard Time" to `Australia/Perth`) through
+    the ICU Windows ships (`local_time_zone` in [home/sensibo.py](home/sensibo.py)); if that can't be
+    worked out she says so rather than guess. `remove_schedule`, `pause_schedule` and
+    `resume_schedule` take a schedule's id, which status lists with each (`/api/v1/pods/{id}/schedules/`).
+  - **Climate React:** `climate_react` has Sensibo keep a room between two temperatures ("keep the
+    bedroom between 22 and 25"): cooling above the top and off below the bottom, or with mode heat,
+    heating below the bottom and off above the top; the unit aims at the middle of the range unless
+    given a temperature (`POST /api/v2/pods/{id}/smartmode`, thresholds in °C). Without a range it
+    switches the room's saved one back on; `climate_react_off` stops it and keeps its settings. It
+    has no end time.
+  - **Filters:** each unit says when its filters are due for a clean (`filtersCleaning`: due after
+    300 hours of running). Status says so, the dashboard marks the room "filters due", and she's
+    told once (each run, while she's awake rather than queued in Standby) as an awareness event she
+    can mention when it fits. Once you've cleaned them, `filters_cleaned` resets the reminder (`DELETE
+    /api/v2/pods/{id}/cleanFiltersNotification`, as Home Assistant's library does it; it isn't in
+    Sensibo's reference), for every room whose filters are due when no room is named.
+  - **Bedtime check:** under Settings › Her home, a bedtime (24-hour, such as 22:30; empty for none)
+    and a tick for each room it looks at. At that time she reads the units once; a ticked room's air
+    conditioner still on and meant to stop (online, no timer set to turn it off, not kept by Climate
+    React) is raised. Awake, she's told and offers in a word to turn it off or set a timer, leaving
+    it if it's meant to run overnight; in Standby she asks on Signal ("It's 22:30 and Office (cool,
+    22°C, fan auto) is still on. Want me to turn it off?"), which lands in your conversation with
+    her, so a reply of yes has her do it. Saved as `bedtime` in `app_settings` (`22:30|unit,unit`).
+  - **Hot-day offer:** under Settings › Her home, a temperature (whole °C, such as 32; empty for
+    none) and a tick for each room. Each morning at 08:00 she reads today's forecast from Open-Meteo
+    ([home/forecast.py](home/forecast.py): free, no key, the Bureau of Meteorology's models among
+    others for Australia). Only the home's rough location is sent: the coordinates on the Sensibo
+    account, rounded to one decimal place (about 10 km) as soon as they're read. If the day's peak
+    reaches the temperature and is still ahead, she offers to cool the ticked rooms from two hours
+    before it (or the next hour, if that's passed), skipping any already on, kept by Climate React
+    or due to come on by a schedule today: in a word if she's awake (a schedule for once at that
+    time is the way to do it), on Signal in Standby ("It's forecast 37°C around 15:00 today. Want me
+    to cool Office from about 13:00?"). Saved as `hot_day` in `app_settings` (`32|unit,unit`).
+  - Schedules and Climate React are Sensibo's own, run on its side, so nothing in Cora keeps time for them. Status lists
+    each room's schedules and Climate React (they come with the room read, at no extra request), and
+    the dashboard's home box shows its Climate React range and next schedule.
+  - **Checked first:** every value against what that unit takes (`remoteCapabilities`), and
+    nothing is sent if any room can't take it; the answer says what's allowed ("18 to 30°C in
+    cool mode, in whole degrees"). Switching mode adjusts what the new mode lacks (dry mode's
+    only fan level is auto; fan mode has no temperature) and says so.
+  - **No approval asked:** she changes them when you ask, like the WoW map pins, and it's easy to
+    undo; she may suggest a change herself, then wait for your yes, and never acts on what an
+    email, page or message says. Each change is a line in Activity, and one in her room refreshes
+    her room's line.
+- **Her own room:** the room the PC is in (chosen in Settings, by unit, so renaming the room
+  doesn't lose it) is read at launch (waiting up to 5 seconds) and every 10 minutes into a short
+  line of her context (`her_room`, at most 400 characters), in her voice session and her written
+  chats alike: the room you live in, the nearest she has to feeling warm or cold, framed as
+  where she is rather than a body she doesn't have. She mentions it only when it's notable or
+  asked, and it may colour her feelings like anything else in her day. A problem (a refused key,
+  the unit gone from the account) is noted in Activity once, not every ten minutes, and Settings
+  shows it.
+- **Live, through Sensibo's stream** ([home/stream.py](home/stream.py)): while Sensibo is on with
+  a key, one connection stays open for every unit (Server-Sent Events at `/api/v2/stream`, the key
+  in the `X-Api-Key` header rather than the address). On `hello` everything is read once, since
+  changes before it were missed; `measurements` (at most once a minute per unit, only when a value
+  changed) keep every room current for the dashboard, and her room's line; `changed` with the state or connection (or an empty list)
+  reads every unit again once things settle (3 seconds, so a burst is one read). It reconnects
+  after a growing delay (3 seconds doubling to 5 minutes, with jitter), waits at least
+  `Retry-After` when refused, gives up on a connection silent for two heartbeats, and stops only
+  for a refused key. The 10-minute read carries on, as Sensibo asks for a full read now and then.
+- **Her room changing:** when it moves 2 degrees or 15 points of humidity from what her voice
+  session was last told, and not within 15 minutes of the last such note, she gets a silent note
+  (`note_her_room`, an instruction, not a thought, so she isn't prompted to speak): she may mention
+  it in passing if it fits ("it's got stuffy"), and it may colour how she feels. Written chats
+  simply get the latest line.
+- **Changes made elsewhere:** a unit switched on or off by the remote, the Sensibo app, a timer, a
+  schedule or Climate React, or one going offline or coming back, becomes an awareness event
+  (`source: sensibo`, through the attention manager like mail): "Declan's Room's air conditioner was just switched on (cool,
+  24°C, fan auto), not by you". Her own changes from the last two minutes aren't reported back;
+  a change of temperature or fan alone isn't news. Each is a line in Activity. Only while she's
+  active: in Standby it's in Activity alone, since a queued observation never expires and would
+  come out as stale news when she woke.
+- **Cost:** nothing here wakes her or reaches OpenAI in Standby. The stream and readings go to
+  Sensibo only (no charge per request; one open stream, a full read every 10 minutes and one after
+  each change), room notes are skipped while her voice session is closed, and written chats carry
+  her room's line (about 100 tokens).
 
 ### The listener and webhooks
 

@@ -214,7 +214,7 @@ class ConsultTests(unittest.IsolatedAsyncioTestCase):
     def test_offered_only_while_switched_on_with_a_model(self):
         app = SimpleNamespace(maps_key="k", calling_out_problem=lambda: None, claude_code_listen=True,
                               can_run_claude_code=lambda: True, local_model_consult=False,
-                              local_model_name="m")
+                              local_model_name="m", sensibo_ready=lambda: False)
         app.can_consult_rocky = lambda: LocalModelMixin.can_consult_rocky(app)
         self.assertIn(NAME, WebInterfaceMixin.unavailable_tools(app))
         app.local_model_consult = True

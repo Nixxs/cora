@@ -9,7 +9,9 @@ from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.events import Click
 from textual.screen import ModalScreen
-from textual.widgets import Button, Input, Label, Select, Static, Switch, TabbedContent, TabPane, TextArea
+from textual.widgets import (
+    Button, Input, Label, Select, SelectionList, Static, Switch, TabbedContent, TabPane, TextArea,
+)
 
 from mail import account as email_setup
 from mail.account import EmailStatus
@@ -17,6 +19,8 @@ from messaging import setup as signal_setup
 from messaging.qr import qr_text
 from messaging.setup import SignalStatus
 from game.chat_line import CHANNELS as GAME_CHANNELS
+from home.sensibo import SCHEDULE_TIME as BEDTIME_TIME
+from storage.app_settings_store import HOT_DAY_HIGHEST, HOT_DAY_LOWEST
 from local_model.manager import IDLE_CHOICES
 from openai_spend import likely_cora_project
 from phone.twilio import REGIONS
@@ -382,6 +386,34 @@ class WebControls:
 
 
 @dataclass
+class HomeControls:
+    """What the Sensibo row reads and does; the app owns the key, the reads and her room."""
+
+    # status() -> (state: "ok", "checking", "problem" or "" when not read yet; the latest reading or problem).
+    status: Callable[[], tuple[str, str]]
+    # rooms() -> [(unit id, room name)] as last read; empty until read.
+    rooms: Callable[[], list[tuple[str, str]]]
+    set_enabled: Callable[[bool], None]
+    # save_key(key): "" forgets it; a saved key is checked straight away.
+    save_key: Callable[[str], None]
+    test: Callable[[], None]
+    save_her_room: Callable[[str], None]
+    enabled: bool = False
+    has_key: bool = False
+    her_room: str = ""
+    # The bedtime check: its time ("22:30", or "" for none) and the units it looks at;
+    # save_bedtime(time, units) ("" turns it off).
+    bedtime: str = ""
+    bedtime_rooms: list[str] = field(default_factory=list)
+    save_bedtime: Callable[[str, list[str]], None] = lambda at, units: None
+    # The hot-day offer: the forecast top it starts at (°C, or None for off) and the units it offers
+    # to cool; save_hot_day(degrees, units).
+    hot_day: int | None = None
+    hot_day_rooms: list[str] = field(default_factory=list)
+    save_hot_day: Callable[[int | None, list[str]], None] = lambda degrees, units: None
+
+
+@dataclass
 class PhoneControls:
     """What the Phone calls row reads and does; the app owns the listener and who may call."""
 
@@ -403,6 +435,25 @@ class PhoneControls:
     region: str = "au1"
     region_address: str = ""
     save_region: Callable[[str], None] = lambda code: None
+
+
+HOME_INTRO = (
+    "The house's air conditioners, through Sensibo. She reads every room's temperature and humidity, "
+    "changes a unit or sets a timer when you ask (aircon), and knows how warm or cold her own room is."
+)
+HOME_KEY_HELP = "From home.sensibo.com/me/api (sign in, then create a key). Kept in the system's credential store."
+HOME_ROOM_HELP = "Where the PC she runs on is: she knows how warm or cold it is there. Test first to list the rooms."
+HOME_HOT_DAY_HELP = (
+    "Each morning at 8 she checks today's forecast (Open-Meteo, from the home's location rounded to about "
+    "10 km). If it reaches this, she offers to cool the ticked rooms ahead of the heat, unless one's already "
+    "on, kept by Climate React or due to come on by a schedule; by Signal if she's in standby. Whole °C; "
+    "empty for none."
+)
+HOME_BEDTIME_HELP = (
+    "At this time she checks the ticked rooms: any air conditioner still on (no timer to turn it off, not "
+    "kept by Climate React), she offers to turn off; by Signal if she's in standby. 24-hour, such as 22:30; "
+    "empty for none."
+)
 
 
 # The Twilio region choice when .env's CORA_TWILIO_API names an address of its own.
@@ -555,6 +606,19 @@ def web_line(status: str) -> Text:
     return Text(f"● {status}", style="#8fcf8f")
 
 
+def home_line(enabled: bool, state: str, status: str) -> Text:
+    """The Sensibo row: off, working (with the latest reading), checking, or what's wrong."""
+    if not enabled:
+        return Text("○ off", style="#8f98a8")
+    if state == "ok":
+        return Text(f"● {status}", style="#8fcf8f")
+    if state == "checking":
+        return Text("◌ checking", style="#d7a06a")
+    if state == "problem":
+        return Text("× see details", style="#e07a7a")
+    return Text("○ not read yet · Test", style="#8f98a8")
+
+
 def phone_line(status: str) -> Text:
     if not status:
         return Text("○ off", style="#8f98a8")
@@ -702,9 +766,12 @@ class ModelSettingsScreen(ModalScreen):
         webhooks: WebhookControls | None = None, web: WebControls | None = None,
         phone: PhoneControls | None = None, general: GeneralControls | None = None,
         game: GameControls | None = None, claude_code: ClaudeCodeControls | None = None,
-        local_model: LocalModelControls | None = None,
+        local_model: LocalModelControls | None = None, home: HomeControls | None = None,
     ) -> None:
         super().__init__()
+        self.home = home
+        # The rooms her-room choice was last filled with, so it's rebuilt only when they change.
+        self.shown_rooms: list[tuple[str, str]] | None = None
         self.general = general
         self.game = game
         self.claude_code = claude_code
@@ -789,6 +856,9 @@ class ModelSettingsScreen(ModalScreen):
             yield from self.compose_signal()
         if self.email is not None:
             yield from self.compose_email()
+        if self.home is not None:
+            yield heading("Her home")
+            yield from self.compose_home()
         if any(part is not None for part in (self.web, self.phone, self.webhooks)):
             yield heading("Reaching her from outside")
         if self.web is not None:
@@ -908,6 +978,54 @@ class ModelSettingsScreen(ModalScreen):
             yield field("Her full name", EMAIL_SIGN_UP_NAME_HELP)
             yield row(entry(value=self.email.sign_up_name, id="email-sign-up-name", placeholder="Cora"),
                       button("Save", "email-save-sign-up-name"))
+
+    def compose_home(self) -> ComposeResult:
+        yield self.service_heading("home", "Sensibo", "home-status",
+                                   Switch(value=self.home.enabled, id="home-enabled"))
+        with Vertical(classes="service-details", id="service-details-home"):
+            yield note(HOME_INTRO)
+            yield Static(id="home-detail", classes="service-reason")
+            yield field("API key", HOME_KEY_HELP)
+            yield row(entry(id="home-key", password=True,
+                            placeholder="key saved · paste to replace" if self.home.has_key else "paste the key"),
+                      button("Save", "home-save-key"), button("Forget", "home-forget-key"),
+                      button("Test", "home-test"))
+            yield field("Her room", HOME_ROOM_HELP)
+            yield Select([], prompt="No room chosen", allow_blank=True, id="home-her-room", compact=True)
+            yield field("Bedtime check", HOME_BEDTIME_HELP)
+            yield row(entry(id="home-bedtime", value=self.home.bedtime, placeholder="22:30", max_length=5),
+                      button("Save", "home-save-bedtime"))
+            yield SelectionList(id="home-bedtime-rooms", compact=True)
+            yield field("Hot-day offer", HOME_HOT_DAY_HELP)
+            yield row(entry(id="home-hot-day", value="" if self.home.hot_day is None else str(self.home.hot_day),
+                            placeholder="32", max_length=2, restrict=r"\d*"),
+                      button("Save", "home-save-hot-day"))
+            yield SelectionList(id="home-hot-day-rooms", compact=True)
+
+    def show_home(self) -> None:
+        state, status = self.home.status()
+        self.query_one("#home-status", Static).update(home_line(self.home.enabled, state, status))
+        detail = self.query_one("#home-detail", Static)
+        problem = self.home.enabled and state == "problem"
+        detail.display = problem
+        detail.update(Text(status, style="#e07a7a") if problem else "")
+        rooms = self.home.rooms()
+        # Her room's choice, rebuilt only when the rooms read change, so it keeps its place.
+        if rooms != self.shown_rooms:
+            self.shown_rooms = list(rooms)
+            choice = self.query_one("#home-her-room", Select)
+            options = list(rooms)
+            if self.home.her_room and all(unit_id != self.home.her_room for unit_id, _ in options):
+                options.append((self.home.her_room, "(chosen before; not read yet)"))
+            choice.set_options([(name, unit_id) for unit_id, name in options])
+            if self.home.her_room:
+                choice.value = self.home.her_room
+            for ticks_id, ticked in (("#home-bedtime-rooms", self.home.bedtime_rooms),
+                                     ("#home-hot-day-rooms", self.home.hot_day_rooms)):
+                ticks = self.query_one(ticks_id, SelectionList)
+                with ticks.prevent(SelectionList.SelectedChanged):
+                    ticks.clear_options()
+                    ticks.add_options([(name, unit_id, unit_id in ticked) for unit_id, name in rooms])
 
     def compose_web(self) -> ComposeResult:
         yield self.service_heading("web", "Web interface", "web-status",
@@ -1206,7 +1324,7 @@ class ModelSettingsScreen(ModalScreen):
         details.display = not details.display
         arrow = "▾" if details.display else "▸"
         titles = {"signal": "Signal", "email": "Email", "webhooks": "Webhooks", "web": "Web interface",
-                  "phone": "Phone calls"}
+                  "phone": "Phone calls", "home": "Sensibo"}
         title = titles.get(service_id) or SERVICES[service_id].title
         self.query_one(f"#service-title-{service_id}", Label).update(f"{arrow} {title}")
 
@@ -1357,6 +1475,8 @@ class ModelSettingsScreen(ModalScreen):
             await self.show_web()
         if self.phone is not None:
             self.show_phone()
+        if self.home is not None:
+            self.show_home()
         for service_id in SERVICES:
             status = self.services.status(service_id)
             self.query_one(f"#service-status-{service_id}", Static).update(
@@ -1407,6 +1527,11 @@ class ModelSettingsScreen(ModalScreen):
                 return
             self.web.enabled = event.value
             self.web.set_enabled(event.value)
+            return
+        if event.switch.id == "home-enabled":
+            if event.value != self.home.enabled:
+                self.home.enabled = event.value
+                self.home.set_enabled(event.value)
             return
         if event.switch.id == "phone-enabled":
             if event.value == self.phone.enabled:
@@ -1497,6 +1622,13 @@ class ModelSettingsScreen(ModalScreen):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         event.stop()
+        if event.select.id == "home-her-room":
+            # The prompt ("No room chosen") clears it.
+            unit_id = event.value if isinstance(event.value, str) else ""
+            if self.home is not None and unit_id != self.home.her_room:
+                self.home.her_room = unit_id
+                self.home.save_her_room(unit_id)
+            return
         if event.select.id == "spend-project":
             if self.general is not None and event.value != self.general.spend_project:
                 self.general.spend_project = event.value
@@ -1564,6 +1696,10 @@ class ModelSettingsScreen(ModalScreen):
         event.stop()
         if event.input.id == "game-vocabulary":
             self.save_game_vocabulary()
+        elif event.input.id == "home-bedtime":
+            self.save_home_bedtime()
+        elif event.input.id == "home-hot-day":
+            self.save_home_hot_day()
         elif event.input.id == "signal-person":
             self.save_person_number()
         elif event.input.id in ("email-client-id", "email-tenant"):
@@ -1638,6 +1774,47 @@ class ModelSettingsScreen(ModalScreen):
         self.phone.save_token(field_.value)
         field_.value = ""
         field_.placeholder = "token saved · paste to replace"
+
+    def save_home_bedtime(self) -> None:
+        """The bedtime check's time, from its field ("" turns it off), with the rooms ticked."""
+        at = self.query_one("#home-bedtime", Input).value.strip()
+        if at and not BEDTIME_TIME.fullmatch(at):
+            self.notify("Bedtime is a 24-hour time, such as 22:30.", severity="warning")
+            return
+        self.home.bedtime = at
+        self.home.save_bedtime(at, list(self.home.bedtime_rooms))
+
+    def save_home_hot_day(self) -> None:
+        """The hot-day offer's temperature, from its field ("" turns it off), with the rooms ticked."""
+        typed = self.query_one("#home-hot-day", Input).value.strip()
+        degrees = int(typed) if typed.isdigit() else None
+        if typed and (degrees is None or not HOT_DAY_LOWEST <= degrees <= HOT_DAY_HIGHEST):
+            self.notify(f"The hot-day temperature is whole degrees, {HOT_DAY_LOWEST} to {HOT_DAY_HIGHEST}.",
+                        severity="warning")
+            return
+        self.home.hot_day = degrees
+        self.home.save_hot_day(degrees, list(self.home.hot_day_rooms))
+
+    def on_selection_list_selected_changed(self, event: SelectionList.SelectedChanged) -> None:
+        if event.selection_list.id == "home-bedtime-rooms":
+            event.stop()
+            self.home.bedtime_rooms = list(event.selection_list.selected)
+            self.home.save_bedtime(self.home.bedtime, list(self.home.bedtime_rooms))
+        elif event.selection_list.id == "home-hot-day-rooms":
+            event.stop()
+            self.home.hot_day_rooms = list(event.selection_list.selected)
+            self.home.save_hot_day(self.home.hot_day, list(self.home.hot_day_rooms))
+
+    def save_home_key(self) -> None:
+        field_ = self.query_one("#home-key", Input)
+        if not field_.value.strip():
+            self.notify("Paste the Sensibo API key first.", severity="warning")
+            return
+        # Straight to the credential store; the field never keeps it.
+        self.home.save_key(field_.value)
+        self.home.has_key = True
+        field_.value = ""
+        field_.placeholder = "key saved · paste to replace"
 
     def save_maps_key(self) -> None:
         field_ = self.query_one("#web-maps-key", Input)
@@ -1736,6 +1913,18 @@ class ModelSettingsScreen(ModalScreen):
         elif button == "phone-forget-token":
             self.phone.save_token("")
             self.query_one("#phone-token", Input).placeholder = "32 letters and digits"
+        elif button == "home-save-key":
+            self.save_home_key()
+        elif button == "home-forget-key":
+            self.home.save_key("")
+            self.home.has_key = False
+            self.query_one("#home-key", Input).placeholder = "paste the key"
+        elif button == "home-test":
+            self.home.test()
+        elif button == "home-save-bedtime":
+            self.save_home_bedtime()
+        elif button == "home-save-hot-day":
+            self.save_home_hot_day()
         elif button == "web-maps-save":
             self.save_maps_key()
         elif button == "web-maps-forget":
